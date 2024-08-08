@@ -97,8 +97,13 @@ typedef struct {
 	GLsync timer_fence;
 	f32    last_frame_time[CS_LAST];
 
-	/* NOTE: One SSBO for raw data and two for decoded data (swapped for chained stages)*/
-	u32 raw_data_ssbo;
+	/* NOTE: multiple raw data SSBOs for unsynchronized mapping.
+	 * Decoded data is only relavent in the context of a single frame, two are
+	 * used so that they can be swapped when chaining multiple compute stages */
+	GLsync raw_data_fences[3];
+	u32    raw_data_ssbos[3];
+	u32    raw_data_index;
+
 	u32 rf_data_ssbos[2];
 	u32 last_output_ssbo_index;
 	u32 hadamard_ssbo;

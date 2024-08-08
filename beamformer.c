@@ -53,6 +53,7 @@ upload_filter_coefficients(BeamformerCtx *ctx, Arena a)
 static void
 alloc_shader_storage(BeamformerCtx *ctx, Arena a)
 {
+	ComputeShaderCtx *cs     = &ctx->csctx;
 	BeamformerParameters *bp = &ctx->params->raw;
 	uv4 dec_data_dim         = bp->dec_data_dim;
 	uv2 rf_raw_dim           = bp->rf_raw_dim;
@@ -61,29 +62,32 @@ alloc_shader_storage(BeamformerCtx *ctx, Arena a)
 	ctx->csctx.rf_raw_dim    = rf_raw_dim;
 	ctx->csctx.dec_data_dim  = dec_data_dim;
 
-	glDeleteBuffers(ARRAY_COUNT(ctx->csctx.rf_data_ssbos), ctx->csctx.rf_data_ssbos);
-	glDeleteBuffers(1, &ctx->csctx.raw_data_ssbo);
-	glGenBuffers(1, &ctx->csctx.raw_data_ssbo);
-	glGenBuffers(ARRAY_COUNT(ctx->csctx.rf_data_ssbos), ctx->csctx.rf_data_ssbos);
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ctx->csctx.raw_data_ssbo);
-	glBufferStorage(GL_SHADER_STORAGE_BUFFER, rf_raw_size, 0,
-	                GL_DYNAMIC_STORAGE_BIT|GL_MAP_WRITE_BIT);
+	glDeleteBuffers(ARRAY_COUNT(cs->rf_data_ssbos), cs->rf_data_ssbos);
+	glGenBuffers(ARRAY_COUNT(cs->rf_data_ssbos),    cs->rf_data_ssbos);
 
-	for (u32 i = 0; i < ARRAY_COUNT(ctx->csctx.rf_data_ssbos); i++) {
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ctx->csctx.rf_data_ssbos[i]);
+	glDeleteBuffers(ARRAY_COUNT(cs->raw_data_ssbos), cs->raw_data_ssbos);
+	glGenBuffers(ARRAY_COUNT(cs->raw_data_ssbos),    cs->raw_data_ssbos);
+
+	for (u32 i = 0; i < ARRAY_COUNT(cs->raw_data_ssbos); i++) {
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, cs->raw_data_ssbos[i]);
+		glBufferStorage(GL_SHADER_STORAGE_BUFFER, rf_raw_size, 0,
+		                GL_DYNAMIC_STORAGE_BIT|GL_MAP_WRITE_BIT);
+	}
+
+	for (u32 i = 0; i < ARRAY_COUNT(cs->rf_data_ssbos); i++) {
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, cs->rf_data_ssbos[i]);
 		glBufferStorage(GL_SHADER_STORAGE_BUFFER, rf_decoded_size, 0, 0);
 	}
 
 	/* NOTE: store hadamard in GPU once; it won't change for a particular imaging session */
-	ctx->csctx.hadamard_dim = (uv2){.x = dec_data_dim.z, .y = dec_data_dim.z};
-	size hadamard_elements  = dec_data_dim.z * dec_data_dim.z;
-	i32  *hadamard          = alloc(&a, i32, hadamard_elements);
+	cs->hadamard_dim       = (uv2){.x = dec_data_dim.z, .y = dec_data_dim.z};
+	size hadamard_elements = dec_data_dim.z * dec_data_dim.z;
+	i32  *hadamard         = alloc(&a, i32, hadamard_elements);
 	fill_hadamard(hadamard, dec_data_dim.z);
 
-	rlUnloadShaderBuffer(ctx->csctx.hadamard_ssbo);
-	ctx->csctx.hadamard_ssbo = rlLoadShaderBuffer(hadamard_elements * sizeof(i32), hadamard,
-	                                              GL_STATIC_DRAW);
-	ctx->flags &= ~ALLOC_SSBOS;
+	rlUnloadShaderBuffer(cs->hadamard_ssbo);
+	cs->hadamard_ssbo  = rlLoadShaderBuffer(hadamard_elements * sizeof(i32), hadamard, GL_STATIC_DRAW);
+	ctx->flags        &= ~ALLOC_SSBOS;
 }
 
 static void
@@ -101,13 +105,16 @@ do_compute_shader(BeamformerCtx *ctx, enum compute_shaders shader)
 	u32 input_ssbo_idx  = csctx->last_output_ssbo_index;
 	switch (shader) {
 	case CS_HADAMARD:
-		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, csctx->raw_data_ssbo);
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1,
+		                 csctx->raw_data_ssbos[csctx->raw_data_index]);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, csctx->rf_data_ssbos[output_ssbo_idx]);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, csctx->hadamard_ssbo);
 		glDispatchCompute(ORONE(csctx->dec_data_dim.x / 32),
 		                  ORONE(csctx->dec_data_dim.y / 32),
 		                  ORONE(csctx->dec_data_dim.z));
+		csctx->raw_data_fences[csctx->raw_data_index] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 		csctx->last_output_ssbo_index = !csctx->last_output_ssbo_index;
+		csctx->raw_data_index = (csctx->raw_data_index + 1) % ARRAY_COUNT(csctx->raw_data_fences);
 		break;
 	case CS_LPF:
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, csctx->rf_data_ssbos[input_ssbo_idx]);
@@ -531,12 +538,27 @@ do_beamformer(BeamformerCtx *ctx, Arena arena)
 		if (!uv4_equal(ctx->out_data_dim, bp->output_points) || ctx->flags & ALLOC_OUT_TEX)
 			alloc_output_image(ctx);
 
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ctx->csctx.raw_data_ssbo);
-		void *rf_data_buf = glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
-		ASSERT(rf_data_buf);
+		i32 raw_index = ctx->csctx.raw_data_index;
+		/* NOTE: if this times out it means the command queue is more than 3 frames behind.
+		 * In that case we need to re-evaluate the buffer size */
+		i32 result = glClientWaitSync(ctx->csctx.raw_data_fences[raw_index], 0, 10000);
+		if (result == GL_TIMEOUT_EXPIRED) {
+			//ASSERT(0);
+		}
+		glDeleteSync(ctx->csctx.raw_data_fences[raw_index]);
+
 		uv2  rf_raw_dim   = ctx->csctx.rf_raw_dim;
 		size rf_raw_size  = rf_raw_dim.x * rf_raw_dim.y * sizeof(i16);
-		size rlen         = os_read_pipe_data(ctx->data_pipe, rf_data_buf, rf_raw_size);
+
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ctx->csctx.raw_data_ssbos[raw_index]);
+		void *rf_data_buf = glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, rf_raw_size,
+		                                     GL_MAP_UNSYNCHRONIZED_BIT | GL_MAP_WRITE_BIT);
+		if (!rf_data_buf) {
+			rlCheckErrors();
+			ASSERT(0);
+		}
+		size rlen = os_read_pipe_data(ctx->data_pipe, rf_data_buf, rf_raw_size);
+
 		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
 		if (rlen == rf_raw_size) ctx->flags |= DO_COMPUTE;
