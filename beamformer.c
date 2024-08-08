@@ -66,8 +66,7 @@ alloc_shader_storage(BeamformerCtx *ctx, Arena a)
 	glGenBuffers(1, &ctx->csctx.raw_data_ssbo);
 	glGenBuffers(ARRAY_COUNT(ctx->csctx.rf_data_ssbos), ctx->csctx.rf_data_ssbos);
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ctx->csctx.raw_data_ssbo);
-	glBufferStorage(GL_SHADER_STORAGE_BUFFER, rf_raw_size, 0,
-	                GL_DYNAMIC_STORAGE_BIT|GL_MAP_WRITE_BIT);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, rf_raw_size, 0, GL_STREAM_DRAW);
 
 	for (u32 i = 0; i < ARRAY_COUNT(ctx->csctx.rf_data_ssbos); i++) {
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ctx->csctx.rf_data_ssbos[i]);
@@ -531,12 +530,13 @@ do_beamformer(BeamformerCtx *ctx, Arena arena)
 		if (!uv4_equal(ctx->out_data_dim, bp->output_points) || ctx->flags & ALLOC_OUT_TEX)
 			alloc_output_image(ctx);
 
-		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ctx->csctx.raw_data_ssbo);
-		void *rf_data_buf = glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
-		ASSERT(rf_data_buf);
 		uv2  rf_raw_dim   = ctx->csctx.rf_raw_dim;
 		size rf_raw_size  = rf_raw_dim.x * rf_raw_dim.y * sizeof(i16);
-		size rlen         = os_read_pipe_data(ctx->data_pipe, rf_data_buf, rf_raw_size);
+		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ctx->csctx.raw_data_ssbo);
+		glBufferData(GL_SHADER_STORAGE_BUFFER, rf_raw_size, 0, GL_STREAM_DRAW);
+		void *rf_data_buf = glMapBuffer(GL_SHADER_STORAGE_BUFFER, GL_WRITE_ONLY);
+		ASSERT(rf_data_buf);
+		size rlen = os_read_pipe_data(ctx->data_pipe, rf_data_buf, rf_raw_size);
 		glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
 		if (rlen == rf_raw_size) ctx->flags |= DO_COMPUTE;
