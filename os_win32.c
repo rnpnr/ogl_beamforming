@@ -55,6 +55,7 @@ W32(iptr)   CreateNamedPipeA(c8 *, u32, u32, u32, u32, u32, u32, void *);
 W32(b32)    DeleteFileA(c8 *);
 W32(void)   ExitProcess(i32);
 W32(b32)    FreeLibrary(void *);
+W32(iptr)   GetCurrentProcess(void);
 W32(b32)    GetFileInformationByHandle(iptr, w32_file_info *);
 W32(i32)    GetLastError(void);
 W32(void *) GetProcAddress(void *, c8 *);
@@ -64,9 +65,10 @@ W32(void *) LoadLibraryA(c8 *);
 W32(void *) MapViewOfFile(iptr, u32, u32, u32, u64);
 W32(b32)    PeekNamedPipe(iptr, u8 *, i32, i32 *, i32 *, i32 *);
 W32(b32)    ReadFile(iptr, u8 *, i32, i32 *, void *);
-W32(b32)    WriteFile(iptr, u8 *, i32, i32 *, void *);
+W32(b32)    TerminateProcess(iptr, u32);
 W32(void *) VirtualAlloc(u8 *, size, u32, u32);
 W32(b32)    VirtualFree(u8 *, size, u32);
+W32(b32)    WriteFile(iptr, u8 *, i32, i32 *, void *);
 
 static iptr win32_stderr_handle;
 
