@@ -1,38 +1,33 @@
 /* See LICENSE for license details. */
-static struct {
-	s8  label;
-	s8  path;
-	b32 needs_header;
-} compute_shaders[CS_LAST] = {
-	#define X(e, n, s, h, pn) [CS_##e] = {s8(#e), s8("shaders/" s ".glsl"), h},
-	COMPUTE_SHADERS
-	#undef X
-};
-
 #ifndef _DEBUG
 
 #include "beamformer.c"
-#define do_debug(...)
+#define debug_init(...)
 
 #else
 static void *debug_lib;
 
 static beamformer_frame_step_fn *beamformer_frame_step;
 
-static void
-do_debug(BeamformerInput *input, Stream *error_stream)
+static FILE_WATCH_CALLBACK_FN(debug_reload)
 {
-	static f64 updated_time;
-	FileStats test_stats = os_get_file_stats(OS_DEBUG_LIB_NAME);
-	if (test_stats.filesize > 32 && test_stats.timestamp > updated_time) {
-		os_unload_library(debug_lib);
-		debug_lib = os_load_library(OS_DEBUG_LIB_NAME, OS_DEBUG_LIB_TEMP_NAME, error_stream);
-		beamformer_frame_step = os_lookup_dynamic_symbol(debug_lib, "beamformer_frame_step", error_stream);
-		updated_time = test_stats.timestamp;
+	BeamformerInput *input = (BeamformerInput *)user_data;
+	Stream err             = arena_stream(&tmp);
 
-		input->executable_reloaded = 1;
-		os_write_err_msg(s8("Reloaded Main Executable\n"));
-	}
+	os_unload_library(debug_lib);
+	debug_lib = os_load_library(OS_DEBUG_LIB_NAME, OS_DEBUG_LIB_TEMP_NAME, &err);
+	beamformer_frame_step = os_lookup_dynamic_symbol(debug_lib, "beamformer_frame_step", &err);
+	os_write_err_msg(s8("Reloaded Main Executable\n"));
+	input->executable_reloaded = 1;
+
+	return 1;
+}
+
+static void
+debug_init(Platform *p, iptr input, Arena *arena)
+{
+	p->add_file_watch(&p->file_watch_context, arena, s8(OS_DEBUG_LIB_NAME), debug_reload, input);
+	debug_reload((s8){0}, input, *arena);
 }
 
 #endif /* _DEBUG */
@@ -154,13 +149,13 @@ compile_shader(Arena a, u32 type, s8 shader)
 	i32 res = 0;
 	glGetShaderiv(sid, GL_COMPILE_STATUS, &res);
 
-	char *stype;
-	switch (type) {
-	case GL_COMPUTE_SHADER:  stype = "Compute";  break;
-	case GL_FRAGMENT_SHADER: stype = "Fragment"; break;
-	}
-
 	if (res == GL_FALSE) {
+		char *stype;
+		switch (type) {
+		case GL_COMPUTE_SHADER:  stype = "Compute";  break;
+		case GL_FRAGMENT_SHADER: stype = "Fragment"; break;
+		}
+
 		TraceLog(LOG_WARNING, "SHADER: [ID %u] %s shader failed to compile", sid, stype);
 		i32 len = 0;
 		glGetShaderiv(sid, GL_INFO_LOG_LENGTH, &len);
@@ -168,94 +163,103 @@ compile_shader(Arena a, u32 type, s8 shader)
 		glGetShaderInfoLog(sid, len, (int *)&err.len, (char *)err.data);
 		TraceLog(LOG_WARNING, "SHADER: [ID %u] Compile error: %s", sid, (char *)err.data);
 		glDeleteShader(sid);
-	} else {
-		TraceLog(LOG_INFO, "SHADER: [ID %u] %s shader compiled successfully", sid, stype);
+
+		sid = 0;
 	}
 
 	return sid;
 }
 
-static void
-reload_shaders(BeamformerCtx *ctx, Arena a)
+static FILE_WATCH_CALLBACK_FN(reload_render_shader)
 {
-	ComputeShaderCtx *csctx = &ctx->csctx;
-	s8 header_in_arena = push_s8(&a, s8(COMPUTE_SHADER_HEADER));
-	for (u32 i = 0; i < ARRAY_COUNT(csctx->programs); i++) {
-		FileStats fs = os_get_file_stats((char *)compute_shaders[i].path.data);
-		if (fs.filesize <= 0)
-			continue;
+	FragmentShaderCtx *ctx = (FragmentShaderCtx *)user_data;
+	Shader updated_fs      = LoadShader(0, (c8 *)path.data);
 
-		Arena tmp = a;
-		s8 shader_text = os_read_file(&tmp, (char *)compute_shaders[i].path.data, fs.filesize);
-		if (shader_text.len == -1) {
-			stream_append_s8(&ctx->error_stream, s8("failed to read shader: "));
-			stream_append_s8(&ctx->error_stream, compute_shaders[i].path);
-			stream_append_byte(&ctx->error_stream, '\n');
-			/* TODO: maybe we don't need to fail here */
-			os_fatal(stream_to_s8(&ctx->error_stream));
-		}
-		/* NOTE: arena works as stack (since everything here is 1 byte aligned) */
-		if (compute_shaders[i].needs_header) {
-			shader_text.data -= header_in_arena.len;
-			shader_text.len  += header_in_arena.len;
-			ASSERT(shader_text.data == header_in_arena.data);
-		}
-
-		u32 shader_id  = compile_shader(tmp, GL_COMPUTE_SHADER, shader_text);
-
-		if (shader_id) {
-			glDeleteProgram(csctx->programs[i]);
-			csctx->programs[i] = rlLoadComputeShaderProgram(shader_id);
-			glUseProgram(csctx->programs[i]);
-			glBindBufferBase(GL_UNIFORM_BUFFER, 0, csctx->shared_ubo);
-			LABEL_GL_OBJECT(GL_PROGRAM, csctx->programs[i], compute_shaders[i].label);
-		}
-
-		glDeleteShader(shader_id);
+	if (updated_fs.id) {
+		UnloadShader(ctx->shader);
+		LABEL_GL_OBJECT(GL_PROGRAM, updated_fs.id, s8("Render Shader"));
+		ctx->shader       = updated_fs;
+		ctx->db_cutoff_id = GetShaderLocation(updated_fs, "u_db_cutoff");
+		ctx->threshold_id = GetShaderLocation(updated_fs, "u_threshold");
+		ctx->gen_mipmaps  = 1;
 	}
 
-	#define X(idx, name) csctx->name##_id = glGetUniformLocation(csctx->programs[idx], "u_" #name);
-	CS_UNIFORMS
-	#undef X
-
-	Shader updated_fs = LoadShader(NULL, "shaders/render.glsl");
-	if (updated_fs.id != rlGetShaderIdDefault()) {
-		UnloadShader(ctx->fsctx.shader);
-		LABEL_GL_OBJECT(GL_PROGRAM, updated_fs.id, s8("Render"));
-		ctx->fsctx.shader       = updated_fs;
-		ctx->fsctx.db_cutoff_id = GetShaderLocation(updated_fs, "u_db_cutoff");
-		ctx->fsctx.threshold_id = GetShaderLocation(updated_fs, "u_threshold");
-	}
+	return 1;
 }
 
-static void
-validate_cuda_lib(CudaLib *cl)
+struct compute_shader_reload_ctx {
+	BeamformerCtx *ctx;
+	s8             label;
+	u32            shader;
+	b32            needs_header;
+};
+
+static FILE_WATCH_CALLBACK_FN(reload_compute_shader)
 {
+	struct compute_shader_reload_ctx *ctx = (struct compute_shader_reload_ctx *)user_data;
+	ComputeShaderCtx *cs = &ctx->ctx->csctx;
+
+	b32 result = 1;
+
+	/* NOTE: arena works as stack (since everything here is 1 byte aligned) */
+	s8 header_in_arena = {.data = tmp.beg};
+	if (ctx->needs_header)
+		header_in_arena = push_s8(&tmp, s8(COMPUTE_SHADER_HEADER));
+
+	size fs = os_get_file_stats((c8 *)path.data).filesize;
+
+	s8 shader_text    = os_read_file(&tmp, (c8 *)path.data, fs);
+	shader_text.data -= header_in_arena.len;
+	shader_text.len  += header_in_arena.len;
+	ASSERT(shader_text.data == header_in_arena.data);
+
+	u32 shader_id  = compile_shader(tmp, GL_COMPUTE_SHADER, shader_text);
+	if (shader_id) {
+		glDeleteProgram(cs->programs[ctx->shader]);
+		cs->programs[ctx->shader] = rlLoadComputeShaderProgram(shader_id);
+		glUseProgram(cs->programs[ctx->shader]);
+		glBindBufferBase(GL_UNIFORM_BUFFER, 0, cs->shared_ubo);
+		LABEL_GL_OBJECT(GL_PROGRAM, cs->programs[ctx->shader], ctx->label);
+
+		TraceLog(LOG_INFO, "%s loaded", path.data);
+
+		ctx->ctx->flags |= START_COMPUTE;
+	} else {
+		result = 0;
+	}
+
+	glDeleteShader(shader_id);
+
+	return result;
+}
+
+static FILE_WATCH_CALLBACK_FN(load_cuda_lib)
+{
+	CudaLib *cl = (CudaLib *)user_data;
+	b32 result  = 0;
+	size fs = os_get_file_stats((c8 *)path.data).filesize;
+	if (fs > 0) {
+		TraceLog(LOG_INFO, "Loading CUDA lib: %s", OS_CUDA_LIB_NAME);
+
+		Stream err = arena_stream(&tmp);
+		os_unload_library(cl->lib);
+		cl->lib = os_load_library((c8 *)path.data, OS_CUDA_LIB_TEMP_NAME, &err);
+		#define X(name) cl->name = os_lookup_dynamic_symbol(cl->lib, #name, &err);
+		CUDA_LIB_FNS
+		#undef X
+
+		result = 1;
+	}
+
 	#define X(name) if (!cl->name) cl->name = name ## _stub;
 	CUDA_LIB_FNS
 	#undef X
+
+	return result;
 }
 
 static void
-check_and_load_cuda_lib(CudaLib *cl, Stream *error_stream)
-{
-	FileStats current = os_get_file_stats(OS_CUDA_LIB_NAME);
-	if (cl->timestamp == current.timestamp || current.filesize < 32)
-		return;
-
-	TraceLog(LOG_INFO, "Loading CUDA lib: %s", OS_CUDA_LIB_NAME);
-
-	cl->timestamp = current.timestamp;
-	os_unload_library(cl->lib);
-	cl->lib = os_load_library(OS_CUDA_LIB_NAME, OS_CUDA_LIB_TEMP_NAME, error_stream);
-	#define X(name) cl->name = os_lookup_dynamic_symbol(cl->lib, #name, error_stream);
-	CUDA_LIB_FNS
-	#undef X
-	validate_cuda_lib(cl);
-}
-
-static void
-setup_beamformer(BeamformerCtx *ctx, Arena temp_memory)
+setup_beamformer(BeamformerCtx *ctx, Arena *memory)
 {
 	ctx->window_size  = (uv2){.w = 1280, .h = 840};
 
@@ -267,7 +271,7 @@ setup_beamformer(BeamformerCtx *ctx, Arena temp_memory)
 
 	/* NOTE: Gather information about the GPU */
 	get_gl_params(&ctx->gl, &ctx->error_stream);
-	dump_gl_params(&ctx->gl, temp_memory);
+	dump_gl_params(&ctx->gl, *memory);
 	validate_gl_requirements(&ctx->gl);
 
 	ctx->fsctx.db        = -50.0f;
@@ -283,8 +287,16 @@ setup_beamformer(BeamformerCtx *ctx, Arena temp_memory)
 	ctx->params->compute_stages[2]    = CS_MIN_MAX;
 	ctx->params->compute_stages_count = 3;
 
-	/* NOTE: make sure function pointers are valid even if we are not using the cuda lib */
-	validate_cuda_lib(&ctx->cuda_lib);
+	if (ctx->gl.vendor_id == GL_VENDOR_NVIDIA
+	    && load_cuda_lib(s8(OS_CUDA_LIB_NAME), (iptr)&ctx->cuda_lib, *memory))
+	{
+		os_add_file_watch(&ctx->platform.file_watch_context, memory,
+		                  s8(OS_CUDA_LIB_NAME), load_cuda_lib, (iptr)&ctx->cuda_lib);
+	} else {
+		#define X(name) if (!ctx->cuda_lib.name) ctx->cuda_lib.name = name ## _stub;
+		CUDA_LIB_FNS
+		#undef X
+	}
 
 	/* NOTE: set up OpenGL debug logging */
 	glDebugMessageCallback(gl_debug_logger, &ctx->error_stream);
@@ -300,5 +312,27 @@ setup_beamformer(BeamformerCtx *ctx, Arena temp_memory)
 	glGenQueries(ARRAY_COUNT(ctx->csctx.timer_fences) * CS_LAST, (u32 *)ctx->csctx.timer_ids);
 	glGenQueries(ARRAY_COUNT(ctx->partial_compute_ctx.timer_ids), ctx->partial_compute_ctx.timer_ids);
 
-	reload_shaders(ctx, temp_memory);
+	#define X(e, sn, f, nh, pretty_name) do if (s8(f).len > 0) {                       \
+		struct compute_shader_reload_ctx *csr = push_struct(memory, typeof(*csr)); \
+		csr->ctx          = ctx;                                                   \
+		csr->label        = s8("CS_" #e);                                          \
+		csr->shader       = sn;                                                    \
+		csr->needs_header = nh;                                                    \
+		reload_compute_shader(s8("shaders/" f ".glsl"), (iptr)csr, *memory);       \
+		os_add_file_watch(&ctx->platform.file_watch_context, memory,               \
+		                  s8("shaders/" f ".glsl"), reload_compute_shader,         \
+		                  (iptr)csr);                                              \
+	} while (0);
+	COMPUTE_SHADERS
+	#undef X
+
+	reload_render_shader(s8("shaders/render.glsl"), (iptr)&ctx->fsctx, *memory);
+	os_add_file_watch(&ctx->platform.file_watch_context, memory, s8("shaders/render.glsl"),
+	                  reload_render_shader, (iptr)&ctx->fsctx);
+
+	/* TODO(rnp): remove this */
+	ComputeShaderCtx *csctx = &ctx->csctx;
+	#define X(idx, name) csctx->name##_id = glGetUniformLocation(csctx->programs[idx], "u_" #name);
+	CS_UNIFORMS
+	#undef X
 }

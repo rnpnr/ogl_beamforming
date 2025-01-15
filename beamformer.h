@@ -35,8 +35,7 @@
 
 enum program_flags {
 	SHOULD_EXIT    = 1 << 0,
-	RELOAD_SHADERS = 1 << 1,
-	GEN_MIPMAPS    = 1 << 30,
+	START_COMPUTE  = 1 << 1,
 };
 
 enum gl_vendor_ids {
@@ -221,6 +220,7 @@ typedef struct {
 	i32             threshold_id;
 	f32             db;
 	f32             threshold;
+	b32             gen_mipmaps;
 } FragmentShaderCtx;
 
 typedef struct {

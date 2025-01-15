@@ -599,7 +599,7 @@ do_beamform_work(BeamformerCtx *ctx, Arena *a)
 				work->compute_ctx.export_handle = INVALID_FILE;
 			}
 
-			ctx->flags |= GEN_MIPMAPS;
+			ctx->fsctx.gen_mipmaps = 1;
 		} break;
 		}
 
@@ -669,6 +669,12 @@ DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 
 	if (input->executable_reloaded) {
 		ui_init(ctx, ctx->ui_backing_store);
+	}
+
+	if (ctx->flags & START_COMPUTE) {
+		if (ui_can_start_compute(ctx))
+			ui_start_compute(ctx);
+		ctx->flags &= ~START_COMPUTE;
 	}
 
 	/* NOTE: Store the compute time for the last frame. */
@@ -767,21 +773,16 @@ DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 	EndTextureMode();
 
 	/* NOTE: regenerate mipmaps only when the output has actually changed */
-	if (ctx->flags & GEN_MIPMAPS) {
+	if (ctx->fsctx.gen_mipmaps) {
 		/* NOTE: shut up raylib's reporting on mipmap gen */
 		SetTraceLogLevel(LOG_NONE);
 		GenTextureMipmaps(&ctx->fsctx.output.texture);
 		SetTraceLogLevel(LOG_INFO);
-		ctx->flags &= ~GEN_MIPMAPS;
+		ctx->fsctx.gen_mipmaps = 0;
 	}
 
 	draw_ui(ctx, input, frame_to_draw);
 
-	if (IsKeyPressed(KEY_R)) {
-		ctx->flags |= RELOAD_SHADERS;
-		if (ui_can_start_compute(ctx))
-			ui_start_compute(ctx);
-	}
 	if (WindowShouldClose())
 		ctx->flags |= SHOULD_EXIT;
 }

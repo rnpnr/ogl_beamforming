@@ -10,7 +10,6 @@ ldflags="-lm"
 debug=${DEBUG}
 
 cc=${CC:-cc}
-main=main_generic.c
 
 case $(uname -sm) in
 MINGW64*)
@@ -20,6 +19,7 @@ MINGW64*)
 		extra_ldflags="-llibmat -llibmex"
 	fi
 	libname="beamformer.dll"
+	main="main_w32.c"
 	${cc} $libcflags helpers/ogl_beamformer_lib.c -o helpers/ogl_beamformer_lib.dll \
 		-L'C:/Program Files/MATLAB/R2022a/extern/lib/win64/microsoft' \
 		$extra_ldflags
@@ -27,6 +27,7 @@ MINGW64*)
 Linux*)
 	cflags="$cflags -D_DEFAULT_SOURCE"
 	libname="beamformer.so"
+	main="main_linux.c"
 	${cc} $libcflags helpers/ogl_beamformer_lib.c -o helpers/ogl_beamformer_lib.so
 	;;
 esac
@@ -64,4 +65,4 @@ else
 	ldflags="./external/lib/libraylib.a ${ldflags}"
 fi
 
-${cc} $cflags -o ogl $main $ldflags
+${cc} ${cflags} -o ogl ${main} ${ldflags}

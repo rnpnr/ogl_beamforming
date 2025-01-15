@@ -160,6 +160,29 @@ typedef struct {
 } FileStats;
 #define ERROR_FILE_STATS (FileStats){.filesize = -1}
 
+#define FILE_WATCH_CALLBACK_FN(name) b32 name(s8 path, iptr user_data, Arena tmp)
+typedef FILE_WATCH_CALLBACK_FN(file_watch_callback);
+
+typedef struct {
+	iptr user_data;
+	u64  hash;
+	file_watch_callback *callback;
+} FileWatch;
+
+typedef struct {
+	u64       hash;
+	iptr      handle;
+	s8        name;
+	FileWatch file_watches[16];
+	u32       file_watch_count;
+} FileWatchDirectory;
+
+typedef struct {
+	FileWatchDirectory directory_watches[4];
+	iptr               handle;
+	u32                directory_watch_count;
+} FileWatchContext;
+
 typedef struct {
 	u8   *data;
 	u32   widx;
@@ -205,13 +228,15 @@ typedef struct {
 #define PLATFORM_ALLOC_ARENA_FN(name) Arena name(Arena old, size capacity)
 typedef PLATFORM_ALLOC_ARENA_FN(platform_alloc_arena_fn);
 
+#define PLATFORM_ADD_FILE_WATCH_FN(name) void name(FileWatchContext *fwctx, Arena *a, s8 path, \
+                                                   file_watch_callback *callback, iptr user_data)
+typedef PLATFORM_ADD_FILE_WATCH_FN(platform_add_file_watch_fn);
+
 #define PLATFORM_CLOSE_FN(name) void name(iptr file)
 typedef PLATFORM_CLOSE_FN(platform_close_fn);
 
 #define PLATFORM_OPEN_FOR_WRITE_FN(name) iptr name(c8 *fname)
 typedef PLATFORM_OPEN_FOR_WRITE_FN(platform_open_for_write_fn);
-
-#define PLATFORM_POLL_PIPE_FN(name) b32 name(Pipe p)
 
 #define PLATFORM_READ_PIPE_FN(name) size name(iptr pipe, void *buf, size len)
 typedef PLATFORM_READ_PIPE_FN(platform_read_pipe_fn);
@@ -223,6 +248,7 @@ typedef PLATFORM_WRITE_NEW_FILE_FN(platform_write_new_file_fn);
 typedef PLATFORM_WRITE_FILE_FN(platform_write_file_fn);
 
 #define PLATFORM_FNS      \
+	X(add_file_watch) \
 	X(alloc_arena)    \
 	X(close)          \
 	X(open_for_write) \
@@ -231,7 +257,10 @@ typedef PLATFORM_WRITE_FILE_FN(platform_write_file_fn);
 	X(write_file)
 
 #define X(name) platform_ ## name ## _fn *name;
-typedef struct { PLATFORM_FNS } Platform;
+typedef struct {
+	PLATFORM_FNS
+	FileWatchContext file_watch_context;
+} Platform;
 #undef X
 
 typedef struct {

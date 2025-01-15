@@ -55,6 +55,7 @@ W32(b32)    CloseHandle(iptr);
 W32(b32)    CopyFileA(c8 *, c8 *, b32);
 W32(iptr)   CreateFileA(c8 *, u32, u32, void *, u32, u32, void *);
 W32(iptr)   CreateFileMappingA(iptr, void *, u32, u32, u32, c8 *);
+W32(iptr)   CreateIoCompletionPort(iptr, iptr, uptr, u32);
 W32(iptr)   CreateNamedPipeA(c8 *, u32, u32, u32, u32, u32, u32, void *);
 W32(b32)    DeleteFileA(c8 *);
 W32(void)   ExitProcess(i32);
@@ -203,18 +204,6 @@ os_open_named_pipe(char *name)
 	return (Pipe){.file = h, .name = name};
 }
 
-/* NOTE: win32 doesn't pollute the filesystem so no need to waste the user's time */
-static void
-os_close_named_pipe(Pipe p)
-{
-}
-
-static PLATFORM_POLL_PIPE_FN(os_poll_pipe)
-{
-	i32 bytes_available = 0;
-	return PeekNamedPipe(p.file, 0, 1 * MEGABYTE, 0, &bytes_available, 0) && bytes_available;
-}
-
 static PLATFORM_READ_PIPE_FN(os_read_pipe)
 {
 	i32 total_read = 0;
@@ -230,12 +219,6 @@ os_open_shared_memory_area(char *name, size cap)
 		return NULL;
 
 	return MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, cap);
-}
-
-/* NOTE: closing the handle releases the memory and this happens when program terminates */
-static void
-os_remove_shared_memory(char *name)
-{
 }
 
 static void *

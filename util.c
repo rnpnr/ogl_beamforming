@@ -56,6 +56,13 @@ alloc_(Arena *a, size len, size align, size count)
 	return mem_clear(p, 0, count * len);
 }
 
+static void
+arena_commit(Arena *a, size size)
+{
+	ASSERT(a->end - a->beg >= size);
+	a->beg += size;
+}
+
 static Arena
 sub_arena(Arena *a, size size)
 {
@@ -246,11 +253,33 @@ stream_append_variable(Stream *s, Variable *var)
 	}
 }
 
+/* NOTE(rnp): FNV-1a hash */
+static u64
+s8_hash(s8 v)
+{
+	u64 h = 0x3243f6a8885a308d; /* digits of pi */
+	for (; v.len; v.len--) {
+		h ^= v.data[v.len - 1] & 0xFF;
+		h *= 1111111111111111111; /* random prime */
+	}
+	return h;
+}
+
 static s8
 cstr_to_s8(char *cstr)
 {
 	s8 result = {.data = (u8 *)cstr};
 	while (*cstr) { result.len++; cstr++; }
+	return result;
+}
+
+/* NOTE(rnp): returns < 0 if byte is not found */
+static size
+s8_scan_backwards(s8 s, u8 byte)
+{
+	size result = s.len;
+	while (result && s.data[result - 1] != byte) result--;
+	result--;
 	return result;
 }
 
@@ -260,7 +289,7 @@ s8_cut_head(s8 s, size cut)
 	s8 result = s;
 	if (cut > 0) {
 		result.data += cut;
-		result.len -= cut;
+		result.len  -= cut;
 	}
 	return result;
 }

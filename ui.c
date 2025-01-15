@@ -880,7 +880,7 @@ static void
 ui_gen_mipmaps(BeamformerCtx *ctx)
 {
 	if (ctx->fsctx.output.texture.id)
-		ctx->flags |= GEN_MIPMAPS;
+		ctx->fsctx.gen_mipmaps = 1;
 }
 
 static void
