@@ -127,7 +127,7 @@ os_close_named_pipe(Pipe p)
 
 static PLATFORM_POLL_PIPE_FN(os_poll_pipe)
 {
-	struct pollfd pfd = {.fd = p.file, .events = POLLIN};
+	struct pollfd pfd = {.fd = p->file, .events = POLLIN};
 	poll(&pfd, 1, 0);
 	return !!(pfd.revents & POLLIN);
 }

@@ -49,6 +49,8 @@ typedef struct {
 	i32 beamform_plane;         /* Plane to Beamform in 2D HERCULES */
 	f32 f_number;               /* F# (set to 0 to disable) */
 	u32 das_shader_id;
+	u32 readi_group_id;			/* Which readi group this data is from*/
+	u32 readi_group_size;		/* Size of readi transmit group */
 	f32 _pad[3];
 } BeamformerParameters;
 

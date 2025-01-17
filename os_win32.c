@@ -11,6 +11,9 @@
 #define GENERIC_WRITE  0x40000000
 #define GENERIC_READ   0x80000000
 
+#define PIPE_WAIT      0x00
+#define PIPE_NOWAIT    0x01
+
 #define PIPE_TYPE_BYTE      0x00
 #define PIPE_ACCESS_INBOUND 0x01
 
@@ -18,6 +21,10 @@
 
 #define CREATE_ALWAYS  2
 #define OPEN_EXISTING  3
+
+#define ERROR_NO_DATA				232L
+#define ERROR_PIPE_NOT_CONNECTED	233L
+#define ERROR_PIPE_LISTENING		536L
 
 typedef struct {
 	u16  wProcessorArchitecture;
@@ -57,6 +64,7 @@ W32(iptr)   CreateFileA(c8 *, u32, u32, void *, u32, u32, void *);
 W32(iptr)   CreateFileMappingA(iptr, void *, u32, u32, u32, c8 *);
 W32(iptr)   CreateNamedPipeA(c8 *, u32, u32, u32, u32, u32, u32, void *);
 W32(b32)    DeleteFileA(c8 *);
+W32(b32)	DisconnectNamedPipe(iptr);
 W32(void)   ExitProcess(i32);
 W32(b32)    FreeLibrary(void *);
 W32(b32)    GetFileInformationByHandle(iptr, w32_file_info *);
@@ -198,7 +206,7 @@ os_get_file_stats(char *fname)
 static Pipe
 os_open_named_pipe(char *name)
 {
-	iptr h = CreateNamedPipeA(name, PIPE_ACCESS_INBOUND, PIPE_TYPE_BYTE, 1,
+	iptr h = CreateNamedPipeA(name, PIPE_ACCESS_INBOUND, PIPE_TYPE_BYTE | PIPE_NOWAIT, 1,
 	                          0, 1 * MEGABYTE, 0, 0);
 	return (Pipe){.file = h, .name = name};
 }
@@ -207,12 +215,46 @@ os_open_named_pipe(char *name)
 static void
 os_close_named_pipe(Pipe p)
 {
+	CloseHandle(p.file);
 }
 
 static PLATFORM_POLL_PIPE_FN(os_poll_pipe)
 {
-	i32 bytes_available = 0;
-	return PeekNamedPipe(p.file, 0, 1 * MEGABYTE, 0, &bytes_available, 0) && bytes_available;
+	// Try and read 0 bytes, this will give more pipe status information than PeakNamedPipe
+	u8 data = 0;
+	i32 total_read = 0;
+	b32 result = ReadFile(p->file, &data, 0, &total_read, NULL);
+
+	if (result == true)
+	{
+		return true;
+	}
+
+	i32 error = GetLastError();
+
+	// These three errors just mean nothing's been sent yet, otherwise the pipe is in a bad state
+	// and needs to be recreated.
+	if (error != ERROR_NO_DATA && error != ERROR_PIPE_LISTENING && error != ERROR_PIPE_NOT_CONNECTED)
+	{
+		/*char msg[1024];
+		snprintf(msg, 1024, "os_poll_pipe: Data pipe poll failed, Windows error '%i'.\n", error);
+		os_write_err_msg(cstr_to_s8(msg));*/
+
+		result = DisconnectNamedPipe(p->file);
+		result = CloseHandle(p->file);
+		*p = os_open_named_pipe(p->name);
+
+		if (p->file == INVALID_FILE)
+		{
+			error = GetLastError();
+			char msg[1024];
+			snprintf(msg, 1024, "os_poll_pipe: Failed to reopen data pipe after error: "
+				"Windows error '%i'.\n", error);
+
+			os_write_err_msg(cstr_to_s8(msg));
+		}
+	}
+	return false;
 }
 
 static PLATFORM_READ_PIPE_FN(os_read_pipe)

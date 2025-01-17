@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #ifndef asm
 #define asm __asm__
@@ -211,7 +212,7 @@ typedef PLATFORM_CLOSE_FN(platform_close_fn);
 #define PLATFORM_OPEN_FOR_WRITE_FN(name) iptr name(c8 *fname)
 typedef PLATFORM_OPEN_FOR_WRITE_FN(platform_open_for_write_fn);
 
-#define PLATFORM_POLL_PIPE_FN(name) b32 name(Pipe p)
+#define PLATFORM_POLL_PIPE_FN(name) b32 name(Pipe *p)
 
 #define PLATFORM_READ_PIPE_FN(name) size name(iptr pipe, void *buf, size len)
 typedef PLATFORM_READ_PIPE_FN(platform_read_pipe_fn);
