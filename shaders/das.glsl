@@ -9,9 +9,10 @@ layout(rg32f, binding = 0) writeonly uniform image3D u_out_data_tex;
 
 layout(location = 2) uniform int   u_volume_export_pass;
 layout(location = 3) uniform ivec3 u_volume_export_dim_offset;
-layout(location = 4) uniform mat4  u_xdc_transform;
-layout(location = 5) uniform int   u_xdc_index;
-layout(location = 6) uniform float u_cycle_t;
+layout(location = 4) uniform mat4  u_xdc_transform; layout(location = 5) uniform mat4  u_view_plane_transform;
+layout(location = 6) uniform mat4  u_view_region_transform;
+layout(location = 7) uniform int   u_xdc_index;
+layout(location = 8) uniform float u_cycle_t;
 
 #define C_SPLINE 0.5
 
@@ -49,27 +50,6 @@ vec2 cubic(uint ridx, float x)
 	return vec2(dot(S, h * C1), dot(S, h * C2));
 }
 #endif
-
-vec3 calc_image_point(vec3 voxel)
-{
-	ivec3 out_data_dim = imageSize(u_out_data_tex);
-	vec4 output_size   = abs(output_max_coord - output_min_coord);
-	vec3 image_point   = output_min_coord.xyz + voxel * output_size.xyz / out_data_dim;
-
-	switch (das_shader_id) {
-	case DAS_ID_UFORCES:
-		/* TODO: fix the math so that the image plane can be aritrary */
-		image_point.y = 0;
-		break;
-	case DAS_ID_HERCULES:
-	case DAS_ID_RCA:
-		if (u_volume_export_pass == 0)
-			image_point.y = off_axis_pos;
-		break;
-	}
-
-	return image_point;
-}
 
 vec2 apodize(vec2 value, float apodization_arg, float distance)
 {
@@ -229,8 +209,9 @@ void main()
 
 	/* NOTE: Convert voxel to physical coordinates */
 	ivec3 out_coord   = ivec3(gl_GlobalInvocationID) + u_volume_export_dim_offset;
-	vec3  image_point = calc_image_point(vec3(gl_GlobalInvocationID)
-	                                     + vec3(u_volume_export_dim_offset));
+	vec3  voxel       = vec3(gl_GlobalInvocationID) + vec3(u_volume_export_dim_offset);
+	vec3  image_point = (u_view_plane_transform * u_view_region_transform *  vec4(voxel, 1)).xyz;
+
 
 	/* NOTE: used for constant F# dynamic receive apodization. This is implemented as:
 	 *

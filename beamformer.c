@@ -290,6 +290,68 @@ beamform_work_queue_push(BeamformerCtx *ctx, Arena *a, enum beamform_work work_t
 	return result;
 }
 
+/* TODO(rnp): use this only for 2D beamforming and combine with the other matrix */
+static m4
+abcd_plane_to_xz_plane(v4 abcd)
+{
+	v3 target = {.y = 1};
+	f32 k_cos_theta = dot_v3(abcd.xyz, target);
+	f32 k           = magnitude_v3(abcd.xyz);
+
+	v4 q;
+	/* TODO(rnp): epsilon? */
+	if (k_cos_theta / k == -1) {
+		q.xyz = normalize_v3(orthogonal_v3(abcd.xyz));
+		q.w   = 0;
+	} else {
+		q.xyz = cross(abcd.xyz, target);
+		q.w   = k_cos_theta + k;
+		q     = normalize_v4(q);
+	}
+
+	/* TODO(rnp): just past in the quaternion; finding the conjugate is trivial just negate
+	 * the x, y, z components */
+	v4 c0 = {0};
+	c0.x = 1 - 2 * (q.y * q.y + q.z * q.z);
+	c0.y = 2 * (q.x * q.y + q.z * q.w);
+	c0.z = 2 * (q.x * q.z - q.y * q.w);
+
+	v4 c1 = {0};
+	c1.x = 2 * (q.x * q.y - q.z * q.w);
+	c1.y = 1 - 2 *(q.x * q.x + q.z * q.z);
+	c1.z = 2 * (q.y * q.z + q.x * q.w);
+
+	v4 c2 = {0};
+	c2.x = 2 * (q.x * q.z + q.y * q.w);
+	c2.y = 2 * (q.y * q.z - q.x * q.w);
+	c2.z = 1 - 2 * (q.x * q.x + q.y * q.y);
+
+	v4 c3 = {.w = 1};
+	if (abcd.y != 0) c3.y = -abcd.w / abcd.y;
+
+	m4 result = {.c[0] = c0, .c[1] = c1, .c[2] = c2, .c[3] = c3};
+
+	return result;
+}
+
+static m4
+grid_to_cartesian(uv4 grid_points, v4 min, v4 max, f32 plane_offset)
+{
+	v4 grid = UV4_TO_V4(grid_points);
+	/* TODO(rnp): write the API for asking for a 2D image only so that this makes more sense */
+	v4 scale = abs_v4(div_v4(sub_v4(max, min), grid));
+
+	v4 c0 = {.x = scale.x};
+	v4 c1 = {.y = scale.y};
+	v4 c2 = {.z = scale.z};
+	//v4 c3 = {.x = min.x, .y = min.y, .z = min.z, .w = 1};
+	v4 c3 = {.x = min.x, .y = plane_offset, .z = min.z, .w = 1};
+
+	m4 result = {.c[0] = c0, .c[1] = c1, .c[2] = c2, .c[3] = c3};
+
+	return result;
+}
+
 static m4
 v3_to_xdc_space(v3 direction, v3 origin, v3 corner1, v3 corner2)
 {
@@ -356,22 +418,30 @@ do_sum_shader(ComputeShaderCtx *cs, u32 *in_textures, u32 in_texture_count, f32 
 }
 
 static void
-do_beamform_shader(ComputeShaderCtx *cs, BeamformerParameters *bp, BeamformFrame *frame,
+do_beamform_shader(ComputeShaderCtx *cs, BeamformerParametersFull *bpf, BeamformFrame *frame,
                    u32 rf_ssbo, iv3 dispatch_dim, iv3 compute_dim_offset, i32 compute_pass)
 {
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, rf_ssbo);
 	glUniform3iv(cs->volume_export_dim_offset_id, 1, compute_dim_offset.E);
 	glUniform1i(cs->volume_export_pass_id, compute_pass);
 
+	BeamformerParameters *bp = &bpf->raw;
 	for (u32 i = 0; i < frame->dim.w; i++) {
 		u32 texture = frame->textures[i];
-		m4 xdc_transform = v3_to_xdc_space((v3){.z = 1},
+		m4 xdc_transform = v3_to_xdc_space((v3){.z = -1},
 		                                   f32_4_to_v4(bp->xdc_origin  + (4 * i)).xyz,
 		                                   f32_4_to_v4(bp->xdc_corner1 + (4 * i)).xyz,
 		                                   f32_4_to_v4(bp->xdc_corner2 + (4 * i)).xyz);
+		m4 view_plane_transform  = abcd_plane_to_xz_plane(bpf->abcd_plane);
+		m4 view_region_transform = grid_to_cartesian(bp->output_points,
+		                                             bp->output_min_coordinate,
+		                                             bp->output_max_coordinate,
+		                                             bp->off_axis_pos);
 		glBindImageTexture(0, texture, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RG32F);
 		glUniform1i(cs->xdc_index_id, i);
 		glUniformMatrix4fv(cs->xdc_transform_id, 1, GL_FALSE, xdc_transform.E);
+		glUniformMatrix4fv(cs->view_plane_transform_id, 1, GL_FALSE, view_plane_transform.E);
+		glUniformMatrix4fv(cs->view_region_transform_id, 1, GL_FALSE, view_region_transform.E);
 		glDispatchCompute(ORONE(dispatch_dim.x / 32),
 		                  ORONE(dispatch_dim.y),
 		                  ORONE(dispatch_dim.z / 32));
@@ -403,7 +473,7 @@ do_partial_compute_step(BeamformerCtx *ctx, BeamformFrame *frame)
 	i32 dispatch_count = frame->dim.z / 32;
 	iv3 dim_offset = {.z = !!dispatch_count * 32 * pc->dispatch_index++};
 	iv3 dispatch_dim = {.x = frame->dim.x, .y = frame->dim.y, .z = 1};
-	do_beamform_shader(cs, &ctx->params->raw, frame, pc->rf_data_ssbo, dispatch_dim, dim_offset, 1);
+	do_beamform_shader(cs, ctx->params, frame, pc->rf_data_ssbo, dispatch_dim, dim_offset, 1);
 
 	if (pc->dispatch_index >= dispatch_count) {
 		pc->dispatch_index  = 0;
@@ -481,7 +551,7 @@ do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformFrame *frame, u32 raw
 	case CS_DAS: {
 		u32 rf_ssbo      = csctx->rf_data_ssbos[input_ssbo_idx];
 		iv3 dispatch_dim = {.x = frame->dim.x, .y = frame->dim.y, .z = frame->dim.z};
-		do_beamform_shader(csctx, &ctx->params->raw, frame, rf_ssbo, dispatch_dim, (iv3){0}, 0);
+		do_beamform_shader(csctx, ctx->params, frame, rf_ssbo, dispatch_dim, (iv3){0}, 0);
 		if (frame->dim.w > 1) {
 			glUseProgram(csctx->programs[CS_SUM]);
 			u32 input_texture_count = frame->dim.w - 1;

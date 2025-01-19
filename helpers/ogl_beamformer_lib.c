@@ -1,12 +1,15 @@
 /* See LICENSE for license details. */
 #include "ogl_beamformer_lib.h"
 
+#define WriteFence() __asm__ volatile ("" ::: "memory")
+
 typedef struct {
 	BeamformerParameters raw;
 	enum compute_shaders compute_stages[16];
 	u32                  compute_stages_count;
 	b32                  upload;
 	b32                  export_next_frame;
+	v4                   abcd_plane;
 	c8                   export_pipe_name[1024];
 } BeamformerParametersFull;
 
@@ -230,7 +233,7 @@ set_beamformer_pipeline(char *shm_name, i32 *stages, i32 stages_count)
 }
 
 b32
-send_data(char *pipe_name, char *shm_name, i16 *data, uv2 data_dim)
+send_data(char *pipe_name, char *shm_name, i16 *data, uv2 data_dim, v4 abcd_plane)
 {
 	if (g_pipe.file == INVALID_FILE) {
 		g_pipe = os_open_named_pipe(pipe_name);
@@ -244,11 +247,14 @@ send_data(char *pipe_name, char *shm_name, i16 *data, uv2 data_dim)
 		return 0;
 
 	/* TODO: this probably needs a mutex around it if we want to change it here */
+	g_bp->abcd_plane     = abcd_plane;
 	g_bp->raw.rf_raw_dim = data_dim;
 	size data_size       = data_dim.x * data_dim.y * sizeof(i16);
 	size written         = os_write_to_pipe(g_pipe, data, data_size);
 	if (written != data_size)
 		warning_msg("failed to write full data to pipe: wrote: %ld", written);
+
+	WriteFence();
 	g_bp->upload = 1;
 
 	return 1;

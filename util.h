@@ -126,7 +126,7 @@ typedef union {
 	f32 E[3];
 } v3;
 
-typedef union {
+typedef __attribute__((aligned(16))) union {
 	struct { f32 x, y, z, w; };
 	struct { f32 r, g, b, a; };
 	struct { v3 xyz; f32 _1; };
@@ -140,6 +140,8 @@ typedef union {
 	v4  c[4];
 	f32 E[16];
 } m4;
+
+#define UV4_TO_V4(uv) (v4){.x = (uv).x, .y = (uv).y, .z = (uv).z, .w = (uv).w}
 
 typedef union {
 	struct { v2 pos, size; };

@@ -292,43 +292,6 @@ round_down_power_of_2(u32 a)
 	return result;
 }
 
-static v3
-cross(v3 a, v3 b)
-{
-	v3 result = {
-		.x = a.y * b.z - a.z * b.y,
-		.y = a.z * b.x - a.x * b.z,
-		.z = a.x * b.y - a.y * b.x,
-	};
-	return result;
-}
-
-static v3
-sub_v3(v3 a, v3 b)
-{
-	v3 result = {
-		.x = a.x - b.x,
-		.y = a.y - b.y,
-		.z = a.z - b.z,
-	};
-	return result;
-}
-
-static f32
-length_v3(v3 a)
-{
-	f32 result = a.x * a.x + a.y * a.y + a.z * a.z;
-	return result;
-}
-
-static v3
-normalize_v3(v3 a)
-{
-	f32 length = length_v3(a);
-	v3 result = {.x = a.x / length, .y = a.y / length, .z = a.z / length};
-	return result;
-}
-
 static v2
 clamp_v2_rect(v2 v, Rect r)
 {
@@ -366,6 +329,83 @@ magnitude_v2(v2 a)
 	return result;
 }
 
+static v3
+cross(v3 a, v3 b)
+{
+	v3 result = {
+		.x = a.y * b.z - a.z * b.y,
+		.y = a.z * b.x - a.x * b.z,
+		.z = a.x * b.y - a.y * b.x,
+	};
+	return result;
+}
+
+static v3
+sub_v3(v3 a, v3 b)
+{
+	v3 result = {
+		.x = a.x - b.x,
+		.y = a.y - b.y,
+		.z = a.z - b.z,
+	};
+	return result;
+}
+
+static v3
+add_v3(v3 a, v3 b)
+{
+	v3 result;
+	result.x = a.x + b.x;
+	result.y = a.y + b.y;
+	result.z = a.z + b.z;
+	return result;
+}
+
+static f32
+dot_v3(v3 a, v3 b)
+{
+	f32 result = a.x * b.x + a.y * b.y + a.z * b.z;
+	return result;
+}
+
+static f32
+magnitude_squared_v3(v3 a)
+{
+	f32 result = dot_v3(a, a);
+	return result;
+}
+
+static f32
+magnitude_v3(v3 a)
+{
+	f32 result = sqrt_f32(magnitude_squared_v3(a));
+	return result;
+}
+
+static v3
+normalize_v3(v3 a)
+{
+	f32 length = magnitude_v3(a);
+	v3 result;
+	result.x = a.x / length;
+	result.y = a.y / length;
+	result.z = a.z / length;
+	return result;
+}
+
+static v3
+orthogonal_v3(v3 a)
+{
+	f32 x = ABS(a.x);
+	f32 y = ABS(a.y);
+	f32 z = ABS(a.z);
+	v3 b = (x < y) ? (x < z ? (v3){.x = 1} : (v3){.z = 1}) : (y < z ? (v3){.y = 1} : (v3){.z = 1});
+
+	v3 result = cross(a, b);
+
+	return result;
+}
+
 static v4
 sub_v4(v4 a, v4 b)
 {
@@ -374,6 +414,47 @@ sub_v4(v4 a, v4 b)
 	result.y = a.y - b.y;
 	result.z = a.z - b.z;
 	result.w = a.w - b.w;
+	return result;
+}
+
+static v4
+div_v4(v4 a, v4 b)
+{
+	v4 result;
+	result.x = a.x / b.x;
+	result.y = a.y / b.y;
+	result.z = a.z / b.z;
+	result.w = a.w / b.w;
+	return result;
+}
+
+static v4
+abs_v4(v4 a)
+{
+	v4 result;
+	result.x = ABS(a.x);
+	result.y = ABS(a.y);
+	result.z = ABS(a.z);
+	result.w = ABS(a.w);
+	return result;
+}
+
+static f32
+magnitude_v4(v4 a)
+{
+	f32 result = sqrt_f32(a.x * a.x + a.y * a.y + a.z * a.z + a.w * a.w);
+	return result;
+}
+
+static v4
+normalize_v4(v4 a)
+{
+	f32 length = magnitude_v4(a);
+	v4 result;
+	result.x = a.x / length;
+	result.y = a.y / length;
+	result.z = a.z / length;
+	result.w = a.w / length;
 	return result;
 }
 
