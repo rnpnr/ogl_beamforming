@@ -123,6 +123,20 @@ os_open_named_pipe(char *name)
 	return (Pipe){.file = open(name, O_RDONLY|O_NONBLOCK), .name = name};
 }
 
+static void
+os_close_named_pipe(Pipe p)
+{
+	close(p.file);
+	unlink(p.name);
+}
+
+static PLATFORM_POLL_PIPE_FN(os_poll_pipe)
+{
+	struct pollfd pfd = {.fd = p->file, .events = POLLIN};
+	poll(&pfd, 1, 0);
+	return !!(pfd.revents & POLLIN);
+}
+
 static PLATFORM_READ_PIPE_FN(os_read_pipe)
 {
 	size r = 0, total_read = 0;
