@@ -49,8 +49,9 @@
 #define ORONE(x)       ((x)? (x) : 1)
 #define SIGN(x)        ((x) < 0? -1 : 1)
 
-#define MEGABYTE (1024ULL * 1024ULL)
-#define GIGABYTE (1024ULL * 1024ULL * 1024ULL)
+#define KB(a)          ((a) << 10ULL)
+#define MB(a)          ((a) << 20ULL)
+#define GB(a)          ((a) << 30ULL)
 
 #define U32_MAX        (0xFFFFFFFFUL)
 #define F32_INFINITY   (__builtin_inff())
@@ -67,6 +68,7 @@ typedef uint32_t  b32;
 typedef float     f32;
 typedef double    f64;
 typedef ptrdiff_t size;
+typedef size_t    usize;
 typedef ptrdiff_t iptr;
 typedef size_t    uptr;
 
@@ -156,36 +158,6 @@ typedef struct {
 #define INVALID_FILE (-1)
 
 typedef struct {
-	size filesize;
-	f64  timestamp;
-} FileStats;
-#define ERROR_FILE_STATS (FileStats){.filesize = -1}
-
-#define FILE_WATCH_CALLBACK_FN(name) b32 name(s8 path, iptr user_data, Arena tmp)
-typedef FILE_WATCH_CALLBACK_FN(file_watch_callback);
-
-typedef struct {
-	iptr user_data;
-	u64  hash;
-	file_watch_callback *callback;
-} FileWatch;
-
-typedef struct {
-	u64       hash;
-	iptr      handle;
-	s8        name;
-	FileWatch file_watches[16];
-	u32       file_watch_count;
-	Arena     buffer;
-} FileWatchDirectory;
-
-typedef struct {
-	FileWatchDirectory directory_watches[4];
-	iptr               handle;
-	u32                directory_watch_count;
-} FileWatchContext;
-
-typedef struct {
 	u8   *data;
 	u32   widx;
 	u32   cap;
@@ -229,6 +201,46 @@ typedef struct {
 
 typedef struct Platform Platform;
 
+typedef struct {
+	Arena arena;
+	iptr  handle;
+	iptr  window_handle;
+	iptr  sync_handle;
+	iptr  user_context;
+	b32   asleep;
+} GLWorkerThreadContext;
+
+typedef struct {
+	size filesize;
+	f64  timestamp;
+} FileStats;
+#define ERROR_FILE_STATS (FileStats){.filesize = -1}
+
+#define FILE_WATCH_CALLBACK_FN(name) b32 name(Platform *platform, s8 path, iptr user_data, Arena tmp)
+typedef FILE_WATCH_CALLBACK_FN(file_watch_callback);
+
+typedef struct {
+	iptr user_data;
+	u64  hash;
+	file_watch_callback *callback;
+} FileWatch;
+
+typedef struct {
+	u64       hash;
+	iptr      handle;
+	s8        name;
+	/* TODO(rnp): just push these as a linked list */
+	FileWatch file_watches[16];
+	u32       file_watch_count;
+	Arena     buffer;
+} FileWatchDirectory;
+
+typedef struct {
+	FileWatchDirectory directory_watches[4];
+	iptr               handle;
+	u32                directory_watch_count;
+} FileWatchContext;
+
 #define PLATFORM_ALLOC_ARENA_FN(name) Arena name(Arena old, size capacity)
 typedef PLATFORM_ALLOC_ARENA_FN(platform_alloc_arena_fn);
 
@@ -236,14 +248,23 @@ typedef PLATFORM_ALLOC_ARENA_FN(platform_alloc_arena_fn);
                                                    file_watch_callback *callback, iptr user_data)
 typedef PLATFORM_ADD_FILE_WATCH_FN(platform_add_file_watch_fn);
 
+#define PLATFORM_WAKE_WORKER_FN(name) void name(GLWorkerThreadContext *ctx)
+typedef PLATFORM_WAKE_WORKER_FN(platform_wake_worker_fn);
+
 #define PLATFORM_CLOSE_FN(name) void name(iptr file)
 typedef PLATFORM_CLOSE_FN(platform_close_fn);
 
 #define PLATFORM_OPEN_FOR_WRITE_FN(name) iptr name(c8 *fname)
 typedef PLATFORM_OPEN_FOR_WRITE_FN(platform_open_for_write_fn);
 
-#define PLATFORM_READ_PIPE_FN(name) size name(iptr pipe, void *buf, size len)
-typedef PLATFORM_READ_PIPE_FN(platform_read_pipe_fn);
+#define PLATFORM_READ_WHOLE_FILE_FN(name) s8 name(Arena *arena, char *file)
+typedef PLATFORM_READ_WHOLE_FILE_FN(platform_read_whole_file_fn);
+
+#define PLATFORM_READ_FILE_FN(name) size name(iptr file, void *buf, size len)
+typedef PLATFORM_READ_FILE_FN(platform_read_file_fn);
+
+#define PLATFORM_WAKE_THREAD_FN(name) void name(iptr sync_handle)
+typedef PLATFORM_WAKE_THREAD_FN(platform_wake_thread_fn);
 
 #define PLATFORM_WRITE_NEW_FILE_FN(name) b32 name(char *fname, s8 raw)
 typedef PLATFORM_WRITE_NEW_FILE_FN(platform_write_new_file_fn);
@@ -251,13 +272,19 @@ typedef PLATFORM_WRITE_NEW_FILE_FN(platform_write_new_file_fn);
 #define PLATFORM_WRITE_FILE_FN(name) b32 name(iptr file, s8 raw)
 typedef PLATFORM_WRITE_FILE_FN(platform_write_file_fn);
 
-#define PLATFORM_FNS      \
-	X(add_file_watch) \
-	X(alloc_arena)    \
-	X(close)          \
-	X(open_for_write) \
-	X(read_pipe)      \
-	X(write_new_file) \
+#define PLATFORM_THREAD_ENTRY_POINT_FN(name) iptr name(iptr _ctx)
+typedef PLATFORM_THREAD_ENTRY_POINT_FN(platform_thread_entry_point_fn);
+
+
+#define PLATFORM_FNS       \
+	X(add_file_watch)  \
+	X(alloc_arena)     \
+	X(close)           \
+	X(open_for_write)  \
+	X(read_whole_file) \
+	X(read_file)       \
+	X(wake_thread)     \
+	X(write_new_file)  \
 	X(write_file)
 
 #define X(name) platform_ ## name ## _fn *name;
@@ -265,17 +292,10 @@ struct Platform {
 	PLATFORM_FNS
 	FileWatchContext file_watch_context;
 	iptr             os_context;
+	iptr             error_file_handle;
+	GLWorkerThreadContext compute_worker;
 };
 #undef X
-
-typedef struct {
-	b32  executable_reloaded;
-	b32  pipe_data_available;
-	iptr pipe_handle;
-
-	v2 mouse;
-	v2 last_mouse;
-} BeamformerInput;
 
 #include "util.c"
 

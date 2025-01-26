@@ -8,6 +8,8 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <pthread.h>
+#include <semaphore.h>
 #include <sys/inotify.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -71,20 +73,19 @@ static PLATFORM_OPEN_FOR_WRITE_FN(os_open_for_write)
 	return result;
 }
 
-static s8
-os_read_file(Arena *a, char *file, size filesize)
+static PLATFORM_READ_WHOLE_FILE_FN(os_read_whole_file)
 {
 	s8 result = {0};
 
+	struct stat sb;
 	i32 fd = open(file, O_RDONLY);
-	if (fd >= 0) {
-		result = s8alloc(a, filesize);
+	if (fd >= 0 && fstat(fd, &sb) >= 0) {
+		result = s8alloc(arena, sb.st_size);
 		size rlen = read(fd, result.data, result.len);
-		if (rlen != result.len) {
+		if (rlen != result.len)
 			result = (s8){0};
-		}
-		close(fd);
 	}
+	if (fd >= 0) close(fd);
 
 	return result;
 }
@@ -121,13 +122,13 @@ os_open_named_pipe(char *name)
 	return (Pipe){.file = open(name, O_RDONLY|O_NONBLOCK), .name = name};
 }
 
-static PLATFORM_READ_PIPE_FN(os_read_pipe)
+static PLATFORM_READ_FILE_FN(os_read_file)
 {
 	size r = 0, total_read = 0;
 	do {
 		if (r != -1)
 			total_read += r;
-		r = read(pipe, buf + total_read, len - total_read);
+		r = read(file, buf + total_read, len - total_read);
 	} while (r);
 	return total_read;
 }
@@ -254,4 +255,33 @@ static PLATFORM_ADD_FILE_WATCH_FN(os_add_file_watch)
 	}
 
 	insert_file_watch(dir, s8_cut_head(path, dir->name.len + 1), user_data, callback);
+}
+
+i32 pthread_setname_np(pthread_t, char *);
+static iptr
+os_create_thread(iptr user_context, char *name, platform_thread_entry_point_fn *fn)
+{
+	pthread_t result;
+	pthread_create(&result, 0, (void *(*)(void *))fn, (void *)user_context);
+	pthread_setname_np(result, name);
+	return (iptr)result;
+}
+
+static iptr
+os_create_sync_object(Arena *arena)
+{
+	sem_t *result = push_struct(arena, sem_t);
+	sem_init(result, 0, 0);
+	return (iptr)result;
+}
+
+static void
+os_sleep_thread(iptr sync_handle)
+{
+	sem_wait((sem_t *)sync_handle);
+}
+
+static PLATFORM_WAKE_THREAD_FN(os_wake_thread)
+{
+	sem_post((sem_t *)sync_handle);
 }

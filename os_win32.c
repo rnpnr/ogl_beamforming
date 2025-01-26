@@ -27,6 +27,8 @@
 #define CREATE_ALWAYS  2
 #define OPEN_EXISTING  3
 
+#define THREAD_SET_LIMITED_INFORMATION 0x0400
+
 typedef struct {
 	u16  wProcessorArchitecture;
 	u16  _pad1;
@@ -81,6 +83,8 @@ W32(iptr)   CreateFileA(c8 *, u32, u32, void *, u32, u32, void *);
 W32(iptr)   CreateFileMappingA(iptr, void *, u32, u32, u32, c8 *);
 W32(iptr)   CreateIoCompletionPort(iptr, iptr, uptr, u32);
 W32(iptr)   CreateNamedPipeA(c8 *, u32, u32, u32, u32, u32, u32, void *);
+W32(iptr)   CreateSemaphoreA(iptr, i64, i64, c8 *);
+W32(iptr)   CreateThread(iptr, usize, iptr, iptr, u32, u32 *);
 W32(b32)    DeleteFileA(c8 *);
 W32(void)   ExitProcess(i32);
 W32(b32)    FreeLibrary(void *);
@@ -95,11 +99,12 @@ W32(void *) MapViewOfFile(iptr, u32, u32, u32, u64);
 W32(b32)    PeekNamedPipe(iptr, u8 *, i32, i32 *, i32 *, i32 *);
 W32(b32)    ReadDirectoryChangesW(iptr, u8 *, u32, b32, u32, u32 *, void *, void *);
 W32(b32)    ReadFile(iptr, u8 *, i32, i32 *, void *);
+W32(b32)    ReleaseSemaphore(iptr, i64, i64 *);
+W32(i32)    SetThreadDescription(iptr, u16 *);
+W32(u32)    WaitForSingleObjectEx(iptr, u32, b32);
 W32(b32)    WriteFile(iptr, u8 *, i32, i32 *, void *);
 W32(void *) VirtualAlloc(u8 *, size, u32, u32);
 W32(b32)    VirtualFree(u8 *, size, u32);
-
-static iptr win32_stderr_handle;
 
 static PLATFORM_WRITE_FILE_FN(os_write_file)
 {
@@ -108,6 +113,8 @@ static PLATFORM_WRITE_FILE_FN(os_write_file)
 	return raw.len == wlen;
 }
 
+/* TODO(rnp): cleanup callers of this function they should route through error file handle instead */
+static iptr win32_stderr_handle;
 static void
 os_write_err_msg(s8 msg)
 {
@@ -158,24 +165,33 @@ static PLATFORM_OPEN_FOR_WRITE_FN(os_open_for_write)
 	return result;
 }
 
-static s8
-os_read_file(Arena *a, char *file, size filesize)
+static PLATFORM_READ_WHOLE_FILE_FN(os_read_whole_file)
 {
 	s8 result = {0};
 
-	if (filesize > 0 && filesize <= (size)U32_MAX) {
-		s8 result = s8alloc(a, filesize);
-		iptr h    = CreateFileA(file, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
-		if (h >= 0) {
-			i32 rlen;
-			if (!ReadFile(h, result.data, result.len, &rlen, 0) || rlen != result.len) {
-				result = (s8){0};
-			}
-			CloseHandle(h);
-		}
+	w32_file_info fileinfo;
+	iptr h = CreateFileA(file, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
+	if (h >= 0 && GetFileInformationByHandle(h, &fileinfo)) {
+		size filesize = (size)fileinfo.nFileSizeHigh << 32;
+		filesize     |= (size)fileinfo.nFileSizeLow;
+		result        = s8alloc(arena, filesize);
+
+		ASSERT(filesize <= (size)U32_MAX);
+
+		i32 rlen;
+		if (!ReadFile(h, result.data, result.len, &rlen, 0) || rlen != result.len)
+			result = (s8){0};
 	}
+	if (h >= 0) CloseHandle(h);
 
 	return result;
+}
+
+static PLATFORM_READ_FILE_FN(os_read_file)
+{
+	i32 total_read = 0;
+	ReadFile(file, buf, len, &total_read, 0);
+	return total_read;
 }
 
 static PLATFORM_WRITE_NEW_FILE_FN(os_write_new_file)
@@ -219,16 +235,8 @@ os_get_file_stats(char *fname)
 static Pipe
 os_open_named_pipe(char *name)
 {
-	iptr h = CreateNamedPipeA(name, PIPE_ACCESS_INBOUND, PIPE_TYPE_BYTE, 1,
-	                          0, 1 * MEGABYTE, 0, 0);
+	iptr h = CreateNamedPipeA(name, PIPE_ACCESS_INBOUND, PIPE_TYPE_BYTE, 1, 0, MB(1), 0, 0);
 	return (Pipe){.file = h, .name = name};
-}
-
-static PLATFORM_READ_PIPE_FN(os_read_pipe)
-{
-	i32 total_read = 0;
-	ReadFile(pipe, buf, len, &total_read, 0);
-	return total_read;
 }
 
 static void *
@@ -326,4 +334,31 @@ static PLATFORM_ADD_FILE_WATCH_FN(os_add_file_watch)
 	}
 
 	insert_file_watch(dir, s8_cut_head(path, dir->name.len + 1), user_data, callback);
+}
+
+static iptr
+os_create_thread(iptr user_context, char *name, platform_thread_entry_point_fn *fn)
+{
+	iptr result = CreateThread(0, 0, (iptr)fn, user_context, 0, 0);
+	/* TODO(rnp): name needs to be utf16 encoded */
+	//SetThreadDescription(result, s8_to_16(arena, name).data);
+	return result;
+}
+
+static iptr
+os_create_sync_object(Arena *arena)
+{
+	iptr result = CreateSemaphoreA(0, 0, 1, 0);
+	return result;
+}
+
+static void
+os_sleep_thread(iptr sync_handle)
+{
+	WaitForSingleObjectEx(sync_handle, 0xFFFFFFFF, 0);
+}
+
+static PLATFORM_WAKE_THREAD_FN(os_wake_thread)
+{
+	ReleaseSemaphore(sync_handle, 1, 0);
 }

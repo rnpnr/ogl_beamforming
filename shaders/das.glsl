@@ -7,9 +7,8 @@ layout(std430, binding = 1) readonly restrict buffer buffer_1 {
 
 layout(rg32f, binding = 0) writeonly uniform image3D u_out_data_tex;
 
-layout(location = 2) uniform int   u_volume_export_pass;
-layout(location = 3) uniform ivec3 u_volume_export_dim_offset;
-layout(location = 4) uniform float u_cycle_t;
+layout(location = 2) uniform ivec3 u_voxel_offset;
+layout(location = 3) uniform float u_cycle_t;
 
 #define C_SPLINE 0.5
 
@@ -66,8 +65,7 @@ vec3 calc_image_point(vec3 voxel)
 	case DAS_ID_HERCULES:
 	case DAS_ID_RCA_TPW:
 	case DAS_ID_RCA_VLS:
-		if (u_volume_export_pass == 0)
-			image_point.y = off_axis_pos;
+		image_point.y = off_axis_pos;
 		break;
 	}
 
@@ -114,7 +112,7 @@ float cylindricalwave_transmit_distance(vec3 point, float focal_depth, float tra
 vec2 RCA(vec3 image_point, vec3 delta, float apodization_arg)
 {
 	uint ridx      = 0;
-	int  direction = beamform_plane * (u_volume_export_pass ^ 1);
+	int  direction = beamform_plane;
 	if (direction != TX_ROWS) image_point = image_point.yxz;
 
 	bool tx_col = TX_MODE_TX_COLS(transmit_mode);
@@ -160,7 +158,7 @@ vec2 RCA(vec3 image_point, vec3 delta, float apodization_arg)
 vec2 HERCULES(vec3 image_point, vec3 delta, float apodization_arg)
 {
 	uint ridx      = 0;
-	int  direction = beamform_plane * (u_volume_export_pass ^ 1);
+	int  direction = beamform_plane;
 	if (direction != TX_ROWS) image_point = image_point.yxz;
 
 	bool tx_col = TX_MODE_TX_COLS(transmit_mode);
@@ -244,9 +242,8 @@ void main()
 {
 
 	/* NOTE: Convert voxel to physical coordinates */
-	ivec3 out_coord   = ivec3(gl_GlobalInvocationID) + u_volume_export_dim_offset;
-	vec3  image_point = calc_image_point(vec3(gl_GlobalInvocationID)
-	                                     + vec3(u_volume_export_dim_offset));
+	ivec3 out_coord   = ivec3(gl_GlobalInvocationID) + u_voxel_offset;
+	vec3  image_point = calc_image_point(vec3(out_coord));
 
 	/* NOTE: used for constant F# dynamic receive apodization. This is implemented as:
 	 *

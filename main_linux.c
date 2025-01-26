@@ -21,8 +21,9 @@
 #include "static.c"
 
 static void
-dispatch_file_watch_events(FileWatchContext *fwctx, Arena arena)
+dispatch_file_watch_events(Platform *platform, Arena arena)
 {
+	FileWatchContext *fwctx = &platform->file_watch_context;
 	u8 *mem     = alloc_(&arena, 4096, 64, 1);
 	Stream path = stream_alloc(&arena, 256);
 	struct inotify_event *event;
@@ -46,7 +47,7 @@ dispatch_file_watch_events(FileWatchContext *fwctx, Arena arena)
 						stream_append_s8(&path, file);
 						stream_append_byte(&path, 0);
 						path.widx--;
-						fw->callback(stream_to_s8(&path),
+						fw->callback(platform, stream_to_s8(&path),
 						             fw->user_data, arena);
 						path.widx = 0;
 						break;
@@ -62,10 +63,11 @@ main(void)
 {
 	BeamformerCtx   ctx   = {0};
 	BeamformerInput input = {.executable_reloaded = 1};
-	Arena temp_memory = os_alloc_arena((Arena){0}, 16 * MEGABYTE);
-	ctx.error_stream  = stream_alloc(&temp_memory, 1 * MEGABYTE);
+	Arena temp_memory = os_alloc_arena((Arena){0}, MB(16));
+	ctx.error_stream  = stream_alloc(&temp_memory, MB(1));
 
-	ctx.ui_backing_store = sub_arena(&temp_memory, 2 * MEGABYTE, 4096);
+	ctx.ui_backing_store              = sub_arena(&temp_memory, MB(2), KB(4));
+	ctx.platform.compute_worker.arena = sub_arena(&temp_memory, MB(2), KB(4));
 
 	Pipe data_pipe    = os_open_named_pipe(OS_PIPE_NAME);
 	input.pipe_handle = data_pipe.file;
@@ -76,9 +78,12 @@ main(void)
 	#undef X
 
 	ctx.platform.file_watch_context.handle = inotify_init1(O_NONBLOCK|O_CLOEXEC);
+	ctx.platform.compute_worker.asleep     = 1;
+	ctx.platform.error_file_handle         = STDERR_FILENO;
 
-	setup_beamformer(&ctx, &temp_memory);
 	debug_init(&ctx.platform, (iptr)&input, &temp_memory);
+	setup_beamformer(&ctx, &temp_memory);
+	os_wake_thread(ctx.platform.compute_worker.sync_handle);
 
 	struct pollfd fds[2] = {{0}, {0}};
 	fds[0].fd     = ctx.platform.file_watch_context.handle;
@@ -86,10 +91,10 @@ main(void)
 	fds[1].fd     = data_pipe.file;
 	fds[1].events = POLLIN;
 
-	while (!(ctx.flags & SHOULD_EXIT)) {
+	while (!ctx.should_exit) {
 		poll(fds, 2, 0);
 		if (fds[0].revents & POLLIN)
-			dispatch_file_watch_events(&ctx.platform.file_watch_context, temp_memory);
+			dispatch_file_watch_events(&ctx.platform, temp_memory);
 
 		input.pipe_data_available = !!(fds[1].revents & POLLIN);
 		input.last_mouse          = input.mouse;

@@ -46,7 +46,7 @@ w32_wide_char_to_mb(Stream *s, u16 *wstr, u32 wide_char_length)
 }
 
 static void
-dispatch_file_watch(FileWatchDirectory *fw_dir, u8 *buf, Arena arena)
+dispatch_file_watch(Platform *platform, FileWatchDirectory *fw_dir, u8 *buf, Arena arena)
 {
 	i64 offset = 0;
 	Stream path = stream_alloc(&arena, 256);
@@ -73,8 +73,7 @@ dispatch_file_watch(FileWatchDirectory *fw_dir, u8 *buf, Arena arena)
 		for (u32 i = 0; i < fw_dir->file_watch_count; i++) {
 			FileWatch *fw = fw_dir->file_watches + i;
 			if (fw->hash == hash) {
-				fw->callback(stream_to_s8(&path),
-				             fw->user_data, arena);
+				fw->callback(platform, stream_to_s8(&path), fw->user_data, arena);
 				break;
 			}
 		}
@@ -98,7 +97,7 @@ clear_io_queue(Platform *platform, BeamformerInput *input, Arena arena)
 		switch (event->tag) {
 		case W32_IO_FILE_WATCH: {
 			FileWatchDirectory *dir = (FileWatchDirectory *)event->context;
-			dispatch_file_watch(dir, dir->buffer.beg, arena);
+			dispatch_file_watch(platform, dir, dir->buffer.beg, arena);
 			zero_struct(overlapped);
 			ReadDirectoryChangesW(dir->handle, dir->buffer.beg, 4096, 0,
 			                      FILE_NOTIFY_CHANGE_LAST_WRITE, 0, overlapped, 0);
@@ -113,10 +112,11 @@ main(void)
 {
 	BeamformerCtx   ctx   = {0};
 	BeamformerInput input = {.executable_reloaded = 1};
-	Arena temp_memory = os_alloc_arena((Arena){0}, 16 * MEGABYTE);
-	ctx.error_stream  = stream_alloc(&temp_memory, 1 * MEGABYTE);
+	Arena temp_memory = os_alloc_arena((Arena){0}, MB(16));
+	ctx.error_stream  = stream_alloc(&temp_memory, MB(1));
 
-	ctx.ui_backing_store = sub_arena(&temp_memory, 2 * MEGABYTE, 4096);
+	ctx.ui_backing_store              = sub_arena(&temp_memory, MB(2), KB(4));
+	ctx.platform.compute_worker.arena = sub_arena(&temp_memory, MB(2), KB(4));
 
 	Pipe data_pipe    = os_open_named_pipe(OS_PIPE_NAME);
 	input.pipe_handle = data_pipe.file;
@@ -128,19 +128,23 @@ main(void)
 
 	w32_context w32_ctx = {0};
 	w32_ctx.io_completion_handle = CreateIoCompletionPort(INVALID_FILE, 0, 0, 0);
-	ctx.platform.os_context = (iptr)&w32_ctx;
 
-	setup_beamformer(&ctx, &temp_memory);
+	ctx.platform.os_context            = (iptr)&w32_ctx;
+	ctx.platform.compute_worker.asleep = 1;
+	ctx.platform.error_file_handle     = GetStdHandle(STD_ERROR_HANDLE);
+
 	debug_init(&ctx.platform, (iptr)&input, &temp_memory);
+	setup_beamformer(&ctx, &temp_memory);
+	os_wake_thread(ctx.platform.compute_worker.sync_handle);
 
-	while (!(ctx.flags & SHOULD_EXIT)) {
+	while (!ctx.should_exit) {
 		clear_io_queue(&ctx.platform, &input, temp_memory);
 
 		input.last_mouse = input.mouse;
 		input.mouse.rl   = GetMousePosition();
 
 		i32 bytes_available = 0;
-		input.pipe_data_available = PeekNamedPipe(data_pipe.file, 0, 1 * MEGABYTE, 0,
+		input.pipe_data_available = PeekNamedPipe(data_pipe.file, 0, MB(1), 0,
 		                                          &bytes_available, 0) && bytes_available;
 
 		beamformer_frame_step(&ctx, &temp_memory, &input);

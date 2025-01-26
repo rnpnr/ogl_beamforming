@@ -7,7 +7,9 @@
 #else
 static void *debug_lib;
 
-static beamformer_frame_step_fn *beamformer_frame_step;
+static beamformer_frame_step_fn       *beamformer_frame_step;
+static beamformer_complete_compute_fn *beamformer_complete_compute;
+static beamformer_work_queue_push_fn  *beamformer_work_queue_push;
 
 static FILE_WATCH_CALLBACK_FN(debug_reload)
 {
@@ -17,6 +19,15 @@ static FILE_WATCH_CALLBACK_FN(debug_reload)
 	os_unload_library(debug_lib);
 	debug_lib = os_load_library(OS_DEBUG_LIB_NAME, OS_DEBUG_LIB_TEMP_NAME, &err);
 	beamformer_frame_step = os_lookup_dynamic_symbol(debug_lib, "beamformer_frame_step", &err);
+	beamformer_work_queue_push = os_lookup_dynamic_symbol(debug_lib,
+	                                                      "beamformer_work_queue_push", &err);
+
+	/* NOTE(rnp): spin until compute thread finishes its work (we will probably
+	 * never reload while compute is in progress but just incase). */
+	while (!platform->compute_worker.asleep);
+
+	beamformer_complete_compute = os_lookup_dynamic_symbol(debug_lib,
+	                                                       "beamformer_complete_compute", &err);
 	os_write_err_msg(s8("Reloaded Main Executable\n"));
 	input->executable_reloaded = 1;
 
@@ -27,7 +38,7 @@ static void
 debug_init(Platform *p, iptr input, Arena *arena)
 {
 	p->add_file_watch(p, arena, s8(OS_DEBUG_LIB_NAME), debug_reload, input);
-	debug_reload((s8){0}, input, *arena);
+	debug_reload(p, (s8){0}, input, *arena);
 }
 
 #endif /* _DEBUG */
@@ -82,6 +93,7 @@ get_gl_params(GLParams *gl, Stream *err)
 	glGetIntegerv(GL_MAX_3D_TEXTURE_SIZE,           &gl->max_3d_texture_dim);
 	glGetIntegerv(GL_MAX_SHADER_STORAGE_BLOCK_SIZE, &gl->max_ssbo_size);
 	glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE,        &gl->max_ubo_size);
+	glGetIntegerv(GL_MAX_SERVER_WAIT_TIMEOUT,       &gl->max_server_wait_time);
 }
 
 static void
@@ -129,47 +141,18 @@ dump_gl_params(GLParams *gl, Arena a)
 	stream_append_i64(&s, gl->version_minor);
 	stream_append_s8(&s, s8("\nMax 1D/2D Texture Dimension: "));
 	stream_append_i64(&s, gl->max_2d_texture_dim);
-	stream_append_s8(&s, s8("\nMax 3D Texture Dimension: "));
+	stream_append_s8(&s, s8("\nMax 3D Texture Dimension:    "));
 	stream_append_i64(&s, gl->max_3d_texture_dim);
-	stream_append_s8(&s, s8("\nMax SSBO Size: "));
+	stream_append_s8(&s, s8("\nMax SSBO Size:               "));
 	stream_append_i64(&s, gl->max_ssbo_size);
-	stream_append_s8(&s, s8("\nMax UBO Size: "));
+	stream_append_s8(&s, s8("\nMax UBO Size:                "));
 	stream_append_i64(&s, gl->max_ubo_size);
+	stream_append_s8(&s, s8("\nMax Server Wait Time [ns]:   "));
+	stream_append_i64(&s, gl->max_server_wait_time);
 	stream_append_s8(&s, s8("\n-----------------------\n"));
 	if (!s.errors)
 		os_write_err_msg(stream_to_s8(&s));
 #endif
-}
-
-static u32
-compile_shader(Arena a, u32 type, s8 shader)
-{
-	u32 sid = glCreateShader(type);
-	glShaderSource(sid, 1, (const char **)&shader.data, (int *)&shader.len);
-	glCompileShader(sid);
-
-	i32 res = 0;
-	glGetShaderiv(sid, GL_COMPILE_STATUS, &res);
-
-	if (res == GL_FALSE) {
-		char *stype;
-		switch (type) {
-		case GL_COMPUTE_SHADER:  stype = "Compute";  break;
-		case GL_FRAGMENT_SHADER: stype = "Fragment"; break;
-		}
-
-		TraceLog(LOG_WARNING, "SHADER: [ID %u] %s shader failed to compile", sid, stype);
-		i32 len = 0;
-		glGetShaderiv(sid, GL_INFO_LOG_LENGTH, &len);
-		s8 err = s8alloc(&a, len);
-		glGetShaderInfoLog(sid, len, (int *)&err.len, (char *)err.data);
-		TraceLog(LOG_WARNING, "SHADER: [ID %u] Compile error: %s", sid, (char *)err.data);
-		glDeleteShader(sid);
-
-		sid = 0;
-	}
-
-	return sid;
 }
 
 static FILE_WATCH_CALLBACK_FN(reload_render_shader)
@@ -189,52 +172,29 @@ static FILE_WATCH_CALLBACK_FN(reload_render_shader)
 	return 1;
 }
 
-struct compute_shader_reload_ctx {
-	BeamformerCtx *ctx;
-	s8             label;
-	u32            shader;
-	b32            needs_header;
-};
 
-static FILE_WATCH_CALLBACK_FN(reload_compute_shader)
+static FILE_WATCH_CALLBACK_FN(queue_compute_shader_reload)
 {
-	struct compute_shader_reload_ctx *ctx = (struct compute_shader_reload_ctx *)user_data;
-	ComputeShaderCtx *cs = &ctx->ctx->csctx;
-
-	b32 result = 1;
-
-	/* NOTE: arena works as stack (since everything here is 1 byte aligned) */
-	s8 header_in_arena = {.data = tmp.beg};
-	if (ctx->needs_header)
-		header_in_arena = push_s8(&tmp, s8(COMPUTE_SHADER_HEADER));
-
-	size fs = os_get_file_stats((c8 *)path.data).filesize;
-
-	s8 shader_text    = os_read_file(&tmp, (c8 *)path.data, fs);
-	shader_text.data -= header_in_arena.len;
-	shader_text.len  += header_in_arena.len;
-
-	if (shader_text.data == header_in_arena.data) {
-		u32 shader_id = compile_shader(tmp, GL_COMPUTE_SHADER, shader_text);
-		if (shader_id) {
-			glDeleteProgram(cs->programs[ctx->shader]);
-			cs->programs[ctx->shader] = rlLoadComputeShaderProgram(shader_id);
-			glUseProgram(cs->programs[ctx->shader]);
-			glBindBufferBase(GL_UNIFORM_BUFFER, 0, cs->shared_ubo);
-			LABEL_GL_OBJECT(GL_PROGRAM, cs->programs[ctx->shader], ctx->label);
-
-			TraceLog(LOG_INFO, "%s loaded", path.data);
-
-			ctx->ctx->flags |= START_COMPUTE;
-		} else {
-			result = 0;
+	ComputeShaderReloadContext *csr = (typeof(csr))user_data;
+	BeamformerCtx *ctx = csr->beamformer_ctx;
+	BeamformWork *work = beamformer_work_queue_push(ctx->beamform_work_queue);
+	if (work) {
+		work->type = BW_RELOAD_SHADER;
+		work->reload_shader_ctx = csr;
+		if (ctx->platform.compute_worker.asleep &&
+		    ctx->beamform_frames[ctx->display_frame_index].ready_to_present)
+		{
+			BeamformWork *compute = beamformer_work_queue_push(ctx->beamform_work_queue);
+			if (compute) {
+				compute->type  = BW_COMPUTE;
+				compute->frame = ctx->beamform_frames + ctx->next_render_frame_index++;
+				if (ctx->next_render_frame_index >= ARRAY_COUNT(ctx->beamform_frames))
+					ctx->next_render_frame_index = 0;
+			}
 		}
-		glDeleteShader(shader_id);
-	} else {
-		TraceLog(LOG_INFO, "shader failed to load: %s", path.data);
+		ctx->platform.wake_thread(ctx->platform.compute_worker.sync_handle);
 	}
-
-	return result;
+	return 1;
 }
 
 static FILE_WATCH_CALLBACK_FN(load_cuda_lib)
@@ -262,6 +222,31 @@ static FILE_WATCH_CALLBACK_FN(load_cuda_lib)
 	return result;
 }
 
+
+#define GLFW_VISIBLE 0x00020004
+void glfwWindowHint(i32, i32);
+iptr glfwCreateWindow(i32, i32, char *, iptr, iptr);
+void glfwMakeContextCurrent(iptr);
+
+#include <stdio.h>
+static PLATFORM_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
+{
+	GLWorkerThreadContext *ctx = (GLWorkerThreadContext *)_ctx;
+
+	glfwMakeContextCurrent(ctx->window_handle);
+
+	for (;;) {
+		ctx->asleep = 1;
+		os_sleep_thread(ctx->sync_handle);
+		ctx->asleep = 0;
+		beamformer_complete_compute(ctx->user_context, ctx->arena);
+	}
+
+	unreachable();
+
+	return 0;
+}
+
 static void
 setup_beamformer(BeamformerCtx *ctx, Arena *memory)
 {
@@ -278,6 +263,20 @@ setup_beamformer(BeamformerCtx *ctx, Arena *memory)
 	dump_gl_params(&ctx->gl, *memory);
 	validate_gl_requirements(&ctx->gl);
 
+	glfwWindowHint(GLFW_VISIBLE, 0);
+	iptr raylib_window_handle = (iptr)GetWindowHandle();
+	GLWorkerThreadContext *worker = &ctx->platform.compute_worker;
+	worker->window_handle = glfwCreateWindow(320, 240, "", 0, raylib_window_handle);
+	worker->sync_handle   = os_create_sync_object(memory);
+	worker->handle        = os_create_thread((iptr)worker, "[compute]",
+	                                         compute_worker_thread_entry_point);
+	/* TODO(rnp): we should lock this down after we have something working */
+	worker->user_context  = (iptr)ctx;
+
+	glfwMakeContextCurrent(raylib_window_handle);
+
+	ctx->beamform_work_queue = push_struct(memory, BeamformWorkQueue);
+
 	ctx->fsctx.db        = -50.0f;
 	ctx->fsctx.threshold =  40.0f;
 
@@ -292,7 +291,7 @@ setup_beamformer(BeamformerCtx *ctx, Arena *memory)
 	ctx->params->compute_stages_count = 3;
 
 	if (ctx->gl.vendor_id == GL_VENDOR_NVIDIA
-	    && load_cuda_lib(s8(OS_CUDA_LIB_NAME), (iptr)&ctx->cuda_lib, *memory))
+	    && load_cuda_lib(&ctx->platform, s8(OS_CUDA_LIB_NAME), (iptr)&ctx->cuda_lib, *memory))
 	{
 		os_add_file_watch(&ctx->platform, memory, s8(OS_CUDA_LIB_NAME), load_cuda_lib,
 		                  (iptr)&ctx->cuda_lib);
@@ -313,29 +312,23 @@ setup_beamformer(BeamformerCtx *ctx, Arena *memory)
 	glNamedBufferStorage(ctx->csctx.shared_ubo, sizeof(BeamformerParameters), 0, GL_DYNAMIC_STORAGE_BIT);
 	LABEL_GL_OBJECT(GL_BUFFER, ctx->csctx.shared_ubo, s8("Beamformer_Parameters"));
 
-	glGenQueries(ARRAY_COUNT(ctx->csctx.timer_fences) * CS_LAST, (u32 *)ctx->csctx.timer_ids);
-	glGenQueries(ARRAY_COUNT(ctx->partial_compute_ctx.timer_ids), ctx->partial_compute_ctx.timer_ids);
-
-	#define X(e, sn, f, nh, pretty_name) do if (s8(f).len > 0) {                       \
-		struct compute_shader_reload_ctx *csr = push_struct(memory, typeof(*csr)); \
-		csr->ctx          = ctx;                                                   \
-		csr->label        = s8("CS_" #e);                                          \
-		csr->shader       = sn;                                                    \
-		csr->needs_header = nh;                                                    \
-		s8 shader = s8(static_path_join("shaders", f ".glsl"));                    \
-		reload_compute_shader(shader, (iptr)csr, *memory);                         \
-		os_add_file_watch(&ctx->platform, memory, shader, reload_compute_shader, (iptr)csr); \
+	#define X(e, sn, f, nh, pretty_name) do if (s8(f).len > 0) {                 \
+		ComputeShaderReloadContext *csr = push_struct(memory, typeof(*csr)); \
+		csr->beamformer_ctx = ctx;                                           \
+		csr->label          = s8("CS_" #e);                                  \
+		csr->shader         = sn;                                            \
+		csr->needs_header   = nh;                                            \
+		csr->path           = s8(static_path_join("shaders", f ".glsl"));    \
+		os_add_file_watch(&ctx->platform, memory, csr->path, queue_compute_shader_reload, (iptr)csr); \
+		queue_compute_shader_reload(&ctx->platform, csr->path, (iptr)csr, *memory); \
 	} while (0);
 	COMPUTE_SHADERS
 	#undef X
+	os_wake_thread(worker->sync_handle);
 
 	s8 render = s8(static_path_join("shaders", "render.glsl"));
-	reload_render_shader(render, (iptr)&ctx->fsctx, *memory);
+	reload_render_shader(&ctx->platform, render, (iptr)&ctx->fsctx, *memory);
 	os_add_file_watch(&ctx->platform, memory, render, reload_render_shader, (iptr)&ctx->fsctx);
 
-	/* TODO(rnp): remove this */
-	ComputeShaderCtx *csctx = &ctx->csctx;
-	#define X(idx, name) csctx->name##_id = glGetUniformLocation(csctx->programs[idx], "u_" #name);
-	CS_UNIFORMS
-	#undef X
+	ctx->ready_for_rf = 1;
 }

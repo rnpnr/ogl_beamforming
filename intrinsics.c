@@ -6,6 +6,11 @@
 #define sqrt_f32(a)     __builtin_sqrtf(a)
 #define atan2_f32(y, x) __builtin_atan2f(y, x)
 
+#define atomic_store(ptr, n) __atomic_store_n(ptr,   n, __ATOMIC_RELEASE)
+#define atomic_load(ptr)     __atomic_load_n(ptr,       __ATOMIC_ACQUIRE)
+#define atomic_and(ptr, n)   __atomic_and_fetch(ptr, n, __ATOMIC_RELEASE)
+#define atomic_add(ptr, n)   __atomic_add_fetch(ptr, n, __ATOMIC_RELEASE)
+
 #ifdef __ARM_ARCH_ISA_A64
 /* TODO? debuggers just loop here forever and need a manual PC increment (step over) */
 #define debugbreak() asm volatile ("brk 0xf000")

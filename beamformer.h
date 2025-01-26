@@ -33,11 +33,6 @@
 /* TODO: multiple views */
 #define MAX_DISPLAYS 1
 
-enum program_flags {
-	SHOULD_EXIT    = 1 << 0,
-	START_COMPUTE  = 1 << 1,
-};
-
 enum gl_vendor_ids {
 	GL_VENDOR_AMD,
 	GL_VENDOR_ARM,
@@ -105,24 +100,13 @@ typedef struct {
 } ScaleBar;
 
 typedef struct {
-	TempArena frame_temporary_arena;
-	Arena     arena_for_frame;
+	b32  executable_reloaded;
+	b32  pipe_data_available;
+	iptr pipe_handle;
 
-	Font font;
-	Font small_font;
-	f32  font_height;
-	f32  small_font_height;
-
-	InteractionState interaction;
-	InputState       text_input_state;
-
-	ScaleBar scale_bars[MAX_DISPLAYS][2];
-	v2_sll   *scale_bar_savepoint_freelist;
-
-	v2  ruler_start_p;
-	v2  ruler_stop_p;
-	u32 ruler_state;
-} BeamformerUI;
+	v2 mouse;
+	v2 last_mouse;
+} BeamformerInput;
 
 #define MAX_FRAMES_IN_FLIGHT 3
 
@@ -157,6 +141,7 @@ typedef struct {
 } CudaLib;
 
 #include "beamformer_parameters.h"
+
 typedef struct {
 	BeamformerParameters raw;
 	enum compute_shaders compute_stages[16];
@@ -166,21 +151,41 @@ typedef struct {
 	c8                   export_pipe_name[1024];
 } BeamformerParametersFull;
 
-#define CS_UNIFORMS                             \
-	X(CS_DAS,     volume_export_dim_offset) \
-	X(CS_DAS,     volume_export_pass)       \
-	X(CS_DAS,     cycle_t)                  \
-	X(CS_MIN_MAX, mips_level)               \
+typedef struct {
+	TempArena frame_temporary_arena;
+	Arena     arena_for_frame;
+
+	Font font;
+	Font small_font;
+	f32  font_height;
+	f32  small_font_height;
+
+	InteractionState interaction;
+	InputState       text_input_state;
+
+	ScaleBar scale_bars[MAX_DISPLAYS][2];
+	v2_sll   *scale_bar_savepoint_freelist;
+
+	v2  ruler_start_p;
+	v2  ruler_stop_p;
+	u32 ruler_state;
+
+	BeamformerUIParameters params;
+	b32                    flush_params;
+	/* TODO(rnp): this is nasty and should be removed */
+	b32                    read_params;
+
+	iptr                   last_displayed_frame;
+} BeamformerUI;
+
+#define CS_UNIFORMS                 \
+	X(CS_DAS,     voxel_offset) \
+	X(CS_DAS,     cycle_t)      \
+	X(CS_MIN_MAX, mips_level)   \
 	X(CS_SUM,     sum_prescale)
 
 typedef struct {
 	u32 programs[CS_LAST];
-
-	u32    timer_index;
-	u32    timer_ids[MAX_FRAMES_IN_FLIGHT][CS_LAST];
-	b32    timer_active[MAX_FRAMES_IN_FLIGHT][CS_LAST];
-	GLsync timer_fences[MAX_FRAMES_IN_FLIGHT];
-	f32    last_frame_time[CS_LAST];
 
 	/* NOTE: the raw_data_ssbo is allocated at 3x the required size to allow for tiled
 	 * transfers when the GPU is running behind the CPU. It is not mapped on NVIDIA because
@@ -200,6 +205,8 @@ typedef struct {
 	u32 hadamard_texture;
 
 	u32 shared_ubo;
+
+	b32 processing_compute;
 
 	uv4 dec_data_dim;
 	uv2 rf_raw_dim;
@@ -221,6 +228,8 @@ typedef struct {
 } FragmentShaderCtx;
 
 typedef struct {
+	GLsync in_flight;
+
 	uv3 dim;
 	u32 texture;
 
@@ -230,17 +239,12 @@ typedef struct {
 	v4  max_coordinate;
 
 	u32 mips;
-} BeamformFrame;
+	b32 ready_to_present;
 
-typedef struct {
-	BeamformFrame frame;
-	u32 timer_ids[2];
-	f32 runtime;
-	u32 rf_data_ssbo;
-	u32 shader;
-	u32 dispatch_index;
-	b32 timer_active;
-} PartialComputeCtx;
+	u32 timer_ids[CS_LAST];
+	f32 compute_times[CS_LAST];
+	b32 timer_active[CS_LAST];
+} BeamformFrame;
 
 typedef struct {
 	enum gl_vendor_ids vendor_id;
@@ -250,12 +254,14 @@ typedef struct {
 	i32  max_3d_texture_dim;
 	i32  max_ssbo_size;
 	i32  max_ubo_size;
+	i32  max_server_wait_time;
 } GLParams;
 
 enum beamform_work {
-	BW_FULL_COMPUTE,
-	BW_RECOMPUTE,
-	BW_PARTIAL_COMPUTE,
+	BW_COMPLETE_FRAME,
+	BW_COMPUTE,
+	BW_LOAD_RF_DATA,
+	BW_RELOAD_SHADER,
 	BW_SAVE_FRAME,
 	BW_SEND_FRAME,
 	BW_SSBO_COPY,
@@ -267,11 +273,17 @@ typedef struct {
 } BeamformSSBOCopy;
 
 typedef struct {
-	BeamformFrame *frame;
-	iptr export_handle;
-	u32  raw_data_ssbo_index;
-	b32  first_pass;
 } BeamformCompute;
+
+typedef struct { iptr handle; } LoadRFDataContext;
+
+typedef struct {
+	void *beamformer_ctx;
+	s8    label;
+	s8    path;
+	u32   shader;
+	b32   needs_header;
+} ComputeShaderReloadContext;
 
 typedef struct {
 	BeamformFrame *frame;
@@ -279,22 +291,23 @@ typedef struct {
 } BeamformOutputFrame;
 
 /* NOTE: discriminated union based on type */
-typedef struct BeamformWork {
-	struct BeamformWork *next;
+typedef struct {
 	union {
-		BeamformSSBOCopy    ssbo_copy_ctx;
-		BeamformCompute     compute_ctx;
-		BeamformOutputFrame output_frame_ctx;
+		iptr                        file_handle;
+		BeamformFrame              *frame;
+		BeamformSSBOCopy            ssbo_copy_ctx;
+		BeamformOutputFrame         output_frame_ctx;
+		ComputeShaderReloadContext *reload_shader_ctx;
 	};
 	u32 type;
 } BeamformWork;
 
 typedef struct {
-	BeamformWork *first;
-	BeamformWork *last;
-	BeamformWork *next_free;
-	i32 compute_in_flight;
-	b32 did_compute_this_frame;
+	union {
+		u64 queue;
+		struct {u32 widx, ridx;};
+	};
+	BeamformWork work_items[1 << 6];
 } BeamformWorkQueue;
 
 typedef struct {
@@ -309,19 +322,23 @@ typedef struct BeamformerCtx {
 	GLParams gl;
 
 	uv2 window_size;
-	u32 flags;
+	b32 start_compute;
+	b32 should_exit;
+
+	/* TODO(rnp): is there a better way of tracking this? */
+	b32 ready_for_rf;
 
 	Arena ui_backing_store;
 	BeamformerUI *ui;
 
 	BeamformFrame beamform_frames[MAX_BEAMFORMED_SAVED_FRAMES];
-	u32 displayed_frame_index;
+	u32 next_render_frame_index;
+	u32 display_frame_index;
 
 	/* NOTE: this will only be used when we are averaging */
 	BeamformFrame averaged_frame;
 	ComputeShaderCtx  csctx;
 	FragmentShaderCtx fsctx;
-	PartialComputeCtx partial_compute_ctx;
 
 	Arena export_buffer;
 
@@ -329,7 +346,7 @@ typedef struct BeamformerCtx {
 	Platform platform;
 	Stream   error_stream;
 
-	BeamformWorkQueue beamform_work_queue;
+	BeamformWorkQueue *beamform_work_queue;
 
 	BeamformerParametersFull *params;
 } BeamformerCtx;
@@ -339,5 +356,11 @@ typedef struct BeamformerCtx {
 #define BEAMFORMER_FRAME_STEP_FN(name) void name(BeamformerCtx *ctx, Arena *arena, \
                                                  BeamformerInput *input)
 typedef BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step_fn);
+
+#define BEAMFORMER_COMPLETE_COMPUTE_FN(name) void name(iptr user_context, Arena arena)
+typedef BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute_fn);
+
+#define BEAMFORMER_WORK_QUEUE_PUSH_FN(name) BeamformWork *name(BeamformWorkQueue *q)
+typedef BEAMFORMER_WORK_QUEUE_PUSH_FN(beamformer_work_queue_push_fn);
 
 #endif /*_BEAMFORMER_H_ */

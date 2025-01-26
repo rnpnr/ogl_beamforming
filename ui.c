@@ -211,9 +211,9 @@ do_scale_bar(BeamformerUI *ui, Stream *buf, Variable var, v2 mouse, i32 directio
 static void
 draw_display_overlay(BeamformerCtx *ctx, Arena a, v2 mouse, Rect display_rect, BeamformFrame *frame)
 {
-	BeamformerUI *ui         = ctx->ui;
-	BeamformerParameters *bp = &ctx->params->raw;
-	InteractionState *is     = &ui->interaction;
+	BeamformerUI *ui           = ctx->ui;
+	BeamformerUIParameters *bp = &ui->params;
+	InteractionState *is       = &ui->interaction;
 
 	Stream buf      = arena_stream(&a);
 	Texture *output = &ctx->fsctx.output.texture;
@@ -531,8 +531,8 @@ do_text_button(BeamformerUI *ui, s8 text, Rect r, v2 mouse, f32 *hover_t)
 static void
 draw_settings_ui(BeamformerCtx *ctx, Rect r, v2 mouse)
 {
-	BeamformerUI *ui         = ctx->ui;
-	BeamformerParameters *bp = &ctx->params->raw;
+	BeamformerUI *ui           = ctx->ui;
+	BeamformerUIParameters *bp = &ui->params;
 
 	f32 minx = bp->output_min_coordinate.x + 1e-6, maxx = bp->output_max_coordinate.x - 1e-6;
 	f32 minz = bp->output_min_coordinate.z + 1e-6, maxz = bp->output_max_coordinate.z - 1e-6;
@@ -684,7 +684,7 @@ draw_settings_ui(BeamformerCtx *ctx, Rect r, v2 mouse)
 }
 
 static void
-draw_debug_overlay(BeamformerCtx *ctx, Arena arena, Rect r)
+draw_debug_overlay(BeamformerCtx *ctx, BeamformFrame *frame, Arena arena, Rect r)
 {
 	static s8 labels[CS_LAST] = {
 		#define X(e, n, s, h, pn) [CS_##e] = s8(pn ":"),
@@ -692,8 +692,7 @@ draw_debug_overlay(BeamformerCtx *ctx, Arena arena, Rect r)
 		#undef X
 	};
 
-	BeamformerUI *ui     = ctx->ui;
-	ComputeShaderCtx *cs = &ctx->csctx;
+	BeamformerUI *ui = ctx->ui;
 	uv2 ws = ctx->window_size;
 
 	Stream buf = stream_alloc(&arena, 64);
@@ -707,28 +706,23 @@ draw_debug_overlay(BeamformerCtx *ctx, Arena arena, Rect r)
 		draw_text(ui->font, labels[index], pos, 0, colour_from_normalized(FG_COLOUR));
 
 		buf.widx = 0;
-		stream_append_f64_e(&buf, cs->last_frame_time[index]);
+		stream_append_f64_e(&buf, frame->compute_times[index]);
 		stream_append_s8(&buf, s8(" [s]"));
 		v2 txt_fs = measure_text(ui->font, stream_to_s8(&buf));
 		v2 rpos   = {.x = r.pos.x + r.size.w - txt_fs.w, .y = pos.y};
 		draw_text(ui->font, stream_to_s8(&buf), rpos, 0, colour_from_normalized(FG_COLOUR));
 
-		compute_time_sum += cs->last_frame_time[index];
+		compute_time_sum += frame->compute_times[index];
 	}
 
-	static s8 totals[2] = {s8("Compute Total:"), s8("Volume Total:")};
-	f32 times[2]        = {compute_time_sum, ctx->partial_compute_ctx.runtime};
-	for (u32 i = 0; i < ARRAY_COUNT(totals); i++) {
-		pos.y    -= measure_text(ui->font, totals[i]).y;
-		draw_text(ui->font, totals[i], pos, 0, colour_from_normalized(FG_COLOUR));
-
-		buf.widx = 0;
-		stream_append_f64_e(&buf, times[i]);
-		stream_append_s8(&buf, s8(" [s]"));
-		v2 txt_fs = measure_text(ui->font, stream_to_s8(&buf));
-		v2 rpos   = {.x = r.pos.x + r.size.w - txt_fs.w, .y = pos.y};
-		draw_text(ui->font, stream_to_s8(&buf), rpos, 0, colour_from_normalized(FG_COLOUR));
-	}
+	pos.y -= ui->font_height;
+	draw_text(ui->font, s8("Compute Total:"), pos, 0, colour_from_normalized(FG_COLOUR));
+	buf.widx = 0;
+	stream_append_f64_e(&buf, compute_time_sum);
+	stream_append_s8(&buf, s8(" [s]"));
+	v2 txt_fs = measure_text(ui->font, stream_to_s8(&buf));
+	v2 rpos   = {.x = r.pos.x + r.size.w - txt_fs.w, .y = pos.y};
+	draw_text(ui->font, stream_to_s8(&buf), rpos, 0, colour_from_normalized(FG_COLOUR));
 
 	{
 		static v2 pos       = {.x = 32,  .y = 128};
@@ -849,30 +843,6 @@ update_text_input(InputState *is)
 	}
 }
 
-static b32
-ui_can_start_compute(BeamformerCtx *ctx)
-{
-	BeamformFrame *displayed = ctx->beamform_frames + ctx->displayed_frame_index;
-	b32 result  = ctx->beamform_work_queue.compute_in_flight == 0;
-	result     &= (displayed->dim.x != 0 || displayed->dim.y != 0);
-	result     &= displayed->dim.z != 0;
-	return result;
-}
-
-static void
-ui_start_compute(BeamformerCtx *ctx)
-{
-	/* NOTE: we do not allow ui to start a work if no work was previously completed */
-	Arena a = {0};
-	if (ui_can_start_compute(ctx)) {
-		beamform_work_queue_push(ctx, &a, BW_RECOMPUTE);
-		BeamformFrameIterator bfi = beamform_frame_iterator(ctx);
-		for (BeamformFrame *frame = frame_next(&bfi); frame; frame = frame_next(&bfi))
-			glClearTexImage(frame->texture, 0, GL_RED, GL_FLOAT, 0);
-	}
-	ctx->params->upload = 1;
-}
-
 static void
 ui_gen_mipmaps(BeamformerCtx *ctx)
 {
@@ -948,7 +918,7 @@ scale_bar_interaction(BeamformerCtx *ctx, v2 mouse)
 			*sb->max_value = MIN(max, is->active.f32_limits.y);
 
 			sb->zoom_starting_point = (v2){.x = F32_INFINITY, .y = F32_INFINITY};
-			ui_start_compute(ctx);
+			ui->flush_params = 1;
 		}
 	}
 
@@ -957,11 +927,12 @@ scale_bar_interaction(BeamformerCtx *ctx, v2 mouse)
 		if (savepoint) {
 			*sb->min_value = savepoint->v.x;
 			*sb->max_value = savepoint->v.y;
-			ui_start_compute(ctx);
 
 			sb->savepoint_stack = savepoint->next;
 			savepoint->next     = ui->scale_bar_savepoint_freelist;
 			ui->scale_bar_savepoint_freelist = savepoint;
+
+			ui->flush_params = 1;
 		}
 		sb->zoom_starting_point = (v2){.x = F32_INFINITY, .y = F32_INFINITY};
 	}
@@ -972,7 +943,7 @@ scale_bar_interaction(BeamformerCtx *ctx, v2 mouse)
 		*sb->max_value += mouse_wheel;
 		*sb->min_value  = MAX(limits.x, *sb->min_value);
 		*sb->max_value  = MIN(limits.y, *sb->max_value);
-		ui_start_compute(ctx);
+		ui->flush_params = 1;
 	}
 }
 
@@ -1044,7 +1015,7 @@ ui_end_interact(BeamformerCtx *ctx, v2 mouse)
 	}
 
 	if (is->active.flags & V_CAUSES_COMPUTE)
-		ui_start_compute(ctx);
+		ui->flush_params = 1;
 
 	if (is->active.flags & V_GEN_MIPMAPS)
 		ui_gen_mipmaps(ctx);
@@ -1119,10 +1090,10 @@ ui_init(BeamformerCtx *ctx, Arena store)
 	ui->small_font_height = measure_text(ui->small_font, s8("8\\W")).h;
 
 	/* TODO: multiple views */
-	ui->scale_bars[0][SB_LATERAL].min_value = &ctx->params->raw.output_min_coordinate.x;
-	ui->scale_bars[0][SB_LATERAL].max_value = &ctx->params->raw.output_max_coordinate.x;
-	ui->scale_bars[0][SB_AXIAL].min_value   = &ctx->params->raw.output_min_coordinate.z;
-	ui->scale_bars[0][SB_AXIAL].max_value   = &ctx->params->raw.output_max_coordinate.z;
+	ui->scale_bars[0][SB_LATERAL].min_value = &ui->params.output_min_coordinate.x;
+	ui->scale_bars[0][SB_LATERAL].max_value = &ui->params.output_max_coordinate.x;
+	ui->scale_bars[0][SB_AXIAL].min_value   = &ui->params.output_min_coordinate.z;
+	ui->scale_bars[0][SB_AXIAL].max_value   = &ui->params.output_max_coordinate.z;
 
 	ui->scale_bars[0][SB_LATERAL].scroll_both = 1;
 	ui->scale_bars[0][SB_AXIAL].scroll_both   = 0;
@@ -1142,9 +1113,23 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformFrame *frame_to_draw
 	//end_temp_arena(ui->frame_temporary_arena);
 	//ui->frame_temporary_arena = begin_temp_arena(&ui->arena_for_frame);
 
+	/* TODO(rnp): there should be a better way of detecting this */
+	if (ui->read_params) {
+		mem_copy(&ctx->params->raw.output_min_coordinate, &ui->params, sizeof(ui->params));
+		ui->flush_params = 0;
+		ui->read_params  = 0;
+	}
+
 	/* NOTE: process interactions first because the user interacted with
 	 * the ui that was presented last frame */
 	ui_interact(ctx, input);
+
+	if (ui->flush_params && !ctx->csctx.processing_compute) {
+		mem_copy(&ui->params, &ctx->params->raw.output_min_coordinate, sizeof(ui->params));
+		ui->flush_params    = 0;
+		ctx->params->upload = 1;
+		ctx->start_compute  = 1;
+	}
 
 	BeginDrawing();
 		ClearBackground(colour_from_normalized(BG_COLOUR));
@@ -1157,8 +1142,8 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformFrame *frame_to_draw
 		rr.pos.x  = lr.pos.x  + lr.size.w;
 
 		draw_settings_ui(ctx, lr, mouse);
-		if (frame_to_draw->dim.w)
+		if (frame_to_draw->ready_to_present)
 			draw_display_overlay(ctx, ui->arena_for_frame, mouse, rr, frame_to_draw);
-		draw_debug_overlay(ctx, ui->arena_for_frame, lr);
+		draw_debug_overlay(ctx, frame_to_draw, ui->arena_for_frame, lr);
 	EndDrawing();
 }
