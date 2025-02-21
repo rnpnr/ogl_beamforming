@@ -12,6 +12,9 @@
 #define GENERIC_WRITE  0x40000000
 #define GENERIC_READ   0x80000000
 
+#define PIPE_WAIT      0x00
+#define PIPE_NOWAIT    0x01
+
 #define PIPE_TYPE_BYTE      0x00
 #define PIPE_ACCESS_INBOUND 0x01
 
@@ -26,6 +29,10 @@
 
 #define CREATE_ALWAYS  2
 #define OPEN_EXISTING  3
+
+#define ERROR_NO_DATA            232L
+#define ERROR_PIPE_NOT_CONNECTED 233L
+#define ERROR_PIPE_LISTENING     536L
 
 typedef struct {
 	u16  wProcessorArchitecture;
@@ -82,6 +89,7 @@ W32(iptr)   CreateFileMappingA(iptr, void *, u32, u32, u32, c8 *);
 W32(iptr)   CreateIoCompletionPort(iptr, iptr, uptr, u32);
 W32(iptr)   CreateNamedPipeA(c8 *, u32, u32, u32, u32, u32, u32, void *);
 W32(b32)    DeleteFileA(c8 *);
+W32(b32)    DisconnectNamedPipe(iptr);
 W32(void)   ExitProcess(i32);
 W32(b32)    FreeLibrary(void *);
 W32(b32)    GetFileInformationByHandle(iptr, w32_file_info *);
@@ -92,7 +100,6 @@ W32(iptr)   GetStdHandle(i32);
 W32(void)   GetSystemInfo(void *);
 W32(void *) LoadLibraryA(c8 *);
 W32(void *) MapViewOfFile(iptr, u32, u32, u32, u64);
-W32(b32)    PeekNamedPipe(iptr, u8 *, i32, i32 *, i32 *, i32 *);
 W32(b32)    ReadDirectoryChangesW(iptr, u8 *, u32, b32, u32, u32 *, void *, void *);
 W32(b32)    ReadFile(iptr, u8 *, i32, i32 *, void *);
 W32(b32)    WriteFile(iptr, u8 *, i32, i32 *, void *);
@@ -219,7 +226,7 @@ os_get_file_stats(char *fname)
 static Pipe
 os_open_named_pipe(char *name)
 {
-	iptr h = CreateNamedPipeA(name, PIPE_ACCESS_INBOUND, PIPE_TYPE_BYTE, 1,
+	iptr h = CreateNamedPipeA(name, PIPE_ACCESS_INBOUND, PIPE_TYPE_BYTE|PIPE_NOWAIT, 1,
 	                          0, 1 * MEGABYTE, 0, 0);
 	return (Pipe){.file = h, .name = name};
 }

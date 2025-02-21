@@ -108,6 +108,36 @@ clear_io_queue(Platform *platform, BeamformerInput *input, Arena arena)
 	}
 }
 
+static b32
+poll_pipe(Pipe *p, Stream *e)
+{
+	u8  data;
+	i32 total_read = 0;
+	b32 result = ReadFile(p->file, &data, 0, &total_read, 0);
+	if (!result) {
+		i32 error = GetLastError();
+		/* NOTE: These errors mean nothing's been sent yet, otherwise pipe is busted
+		 * and needs to be recreated. */
+		if (error != ERROR_NO_DATA &&
+		    error != ERROR_PIPE_LISTENING &&
+		    error != ERROR_PIPE_NOT_CONNECTED)
+		{
+			DisconnectNamedPipe(p->file);
+			CloseHandle(p->file);
+			*p = os_open_named_pipe(p->name);
+
+			if (p->file == INVALID_FILE) {
+				stream_append_s8(e, s8("poll_pipe: failed to reopen pipe: error: "));
+				stream_append_i64(e, GetLastError());
+				stream_append_byte(e, '\n');
+				os_write_err_msg(stream_to_s8(e));
+				e->widx = 0;
+			}
+		}
+	}
+	return result;
+}
+
 int
 main(void)
 {
@@ -140,8 +170,7 @@ main(void)
 		input.mouse.rl   = GetMousePosition();
 
 		i32 bytes_available = 0;
-		input.pipe_data_available = PeekNamedPipe(data_pipe.file, 0, 1 * MEGABYTE, 0,
-		                                          &bytes_available, 0) && bytes_available;
+		input.pipe_data_available = poll_pipe(&data_pipe, &ctx.error_stream);
 
 		beamformer_frame_step(&ctx, &temp_memory, &input);
 
