@@ -1,8 +1,16 @@
 /* See LICENSE for license details. */
 layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
 
+#ifdef INPUT_DATA_TYPE_FLOAT
+#define INPUT_DATA_TYPE    float
+#define RF_DATA_STEP_SCALE 1
+#else
+#define INPUT_DATA_TYPE    int
+#define RF_DATA_STEP_SCALE 2
+#endif
+
 layout(std430, binding = 1) readonly restrict buffer buffer_1 {
-	int rf_data[];
+	INPUT_DATA_TYPE rf_data[];
 };
 
 layout(std430, binding = 2) writeonly restrict buffer buffer_2 {
@@ -10,6 +18,17 @@ layout(std430, binding = 2) writeonly restrict buffer buffer_2 {
 };
 
 layout(r8i, binding = 0) readonly restrict uniform iimage2D hadamard;
+
+INPUT_DATA_TYPE sample_rf_data(uint index, uint lfs)
+{
+	INPUT_DATA_TYPE result;
+	#ifdef INPUT_DATA_TYPE_FLOAT
+	result = rf_data[index];
+	#else
+	result = (rf_data[index] << lfs) >> 16;
+	#endif
+	return result;
+}
 
 void main()
 {
@@ -37,8 +56,8 @@ void main()
 	uint rf_off    = rf_raw_dim.x * rf_channel + time_sample;
 
 	/* NOTE: rf_data index and stride considering the data is i16 not i32 */
-	uint ridx       = rf_off / 2;
-	uint ridx_delta = rf_stride / 2;
+	uint ridx       = rf_off    / RF_DATA_STEP_SCALE;
+	uint ridx_delta = rf_stride / RF_DATA_STEP_SCALE;
 
 	/* NOTE: rf_data is i16 so each access grabs two time samples at time.
 	 * We need to shift arithmetically (maintaining the sign) to get the
@@ -47,22 +66,19 @@ void main()
 	uint lfs = ((~time_sample) & 1u) * 16;
 
 	/* NOTE: Compute N-D dot product */
-	int sum = 0;
+	float result = 0;
 	switch (decode) {
 	case DECODE_MODE_NONE: {
-		ridx += ridx_delta * acq;
-		sum   = (rf_data[ridx] << lfs) >> 16;
+		result = sample_rf_data(ridx + ridx_delta * acq, lfs);
 	} break;
 	case DECODE_MODE_HADAMARD: {
-		/* NOTE: offset to get the correct column in hadamard matrix */
-		uint hoff = dec_data_dim.z * acq;
-
+		INPUT_DATA_TYPE sum = 0;
 		for (int i = 0; i < dec_data_dim.z; i++) {
-			int data = (rf_data[ridx] << lfs) >> 16;
-			sum  += imageLoad(hadamard, ivec2(i, acq)).x * data;
+			sum  += imageLoad(hadamard, ivec2(i, acq)).x * sample_rf_data(ridx, lfs);
 			ridx += ridx_delta;
 		}
+		result = float(sum) / float(dec_data_dim.z);
 	} break;
 	}
-	out_data[out_off] = vec2(float(sum), 0);
+	out_data[out_off] = vec2(result, 0);
 }

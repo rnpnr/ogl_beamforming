@@ -16,7 +16,6 @@ typedef struct {
 	char *name;
 } Pipe;
 
-
 typedef struct { size len; u8 *data; } s8;
 #define s8(s) (s8){.len = ARRAY_COUNT(s) - 1, .data = (u8 *)s}
 
@@ -274,7 +273,7 @@ b32
 set_beamformer_pipeline(char *shm_name, i32 *stages, i32 stages_count)
 {
 	if (stages_count > ARRAY_COUNT(g_bp->compute_stages)) {
-		error_msg("maximum stage count is %u", ARRAY_COUNT(g_bp->compute_stages));
+		error_msg("maximum stage count is %lu", ARRAY_COUNT(g_bp->compute_stages));
 		return 0;
 	}
 
@@ -287,7 +286,8 @@ set_beamformer_pipeline(char *shm_name, i32 *stages, i32 stages_count)
 		case CS_CUDA_HILBERT:
 		case CS_DAS:
 		case CS_DEMOD:
-		case CS_HADAMARD:
+		case CS_DECODE:
+		case CS_DECODE_FLOAT:
 		case CS_MIN_MAX:
 		case CS_SUM:
 			g_bp->compute_stages[i] = stages[i];
@@ -331,7 +331,7 @@ send_raw_data(char *pipe_name, char *shm_name, void *data, u32 data_size)
 				written = os_write(g_pipe.file, data, data_size);
 			result = written == data_size;
 			if (!result)
-				warning_msg("failed again, wrote %ld/%ld\ngiving up",
+				warning_msg("failed again, wrote %ld/%u\ngiving up",
 				            written, data_size);
 		}
 	}
@@ -367,12 +367,12 @@ set_beamformer_parameters(char *shm_name, BeamformerParameters *new_bp)
 	return 1;
 }
 
-void
-beamform_data_synchronized(char *pipe_name, char *shm_name, i16 *data, uv2 data_dim,
-                           uv4 output_points, f32 *out_data, i32 timeout_ms)
+static b32
+beamform_data_synchronized(char *pipe_name, char *shm_name, void *data, uv2 data_dim,
+                           u32 data_size, uv4 output_points, f32 *out_data, i32 timeout_ms)
 {
 	if (!check_shared_memory(shm_name))
-		return;
+		return 0;
 
 	if (output_points.x == 0) output_points.x = 1;
 	if (output_points.y == 0) output_points.y = 1;
@@ -388,19 +388,19 @@ beamform_data_synchronized(char *pipe_name, char *shm_name, i16 *data, uv2 data_
 	s8 export_name = s8(OS_EXPORT_PIPE_NAME);
 	if (export_name.len > ARRAY_COUNT(g_bp->export_pipe_name)) {
 		error_msg("export pipe name too long");
-		return;
+		return 0;
 	}
 
 	Pipe export_pipe = os_open_read_pipe(OS_EXPORT_PIPE_NAME);
 	if (export_pipe.file == INVALID_FILE) {
 		error_msg("failed to open export pipe");
-		return;
+		return 0;
 	}
 
 	for (u32 i = 0; i < export_name.len; i++)
 		g_bp->export_pipe_name[i] = export_name.data[i];
 
-	b32 result = send_data(pipe_name, shm_name, data, data_dim);
+	b32 result = send_raw_data(pipe_name, shm_name, data, data_size);
 	if (result) {
 		size output_size = output_points.x * output_points.y * output_points.z * sizeof(f32) * 2;
 		result = os_wait_read_pipe(export_pipe, out_data, output_size, timeout_ms);
@@ -411,4 +411,34 @@ beamform_data_synchronized(char *pipe_name, char *shm_name, i16 *data, uv2 data_
 	os_disconnect_pipe(export_pipe);
 	os_close_pipe(&export_pipe.file, export_pipe.name);
 	os_close_pipe(&g_pipe.file, 0);
+
+	return result;
+}
+
+b32
+beamform_data_synchronized_i16(char *pipe_name, char *shm_name, i16 *data, uv2 data_dim,
+                               uv4 output_points, f32 *out_data, i32 timeout_ms)
+{
+	b32 result    = 0;
+	u64 data_size = data_dim.x * data_dim.y * sizeof(i16);
+	if (data_size <= U32_MAX) {
+		g_bp->raw.rf_raw_dim = data_dim;
+		result = beamform_data_synchronized(pipe_name, shm_name, data, data_dim, data_size,
+		                                    output_points, out_data, timeout_ms);
+	}
+	return result;
+}
+
+b32
+beamform_data_synchronized_f32(char *pipe_name, char *shm_name, f32 *data, uv2 data_dim,
+                               uv4 output_points, f32 *out_data, i32 timeout_ms)
+{
+	b32 result    = 0;
+	u64 data_size = data_dim.x * data_dim.y * sizeof(f32);
+	if (data_size <= U32_MAX) {
+		g_bp->raw.rf_raw_dim = data_dim;
+		result = beamform_data_synchronized(pipe_name, shm_name, data, data_dim, data_size,
+		                                    output_points, out_data, timeout_ms);
+	}
+	return result;
 }

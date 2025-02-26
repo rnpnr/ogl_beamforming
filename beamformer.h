@@ -180,7 +180,7 @@ typedef struct {
 	iptr                   last_displayed_frame;
 } BeamformerUI;
 
-#define CS_UNIFORMS                 \
+#define CS_UNIFORMS \
 	X(CS_DAS,     voxel_offset) \
 	X(CS_DAS,     cycle_t)      \
 	X(CS_MIN_MAX, mips_level)   \
@@ -189,12 +189,6 @@ typedef struct {
 typedef struct {
 	u32 programs[CS_LAST];
 
-	/* NOTE: the raw_data_ssbo is allocated at 3x the required size to allow for tiled
-	 * transfers when the GPU is running behind the CPU. It is not mapped on NVIDIA because
-	 * their drivers _will_ store the buffer in the system memory. This doesn't happen
-	 * for Intel or AMD and mapping the buffer is preferred. In either case incoming data can
-	 * be written to the arena at the appropriate offset for the current raw_data_index. An
-	 * additional BufferSubData is needed on NVIDIA to upload the data. */
 	/* NOTE: The raw data ssbo is not mapped on NVIDIA because their drivers _will_ store
 	 * the buffer in the system memory. This doesn't happen for other vendors and
 	 * mapping the buffer is preferred. In either case incoming data can be written to

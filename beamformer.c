@@ -364,7 +364,8 @@ do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformFrame *frame, enum co
 	u32 input_ssbo_idx  = csctx->last_output_ssbo_index;
 
 	switch (shader) {
-	case CS_HADAMARD:
+	case CS_DECODE:
+	case CS_DECODE_FLOAT:
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, csctx->raw_data_ssbo);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, csctx->rf_data_ssbos[output_ssbo_idx]);
 		glBindImageTexture(0, csctx->hadamard_texture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R8I);
@@ -508,15 +509,21 @@ reload_compute_shader(BeamformerCtx *ctx, s8 path, ComputeShaderReloadContext *c
 	ComputeShaderCtx *cs = &ctx->csctx;
 
 	/* NOTE: arena works as stack (since everything here is 1 byte aligned) */
-	s8 header_in_arena = {.data = tmp.beg};
-	if (csr->needs_header)
-		header_in_arena = push_s8(&tmp, s8(COMPUTE_SHADER_HEADER));
+	s8 header = {.data = tmp.beg};
+	if (csr->needs_header) {
+		header = push_s8(&tmp, s8(COMPUTE_SHADER_HEADER));
+		if (csr->shader == CS_DECODE_FLOAT) {
+			s8 extra = push_s8(&tmp, s8(COMPUTE_FLOAT_DECODE_HEADER));
+			ASSERT(extra.data == header.data + header.len);
+			header.len += extra.len;
+		}
+	}
 
-	s8 shader_text    = ctx->platform.read_whole_file(&tmp, (c8 *)path.data);
-	shader_text.data -= header_in_arena.len;
-	shader_text.len  += header_in_arena.len;
+	s8 shader_text = ctx->platform.read_whole_file(&tmp, (c8 *)path.data);
+	shader_text.data -= header.len;
+	shader_text.len  += header.len;
 
-	if (shader_text.data == header_in_arena.data) {
+	if (shader_text.data == header.data) {
 		u32 shader_id  = compile_shader(&ctx->platform, tmp, GL_COMPUTE_SHADER, shader_text, path);
 		if (shader_id) {
 			u32 new_program = link_program(&ctx->platform, tmp, shader_id);
@@ -561,6 +568,11 @@ DEBUG_EXPORT BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute)
 		case BW_RELOAD_SHADER: {
 			ComputeShaderReloadContext *csr = work->reload_shader_ctx;
 			reload_compute_shader(ctx, csr->path, csr, arena);
+			if (csr->shader == CS_DECODE) {
+				csr->shader = CS_DECODE_FLOAT;
+				reload_compute_shader(ctx, csr->path, csr, arena);
+				csr->shader = CS_DECODE;
+			}
 
 			/* TODO(rnp): remove this */
 			#define X(idx, name) cs->name##_id = glGetUniformLocation(cs->programs[idx], "u_" #name);

@@ -1,14 +1,15 @@
 /* See LICENSE for license details. */
 
 /* X(enumarant, number, shader file name, needs header, pretty name) */
-#define COMPUTE_SHADERS                                    \
-	X(CUDA_DECODE,  0, "",         0, "CUDA Decoding") \
-	X(CUDA_HILBERT, 1, "",         0, "CUDA Hilbert")  \
-	X(DAS,          2, "das",      1, "DAS")           \
-	X(DEMOD,        3, "demod",    1, "Demodulation")  \
-	X(HADAMARD,     4, "hadamard", 1, "Decoding")      \
-	X(MIN_MAX,      5, "min_max",  0, "Min/Max")       \
-	X(SUM,          6, "sum",      0, "Sum")
+#define COMPUTE_SHADERS \
+	X(CUDA_DECODE,  0, "",         0, "CUDA Decoding")  \
+	X(CUDA_HILBERT, 1, "",         0, "CUDA Hilbert")   \
+	X(DAS,          2, "das",      1, "DAS")            \
+	X(DECODE,       3, "decode",   1, "Decoding")       \
+	X(DECODE_FLOAT, 4, "",         1, "Decoding (F32)") \
+	X(DEMOD,        5, "demod",    1, "Demodulation")   \
+	X(MIN_MAX,      6, "min_max",  0, "Min/Max")        \
+	X(SUM,          7, "sum",      0, "Sum")
 
 enum compute_shaders {
 	#define X(e, n, s, h, pn) CS_ ##e = n,
@@ -118,6 +119,10 @@ layout(std140, binding = 0) uniform parameters {\n\
 #define DAS_ID_RCA_VLS       " str(DAS_ID_RCA_VLS)  "\n\
 #define DAS_ID_RCA_TPW       " str(DAS_ID_RCA_TPW)  "\n\
 \n\
+#line 1\n"
+
+#define COMPUTE_FLOAT_DECODE_HEADER "\
+#define INPUT_DATA_TYPE_FLOAT\n\
 #line 1\n"
 
 /* TODO(rnp): bake this into the das shader header */

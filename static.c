@@ -290,10 +290,9 @@ setup_beamformer(BeamformerCtx *ctx, Arena *memory)
 	ASSERT(ctx->params);
 
 	/* NOTE: default compute shader pipeline */
-	ctx->params->compute_stages[0]    = CS_HADAMARD;
+	ctx->params->compute_stages[0]    = CS_DECODE;
 	ctx->params->compute_stages[1]    = CS_DAS;
-	ctx->params->compute_stages[2]    = CS_MIN_MAX;
-	ctx->params->compute_stages_count = 3;
+	ctx->params->compute_stages_count = 2;
 
 	if (ctx->gl.vendor_id == GL_VENDOR_NVIDIA
 	    && load_cuda_lib(&ctx->platform, s8(OS_CUDA_LIB_NAME), (iptr)&ctx->cuda_lib, *memory))
