@@ -252,6 +252,8 @@ typedef struct BeamformerFrameView {
 
 	Variable threshold;
 	Variable dynamic_range;
+	Variable gamma;
+	f32      gamma_val;
 
 	FragmentShaderCtx *ctx;
 	BeamformFrame     *frame;
@@ -652,10 +654,20 @@ add_beamformer_frame_view(BeamformerUI *ui, Variable *parent, Arena *arena,
 	              VT_F32, ui->small_font);
 	fill_variable(&bv->threshold, var, s8("Threshold:"), V_INPUT|V_TEXT|V_UPDATE_VIEW,
 	              VT_F32, ui->small_font);
+	fill_variable(&bv->gamma, var, s8("Gamma:"), V_INPUT|V_TEXT|V_UPDATE_VIEW,
+	              VT_BEAMFORMER_VARIABLE, ui->small_font);
 
 	bv->type                = type;
 	bv->dynamic_range.u.f32 = -50.0f;
 	bv->threshold.u.f32     =  40.0f;
+	bv->gamma_val           =  1.0f;
+
+	BeamformerVariable *gamma = &bv->gamma.u.beamformer_variable;
+	gamma->store              = &bv->gamma_val;
+	gamma->store_type         = VT_F32;
+	gamma->params.display_scale = 1.0f;
+	gamma->params.scroll_scale  = 0.01f;
+	gamma->params.limits        = (v2){.y = 8};
 
 	bv->lateral_scale_bar.limits              = (v2){.x = -1, .y = 1};
 	bv->axial_scale_bar.limits                = (v2){.x =  0, .y = 1};
@@ -789,6 +801,7 @@ update_frame_views(BeamformerUI *ui)
 					glBindTextureUnit(0, frame->texture);
 					glUniform1f(view->ctx->db_cutoff_id, view->dynamic_range.u.f32);
 					glUniform1f(view->ctx->threshold_id, view->threshold.u.f32);
+					glUniform1f(view->ctx->gamma_id,     view->gamma_val);
 					DrawTexture(view->rendered_view.texture, 0, 0, WHITE);
 				EndShaderMode();
 			EndTextureMode();
@@ -1369,12 +1382,13 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 		f32 max_prefix_width = MAX(view->threshold.name_width, view->dynamic_range.name_width);
 
 		v2  end     = add_v2(vr.pos, vr.size);
-		f32 start_y = MAX(end.y - 4 - 2 * text_spec.font->baseSize, vr.pos.y);
+		f32 start_y = MAX(end.y - 4 - 3 * text_spec.font->baseSize, vr.pos.y);
 		end.y -= text_spec.font->baseSize;
 		v2 at = {.x = vr.pos.x + 4, .y = start_y};
 
 		at.y += draw_text(view->dynamic_range.name, at, &text_spec).y;
 		if (at.y < end.y) at.y += draw_text(view->threshold.name, at, &text_spec).y;
+		if (at.y < end.y) at.y += draw_text(view->gamma.name, at, &text_spec).y;
 
 		at.y  = start_y;
 		at.x += max_prefix_width + 8;
@@ -1390,6 +1404,14 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 			size = draw_beamformer_variable(ui, a, &view->threshold, at, mouse,
 			                                RULER_COLOUR, text_spec);
 			max_center_width = MAX(size.w, max_center_width);
+			at.y += size.h;
+		}
+
+		if (at.y < end.y) {
+			size = draw_beamformer_variable(ui, a, &view->gamma, at, mouse,
+			                                RULER_COLOUR, text_spec);
+			max_center_width = MAX(size.w, max_center_width);
+			at.y += size.h;
 		}
 
 		at.y  = start_y;
