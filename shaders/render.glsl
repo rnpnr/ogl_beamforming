@@ -7,6 +7,7 @@ out vec4 v_out_colour;
 layout(binding = 0)  uniform sampler3D u_out_data_tex;
 layout(location = 1) uniform float     u_db_cutoff = -60;
 layout(location = 2) uniform float     u_threshold =  40;
+layout(location = 3) uniform float     u_gamma     =  1;
 
 /* input:  h [0,360] | s,v [0, 1] *
  * output: rgb [0,1]              */
@@ -33,7 +34,9 @@ void main()
 
 	float threshold_val = pow(10.0f, u_threshold / 20.0f);
 	smp = clamp(smp, 0.0f, threshold_val);
-	smp = 20 * log(smp / threshold_val) / log(10);
+	smp = smp / threshold_val;
+	smp = pow(smp, u_gamma);
+	smp = 20 * log(smp) / log(10);
 
 	smp = clamp(smp, u_db_cutoff, 0) / u_db_cutoff;
 	smp = 1 - smp;

@@ -58,6 +58,7 @@ typedef struct {
 	b32    updated;
 	i32    db_cutoff_id;
 	i32    threshold_id;
+	i32    gamma_id;
 } FragmentShaderCtx;
 
 #include "beamformer_parameters.h"
