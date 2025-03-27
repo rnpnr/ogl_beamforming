@@ -198,7 +198,8 @@ typedef struct {
 /* X(id, text) */
 #define FRAME_VIEW_BUTTONS \
 	X(FV_COPY_HORIZONTAL, "Copy Horizontal") \
-	X(FV_COPY_VERTICAL,   "Copy Vertical")
+	X(FV_COPY_VERTICAL,   "Copy Vertical")   \
+	X(FV_EXPORT,          "Export Bitmap")
 
 #define GLOBAL_MENU_BUTTONS \
 	X(GM_OPEN_LIVE_VIEW_RIGHT, "Open Live View Right") \
@@ -457,6 +458,67 @@ stream_append_variable(Stream *s, Variable *var)
 	} break;
 	default: INVALID_CODE_PATH;
 	}
+}
+
+static s8
+push_das_shader_id(Stream *s, DASShaderID shader, u32 transmit_count)
+{
+	#define X(type, id, pretty, fixed_tx) s8(pretty),
+	static s8 pretty_names[] = { DAS_TYPES };
+	#undef X
+	#define X(type, id, pretty, fixed_tx) fixed_tx,
+	static u8 fixed_transmits[] = { DAS_TYPES };
+	#undef X
+
+	if ((u32)shader < (u32)DAS_LAST) {
+		stream_append_s8(s, pretty_names[shader]);
+		if (!fixed_transmits[shader]) {
+			stream_append_byte(s, '-');
+			stream_append_u64(s, transmit_count);
+		}
+	}
+
+	return stream_to_s8(s);
+}
+
+static s8
+push_custom_view_title(Stream *s, Variable *var)
+{
+	switch (var->type) {
+	case VT_COMPUTE_STATS_VIEW:
+	case VT_COMPUTE_LATEST_STATS_VIEW: {
+		stream_append_s8(s, s8("Compute Stats"));
+		if (var->type == VT_COMPUTE_LATEST_STATS_VIEW)
+			stream_append_s8(s, s8(": Live"));
+	} break;
+	case VT_COMPUTE_PROGRESS_BAR: {
+		stream_append_s8(s, s8("Compute Progress: "));
+		stream_append_f64(s, 100 * *var->u.compute_progress_bar.progress, 100);
+		stream_append_byte(s, '%');
+	} break;
+	case VT_BEAMFORMER_FRAME_VIEW: {
+		BeamformerFrameView *bv = var->u.generic;
+		stream_append_s8(s, s8("Frame View"));
+		switch (bv->type) {
+		case FVT_COPY: stream_append_s8(s, s8(": Copy [")); break;
+		case FVT_LATEST: {
+			#define X(plane, id, pretty) s8(": " pretty " ["),
+			local_persist s8 labels[IPT_LAST + 1] = { IMAGE_PLANE_TAGS s8(": Live [") };
+			#undef X
+			stream_append_s8(s, labels[bv->cycler->u.cycler.state % (IPT_LAST + 1)]);
+		} break;
+		case FVT_INDEXED: {
+			stream_append_s8(s, s8(": Index {"));
+			stream_append_u64(s, bv->cycler->u.cycler.state % MAX_BEAMFORMED_SAVED_FRAMES);
+			stream_append_s8(s, s8("} ["));
+		} break;
+		}
+		stream_append_hex_u64(s, bv->frame? bv->frame->id : 0);
+		stream_append_byte(s, ']');
+	} break;
+	default: INVALID_CODE_PATH;
+	}
+	return stream_to_s8(s);
 }
 
 function void
@@ -927,6 +989,62 @@ ui_copy_frame(BeamformerUI *ui, Variable *view, RegionSplitDirection direction)
 	resize_frame_view(bv, (uv2){.x = bv->frame->dim.x, .y = bv->frame->dim.z});
 }
 
+#include <stdlib.h>
+function void
+ui_export_view(BeamformerUI *ui, Variable *view)
+{
+	ASSERT(view->type == VT_UI_VIEW);
+
+	u8 buffer[1024];
+
+	BeamformerFrameView *bv = view->u.group.first->u.generic;
+	if (!bv->frame)
+		return;
+
+	Arena tmp = ui->arena;
+	Stream buf = arena_stream(&tmp);
+	Stream path = {.data = buffer, .cap = sizeof(buffer)};
+
+	v4 min = bv->frame->min_coordinate, max = bv->frame->max_coordinate;
+
+	stream_append_s8(&path, s8("/tmp/downloads/"));
+	push_das_shader_id(&path, bv->frame->das_shader_id, bv->frame->compound_count);
+	stream_append_byte(&path, '_');
+	stream_append_hex_u64(&path, bv->frame->id);
+	iz pidx = path.widx;
+	stream_append_s8(&path, s8("_params.csv"));
+	stream_append_byte(&path, 0);
+
+	stream_append_s8(&buf, s8("min_coord,max_coord,size,dynamic_range\n"));
+	stream_append_f64(&buf, min.x, 1000); stream_append_byte(&buf, ',');
+	stream_append_f64(&buf, max.x, 1000); stream_append_byte(&buf, ',');
+	stream_append_u64(&buf, bv->texture_dim.w); stream_append_byte(&buf, ',');
+	stream_append_f64(&buf, bv->dynamic_range.u.f32, 100);
+	stream_append_byte(&buf, '\n');
+	stream_append_f64(&buf, min.z, 1000); stream_append_byte(&buf, ',');
+	stream_append_f64(&buf, max.z, 1000); stream_append_byte(&buf, ',');
+	stream_append_u64(&buf, bv->texture_dim.h); stream_append_byte(&buf, ',');
+	stream_append_byte(&buf, '\n');
+	if (!ui->os->write_new_file((c8 *)path.data, stream_to_s8(&buf)))
+		ui->os->write_file(ui->os->stderr, s8("failed to export view parameters\n"));
+
+	stream_reset(&path, pidx);
+	stream_append_s8(&path, s8(".bin"));
+	stream_append_byte(&path, 0);
+
+	iz out_size = bv->texture_dim.h * bv->texture_dim.w * sizeof(u32);
+	void *out_buf = malloc(out_size);
+	if (out_buf) {
+		//ctx->export_buffer = ctx->os.alloc_arena(ctx->export_buffer, out_size);
+		glGetTextureImage(bv->texture, 0, GL_RGBA,
+		                  GL_UNSIGNED_INT_8_8_8_8, out_size, out_buf);
+		s8 raw = {.len = out_size, .data = out_buf};
+		if (!ui->os->write_new_file((c8 *)path.data, raw))
+			ui->os->write_file(ui->os->stderr, s8("failed to export view\n"));
+		free(out_buf);
+	}
+}
+
 function b32
 view_update(BeamformerUI *ui, BeamformerFrameView *view)
 {
@@ -1015,67 +1133,6 @@ lerp_v4(v4 a, v4 b, f32 t)
 		.z = a.z + t * (b.z - a.z),
 		.w = a.w + t * (b.w - a.w),
 	};
-}
-
-static s8
-push_das_shader_id(Stream *s, DASShaderID shader, u32 transmit_count)
-{
-	#define X(type, id, pretty, fixed_tx) s8(pretty),
-	static s8 pretty_names[] = { DAS_TYPES };
-	#undef X
-	#define X(type, id, pretty, fixed_tx) fixed_tx,
-	static u8 fixed_transmits[] = { DAS_TYPES };
-	#undef X
-
-	if ((u32)shader < (u32)DAS_LAST) {
-		stream_append_s8(s, pretty_names[shader]);
-		if (!fixed_transmits[shader]) {
-			stream_append_byte(s, '-');
-			stream_append_u64(s, transmit_count);
-		}
-	}
-
-	return stream_to_s8(s);
-}
-
-static s8
-push_custom_view_title(Stream *s, Variable *var)
-{
-	switch (var->type) {
-	case VT_COMPUTE_STATS_VIEW:
-	case VT_COMPUTE_LATEST_STATS_VIEW: {
-		stream_append_s8(s, s8("Compute Stats"));
-		if (var->type == VT_COMPUTE_LATEST_STATS_VIEW)
-			stream_append_s8(s, s8(": Live"));
-	} break;
-	case VT_COMPUTE_PROGRESS_BAR: {
-		stream_append_s8(s, s8("Compute Progress: "));
-		stream_append_f64(s, 100 * *var->u.compute_progress_bar.progress, 100);
-		stream_append_byte(s, '%');
-	} break;
-	case VT_BEAMFORMER_FRAME_VIEW: {
-		BeamformerFrameView *bv = var->u.generic;
-		stream_append_s8(s, s8("Frame View"));
-		switch (bv->type) {
-		case FVT_COPY: stream_append_s8(s, s8(": Copy [")); break;
-		case FVT_LATEST: {
-			#define X(plane, id, pretty) s8(": " pretty " ["),
-			local_persist s8 labels[IPT_LAST + 1] = { IMAGE_PLANE_TAGS s8(": Live [") };
-			#undef X
-			stream_append_s8(s, labels[bv->cycler->u.cycler.state % (IPT_LAST + 1)]);
-		} break;
-		case FVT_INDEXED: {
-			stream_append_s8(s, s8(": Index {"));
-			stream_append_u64(s, bv->cycler->u.cycler.state % MAX_BEAMFORMED_SAVED_FRAMES);
-			stream_append_s8(s, s8("} ["));
-		} break;
-		}
-		stream_append_hex_u64(s, bv->frame? bv->frame->id : 0);
-		stream_append_byte(s, ']');
-	} break;
-	default: INVALID_CODE_PATH;
-	}
-	return stream_to_s8(s);
 }
 
 static v2
@@ -2274,6 +2331,7 @@ ui_button_interaction(BeamformerUI *ui, Variable *button)
 {
 	ASSERT(button->type == VT_UI_BUTTON);
 	switch (button->u.button) {
+	case UI_BID_FV_EXPORT: ui_export_view(ui, button->parent->parent); break;
 	case UI_BID_FV_COPY_HORIZONTAL: {
 		ui_copy_frame(ui, button->parent->parent, RSD_HORIZONTAL);
 	} break;
