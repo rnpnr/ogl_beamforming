@@ -313,6 +313,34 @@ set_beamformer_parameters(char *shm_name, BeamformerParameters *new_bp)
 }
 
 b32
+set_beamformer_ui_parameters(char *shm_name, BeamformerUIParameters *new_bp)
+{
+	if (!check_shared_memory(shm_name))
+		return 0;
+
+	u8 *src = (u8 *)new_bp, *dest = (u8 *)&g_bp->raw.output_min_coordinate;
+	for (size i = 0; i < sizeof(BeamformerUIParameters); i++)
+		dest[i] = src[i];
+	g_bp->upload = 1;
+
+	return 1;
+}
+
+b32
+set_beamformer_fixed_parameters(char *shm_name, BeamformerFixedParameters *new_bp)
+{
+	if (!check_shared_memory(shm_name))
+		return 0;
+
+	u8 *src = (u8 *)new_bp, *dest = (u8 *)&g_bp->raw;
+	for (size i = 0; i < sizeof(BeamformerFixedParameters); i++)
+		dest[i] = src[i];
+	g_bp->upload = 1;
+
+	return 1;
+}
+
+b32
 send_data(char *pipe_name, char *shm_name, void *data, u32 data_size)
 {
 	b32 result = g_pipe.file != INVALID_FILE;

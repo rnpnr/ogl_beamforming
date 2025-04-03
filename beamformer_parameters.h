@@ -73,7 +73,8 @@ typedef enum {
 	X(readi_group_size, u32, , uint, , "/* Size of readi transmit group */")
 
 #define X(name, type, size, gltype, glsize, comment) type name size;
-typedef struct { BEAMFORMER_UI_PARAMS } BeamformerUIParameters;
+typedef struct { BEAMFORMER_UI_PARAMS }   BeamformerUIParameters;
+typedef struct { BEAMFORMER_PARAMS_HEAD } BeamformerFixedParameters;
 
 /* NOTE: This struct follows the OpenGL std140 layout. DO NOT modify unless you have
  * read and understood the rules, particulary with regards to _member alignment_ */
