@@ -1,6 +1,10 @@
 #!/bin/sh
 
 base=/tmp/downloads
+base=data
+
+study="250317_MN45-1_3.30MHz_ATS539_Cyst_FORCES-TxRow"
+
 output=${base}
 
 #studies="
@@ -24,4 +28,5 @@ output=${base}
 #./comp_paper --analytic --export ${output} ${base}
 #./comp_paper --analytic --low-pass ${base}
 #./comp_paper --low-pass ${base}
-./comp_paper --analytic ${base}
+#./comp_paper --analytic ${base}
+./throughput --loop "${base}" "${study}"
