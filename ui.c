@@ -355,6 +355,12 @@ typedef enum {
 	TF_OUTLINED = 1 << 2,
 } TextFlags;
 
+typedef enum {
+	TA_CENTER,
+	TA_LEFT,
+	TA_RIGHT,
+} TextAlignment;
+
 typedef struct {
 	Font  *font;
 	Rect  limits;
@@ -362,8 +368,27 @@ typedef struct {
 	Color outline_colour;
 	f32   outline_thick;
 	f32   rotation;
-	TextFlags flags;
+	TextAlignment align;
+	TextFlags     flags;
 } TextSpec;
+
+typedef struct {
+	s8 text;
+	Variable *var;
+	TextAlignment align;
+} TableCell;
+
+typedef struct {
+	TableCell *cells;
+	u32        cell_count;
+} TableRow;
+
+typedef struct {
+	Rect draw_region;
+	u32  fixed_columns;
+	f32  cell_border_width;
+	f32  row_border_width;
+} TableSpec;
 
 function v2
 measure_glyph(Font font, u32 glyph)
