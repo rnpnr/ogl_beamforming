@@ -123,7 +123,7 @@ end_temp_arena(TempArena ta)
 {
 	Arena *a = ta.arena;
 	if (a) {
-		ASSERT(a->beg >= ta.old_beg)
+		assert(a->beg >= ta.old_beg);
 		a->beg = ta.old_beg;
 	}
 }
