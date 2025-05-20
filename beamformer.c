@@ -1,6 +1,5 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
- * [ ]: refactor: BeamformGPUComputeContext
  * [ ]: refactor: compute shader timers should be generated based on the pipeline stage limit
  * [ ]: reinvestigate ring buffer raw_data_ssbo
  *      - to minimize latency the main thread should manage the subbuffer upload so that the
@@ -9,6 +8,15 @@
  *      - In particular we will potentially need multiple GPUComputeContexts so that we
  *        can overwrite one while the other is in use.
  *      - make use of glFenceSync to guard buffer uploads
+ * [ ]: bug: re-beamform on shader reload
+ * [ ]: need to keep track of gpu memory in some way
+ *      - want to be able to store more than 16 2D frames but limit 3D frames
+ *      - maybe keep track of how much gpu memory is committed for beamformed images
+ *        and use that to determine when to loop back over existing textures
+ *      - to do this maybe use a circular linked list instead of a flat array
+ *      - then have a way of querying how many frames are available for a specific point count
+ * [ ]: bug: reinit cuda on hot-reload
+ * [ ]: bug: parameters version should not be in the middle of the shared memory
  */
 
 #include "beamformer.h"
@@ -506,7 +514,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 			}
 		} break;
 		case BW_UPLOAD_BUFFER: {
-			ASSERT(!atomic_load((i32 *)(barrier_offset + work->completion_barrier)));
+			try_lock((i32 *)(barrier_offset + work->completion_barrier), -1,
+			         ctx->os.wait_on_value);
 			BeamformerUploadContext *uc = &work->upload_context;
 			u32 tex_type, tex_format, tex_element_count, tex_1d = 0, buffer = 0;
 			switch (uc->kind) {
@@ -557,6 +566,10 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 		case BW_COMPUTE: {
 			atomic_store(&cs->processing_compute, 1);
 			start_renderdoc_capture(gl_context);
+			if (ctx->starting_compute_from_library) {
+				release_lock(&sm->dispatch_compute_sync, ctx->os.wake_waiters);
+				atomic_store(&ctx->starting_compute_from_library, 0);
+			}
 
 			BeamformComputeFrame *frame = work->frame;
 			uv3 try_dim = make_valid_test_dim(bp->output_points);
@@ -629,14 +642,13 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 				INVALID_CODE_PATH;
 			}
 		} break;
-		default: INVALID_CODE_PATH; break;
+		InvalidDefaultCase;
 		}
 
 		if (can_commit) {
-			if (work->completion_barrier) {
-				i32 *value = (i32 *)(barrier_offset + work->completion_barrier);
-				ctx->os.wake_waiters(value);
-			}
+			if (work->completion_barrier)
+				release_lock((i32 *)(barrier_offset + work->completion_barrier),
+				             ctx->os.wake_waiters);
 			beamform_work_queue_pop_commit(q);
 			work = beamform_work_queue_pop(q);
 		}
@@ -690,9 +702,8 @@ DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 	}
 
 	BeamformerParameters *bp = &ctx->shared_memory->parameters;
-	if (ctx->shared_memory->dispatch_compute_sync) {
+	if (ctx->shared_memory->dispatch_compute_sync && !ctx->starting_compute_from_library) {
 		ImagePlaneTag current_plane = ctx->shared_memory->current_image_plane;
-		atomic_store(&ctx->shared_memory->dispatch_compute_sync, 0);
 		BeamformWork *work = beamform_work_queue_push(ctx->beamform_work_queue);
 		if (work) {
 			if (fill_frame_compute_work(ctx, work, current_plane))
@@ -718,6 +729,7 @@ DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 				ctx->shared_memory->export_next_frame = 0;
 			}
 
+			atomic_store(&ctx->starting_compute_from_library, 1);
 			ctx->os.wake_waiters(&ctx->os.compute_worker.sync_variable);
 		}
 	}

@@ -28,15 +28,18 @@
 		#define DEBUG_EXPORT
 	#endif
 	#define DEBUG_DECL(a) a
-	#define ASSERT(c) do { if (!(c)) debugbreak(); } while (0);
+	#define ASSERT(c) do { if (!(c)) debugbreak(); } while (0)
 #else
 	#define DEBUG_EXPORT function
 	#define DEBUG_DECL(a)
 	#define ASSERT(c)
 #endif
 
+#define assert(c) ASSERT(c)
+
 #define INVALID_CODE_PATH ASSERT(0)
-#define INVALID_DEFAULT_CASE default: ASSERT(0) break
+#define INVALID_DEFAULT_CASE default: ASSERT(0); break
+#define InvalidDefaultCase default: assert(0); break
 
 #define function      static
 #define global        static

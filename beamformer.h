@@ -163,6 +163,7 @@ typedef struct {
 	GLParams gl;
 
 	uv2 window_size;
+	b32 starting_compute_from_library;
 	b32 start_compute;
 	b32 should_exit;
 
