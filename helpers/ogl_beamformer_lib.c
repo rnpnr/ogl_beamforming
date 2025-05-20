@@ -186,9 +186,9 @@ try_push_work_queue(void)
 }
 
 function b32
-lib_try_wait_sync(i32 *sync, i32 timeout_ms, os_wait_on_value_fn *os_wait_on_value)
+lib_try_lock(i32 *sync, i32 timeout_ms)
 {
-	b32 result = try_wait_sync(sync, timeout_ms, os_wait_on_value);
+	b32 result = try_lock(sync, timeout_ms, os_wait_on_value);
 	if (!result) g_lib_last_error = BF_LIB_ERR_KIND_SYNC_VARIABLE;
 	return result;
 }
@@ -250,12 +250,13 @@ beamformer_start_compute(u32 image_plane_tag)
 	b32 result = 0;
 	if (image_plane_tag < IPT_LAST) {
 		if (check_shared_memory()) {
-			if (atomic_load(&g_bp->dispatch_compute_sync) == 0) {
+			if (lib_try_lock(&g_bp->dispatch_compute_sync, 0)) {
+				/* TODO(rnp): there is a race here with touching this */
 				g_bp->current_image_plane = image_plane_tag;
-				atomic_store(&g_bp->dispatch_compute_sync, 1);
+
 				result = 1;
-			} else {
-				g_lib_last_error = BF_LIB_ERR_KIND_SYNC_VARIABLE;
+				/* TODO(rnp): timeout */
+				os_wait_on_value(&g_bp->dispatch_compute_sync, 1, -1);
 			}
 		}
 	} else {
@@ -271,7 +272,7 @@ beamformer_upload_buffer(void *data, u32 size, i32 store_offset, i32 sync_offset
 	b32 result = 0;
 	if (check_shared_memory()) {
 		BeamformWork *work = try_push_work_queue();
-		result = work && lib_try_wait_sync((i32 *)((u8 *)g_bp + sync_offset), timeout_ms, os_wait_on_value);
+		result = work && lib_try_lock((i32 *)((u8 *)g_bp + sync_offset), timeout_ms);
 		if (result) {
 			BeamformerUploadContext *uc = &work->upload_context;
 			uc->shared_memory_offset = store_offset;
@@ -281,6 +282,7 @@ beamformer_upload_buffer(void *data, u32 size, i32 store_offset, i32 sync_offset
 			work->completion_barrier = sync_offset;
 			mem_copy((u8 *)g_bp + store_offset, data, size);
 			beamform_work_queue_push_commit(&g_bp->external_work_queue);
+			release_lock((i32 *)((u8 *)g_bp + sync_offset), os_wake_waiters);
 		}
 	}
 	return result;
@@ -337,7 +339,7 @@ beamformer_push_parameters_ui(BeamformerUIParameters *bp, i32 timeout_ms)
 	b32 result = 0;
 	if (check_shared_memory()) {
 		BeamformWork *work = try_push_work_queue();
-		result = work && lib_try_wait_sync(&g_bp->parameters_ui_sync, timeout_ms, os_wait_on_value);
+		result = work && lib_try_lock(&g_bp->parameters_ui_sync, timeout_ms);
 		if (result) {
 			BeamformerUploadContext *uc = &work->upload_context;
 			uc->shared_memory_offset = offsetof(BeamformerSharedMemory, parameters);
@@ -347,6 +349,7 @@ beamformer_push_parameters_ui(BeamformerUIParameters *bp, i32 timeout_ms)
 			work->completion_barrier = offsetof(BeamformerSharedMemory, parameters_ui_sync);
 			mem_copy(&g_bp->parameters_ui, bp, sizeof(*bp));
 			beamform_work_queue_push_commit(&g_bp->external_work_queue);
+			release_lock(&g_bp->parameters_ui_sync, os_wake_waiters);
 		}
 	}
 	return result;
@@ -358,7 +361,7 @@ beamformer_push_parameters_head(BeamformerParametersHead *bp, i32 timeout_ms)
 	b32 result = 0;
 	if (check_shared_memory()) {
 		BeamformWork *work = try_push_work_queue();
-		result = work && lib_try_wait_sync(&g_bp->parameters_head_sync, timeout_ms, os_wait_on_value);
+		result = work && lib_try_lock(&g_bp->parameters_head_sync, timeout_ms);
 		if (result) {
 			BeamformerUploadContext *uc = &work->upload_context;
 			uc->shared_memory_offset = offsetof(BeamformerSharedMemory, parameters);
@@ -368,6 +371,7 @@ beamformer_push_parameters_head(BeamformerParametersHead *bp, i32 timeout_ms)
 			work->completion_barrier = offsetof(BeamformerSharedMemory, parameters_head_sync);
 			mem_copy(&g_bp->parameters_head, bp, sizeof(*bp));
 			beamform_work_queue_push_commit(&g_bp->external_work_queue);
+			release_lock(&g_bp->parameters_head_sync, os_wake_waiters);
 		}
 	}
 	return result;
@@ -393,14 +397,8 @@ b32
 send_data(void *data, u32 data_size)
 {
 	b32 result = 0;
-	if (beamformer_push_data(data, data_size, 0)) {
+	if (beamformer_push_data(data, data_size, 0))
 		result = beamformer_start_compute(0);
-		if (result) {
-			/* TODO(rnp): should we just set timeout on acquiring the lock instead of this? */
-			try_wait_sync(&g_bp->raw_data_sync, -1, os_wait_on_value);
-			atomic_store(&g_bp->raw_data_sync, 1);
-		}
-	}
 	return result;
 }
 

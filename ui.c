@@ -2901,7 +2901,7 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformFrame *frame_to_draw
 	if (ui->flush_params) {
 		validate_ui_parameters(&ui->params);
 		BeamformWork *work = beamform_work_queue_push(ctx->beamform_work_queue);
-		if (work && try_wait_sync(&ctx->shared_memory->parameters_sync, 0, ctx->os.wait_on_value)) {
+		if (work && try_lock(&ctx->shared_memory->parameters_sync, 0, ctx->os.wait_on_value)) {
 			BeamformerUploadContext *uc = &work->upload_context;
 			uc->shared_memory_offset = offsetof(BeamformerSharedMemory, parameters);
 			uc->size = sizeof(ctx->shared_memory->parameters);
@@ -2912,6 +2912,7 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformFrame *frame_to_draw
 			beamform_work_queue_push_commit(ctx->beamform_work_queue);
 			ui->flush_params   = 0;
 			ctx->start_compute = 1;
+			release_lock(&ctx->shared_memory->parameters_sync, ctx->os.wake_waiters);
 		}
 	}
 

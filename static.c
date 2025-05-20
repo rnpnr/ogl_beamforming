@@ -225,7 +225,6 @@ function FILE_WATCH_CALLBACK_FN(load_cuda_lib)
 	return result;
 }
 
-
 #define GLFW_VISIBLE 0x00020004
 void glfwWindowHint(i32, i32);
 iptr glfwCreateWindow(i32, i32, char *, iptr, iptr);
@@ -243,7 +242,7 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 	for (;;) {
 		for (;;) {
 			i32 current = atomic_load(&ctx->sync_variable);
-			if (current && atomic_swap(&ctx->sync_variable, 0) == current)
+			if (current == 0 && atomic_swap(&ctx->sync_variable, 1) == current)
 				break;
 
 			ctx->asleep = 1;
@@ -293,14 +292,6 @@ setup_beamformer(BeamformerCtx *ctx, Arena *memory)
 	mem_clear(ctx->shared_memory, 0, sizeof(*ctx->shared_memory));
 
 	ctx->shared_memory->version = BEAMFORMER_PARAMETERS_VERSION;
-	/* TODO(rnp): refactor - this is annoying */
-	ctx->shared_memory->parameters_sync      = 1;
-	ctx->shared_memory->parameters_head_sync = 1;
-	ctx->shared_memory->parameters_ui_sync   = 1;
-	ctx->shared_memory->raw_data_sync        = 1;
-	ctx->shared_memory->channel_mapping_sync = 1;
-	ctx->shared_memory->sparse_elements_sync = 1;
-	ctx->shared_memory->focal_vectors_sync   = 1;
 
 	/* NOTE: default compute shader pipeline */
 	ctx->shared_memory->compute_stages[0]    = ComputeShaderKind_Decode;

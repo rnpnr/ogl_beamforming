@@ -52,17 +52,25 @@ DEBUG_EXPORT BEAMFORM_WORK_QUEUE_PUSH_COMMIT_FN(beamform_work_queue_push_commit)
 }
 
 function b32
-try_wait_sync(i32 *sync, i32 timeout_ms, os_wait_on_value_fn *os_wait_on_value)
+try_lock(i32 *sync, i32 timeout_ms, os_wait_on_value_fn *os_wait_on_value)
 {
 	b32 result = 0;
 	for (;;) {
 		i32 current = atomic_load(sync);
-		if (current && atomic_cas(sync, &current, 0)) {
+		if (current == 0 && atomic_cas(sync, &current, 1)) {
 			result = 1;
 			break;
 		}
-		if (!timeout_ms || !os_wait_on_value(sync, 0, timeout_ms))
+		if (!timeout_ms || !os_wait_on_value(sync, current, timeout_ms))
 			break;
 	}
 	return result;
+}
+
+function void
+release_lock(i32 *sync, os_wake_waiters_fn *os_wake_waiters)
+{
+	assert(atomic_load(sync));
+	atomic_store(sync, 0);
+	os_wake_waiters(sync);
 }
