@@ -68,7 +68,7 @@
 #define MAX(a, b)        ((a) > (b) ? (a) : (b))
 #define ORONE(x)         ((x)? (x) : 1)
 #define SIGN(x)          ((x) < 0? -1 : 1)
-#define SWAP(a, b)       {typeof(a) __tmp = (a); (a) = (b); (b) = __tmp;}
+#define swap(a, b)       do {typeof(a) __tmp = (a); (a) = (b); (b) = __tmp;} while(0)
 
 /* NOTE(rnp): no guarantees about actually getting an element */
 #define SLLPop(list)     list; list = list ? list->next : 0

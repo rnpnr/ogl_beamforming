@@ -2,19 +2,9 @@
 /* TODO(rnp):
  * [ ]: refactor: ui should be in its own thread and that thread should only be concerned with the ui
  * [ ]: refactor: ui shouldn't fully destroy itself on hot reload
- * [ ]: refactor: remove all the excessive measure_texts (cell drawing, hover_var in params table)
+ * [ ]: refactor: remove all the excessive measure_texts (cell drawing, hover_interaction in params table)
  * [ ]: refactor: move remaining fragment shader stuff into ui
  * [ ]: refactor: scale table to rect
- * [ ]: refactor: re-add next_hot variable. this will simplify the code and number of checks
- *      being performed inline. example:
- *      if (hovering)
- *      	next_hot = var;
- *      draw_text(..., var->hover_t);
- *      // elsewhere in code
- *      if (!is->active)
- *      	hot = next_hot ....
- *
- *      hot->hover_t += hover_speed * dt_for_frame
  * [ ]: scroll bar for views that don't have enough space
  * [ ]: compute times through same path as parameter list ?
  * [ ]: allow views to collapse to just their title bar
@@ -35,9 +25,7 @@
  * [ ]: show full non-truncated string on hover
  * [ ]: refactor: hovered element type and show hovered element in full even when truncated
  * [ ]: visual indicator for broken shader stage gh#27
- * [ ]: V_UP_HIERARCHY, V_DOWN_HIERARCHY - set active interaction to parent or child ?
  * [ ]: bug: cross-plane view with different dimensions for each plane
- * [ ]: interaction last_rect is weird; need a better way of keeping track of menu position
  */
 
 #define BG_COLOUR              (v4){.r = 0.15, .g = 0.12, .b = 0.13, .a = 1.0}
@@ -77,17 +65,8 @@ typedef struct {
 	i32  cursor;
 	f32  cursor_blink_t;
 	f32  cursor_blink_scale;
+	Font *font, *hot_font;
 } InputState;
-
-typedef enum {
-	IT_NONE,
-	IT_NOP,
-	IT_DRAG,
-	IT_MENU,
-	IT_SCROLL,
-	IT_SET,
-	IT_TEXT,
-} InteractionType;
 
 typedef enum {
 	RS_NONE,
@@ -160,8 +139,9 @@ typedef enum {
 	VT_COMPUTE_PROGRESS_BAR,
 	VT_SCALE_BAR,
 	VT_UI_BUTTON,
-	VT_UI_VIEW,
+	VT_UI_FLOATING_WIDGET,
 	VT_UI_REGION_SPLIT,
+	VT_UI_VIEW,
 } VariableType;
 
 typedef enum {
@@ -177,6 +157,7 @@ typedef struct {
 	Variable *last;
 	b32       expanded;
 	VariableGroupType type;
+	Variable *container;
 } VariableGroup;
 
 typedef enum {
@@ -205,6 +186,7 @@ typedef struct {
 #define X(id, text) UI_BID_ ##id,
 typedef enum {
 	UI_BID_CLOSE_VIEW,
+	UI_BID_CLOSE_WIDGET,
 	GLOBAL_MENU_BUTTONS
 	FRAME_VIEW_BUTTONS
 } UIButtonID;
@@ -226,11 +208,22 @@ typedef struct {
 } BeamformerVariable;
 
 typedef enum {
+	FloatingWidgetKind_Menu,
+	FloatingWidgetKind_TextBox,
+} FloatingWidgetKind;
+
+/* TODO(rnp): collapse with UIView? */
+typedef struct {
+	Variable *reference;
+	Variable *close;
+	Rect rect;
+	FloatingWidgetKind kind;
+} FloatingWidget;
+
+typedef enum {
 	V_INPUT          = 1 << 0,
 	V_TEXT           = 1 << 1,
 	V_RADIO_BUTTON   = 1 << 2,
-	V_MENU           = 1 << 3,
-	V_CLOSES_MENU    = 1 << 4,
 	V_CAUSES_COMPUTE = 1 << 29,
 	V_UPDATE_VIEW    = 1 << 30,
 } VariableFlags;
@@ -242,18 +235,19 @@ struct Variable {
 		BeamformerVariable  beamformer_variable;
 		ComputeProgressBar  compute_progress_bar;
 		ComputeStatsView    compute_stats_view;
+		FloatingWidget      floating_widget;
 		RegionSplit         region_split;
 		ScaleBar            scale_bar;
 		UIButtonID          button;
 		UIView              view;
 		VariableCycler      cycler;
 		VariableGroup       group;
-		scaled_f32          scaled_f32;
-		b32                 b32;
-		i32                 i32;
-		u32                 u32;
-		f32                 f32;
-	} u;
+		scaled_f32          scaled_real32;
+		b32                 bool32;
+		i32                 signed32;
+		u32                 unsigned32;
+		f32                 real32;
+	};
 	Variable *next;
 	Variable *parent;
 	VariableFlags flags;
@@ -304,13 +298,28 @@ typedef struct BeamformerFrameView {
 	b32 needs_update;
 } BeamformerFrameView;
 
+typedef enum {
+	InteractionKind_None,
+	InteractionKind_Nop,
+	InteractionKind_Auto,
+	InteractionKind_Button,
+	InteractionKind_Drag,
+	InteractionKind_Menu,
+	InteractionKind_Scroll,
+	InteractionKind_Set,
+	InteractionKind_Text,
+} InteractionKind;
+
 typedef struct {
-	Variable *hot;
-	Variable *active;
-	InteractionType type;
-	Rect  rect,  hot_rect, last_rect;
-	Font *font, *hot_font;
-} InteractionState;
+	InteractionKind kind;
+	union {
+		void     *generic;
+		Variable *var;
+	};
+	Rect rect;
+} Interaction;
+
+#define auto_interaction(r, v) (Interaction){.kind = InteractionKind_Auto, .var = v, .rect = r}
 
 struct BeamformerUI {
 	Arena arena;
@@ -321,12 +330,17 @@ struct BeamformerUI {
 	Variable *regions;
 	Variable *variable_freelist;
 
+	Variable floating_widget_sentinal;
+
 	BeamformerFrameView *views;
 	BeamformerFrameView *view_freelist;
 	BeamformFrame       *frame_freelist;
 
-	InteractionState interaction;
-	InputState       text_input_state;
+	Interaction interaction;
+	Interaction hot_interaction;
+	Interaction next_interaction;
+
+	InputState  text_input_state;
 
 	v2_sll *scale_bar_savepoint_freelist;
 
@@ -498,23 +512,23 @@ stream_append_variable(Stream *s, Variable *var)
 {
 	switch (var->type) {
 	case VT_UI_BUTTON:
-	case VT_GROUP: stream_append_s8(s, var->name); break;
-	case VT_F32:   stream_append_f64(s, var->u.f32, 100); break;
-	case VT_B32:   stream_append_s8(s, var->u.b32 ? s8("True") : s8("False")); break;
-	case VT_SCALED_F32: stream_append_f64(s, var->u.scaled_f32.val, 100); break;
-	case VT_BEAMFORMER_VARIABLE: {
-		BeamformerVariable *bv = &var->u.beamformer_variable;
+	case VT_GROUP:{ stream_append_s8(s, var->name); }break;
+	case VT_F32:{   stream_append_f64(s, var->real32, 100); }break;
+	case VT_B32:{   stream_append_s8(s, var->bool32 ? s8("True") : s8("False")); }break;
+	case VT_SCALED_F32:{ stream_append_f64(s, var->scaled_real32.val, 100); }break;
+	case VT_BEAMFORMER_VARIABLE:{
+		BeamformerVariable *bv = &var->beamformer_variable;
 		switch (bv->store_type) {
-		case VT_F32: stream_append_f64(s, *(f32 *)bv->store * bv->display_scale, 100); break;
-		default: INVALID_CODE_PATH;
+		case VT_F32:{ stream_append_f64(s, *(f32 *)bv->store * bv->display_scale, 100); }break;
+		InvalidDefaultCase;
 		}
-	} break;
-	case VT_CYCLER: {
-		u32 index = *var->u.cycler.state;
-		if (var->u.cycler.labels) stream_append_s8(s, var->u.cycler.labels[index]);
-		else                      stream_append_u64(s, index);
-	} break;
-	default: INVALID_CODE_PATH;
+	}break;
+	case VT_CYCLER:{
+		u32 index = *var->cycler.state;
+		if (var->cycler.labels) stream_append_s8(s, var->cycler.labels[index]);
+		else                    stream_append_u64(s, index);
+	}break;
+	InvalidDefaultCase;
 	}
 }
 
@@ -735,11 +749,11 @@ push_custom_view_title(Stream *s, Variable *var)
 	} break;
 	case VT_COMPUTE_PROGRESS_BAR: {
 		stream_append_s8(s, s8("Compute Progress: "));
-		stream_append_f64(s, 100 * *var->u.compute_progress_bar.progress, 100);
+		stream_append_f64(s, 100 * *var->compute_progress_bar.progress, 100);
 		stream_append_byte(s, '%');
 	} break;
 	case VT_BEAMFORMER_FRAME_VIEW: {
-		BeamformerFrameView *bv = var->u.generic;
+		BeamformerFrameView *bv = var->generic;
 		stream_append_s8(s, s8("Frame View"));
 		switch (bv->type) {
 		case FVT_COPY: stream_append_s8(s, s8(": Copy [")); break;
@@ -747,11 +761,11 @@ push_custom_view_title(Stream *s, Variable *var)
 			#define X(plane, id, pretty) s8_comp(": " pretty " ["),
 			read_only local_persist s8 labels[IPT_LAST + 1] = {IMAGE_PLANE_TAGS s8_comp(": Live [")};
 			#undef X
-			stream_append_s8(s, labels[*bv->cycler->u.cycler.state % (IPT_LAST + 1)]);
+			stream_append_s8(s, labels[*bv->cycler->cycler.state % (IPT_LAST + 1)]);
 		} break;
 		case FVT_INDEXED: {
 			stream_append_s8(s, s8(": Index {"));
-			stream_append_u64(s, *bv->cycler->u.cycler.state % MAX_BEAMFORMED_SAVED_FRAMES);
+			stream_append_u64(s, *bv->cycler->cycler.state % MAX_BEAMFORMED_SAVED_FRAMES);
 			stream_append_s8(s, s8("} ["));
 		} break;
 		}
@@ -793,21 +807,21 @@ ui_variable_free(BeamformerUI *ui, Variable *var)
 		var->parent = 0;
 		while (var) {
 			if (var->type == VT_GROUP) {
-				var = var->u.group.first;
+				var = var->group.first;
 			} else {
 				if (var->type == VT_BEAMFORMER_FRAME_VIEW) {
 					/* TODO(rnp): instead there should be a way of linking these up */
-					BeamformerFrameView *bv = var->u.generic;
+					BeamformerFrameView *bv = var->generic;
 					if (bv->type == FVT_COPY) {
 						glDeleteTextures(1, &bv->frame->texture);
 						bv->frame->texture = 0;
 						SLLPush(bv->frame, ui->frame_freelist);
 					}
-					if (bv->axial_scale_bar.u.scale_bar.savepoint_stack)
-						SLLPush(bv->axial_scale_bar.u.scale_bar.savepoint_stack,
+					if (bv->axial_scale_bar.scale_bar.savepoint_stack)
+						SLLPush(bv->axial_scale_bar.scale_bar.savepoint_stack,
 						        ui->scale_bar_savepoint_freelist);
-					if (bv->lateral_scale_bar.u.scale_bar.savepoint_stack)
-						SLLPush(bv->lateral_scale_bar.u.scale_bar.savepoint_stack,
+					if (bv->lateral_scale_bar.scale_bar.savepoint_stack)
+						SLLPush(bv->lateral_scale_bar.scale_bar.savepoint_stack,
 						        ui->scale_bar_savepoint_freelist);
 					DLLRemove(bv);
 					/* TODO(rnp): hack; use a sentinal */
@@ -834,10 +848,10 @@ ui_variable_free(BeamformerUI *ui, Variable *var)
 function void
 ui_view_free(BeamformerUI *ui, Variable *view)
 {
-	ASSERT(view->type == VT_UI_VIEW);
-	ui_variable_free(ui, view->u.view.child);
-	ui_variable_free(ui, view->u.view.close);
-	ui_variable_free(ui, view->u.view.menu);
+	assert(view->type == VT_UI_VIEW);
+	ui_variable_free(ui, view->view.child);
+	ui_variable_free(ui, view->view.close);
+	ui_variable_free(ui, view->view.menu);
 	ui_variable_free(ui, view);
 }
 
@@ -851,8 +865,8 @@ fill_variable(Variable *var, Variable *group, s8 name, u32 flags, VariableType t
 	var->name_width = measure_text(font, name).x;
 
 	if (group && group->type == VT_GROUP) {
-		if (group->u.group.last) group->u.group.last = group->u.group.last->next = var;
-		else                     group->u.group.last = group->u.group.first      = var;
+		if (group->group.last) group->group.last = group->group.last->next = var;
+		else                   group->group.last = group->group.first      = var;
 	}
 
 	return var;
@@ -871,8 +885,8 @@ add_variable(BeamformerUI *ui, Variable *group, Arena *arena, s8 name, u32 flags
 function Variable *
 add_variable_group(BeamformerUI *ui, Variable *group, Arena *arena, s8 name, VariableGroupType type, Font font)
 {
-	Variable *result     = add_variable(ui, group, arena, name, V_INPUT, VT_GROUP, font);
-	result->u.group.type = type;
+	Variable *result   = add_variable(ui, group, arena, name, V_INPUT, VT_GROUP, font);
+	result->group.type = type;
 	return result;
 }
 
@@ -888,9 +902,9 @@ add_variable_cycler(BeamformerUI *ui, Variable *group, Arena *arena, u32 flags, 
                     u32 *store, s8 *labels, u32 cycle_count)
 {
 	Variable *result = add_variable(ui, group, arena, name, V_INPUT|flags, VT_CYCLER, font);
-	result->u.cycler.cycle_length = cycle_count;
-	result->u.cycler.state        = store;
-	result->u.cycler.labels       = labels;
+	result->cycler.cycle_length = cycle_count;
+	result->cycler.state        = store;
+	result->cycler.labels       = labels;
 	return result;
 }
 
@@ -899,7 +913,23 @@ add_button(BeamformerUI *ui, Variable *group, Arena *arena, s8 name, UIButtonID 
            u32 flags, Font font)
 {
 	Variable *result = add_variable(ui, group, arena, name, V_INPUT|flags, VT_UI_BUTTON, font);
-	result->u.button = id;
+	result->button   = id;
+	return result;
+}
+
+function Variable *
+add_floating_widget(BeamformerUI *ui, Arena *arena, FloatingWidgetKind kind, v2 at, Variable *reference)
+{
+	Variable *result = add_variable(ui, 0, arena, s8(""), 0, VT_UI_FLOATING_WIDGET, ui->small_font);
+	result->floating_widget.rect.pos  = at;
+	result->floating_widget.kind      = kind;
+	result->floating_widget.reference = reference;
+	result->floating_widget.close     = add_button(ui, result, arena, s8(""), UI_BID_CLOSE_WIDGET,
+	                                               0, ui->small_font);
+	result->parent = &ui->floating_widget_sentinal;
+	result->next   = ui->floating_widget_sentinal.next;
+	result->next->parent = result;
+	ui->floating_widget_sentinal.next = result;
 	return result;
 }
 
@@ -908,8 +938,8 @@ add_ui_split(BeamformerUI *ui, Variable *parent, Arena *arena, s8 name, f32 frac
              RegionSplitDirection direction, Font font)
 {
 	Variable *result = add_variable(ui, parent, arena, name, 0, VT_UI_REGION_SPLIT, font);
-	result->u.region_split.direction = direction;
-	result->u.region_split.fraction  = fraction;
+	result->region_split.direction = direction;
+	result->region_split.fraction  = fraction;
 	return result;
 }
 
@@ -918,9 +948,7 @@ add_global_menu(BeamformerUI *ui, Arena *arena, Variable *parent)
 {
 	Variable *result = add_variable_group(ui, 0, &ui->arena, s8(""), VG_LIST, ui->small_font);
 	result->parent = parent;
-	result->flags  = V_MENU;
-	#define X(id, text) add_button(ui, result, &ui->arena, s8(text), UI_BID_ ##id, \
-	                               V_CLOSES_MENU, ui->small_font);
+	#define X(id, text) add_button(ui, result, &ui->arena, s8(text), UI_BID_ ##id, 0, ui->small_font);
 	GLOBAL_MENU_BUTTONS
 	#undef X
 	return result;
@@ -930,7 +958,7 @@ function Variable *
 add_ui_view(BeamformerUI *ui, Variable *parent, Arena *arena, s8 name, u32 view_flags, b32 closable)
 {
 	Variable *result = add_variable(ui, parent, arena, name, 0, VT_UI_VIEW, ui->small_font);
-	UIView   *view   = &result->u.view;
+	UIView   *view   = &result->view;
 	view->flags      = view_flags;
 	view->menu       = add_global_menu(ui, arena, result);
 	if (closable) {
@@ -947,7 +975,7 @@ add_beamformer_variable_f32(BeamformerUI *ui, Variable *group, Arena *arena, s8 
                             Font font)
 {
 	Variable *var = add_variable(ui, group, arena, name, flags, VT_BEAMFORMER_VARIABLE, font);
-	BeamformerVariable *bv = &var->u.beamformer_variable;
+	BeamformerVariable *bv = &var->beamformer_variable;
 	bv->suffix        = suffix;
 	bv->store         = store;
 	bv->store_type    = VT_F32;
@@ -966,8 +994,8 @@ add_beamformer_parameters_view(Variable *parent, BeamformerCtx *ctx)
 
 	/* TODO(rnp): this can be closable once we have a way of opening new views */
 	Variable *result = add_ui_view(ui, parent, &ui->arena, s8("Parameters"), 0, 0);
-	Variable *group  = result->u.view.child = add_variable(ui, result, &ui->arena, s8(""), 0,
-	                                                       VT_GROUP, ui->font);
+	Variable *group  = result->view.child = add_variable(ui, result, &ui->arena, s8(""), 0,
+	                                                     VT_GROUP, ui->font);
 
 	add_beamformer_variable_f32(ui, group, &ui->arena, s8("Sampling Frequency:"), s8("[MHz]"),
 	                            &bp->sampling_frequency, (v2){0}, 1e-6, 0, 0, ui->font);
@@ -1031,16 +1059,16 @@ add_beamformer_frame_view(BeamformerUI *ui, Variable *parent, Arena *arena,
 {
 	/* TODO(rnp): this can be always closable once we have a way of opening new views */
 	Variable *result = add_ui_view(ui, parent, arena, s8(""), UI_VIEW_CUSTOM_TEXT, closable);
-	Variable *var = result->u.view.child = add_variable(ui, result, arena, s8(""), 0,
-	                                                    VT_BEAMFORMER_FRAME_VIEW, ui->small_font);
+	Variable *var = result->view.child = add_variable(ui, result, arena, s8(""), 0,
+	                                                  VT_BEAMFORMER_FRAME_VIEW, ui->small_font);
 
 	BeamformerFrameView *bv = SLLPop(ui->view_freelist);
 	if (bv) zero_struct(bv);
 	else    bv = push_struct(arena, typeof(*bv));
 	DLLPushDown(bv, ui->views);
 
-	var->u.generic = bv;
-	bv->type       = type;
+	var->generic = bv;
+	bv->type     = type;
 
 	fill_variable(&bv->dynamic_range, var, s8("Dynamic Range:"), V_INPUT|V_TEXT|V_UPDATE_VIEW,
 	              VT_F32, ui->small_font);
@@ -1049,15 +1077,15 @@ add_beamformer_frame_view(BeamformerUI *ui, Variable *parent, Arena *arena,
 	fill_variable(&bv->gamma, var, s8("Gamma:"), V_INPUT|V_TEXT|V_UPDATE_VIEW,
 	              VT_SCALED_F32, ui->small_font);
 
-	bv->dynamic_range.u.f32      = 50.0f;
-	bv->threshold.u.f32          = 55.0f;
-	bv->gamma.u.scaled_f32.val   = 1.0f;
-	bv->gamma.u.scaled_f32.scale = 0.05f;
+	bv->dynamic_range.real32      = 50.0f;
+	bv->threshold.real32          = 55.0f;
+	bv->gamma.scaled_real32.val   = 1.0f;
+	bv->gamma.scaled_real32.scale = 0.05f;
 
 	fill_variable(&bv->lateral_scale_bar, var, s8(""), V_INPUT, VT_SCALE_BAR, ui->small_font);
 	fill_variable(&bv->axial_scale_bar,   var, s8(""), V_INPUT, VT_SCALE_BAR, ui->small_font);
-	ScaleBar *lateral            = &bv->lateral_scale_bar.u.scale_bar;
-	ScaleBar *axial              = &bv->axial_scale_bar.u.scale_bar;
+	ScaleBar *lateral            = &bv->lateral_scale_bar.scale_bar;
+	ScaleBar *axial              = &bv->axial_scale_bar.scale_bar;
 	lateral->direction           = SB_LATERAL;
 	axial->direction             = SB_AXIAL;
 	lateral->scroll_scale        = (v2){.x = -0.5e-3, .y = 0.5e-3};
@@ -1065,13 +1093,13 @@ add_beamformer_frame_view(BeamformerUI *ui, Variable *parent, Arena *arena,
 	lateral->zoom_starting_coord = F32_INFINITY;
 	axial->zoom_starting_coord   = F32_INFINITY;
 
-	Variable *menu = result->u.view.menu;
+	Variable *menu = result->view.menu;
 	/* TODO(rnp): push to head of list? */
-	Variable *old_menu_first = menu->u.group.first;
-	Variable *old_menu_last  = menu->u.group.last;
-	menu->u.group.first = menu->u.group.last = 0;
+	Variable *old_menu_first = menu->group.first;
+	Variable *old_menu_last  = menu->group.last;
+	menu->group.first = menu->group.last = 0;
 
-	#define X(id, text) add_button(ui, menu, arena, s8(text), UI_BID_ ##id, V_CLOSES_MENU, ui->small_font);
+	#define X(id, text) add_button(ui, menu, arena, s8(text), UI_BID_ ##id, 0, ui->small_font);
 	FRAME_VIEW_BUTTONS
 	#undef X
 
@@ -1099,8 +1127,8 @@ add_beamformer_frame_view(BeamformerUI *ui, Variable *parent, Arena *arena,
 	bv->lateral_scale_bar_active = add_variable(ui, menu, arena, s8("Lateral Scale Bar"),
 	                                            V_INPUT|V_RADIO_BUTTON, VT_B32, ui->small_font);
 
-	menu->u.group.last->next = old_menu_first;
-	menu->u.group.last       = old_menu_last;
+	menu->group.last->next = old_menu_first;
+	menu->group.last       = old_menu_last;
 
 	return result;
 }
@@ -1111,9 +1139,9 @@ add_compute_progress_bar(Variable *parent, BeamformerCtx *ctx)
 	BeamformerUI *ui = ctx->ui;
 	/* TODO(rnp): this can be closable once we have a way of opening new views */
 	Variable *result = add_ui_view(ui, parent, &ui->arena, s8(""), UI_VIEW_CUSTOM_TEXT, 0);
-	result->u.view.child = add_variable(ui, result, &ui->arena, s8(""), 0,
-	                                    VT_COMPUTE_PROGRESS_BAR, ui->small_font);
-	ComputeProgressBar *bar = &result->u.view.child->u.compute_progress_bar;
+	result->view.child = add_variable(ui, result, &ui->arena, s8(""), 0,
+	                                  VT_COMPUTE_PROGRESS_BAR, ui->small_font);
+	ComputeProgressBar *bar = &result->view.child->compute_progress_bar;
 	bar->progress   = &ctx->csctx.processing_progress;
 	bar->processing = &ctx->csctx.processing_compute;
 
@@ -1124,8 +1152,8 @@ function Variable *
 add_compute_stats_view(BeamformerUI *ui, Variable *parent, Arena *arena, VariableType type)
 {
 	/* TODO(rnp): this can be closable once we have a way of opening new views */
-	Variable *result     = add_ui_view(ui, parent, arena, s8(""), UI_VIEW_CUSTOM_TEXT, 0);
-	result->u.view.child = add_variable(ui, result, &ui->arena, s8(""), 0, type, ui->small_font);
+	Variable *result   = add_ui_view(ui, parent, arena, s8(""), UI_VIEW_CUSTOM_TEXT, 0);
+	result->view.child = add_variable(ui, result, &ui->arena, s8(""), 0, type, ui->small_font);
 	return result;
 }
 
@@ -1133,27 +1161,27 @@ function Variable *
 ui_split_region(BeamformerUI *ui, Variable *region, Variable *split_side, RegionSplitDirection direction)
 {
 	Variable *result = add_ui_split(ui, region, &ui->arena, s8(""), 0.5, direction, ui->small_font);
-	if (split_side == region->u.region_split.left) {
-		region->u.region_split.left  = result;
+	if (split_side == region->region_split.left) {
+		region->region_split.left  = result;
 	} else {
-		region->u.region_split.right = result;
+		region->region_split.right = result;
 	}
 	split_side->parent = result;
-	result->u.region_split.left = split_side;
+	result->region_split.left = split_side;
 	return result;
 }
 
 function void
 ui_fill_live_frame_view(BeamformerUI *ui, BeamformerFrameView *bv)
 {
-	ScaleBar *lateral = &bv->lateral_scale_bar.u.scale_bar;
-	ScaleBar *axial   = &bv->axial_scale_bar.u.scale_bar;
+	ScaleBar *lateral = &bv->lateral_scale_bar.scale_bar;
+	ScaleBar *axial   = &bv->axial_scale_bar.scale_bar;
 	lateral->min_value = ui->params.output_min_coordinate + 0;
 	lateral->max_value = ui->params.output_max_coordinate + 0;
 	axial->min_value   = ui->params.output_min_coordinate + 2;
 	axial->max_value   = ui->params.output_max_coordinate + 2;
-	bv->axial_scale_bar_active->u.b32   = 1;
-	bv->lateral_scale_bar_active->u.b32 = 1;
+	bv->axial_scale_bar_active->bool32   = 1;
+	bv->lateral_scale_bar_active->bool32 = 1;
 	bv->ctx = ui->frame_view_render_context;
 	bv->axial_scale_bar.flags   |= V_CAUSES_COMPUTE;
 	bv->lateral_scale_bar.flags |= V_CAUSES_COMPUTE;
@@ -1167,9 +1195,9 @@ ui_add_live_frame_view(BeamformerUI *ui, Variable *view, RegionSplitDirection di
 	ASSERT(view->type   == VT_UI_VIEW);
 
 	Variable *new_region = ui_split_region(ui, region, view, direction);
-	new_region->u.region_split.right = add_beamformer_frame_view(ui, new_region, &ui->arena, FVT_LATEST, 1);
+	new_region->region_split.right = add_beamformer_frame_view(ui, new_region, &ui->arena, FVT_LATEST, 1);
 
-	ui_fill_live_frame_view(ui, new_region->u.region_split.right->u.group.first->u.generic);
+	ui_fill_live_frame_view(ui, new_region->region_split.right->group.first->generic);
 }
 
 function void
@@ -1179,30 +1207,30 @@ ui_copy_frame(BeamformerUI *ui, Variable *view, RegionSplitDirection direction)
 	ASSERT(region->type == VT_UI_REGION_SPLIT);
 	ASSERT(view->type   == VT_UI_VIEW);
 
-	BeamformerFrameView *old = view->u.group.first->u.generic;
+	BeamformerFrameView *old = view->group.first->generic;
 	/* TODO(rnp): hack; it would be better if this was unreachable with a 0 old->frame */
 	if (!old->frame)
 		return;
 
 	Variable *new_region = ui_split_region(ui, region, view, direction);
-	new_region->u.region_split.right = add_beamformer_frame_view(ui, new_region, &ui->arena, FVT_COPY, 1);
+	new_region->region_split.right = add_beamformer_frame_view(ui, new_region, &ui->arena, FVT_COPY, 1);
 
-	BeamformerFrameView *bv = new_region->u.region_split.right->u.group.first->u.generic;
-	ScaleBar *lateral  = &bv->lateral_scale_bar.u.scale_bar;
-	ScaleBar *axial    = &bv->axial_scale_bar.u.scale_bar;
+	BeamformerFrameView *bv = new_region->region_split.right->group.first->generic;
+	ScaleBar *lateral  = &bv->lateral_scale_bar.scale_bar;
+	ScaleBar *axial    = &bv->axial_scale_bar.scale_bar;
 	lateral->min_value = &bv->min_coordinate.x;
 	lateral->max_value = &bv->max_coordinate.x;
 	axial->min_value   = &bv->min_coordinate.z;
 	axial->max_value   = &bv->max_coordinate.z;
 
-	bv->ctx                 = old->ctx;
-	bv->needs_update        = 1;
-	bv->threshold.u.f32     = old->threshold.u.f32;
-	bv->dynamic_range.u.f32 = old->dynamic_range.u.f32;
-	bv->gamma.u.f32         = old->gamma.u.f32;
-	bv->log_scale->u.b32    = old->log_scale->u.b32;
-	bv->min_coordinate      = old->frame->min_coordinate;
-	bv->max_coordinate      = old->frame->max_coordinate;
+	bv->ctx                  = old->ctx;
+	bv->needs_update         = 1;
+	bv->threshold.real32     = old->threshold.real32;
+	bv->dynamic_range.real32 = old->dynamic_range.real32;
+	bv->gamma.real32         = old->gamma.real32;
+	bv->log_scale->bool32    = old->log_scale->bool32;
+	bv->min_coordinate       = old->frame->min_coordinate;
+	bv->max_coordinate       = old->frame->max_coordinate;
 
 	bv->frame = SLLPop(ui->frame_freelist);
 	if (!bv->frame) bv->frame = push_struct(&ui->arena, typeof(*bv->frame));
@@ -1228,7 +1256,7 @@ ui_export_view(BeamformerUI *ui, Variable *view)
 
 	u8 buffer[1024];
 
-	BeamformerFrameView *bv = view->u.group.first->u.generic;
+	BeamformerFrameView *bv = view->group.first->generic;
 	if (!bv->frame)
 		return;
 
@@ -1249,7 +1277,7 @@ ui_export_view(BeamformerUI *ui, Variable *view)
 	stream_append_f64(&buf, min.x, 1000); stream_append_byte(&buf, ',');
 	stream_append_f64(&buf, max.x, 1000); stream_append_byte(&buf, ',');
 	stream_append_u64(&buf, bv->texture_dim.w); stream_append_byte(&buf, ',');
-	stream_append_f64(&buf, bv->dynamic_range.u.f32, 100);
+	stream_append_f64(&buf, bv->dynamic_range.real32, 100);
 	stream_append_byte(&buf, '\n');
 	stream_append_f64(&buf, min.z, 1000); stream_append_byte(&buf, ',');
 	stream_append_f64(&buf, max.z, 1000); stream_append_byte(&buf, ',');
@@ -1279,7 +1307,7 @@ function b32
 view_update(BeamformerUI *ui, BeamformerFrameView *view)
 {
 	if (view->type == FVT_LATEST) {
-		u32 index = *view->cycler->u.cycler.state;
+		u32 index = *view->cycler->cycler.state;
 		view->needs_update |= view->frame != ui->latest_plane[index];
 		view->frame         = ui->latest_plane[index];
 		if (view->needs_update) {
@@ -1318,10 +1346,10 @@ update_frame_views(BeamformerUI *ui, Rect window)
 			glClearNamedFramebufferfv(view->ctx->framebuffer, GL_COLOR, 0,
 			                          (f32 []){0.79, 0.46, 0.77, 1});
 			glBindTextureUnit(0, view->frame->texture);
-			glProgramUniform1f(view->ctx->shader,  FRAME_VIEW_RENDER_DYNAMIC_RANGE_LOC, view->dynamic_range.u.f32);
-			glProgramUniform1f(view->ctx->shader,  FRAME_VIEW_RENDER_THRESHOLD_LOC,     view->threshold.u.f32);
-			glProgramUniform1f(view->ctx->shader,  FRAME_VIEW_RENDER_GAMMA_LOC,         view->gamma.u.scaled_f32.val);
-			glProgramUniform1ui(view->ctx->shader, FRAME_VIEW_RENDER_LOG_SCALE_LOC,     view->log_scale->u.b32);
+			glProgramUniform1f(view->ctx->shader,  FRAME_VIEW_RENDER_DYNAMIC_RANGE_LOC, view->dynamic_range.real32);
+			glProgramUniform1f(view->ctx->shader,  FRAME_VIEW_RENDER_THRESHOLD_LOC,     view->threshold.real32);
+			glProgramUniform1f(view->ctx->shader,  FRAME_VIEW_RENDER_GAMMA_LOC,         view->gamma.scaled_real32.val);
+			glProgramUniform1ui(view->ctx->shader, FRAME_VIEW_RENDER_LOG_SCALE_LOC,     view->log_scale->bool32);
 
 			glDrawArrays(GL_TRIANGLES, 0, 6);
 			glGenerateTextureMipmap(view->texture);
@@ -1487,6 +1515,20 @@ scale_rect_centered(Rect r, v2 scale)
 }
 
 function b32
+interactions_equal(Interaction a, Interaction b)
+{
+	b32 result = (a.kind == b.kind) && (a.generic == b.generic);
+	return result;
+}
+
+function b32
+interaction_is_hot(BeamformerUI *ui, Interaction a)
+{
+	b32 result = interactions_equal(ui->hot_interaction, a);
+	return result;
+}
+
+function b32
 point_in_rect(v2 p, Rect r)
 {
 	v2  end    = add_v2(r.pos, r.size);
@@ -1511,39 +1553,40 @@ world_point_to_screen_2d(v2 p, v2 world_min, v2 world_max, v2 screen_min, v2 scr
 }
 
 function b32
-hover_rect(v2 mouse, Rect rect, f32 *hover_t)
+hover_interaction(BeamformerUI *ui, v2 mouse, Interaction interaction)
 {
-	b32 hovering = point_in_rect(mouse, rect);
-	if (hovering) *hover_t += HOVER_SPEED * dt_for_frame;
-	else          *hover_t -= HOVER_SPEED * dt_for_frame;
-	*hover_t = CLAMP01(*hover_t);
-	return hovering;
+	Variable *var = interaction.var;
+	b32 result = point_in_rect(mouse, interaction.rect);
+	if (result) ui->next_interaction = interaction;
+	if (interaction_is_hot(ui, interaction)) var->hover_t += HOVER_SPEED * dt_for_frame;
+	else                                     var->hover_t -= HOVER_SPEED * dt_for_frame;
+	var->hover_t = CLAMP01(var->hover_t);
+	return result;
 }
 
-function b32
-hover_var(BeamformerUI *ui, v2 mouse, Rect rect, Variable *var)
+function void
+draw_close_button(BeamformerUI *ui, Variable *close, v2 mouse, Rect r, v2 x_scale)
 {
-	b32 result = 0;
-	if (ui->interaction.type != IT_DRAG || ui->interaction.active == var) {
-		result = hover_rect(mouse, rect, &var->hover_t);
-		if (result) {
-			ui->interaction.hot_rect = rect;
-			ui->interaction.hot      = var;
-		}
-	}
-	return result;
+	assert(close->type == VT_UI_BUTTON);
+	hover_interaction(ui, mouse, auto_interaction(r, close));
+
+	Color colour = colour_from_normalized(lerp_v4(MENU_CLOSE_COLOUR, FG_COLOUR, close->hover_t));
+	r = scale_rect_centered(r, x_scale);
+	DrawLineEx(r.pos.rl, add_v2(r.pos, r.size).rl, 4, colour);
+	DrawLineEx(add_v2(r.pos, (v2){.x = r.size.w}).rl,
+	           add_v2(r.pos, (v2){.y = r.size.h}).rl, 4, colour);
 }
 
 function Rect
 draw_title_bar(BeamformerUI *ui, Arena arena, Variable *ui_view, Rect r, v2 mouse)
 {
-	ASSERT(ui_view->type == VT_UI_VIEW);
-	UIView *view = &ui_view->u.view;
+	assert(ui_view->type == VT_UI_VIEW);
+	UIView *view = &ui_view->view;
 
 	s8 title = ui_view->name;
 	if (view->flags & UI_VIEW_CUSTOM_TEXT) {
 		Stream buf = arena_stream(arena);
-		push_custom_view_title(&buf, ui_view->u.group.first);
+		push_custom_view_title(&buf, ui_view->group.first);
 		title = arena_stream_commit(&arena, &buf);
 	}
 
@@ -1560,20 +1603,14 @@ draw_title_bar(BeamformerUI *ui, Arena arena, Variable *ui_view, Rect r, v2 mous
 	if (view->close) {
 		Rect close;
 		cut_rect_horizontal(title_rect, title_rect.size.w - title_rect.size.h, &title_rect, &close);
-		hover_var(ui, mouse, close, view->close);
-
-		Color colour = colour_from_normalized(lerp_v4(MENU_CLOSE_COLOUR, FG_COLOUR, view->close->hover_t));
-		close = shrink_rect_centered(close, (v2){.x = 16, .y = 16});
-		DrawLineEx(close.pos.rl, add_v2(close.pos, close.size).rl, 4, colour);
-		DrawLineEx(add_v2(close.pos, (v2){.x = close.size.w}).rl,
-		           add_v2(close.pos, (v2){.y = close.size.h}).rl,  4, colour);
+		draw_close_button(ui, view->close, mouse, close, (v2){{.4, .4}});
 	}
 
 	if (view->menu) {
 		Rect menu;
 		cut_rect_horizontal(title_rect, title_rect.size.w - title_rect.size.h, &title_rect, &menu);
-		if (hover_var(ui, mouse, menu, view->menu))
-			ui->interaction.hot_font = &ui->small_font;
+		Interaction interaction = {.kind = InteractionKind_Menu, .var = view->menu, .rect = menu};
+		hover_interaction(ui, mouse, interaction);
 
 		Color colour = colour_from_normalized(lerp_v4(MENU_PLUS_COLOUR, FG_COLOUR, view->menu->hover_t));
 		menu = shrink_rect_centered(menu, (v2){.x = 14, .y = 14});
@@ -1649,8 +1686,8 @@ function void
 do_scale_bar(BeamformerUI *ui, Arena arena, Variable *scale_bar, v2 mouse, Rect draw_rect,
              f32 start_value, f32 end_value, s8 suffix)
 {
-	ASSERT(scale_bar->type == VT_SCALE_BAR);
-	ScaleBar *sb = &scale_bar->u.scale_bar;
+	assert(scale_bar->type == VT_SCALE_BAR);
+	ScaleBar *sb = &scale_bar->scale_bar;
 
 	v2 txt_s = measure_text(ui->small_font, s8("-288.8 mm"));
 
@@ -1682,7 +1719,7 @@ do_scale_bar(BeamformerUI *ui, Arena arena, Variable *scale_bar, v2 mouse, Rect 
 		markers[1]        = relative_mouse.x;
 	}
 
-	if (hover_var(ui, mouse, tick_rect, scale_bar))
+	if (hover_interaction(ui, mouse, auto_interaction(tick_rect, scale_bar)))
 		marker_count = 2;
 
 	draw_ruler(ui, arena, start_pos, end_pos, start_value, end_value, markers, marker_count,
@@ -1692,19 +1729,19 @@ do_scale_bar(BeamformerUI *ui, Arena arena, Variable *scale_bar, v2 mouse, Rect 
 function v2
 draw_radio_button(BeamformerUI *ui, Variable *var, v2 at, v2 mouse, v4 base_colour, f32 size)
 {
-	ASSERT(var->type == VT_B32 || var->type == VT_BEAMFORMER_VARIABLE);
+	assert(var->type == VT_B32 || var->type == VT_BEAMFORMER_VARIABLE);
 	b32 value;
 	if (var->type == VT_B32) {
-		value = var->u.b32;
+		value = var->bool32;
 	} else {
-		ASSERT(var->u.beamformer_variable.store_type == VT_B32);
-		value = *(b32 *)var->u.beamformer_variable.store;
+		assert(var->beamformer_variable.store_type == VT_B32);
+		value = *(b32 *)var->beamformer_variable.store;
 	}
 
 	v2 result = (v2){.x = size, .y = size};
 	Rect hover_rect   = {.pos = at, .size = result};
 	hover_rect.pos.y += 1;
-	hover_var(ui, mouse, hover_rect, var);
+	hover_interaction(ui, mouse, auto_interaction(hover_rect, var));
 
 	hover_rect = shrink_rect_centered(hover_rect, (v2){.x = 8, .y = 8});
 	Rect inner = shrink_rect_centered(hover_rect, (v2){.x = 4, .y = 4});
@@ -1730,8 +1767,8 @@ draw_variable(BeamformerUI *ui, Arena arena, Variable *var, v2 at, v2 mouse, v4 
 		if (var->flags & V_INPUT) {
 			Rect text_rect = {.pos = at, .size = result};
 			text_rect = extend_rect_centered(text_rect, (v2){.x = 8});
-			if (hover_var(ui, mouse, text_rect, var) && (var->flags & V_TEXT))
-				ui->interaction.hot_font = text_spec.font;
+			if (hover_interaction(ui, mouse, auto_interaction(text_rect, var)) && (var->flags & V_TEXT))
+				ui->text_input_state.hot_font = text_spec.font;
 			text_spec.colour = lerp_v4(base_colour, HOVERED_COLOUR, var->hover_t);
 		}
 
@@ -1753,8 +1790,8 @@ draw_table_cell(BeamformerUI *ui, TableCell *cell, Rect cell_rect, TextAlignment
 	v4 base_colour = ts.colour;
 	if (cell->kind == TCK_VARIABLE && cell->var->flags & V_INPUT) {
 		Rect hover = {.pos = cell_at, .size = {.w = cell->width, .h = cell_rect.size.h}};
-		if (hover_var(ui, mouse, hover, cell->var) && (cell->var->flags & V_TEXT))
-			ui->interaction.hot_font = ts.font;
+		if (hover_interaction(ui, mouse, auto_interaction(hover, cell->var)) && (cell->var->flags & V_TEXT))
+			ui->text_input_state.hot_font = ts.font;
 		ts.colour = lerp_v4(ts.colour, HOVERED_COLOUR, cell->var->hover_t);
 	}
 
@@ -1813,9 +1850,8 @@ draw_table(BeamformerUI *ui, Arena arena, Table *table, Rect draw_rect, TextSpec
 function void
 draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect display_rect, v2 mouse)
 {
-	ASSERT(var->type == VT_BEAMFORMER_FRAME_VIEW);
-	InteractionState *is      = &ui->interaction;
-	BeamformerFrameView *view = var->u.generic;
+	assert(var->type == VT_BEAMFORMER_FRAME_VIEW);
+	BeamformerFrameView *view = var->generic;
 	BeamformFrame *frame      = view->frame;
 
 	v2 txt_s = measure_text(ui->small_font, s8("-288.8 mm"));
@@ -1828,13 +1864,13 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 
 	Rect vr = display_rect;
 	v2 scale_bar_area = {0};
-	if (view->axial_scale_bar_active->u.b32) {
+	if (view->axial_scale_bar_active->bool32) {
 		vr.pos.y         += 0.5 * ui->small_font.baseSize;
 		scale_bar_area.x += scale_bar_size;
 		scale_bar_area.y += ui->small_font.baseSize;
 	}
 
-	if (view->lateral_scale_bar_active->u.b32) {
+	if (view->lateral_scale_bar_active->bool32) {
 		vr.pos.x         += 0.5 * ui->small_font.baseSize;
 		scale_bar_area.x += ui->small_font.baseSize;
 		scale_bar_area.y += scale_bar_size;
@@ -1880,21 +1916,21 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 	v2 start_pos  = vr.pos;
 	start_pos.y  += vr.size.y;
 
-	if (vr.size.w > 0 && view->lateral_scale_bar_active->u.b32) {
+	if (vr.size.w > 0 && view->lateral_scale_bar_active->bool32) {
 		do_scale_bar(ui, a, &view->lateral_scale_bar, mouse,
 		             (Rect){.pos = start_pos, .size = vr.size},
-		             *view->lateral_scale_bar.u.scale_bar.min_value * 1e3,
-		             *view->lateral_scale_bar.u.scale_bar.max_value * 1e3, s8(" mm"));
+		             *view->lateral_scale_bar.scale_bar.min_value * 1e3,
+		             *view->lateral_scale_bar.scale_bar.max_value * 1e3, s8(" mm"));
 	}
 
 	start_pos    = vr.pos;
 	start_pos.x += vr.size.x;
 
-	if (vr.size.h > 0 && view->axial_scale_bar_active->u.b32) {
+	if (vr.size.h > 0 && view->axial_scale_bar_active->bool32) {
 		do_scale_bar(ui, a, &view->axial_scale_bar, mouse,
 		             (Rect){.pos = start_pos, .size = vr.size},
-		             *view->axial_scale_bar.u.scale_bar.max_value * 1e3,
-		             *view->axial_scale_bar.u.scale_bar.min_value * 1e3, s8(" mm"));
+		             *view->axial_scale_bar.scale_bar.max_value * 1e3,
+		             *view->axial_scale_bar.scale_bar.min_value * 1e3, s8(" mm"));
 	}
 
 	TextSpec text_spec = {.font = &ui->small_font, .flags = TF_LIMITED|TF_OUTLINED,
@@ -1902,9 +1938,10 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 	                      .limits.size.x = vr.size.w};
 
 	f32 draw_table_width = vr.size.w;
-	if (point_in_rect(mouse, vr)) {
-		is->hot      = var;
-		is->hot_rect = vr;
+	/* NOTE: avoid hover_t modification */
+	Interaction viewer = auto_interaction(vr, var);
+	if (point_in_rect(mouse, viewer.rect)) {
+		ui->next_interaction = viewer;
 
 		v2 world = screen_point_to_world_2d(mouse, vr.pos, add_v2(vr.pos, vr.size),
 		                                    XZ(view->min_coordinate),
@@ -1976,7 +2013,7 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 	Table *table = table_new(&a, 3, 3, (TextAlignment []){TA_LEFT, TA_LEFT, TA_LEFT});
 	table_push_parameter_row(table, &a, view->gamma.name,     &view->gamma,     s8(""));
 	table_push_parameter_row(table, &a, view->threshold.name, &view->threshold, s8(""));
-	if (view->log_scale->u.b32)
+	if (view->log_scale->bool32)
 		table_push_parameter_row(table, &a, view->dynamic_range.name, &view->dynamic_range, s8("[dB]"));
 
 	Rect table_rect = vr;
@@ -2060,14 +2097,14 @@ draw_ui_view_listing(BeamformerUI *ui, Variable *group, Arena arena, Rect r, v2 
 	/* NOTE(rnp): minimum width for middle column */
 	table->widths[1] = 150;
 
-	Variable *var = group->u.group.first;
+	Variable *var = group->group.first;
 	while (var) {
 		switch (var->type) {
 		case VT_CYCLER:
 		case VT_BEAMFORMER_VARIABLE: {
 			s8 suffix = s8("");
 			if (var->type == VT_BEAMFORMER_VARIABLE)
-				suffix = var->u.beamformer_variable.suffix;
+				suffix = var->beamformer_variable.suffix;
 			table_push_parameter_row(table, &arena, var->name, var, suffix);
 			while (var) {
 				if (var->next) {
@@ -2079,7 +2116,7 @@ draw_ui_view_listing(BeamformerUI *ui, Variable *group, Arena arena, Rect r, v2 
 			}
 		} break;
 		case VT_GROUP: {
-			VariableGroup *g = &var->u.group;
+			VariableGroup *g = &var->group;
 
 			TableCell *cells = table_push_row(table, &arena, TRK_CELLS)->data;
 			cells[0] = (TableCell){.text = var->name, .kind = TCK_VARIABLE, .var = var};
@@ -2092,9 +2129,9 @@ draw_ui_view_listing(BeamformerUI *ui, Variable *group, Arena arena, Rect r, v2 
 			} else {
 				Variable *v = g->first;
 
-				ASSERT(!v || v->type == VT_BEAMFORMER_VARIABLE);
+				assert(!v || v->type == VT_BEAMFORMER_VARIABLE);
 				/* NOTE(rnp): assume the suffix is the same for all elements */
-				if (v) cells[2].text = v->u.beamformer_variable.suffix;
+				if (v) cells[2].text = v->beamformer_variable.suffix;
 
 				Stream sb = arena_stream(arena);
 				switch (g->type) {
@@ -2134,7 +2171,7 @@ draw_ui_view_listing(BeamformerUI *ui, Variable *group, Arena arena, Rect r, v2 
 		rect.pos  = add_v2(it->cell_rect.pos, scale_v2((v2){.x = text_spec.font->baseSize}, it->sub_table_depth));
 		rect.size = it->cell_rect.size;
 		if (cell->kind == TCK_VARIABLE_GROUP) {
-			Variable *v = cell->var->u.group.first;
+			Variable *v = cell->var->group.first;
 			v2 at = table_cell_align(cell, it->alignment, rect);
 			text_spec.limits.size.w = r.size.w - (at.x - it->start_x);
 			f32 dw = draw_text(s8("{"), at, &text_spec).x;
@@ -2165,7 +2202,7 @@ function void
 draw_ui_view(BeamformerUI *ui, Variable *ui_view, Rect r, v2 mouse, TextSpec text_spec)
 {
 	ASSERT(ui_view->type == VT_UI_VIEW);
-	UIView *view = &ui_view->u.view;
+	UIView *view = &ui_view->view;
 
 	if (view->needed_height - r.size.h < view->offset)
 		view->offset = view->needed_height - r.size.h;
@@ -2181,21 +2218,21 @@ draw_ui_view(BeamformerUI *ui, Variable *ui_view, Rect r, v2 mouse, TextSpec tex
 	switch (var->type) {
 	case VT_GROUP: size = draw_ui_view_listing(ui, var, ui->arena, r, mouse, text_spec); break;
 	case VT_BEAMFORMER_FRAME_VIEW: {
-		BeamformerFrameView *bv = var->u.generic;
+		BeamformerFrameView *bv = var->generic;
 		if (frame_view_ready_to_present(bv))
 			draw_beamformer_frame_view(ui, ui->arena, var, r, mouse);
 	} break;
 	case VT_COMPUTE_PROGRESS_BAR: {
-		size = draw_compute_progress_bar(ui, ui->arena, &var->u.compute_progress_bar, r);
+		size = draw_compute_progress_bar(ui, ui->arena, &var->compute_progress_bar, r);
 	} break;
 	case VT_COMPUTE_LATEST_STATS_VIEW:
 	case VT_COMPUTE_STATS_VIEW: {
-		ComputeShaderStats *stats = var->u.compute_stats_view.stats;
+		ComputeShaderStats *stats = var->compute_stats_view.stats;
 		if (var->type == VT_COMPUTE_LATEST_STATS_VIEW)
 			stats = *(ComputeShaderStats **)stats;
-		size = draw_compute_stats_view(var->u.compute_stats_view.ctx, ui->arena, stats, r);
+		size = draw_compute_stats_view(var->compute_stats_view.ctx, ui->arena, stats, r);
 	} break;
-	default: INVALID_CODE_PATH;
+	InvalidDefaultCase;
 	}
 
 	view->needed_height = size.y;
@@ -2206,7 +2243,7 @@ draw_active_text_box(BeamformerUI *ui, Variable *var)
 {
 	InputState *is = &ui->text_input_state;
 	Rect box       = ui->interaction.rect;
-	Font *font     = ui->interaction.font;
+	Font *font     = is->font;
 
 	s8 text          = {.len = is->count, .data = is->buf};
 	v2 text_size     = measure_text(*font, text);
@@ -2236,16 +2273,15 @@ draw_active_text_box(BeamformerUI *ui, Variable *var)
 	DrawRectanglePro(cursor.rl, (Vector2){0}, 0, colour_from_normalized(cursor_colour));
 }
 
-function void
-draw_active_menu(BeamformerUI *ui, Arena arena, Variable *menu, v2 mouse, Rect window)
+function Rect
+draw_menu(BeamformerUI *ui, Arena arena, Variable *menu, Font *font, v2 at, v2 mouse, Rect window)
 {
-	ASSERT(menu->type == VT_GROUP);
+	assert(menu->type == VT_GROUP);
 
-	Font *font          = ui->interaction.font;
 	f32 font_height     = font->baseSize;
 	f32 max_label_width = 0;
 
-	Variable *item = menu->u.group.first;
+	Variable *item = menu->group.first;
 	i32 item_count = 0;
 	b32 radio = 0;
 	while (item) {
@@ -2256,7 +2292,6 @@ draw_active_menu(BeamformerUI *ui, Arena arena, Variable *menu, v2 mouse, Rect w
 	}
 
 	f32 radio_button_width = radio? font_height : 0;
-	v2  at          = ui->interaction.rect.pos;
 	f32 menu_width  = max_label_width + radio_button_width + 8;
 	f32 menu_height = item_count * font_height + (item_count - 1) * 2;
 	menu_height = MAX(menu_height, 0);
@@ -2267,19 +2302,17 @@ draw_active_menu(BeamformerUI *ui, Arena arena, Variable *menu, v2 mouse, Rect w
 		at.y = window.size.h - menu_height - 12;
 	/* TODO(rnp): scroll menu if it doesn't fit on screen */
 
-	Rect menu_rect = {.pos = at, .size = {.w = menu_width, .h = menu_height}};
-	Rect bg_rect   = extend_rect_centered(menu_rect, (v2){.x = 12, .y = 8});
-	menu_rect      = extend_rect_centered(menu_rect, (v2){.x = 6,  .y = 4});
-	DrawRectangleRounded(bg_rect.rl,   0.1, 0, fade(BLACK, 0.8));
-	DrawRectangleRounded(menu_rect.rl, 0.1, 0, colour_from_normalized(BG_COLOUR));
-	v2 start = at;
+	Rect result = {.pos = at, .size = {.w = menu_width, .h = menu_height}};
+	result.size = add_v2(result.size, (v2){.x = 12, .y = 8});
+
+	v2 start = at = add_v2(result.pos, (v2){.x = 6,  .y = 4});
 	for (i32 i = 0; i < item_count - 1; i++) {
 		at.y += 2 + font_height;
 		DrawLineEx((v2){.x = at.x - 3, .y = at.y}.rl,
 		           add_v2(at, (v2){.w = menu_width + 3}).rl, 2, fade(BLACK, 0.8));
 	}
 
-	item = menu->u.group.first;
+	item = menu->group.first;
 	TextSpec text_spec = {.font = font, .colour = FG_COLOUR, .limits.size.w = menu_width};
 	at = start;
 	while (item) {
@@ -2293,6 +2326,7 @@ draw_active_menu(BeamformerUI *ui, Arena arena, Variable *menu, v2 mouse, Rect w
 		at.y += draw_variable(ui, arena, item, at, mouse, FG_COLOUR, text_spec).y + 2;
 		item = item->next;
 	}
+	return result;
 }
 
 function void
@@ -2315,12 +2349,12 @@ draw_layout_variable(BeamformerUI *ui, Variable *var, Rect draw_rect, v2 mouse)
 	BeginScissorMode(draw_rect.pos.x, draw_rect.pos.y, draw_rect.size.w, draw_rect.size.h);
 	switch (var->type) {
 	case VT_UI_VIEW: {
-		hover_var(ui, mouse, draw_rect, var);
+		hover_interaction(ui, mouse, auto_interaction(draw_rect, var));
 		TextSpec text_spec = {.font = &ui->font, .colour = FG_COLOUR, .flags = TF_LIMITED};
 		draw_ui_view(ui, var, draw_rect, mouse, text_spec);
 	} break;
 	case VT_UI_REGION_SPLIT: {
-		RegionSplit *rs = &var->u.region_split;
+		RegionSplit *rs = &var->region_split;
 
 		Rect split, hover;
 		switch (rs->direction) {
@@ -2342,13 +2376,14 @@ draw_layout_variable(BeamformerUI *ui, Variable *var, Rect draw_rect, v2 mouse)
 		} break;
 		}
 
-		hover_var(ui, mouse, hover, var);
+		Interaction drag = {.kind = InteractionKind_Drag, .rect = hover, .var = var};
+		hover_interaction(ui, mouse, drag);
 
 		v4 colour = HOVERED_COLOUR;
 		colour.a  = var->hover_t;
 		DrawRectangleRounded(split.rl, 0.6, 0, colour_from_normalized(colour));
 	} break;
-	default: INVALID_CODE_PATH; break;
+	InvalidDefaultCase;
 	}
 	EndScissorMode();
 }
@@ -2377,7 +2412,7 @@ draw_ui_regions(BeamformerUI *ui, Rect window, v2 mouse)
 
 		if (top->var->type == VT_UI_REGION_SPLIT) {
 			Rect first, second;
-			RegionSplit *rs = &top->var->u.region_split;
+			RegionSplit *rs = &top->var->region_split;
 			switch (rs->direction) {
 			case RSD_VERTICAL: {
 				split_rect_vertical(rect, rs->fraction, &first, &second);
@@ -2396,45 +2431,102 @@ draw_ui_regions(BeamformerUI *ui, Rect window, v2 mouse)
 }
 
 function void
-scroll_interaction(Variable *var, f32 delta)
+draw_floating_widget_container(BeamformerUI *ui, Variable *var, v2 mouse, Rect bounds)
 {
-	switch (var->type) {
-	case VT_B32: var->u.b32  = !var->u.b32; break;
-	case VT_F32: var->u.f32 += delta;       break;
-	case VT_I32: var->u.i32 += delta;       break;
-	case VT_U32: var->u.u32 += delta;       break;
-	case VT_SCALED_F32: var->u.scaled_f32.val += delta * var->u.scaled_f32.scale; break;
-	case VT_BEAMFORMER_FRAME_VIEW: {
-		BeamformerFrameView *bv = var->u.generic;
-		bv->needs_update     = 1;
-		bv->threshold.u.f32 += delta;
-	} break;
-	case VT_BEAMFORMER_VARIABLE: {
-		BeamformerVariable *bv = &var->u.beamformer_variable;
-		switch (bv->store_type) {
-		case VT_F32: {
-			f32 val = *(f32 *)bv->store + delta * bv->scroll_scale;
-			*(f32 *)bv->store = CLAMP(val, bv->limits.x, bv->limits.y);
-		} break;
-		INVALID_DEFAULT_CASE;
+	FloatingWidget *fw = &var->floating_widget;
+	if (fw->rect.size.x > 0 && fw->rect.size.y > 0) {
+		f32 line_height = ui->small_font.baseSize;
+
+		if (fw->rect.pos.y - line_height < 0) fw->rect.pos.y += line_height - fw->rect.pos.y;
+		f32 delta_x = fw->rect.pos.x + fw->rect.size.x - bounds.size.x;
+		if (delta_x > 0) {
+			fw->rect.pos.x -= delta_x;
+			fw->rect.pos.x  = MAX(0, fw->rect.pos.x);
 		}
-	} break;
-	case VT_CYCLER: {
-		*var->u.cycler.state += delta > 0? 1 : -1;
-		*var->u.cycler.state %= var->u.cycler.cycle_length;
-	} break;
-	case VT_UI_VIEW: {
-		var->u.view.offset += UI_SCROLL_SPEED * delta;
-		var->u.view.offset  = MAX(0, var->u.view.offset);
-	} break;
-	INVALID_DEFAULT_CASE;
+		Rect container = fw->rect;
+		container.pos.y  -= 5 + line_height;
+		container.size.y += 2 + line_height;
+		Rect handle = {{container.pos, (v2){.x = container.size.w, .y = 2 + line_height}}};
+		Rect close;
+		hover_interaction(ui, mouse, auto_interaction(container, var));
+		cut_rect_horizontal(handle, handle.size.w - handle.size.h - 6, 0, &close);
+		close.size.w = close.size.h;
+
+		f32 roundness = 12.0f / fw->rect.size.y;
+		DrawRectangleRounded(handle.rl, 0.1, 0, colour_from_normalized(BG_COLOUR));
+		DrawRectangleRoundedLinesEx(handle.rl, 0.2, 0, 2, BLACK);
+		DrawRectangleRounded(fw->rect.rl, roundness / 2, 0, colour_from_normalized(BG_COLOUR));
+		DrawRectangleRoundedLinesEx(fw->rect.rl, roundness, 0, 2, BLACK);
+		draw_close_button(ui, fw->close, mouse, close, (v2){{0.45, 0.45}});
 	}
 }
 
 function void
-begin_text_input(InputState *is, Font *font, Rect r, Variable *var, v2 mouse)
+draw_floating_widgets(BeamformerUI *ui, Rect window_rect, v2 mouse)
 {
-	Stream s = {.cap = ARRAY_COUNT(is->buf), .data = is->buf};
+	for (Variable *var = ui->floating_widget_sentinal.parent;
+	     var != &ui->floating_widget_sentinal;
+	     var = var->parent)
+	{
+		assert(var->type == VT_UI_FLOATING_WIDGET);
+		FloatingWidget *fw = &var->floating_widget;
+		draw_floating_widget_container(ui, var, mouse, window_rect);
+
+		Rect draw_rect = {0};
+		switch (fw->kind) {
+		case FloatingWidgetKind_Menu:{
+			draw_rect = draw_menu(ui, ui->arena, fw->reference, &ui->small_font,
+			                      fw->rect.pos, mouse, window_rect);
+		}break;
+		case FloatingWidgetKind_TextBox:{
+		}break;
+		InvalidDefaultCase;
+		}
+		fw->rect = draw_rect;
+	}
+}
+
+function void
+scroll_interaction(Variable *var, f32 delta)
+{
+	switch (var->type) {
+	case VT_B32:{ var->bool32  = !var->bool32; }break;
+	case VT_F32:{ var->real32 += delta;        }break;
+	case VT_I32:{ var->signed32 += delta;      }break;
+	case VT_U32:{ var->unsigned32 += delta;    }break;
+	case VT_SCALED_F32:{ var->scaled_real32.val += delta * var->scaled_real32.scale; }break;
+	case VT_BEAMFORMER_FRAME_VIEW:{
+		BeamformerFrameView *bv = var->generic;
+		bv->needs_update      = 1;
+		bv->threshold.real32 += delta;
+	} break;
+	case VT_BEAMFORMER_VARIABLE:{
+		BeamformerVariable *bv = &var->beamformer_variable;
+		switch (bv->store_type) {
+		case VT_F32:{
+			f32 val = *(f32 *)bv->store + delta * bv->scroll_scale;
+			*(f32 *)bv->store = CLAMP(val, bv->limits.x, bv->limits.y);
+		}break;
+		InvalidDefaultCase;
+		}
+	}break;
+	case VT_CYCLER:{
+		*var->cycler.state += delta > 0? 1 : -1;
+		*var->cycler.state %= var->cycler.cycle_length;
+	}break;
+	case VT_UI_VIEW:{
+		var->view.offset += UI_SCROLL_SPEED * delta;
+		var->view.offset  = MAX(0, var->view.offset);
+	}break;
+	InvalidDefaultCase;
+	}
+}
+
+function void
+begin_text_input(InputState *is, Rect r, Variable *var, v2 mouse)
+{
+	Font *font = is->font = is->hot_font;
+	Stream s = {.cap = countof(is->buf), .data = is->buf};
 	stream_append_variable(&s, var);
 	is->count = s.widx;
 
@@ -2459,20 +2551,20 @@ end_text_input(InputState *is, Variable *var)
 	f64 value = parse_f64((s8){.len = is->count, .data = is->buf});
 
 	switch (var->type) {
-	case VT_SCALED_F32: var->u.scaled_f32.val = value; break;
-	case VT_F32:        var->u.f32            = value; break;
-	case VT_BEAMFORMER_VARIABLE: {
-		BeamformerVariable *bv = &var->u.beamformer_variable;
+	case VT_SCALED_F32:{ var->scaled_real32.val = value; }break;
+	case VT_F32:{        var->real32            = value; }break;
+	case VT_BEAMFORMER_VARIABLE:{
+		BeamformerVariable *bv = &var->beamformer_variable;
 		switch (bv->store_type) {
-		case VT_F32: {
+		case VT_F32:{
 			value = CLAMP(value / bv->display_scale, bv->limits.x, bv->limits.y);
 			*(f32 *)bv->store = value;
-		} break;
-		INVALID_DEFAULT_CASE;
+		}break;
+		InvalidDefaultCase;
 		}
 		var->hover_t = 0;
-	} break;
-	INVALID_DEFAULT_CASE;
+	}break;
+	InvalidDefaultCase;
 	}
 }
 
@@ -2528,14 +2620,14 @@ update_text_input(InputState *is, Variable *var)
 function void
 scale_bar_interaction(BeamformerUI *ui, ScaleBar *sb, v2 mouse)
 {
-	InteractionState *is    = &ui->interaction;
+	Interaction *it = &ui->interaction;
 	b32 mouse_left_pressed  = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 	b32 mouse_right_pressed = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
 	f32 mouse_wheel         = GetMouseWheelMoveV().y;
 
 	if (mouse_left_pressed) {
-		v2 world_mouse = screen_point_to_world_2d(mouse, is->rect.pos,
-		                                          add_v2(is->rect.pos, is->rect.size),
+		v2 world_mouse = screen_point_to_world_2d(mouse, it->rect.pos,
+		                                          add_v2(it->rect.pos, it->rect.size),
 		                                          (v2){{*sb->min_value, *sb->min_value}},
 		                                          (v2){{*sb->max_value, *sb->max_value}});
 		f32 new_coord = F32_INFINITY;
@@ -2548,7 +2640,7 @@ scale_bar_interaction(BeamformerUI *ui, ScaleBar *sb, v2 mouse)
 		} else {
 			f32 min = sb->zoom_starting_coord;
 			f32 max = new_coord;
-			if (min > max) SWAP(min, max)
+			if (min > max) swap(min, max);
 
 			v2_sll *savepoint = SLLPop(ui->scale_bar_savepoint_freelist);
 			if (!savepoint) savepoint = push_struct(&ui->arena, v2_sll);
@@ -2582,127 +2674,157 @@ scale_bar_interaction(BeamformerUI *ui, ScaleBar *sb, v2 mouse)
 }
 
 function void
+ui_widget_bring_to_front(Variable *sentinal, Variable *widget)
+{
+	/* TODO(rnp): clean up the linkage so this can be a macro */
+	widget->parent->next = widget->next;
+	widget->next->parent = widget->parent;
+
+	widget->parent = sentinal;
+	widget->next   = sentinal->next;
+	widget->next->parent = widget;
+	sentinal->next = widget;
+}
+
+function void
+ui_close_widget(BeamformerUI *ui, Variable *widget)
+{
+	assert(widget->type == VT_UI_FLOATING_WIDGET);
+	FloatingWidget *fw = &widget->floating_widget;
+	switch (fw->kind) {
+	case FloatingWidgetKind_Menu:{
+		assert(fw->reference->type == VT_GROUP);
+		fw->reference->group.expanded  = 0;
+		fw->reference->group.container = 0;
+	}break;
+	InvalidDefaultCase;
+	}
+	widget->parent->next = widget->next;
+	widget->next->parent = widget->parent;
+	SLLPush(widget->floating_widget.close, ui->variable_freelist);
+	SLLPush(widget, ui->variable_freelist);
+}
+
+function void
 ui_button_interaction(BeamformerUI *ui, Variable *button)
 {
-	ASSERT(button->type == VT_UI_BUTTON);
-	switch (button->u.button) {
-	case UI_BID_FV_EXPORT: ui_export_view(ui, button->parent->parent); break;
-	case UI_BID_FV_COPY_HORIZONTAL: {
+	assert(button->type == VT_UI_BUTTON);
+	switch (button->button) {
+	case UI_BID_FV_EXPORT:{ ui_export_view(ui, button->parent->parent); }break;
+	case UI_BID_FV_COPY_HORIZONTAL:{
 		ui_copy_frame(ui, button->parent->parent, RSD_HORIZONTAL);
-	} break;
-	case UI_BID_FV_COPY_VERTICAL: {
+	}break;
+	case UI_BID_FV_COPY_VERTICAL:{
 		ui_copy_frame(ui, button->parent->parent, RSD_VERTICAL);
-	} break;
-	case UI_BID_GM_OPEN_LIVE_VIEW_RIGHT: {
+	}break;
+	case UI_BID_GM_OPEN_LIVE_VIEW_RIGHT:{
 		ui_add_live_frame_view(ui, button->parent->parent, RSD_HORIZONTAL);
-	} break;
-	case UI_BID_GM_OPEN_LIVE_VIEW_BELOW: {
+	}break;
+	case UI_BID_GM_OPEN_LIVE_VIEW_BELOW:{
 		ui_add_live_frame_view(ui, button->parent->parent, RSD_VERTICAL);
-	} break;
-	case UI_BID_CLOSE_VIEW: {
+	}break;
+	case UI_BID_CLOSE_WIDGET:{ ui_close_widget(ui, button->parent); }break;
+	case UI_BID_CLOSE_VIEW:{
 		Variable *view   = button->parent;
 		Variable *region = view->parent;
-		ASSERT(view->type == VT_UI_VIEW && region->type == VT_UI_REGION_SPLIT);
+		assert(view->type == VT_UI_VIEW && region->type == VT_UI_REGION_SPLIT);
 
 		Variable *parent    = region->parent;
-		Variable *remaining = region->u.region_split.left;
-		if (remaining == view) remaining = region->u.region_split.right;
+		Variable *remaining = region->region_split.left;
+		if (remaining == view) remaining = region->region_split.right;
 
 		ui_view_free(ui, view);
 
-		ASSERT(parent->type == VT_UI_REGION_SPLIT);
-		if (parent->u.region_split.left == region) {
-			parent->u.region_split.left  = remaining;
+		assert(parent->type == VT_UI_REGION_SPLIT);
+		if (parent->region_split.left == region) {
+			parent->region_split.left  = remaining;
 		} else {
-			parent->u.region_split.right = remaining;
+			parent->region_split.right = remaining;
 		}
 		remaining->parent = parent;
 
 		SLLPush(region, ui->variable_freelist);
-	} break;
+	}break;
 	}
 }
 
 function void
-ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll, b32 mouse_left_pressed)
+ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll)
 {
-	InteractionState *is = &ui->interaction;
-	if (is->hot) {
-		switch (is->hot->type) {
-		case VT_NULL: is->type = IT_NOP; break;
-		case VT_B32:  is->type = IT_SET; break;
-		case VT_UI_REGION_SPLIT: { is->type = IT_DRAG; }                 break;
-		case VT_UI_VIEW:         { if (scroll) is->type = IT_SCROLL; }   break;
-		case VT_UI_BUTTON:       { ui_button_interaction(ui, is->hot); } break;
-		case VT_SCALE_BAR:       { is->type = IT_SET; } break;
-		case VT_BEAMFORMER_FRAME_VIEW:
-		case VT_CYCLER: {
-			if (scroll) is->type = IT_SCROLL;
-			else        is->type = IT_SET;
-		} break;
-		case VT_GROUP: {
-			if (mouse_left_pressed && is->hot->flags & V_MENU) {
-				is->type = IT_MENU;
-			} else {
-				is->type = IT_SET;
+	Interaction *hot = &ui->hot_interaction;
+	if (hot->kind != InteractionKind_None) {
+		if (hot->kind == InteractionKind_Auto) {
+			switch (hot->var->type) {
+			case VT_NULL:{ hot->kind = InteractionKind_Nop; }break;
+			case VT_B32:{ hot->kind = InteractionKind_Set; }break;
+			case VT_SCALE_BAR:{ hot->kind = InteractionKind_Set; }break;
+			case VT_UI_BUTTON:{ hot->kind = InteractionKind_Button; }break;
+			case VT_GROUP:{ hot->kind = InteractionKind_Set; }break;
+			case VT_UI_FLOATING_WIDGET:{
+				hot->kind = InteractionKind_Drag;
+				ui_widget_bring_to_front(&ui->floating_widget_sentinal, hot->var);
+			}break;
+			case VT_UI_VIEW:{
+				if (scroll) hot->kind = InteractionKind_Scroll;
+				else        hot->kind = InteractionKind_Nop;
+			}break;
+			case VT_BEAMFORMER_FRAME_VIEW:
+			case VT_CYCLER:
+			{
+				if (scroll) hot->kind = InteractionKind_Scroll;
+				else        hot->kind = InteractionKind_Set;
+			}break;
+			case VT_BEAMFORMER_VARIABLE:{
+				if (hot->var->beamformer_variable.store_type == VT_B32) {
+					hot->kind = InteractionKind_Set;
+					break;
+				}
+			} /* FALLTHROUGH */
+			case VT_F32:
+			case VT_SCALED_F32:
+			{
+				if (scroll) {
+					hot->kind = InteractionKind_Scroll;
+				} else if (hot->var->flags & V_TEXT) {
+					hot->kind = InteractionKind_Text;
+					begin_text_input(&ui->text_input_state, hot->rect,
+					                 hot->var, input->mouse);
+				}
+			}break;
+			InvalidDefaultCase;
 			}
-		} break;
-		case VT_BEAMFORMER_VARIABLE: {
-			if (is->hot->u.beamformer_variable.store_type == VT_B32) {
-				is->type = IT_SET;
-				break;
-			}
-		} /* FALLTHROUGH */
-		case VT_SCALED_F32:
-		case VT_F32: {
-			if (scroll) {
-				is->type = IT_SCROLL;
-			} else if (mouse_left_pressed && is->hot->flags & V_TEXT) {
-				is->type = IT_TEXT;
-				begin_text_input(&ui->text_input_state, is->hot_font, is->hot_rect,
-				                 is->hot, input->mouse);
-			}
-		} break;
-		default: INVALID_CODE_PATH;
 		}
-	}
-	if (is->type != IT_NONE) {
-		is->last_rect = is->rect;
-		is->active = is->hot;
-		is->rect   = is->hot_rect;
-		is->font   = is->hot_font;
+
+		ui->interaction = ui->hot_interaction;
+	} else {
+		ui->interaction.kind = InteractionKind_Nop;
 	}
 }
 
 function void
 ui_end_interact(BeamformerUI *ui, v2 mouse)
 {
-	InteractionState *is = &ui->interaction;
-	switch (is->type) {
-	case IT_NOP:  break;
-	case IT_MENU: break;
-	case IT_DRAG: break;
-	case IT_SET: {
-		switch (is->active->type) {
-		case VT_B32: { is->active->u.b32 = !is->active->u.b32; } break;
-		case VT_GROUP: {
-			is->active->u.group.expanded = !is->active->u.group.expanded;
-		} break;
-		case VT_CYCLER: {
-			*is->active->u.cycler.state += 1;
-			*is->active->u.cycler.state %= is->active->u.cycler.cycle_length;
-		} break;
-		case VT_SCALE_BAR: {
-			scale_bar_interaction(ui, &is->active->u.scale_bar, mouse);
-		} break;
-		case VT_BEAMFORMER_FRAME_VIEW: {
-			BeamformerFrameView *bv = is->hot->u.generic;
+	Interaction *it = &ui->interaction;
+	switch (it->kind) {
+	case InteractionKind_Nop:{}break;
+	case InteractionKind_Drag:{}break;
+	case InteractionKind_Set:{
+		switch (it->var->type) {
+		case VT_B32:{ it->var->bool32 = !it->var->bool32; }break;
+		case VT_GROUP:{ it->var->group.expanded = !it->var->group.expanded; }break;
+		case VT_SCALE_BAR:{ scale_bar_interaction(ui, &it->var->scale_bar, mouse); }break;
+		case VT_CYCLER:{
+			*it->var->cycler.state += 1;
+			*it->var->cycler.state %= it->var->cycler.cycle_length;
+		}break;
+		case VT_BEAMFORMER_FRAME_VIEW:{
+			BeamformerFrameView *bv = it->var->generic;
 			bv->ruler.state++;
 			switch (bv->ruler.state) {
 			case RS_START:
 			case RS_HOLD: {
-				v2 r_max = add_v2(is->rect.pos, is->rect.size);
-				v2 p = screen_point_to_world_2d(mouse, is->rect.pos, r_max,
+				v2 r_max = add_v2(it->rect.pos, it->rect.size);
+				v2 p = screen_point_to_world_2d(mouse, it->rect.pos, r_max,
 				                                XZ(bv->min_coordinate),
 				                                XZ(bv->max_coordinate));
 				if (bv->ruler.state == RS_START) bv->ruler.start = p;
@@ -2711,80 +2833,83 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 			default: bv->ruler.state = RS_NONE; break;
 			}
 		} break;
-		default: INVALID_CODE_PATH;
+		InvalidDefaultCase;
 		}
 	} break;
-	case IT_SCROLL:  scroll_interaction(is->active, GetMouseWheelMoveV().y); break;
-	case IT_TEXT:    end_text_input(&ui->text_input_state, is->active);      break;
-	default: INVALID_CODE_PATH;
+	case InteractionKind_Menu:{
+		assert(it->var->type == VT_GROUP);
+		VariableGroup *g = &it->var->group;
+		if (g->container) {
+			ui_widget_bring_to_front(&ui->floating_widget_sentinal, g->container);
+		} else {
+			g->container = add_floating_widget(ui, &ui->arena, FloatingWidgetKind_Menu,
+			                                   mouse, it->var);
+		}
+	}break;
+	case InteractionKind_Button:{ ui_button_interaction(ui, it->var); }break;
+	case InteractionKind_Scroll:{ scroll_interaction(it->var, GetMouseWheelMoveV().y); }break;
+	case InteractionKind_Text:{ end_text_input(&ui->text_input_state, it->var); }break;
+	InvalidDefaultCase;
 	}
 
-	b32 menu_child = is->active->parent && is->active->parent->flags & V_MENU;
-
-	/* TODO(rnp): better way of clearing the state when the parent is a menu */
-	if (menu_child) is->active->hover_t = 0;
-
-	if (is->active->flags & V_CAUSES_COMPUTE)
+	if (it->var->flags & V_CAUSES_COMPUTE)
 		ui->flush_params = 1;
-	if (is->active->flags & V_UPDATE_VIEW) {
-		Variable *parent = is->active->parent;
+	if (it->var->flags & V_UPDATE_VIEW) {
+		Variable *parent = it->var->parent;
 		BeamformerFrameView *frame;
 		/* TODO(rnp): more straight forward way of achieving this */
 		if (parent->type == VT_BEAMFORMER_FRAME_VIEW) {
-			frame = parent->u.generic;
+			frame = parent->generic;
 		} else {
-			ASSERT(parent->flags & V_MENU);
-			ASSERT(parent->parent->u.group.first->type == VT_BEAMFORMER_FRAME_VIEW);
-			frame = parent->parent->u.group.first->u.generic;
+			assert(parent->parent->group.first->type == VT_BEAMFORMER_FRAME_VIEW);
+			frame = parent->parent->group.first->generic;
 		}
 		frame->needs_update = 1;
 	}
 
-	if (menu_child && (is->active->flags & V_CLOSES_MENU) == 0) {
-		is->type   = IT_MENU;
-		is->rect   = is->last_rect;
-		is->active = is->active->parent;
-	} else {
-		is->type   = IT_NONE;
-		is->active = 0;
-	}
+	ui->interaction = (Interaction){.kind = InteractionKind_None};
 }
 
 function void
-ui_interact(BeamformerUI *ui, BeamformerInput *input, uv2 window_size)
+ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 {
-	InteractionState *is    = &ui->interaction;
-	b32 mouse_left_pressed  = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
-	b32 mouse_right_pressed = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
-	b32 wheel_moved         = GetMouseWheelMoveV().y != 0;
-	if (mouse_right_pressed || mouse_left_pressed || wheel_moved) {
-		if (is->type != IT_NONE)
-			ui_end_interact(ui, input->mouse);
-		ui_begin_interact(ui, input, wheel_moved, mouse_left_pressed);
+	InteractionKind current = ui->interaction.kind;
+	if (current == InteractionKind_None || current == InteractionKind_Text) {
+		ui->hot_interaction = ui->next_interaction;
+
+		b32 mouse_left_pressed  = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+		b32 mouse_right_pressed = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
+		b32 wheel_moved         = GetMouseWheelMoveV().y != 0;
+		if (mouse_right_pressed || mouse_left_pressed || wheel_moved) {
+			if (ui->interaction.kind != InteractionKind_None)
+				ui_end_interact(ui, input->mouse);
+			ui_begin_interact(ui, input, wheel_moved);
+		}
 	}
 
-	if (IsKeyPressed(KEY_ENTER) && is->type == IT_TEXT)
-		ui_end_interact(ui, input->mouse);
-
-	switch (is->type) {
-	case IT_NONE: break;
-	case IT_NOP:  break;
-	case IT_MENU: break;
-	case IT_SCROLL: ui_end_interact(ui, input->mouse);                    break;
-	case IT_SET:    ui_end_interact(ui, input->mouse);                    break;
-	case IT_TEXT:   update_text_input(&ui->text_input_state, is->active); break;
-	case IT_DRAG: {
+	switch (ui->interaction.kind) {
+	case InteractionKind_Nop:{ ui->interaction.kind = InteractionKind_None; }break;
+	case InteractionKind_None:{}break;
+	case InteractionKind_Text:{
+		update_text_input(&ui->text_input_state, ui->interaction.var);
+		if (IsKeyPressed(KEY_ENTER)) ui_end_interact(ui, input->mouse);
+	}break;
+	case InteractionKind_Drag:{
 		if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
 			ui_end_interact(ui, input->mouse);
 		} else {
-			v2 ws     = {.w = window_size.w, .h = window_size.h};
+			v2 ws     = window_rect.size;
 			v2 dMouse = sub_v2(input->mouse, input->last_mouse);
-			dMouse    = mul_v2(dMouse, (v2){.x = 1.0f / ws.w, .y = 1.0f / ws.h});
 
-			switch (is->active->type) {
-			case VT_UI_REGION_SPLIT: {
+			switch (ui->interaction.var->type) {
+			case VT_UI_FLOATING_WIDGET:{
+				v2 *pos = &ui->interaction.var->floating_widget.rect.pos;
+				*pos = clamp_v2_rect(add_v2(*pos, dMouse), window_rect);
+			}break;
+			case VT_UI_REGION_SPLIT:{
 				f32 min_fraction = 0;
-				RegionSplit *rs = &is->active->u.region_split;
+				dMouse = mul_v2(dMouse, (v2){.x = 1.0f / ws.w, .y = 1.0f / ws.h});
+				RegionSplit *rs = &ui->interaction.var->region_split;
 				switch (rs->direction) {
 				case RSD_VERTICAL: {
 					min_fraction  = (UI_SPLIT_HANDLE_THICK + 0.5 * UI_REGION_PAD) / ws.h;
@@ -2796,14 +2921,15 @@ ui_interact(BeamformerUI *ui, BeamformerInput *input, uv2 window_size)
 				} break;
 				}
 				rs->fraction = CLAMP(rs->fraction, min_fraction, 1 - min_fraction);
-			} break;
-			default: break;
+			}break;
+			default:{}break;
 			}
 		}
 	} break;
+	default:{ ui_end_interact(ui, input->mouse); }break;
 	}
 
-	is->hot = 0;
+	ui->next_interaction = (Interaction){.kind = InteractionKind_None};
 }
 
 function void
@@ -2839,41 +2965,44 @@ ui_init(BeamformerCtx *ctx, Arena store)
 	ui->font       = LoadFontEx("assets/IBMPlexSans-Bold.ttf", 28, 0, 0);
 	ui->small_font = LoadFontEx("assets/IBMPlexSans-Bold.ttf", 20, 0, 0);
 
+	ui->floating_widget_sentinal.parent = &ui->floating_widget_sentinal;
+	ui->floating_widget_sentinal.next   = &ui->floating_widget_sentinal;
+
 	Variable *split = ui->regions = add_ui_split(ui, 0, &ui->arena, s8("UI Root"), 0.4,
 	                                             RSD_HORIZONTAL, ui->font);
-	split->u.region_split.left    = add_ui_split(ui, split, &ui->arena, s8(""), 0.475,
-	                                             RSD_VERTICAL, ui->font);
-	split->u.region_split.right   = add_beamformer_frame_view(ui, split, &ui->arena, FVT_LATEST, 0);
-
-	ui_fill_live_frame_view(ui, split->u.region_split.right->u.view.child->u.generic);
-
-	split = split->u.region_split.left;
-	split->u.region_split.left  = add_beamformer_parameters_view(split, ctx);
-	split->u.region_split.right = add_ui_split(ui, split, &ui->arena, s8(""), 0.22,
+	split->region_split.left    = add_ui_split(ui, split, &ui->arena, s8(""), 0.475,
 	                                           RSD_VERTICAL, ui->font);
-	split = split->u.region_split.right;
+	split->region_split.right   = add_beamformer_frame_view(ui, split, &ui->arena, FVT_LATEST, 0);
 
-	split->u.region_split.left  = add_compute_progress_bar(split, ctx);
-	split->u.region_split.right = add_compute_stats_view(ui, split, &ui->arena,
-	                                                     VT_COMPUTE_LATEST_STATS_VIEW);
+	ui_fill_live_frame_view(ui, split->region_split.right->view.child->generic);
 
-	ComputeStatsView *compute_stats = &split->u.region_split.right->u.group.first->u.compute_stats_view;
+	split = split->region_split.left;
+	split->region_split.left  = add_beamformer_parameters_view(split, ctx);
+	split->region_split.right = add_ui_split(ui, split, &ui->arena, s8(""), 0.22,
+	                                         RSD_VERTICAL, ui->font);
+	split = split->region_split.right;
+
+	split->region_split.left  = add_compute_progress_bar(split, ctx);
+	split->region_split.right = add_compute_stats_view(ui, split, &ui->arena,
+	                                                   VT_COMPUTE_LATEST_STATS_VIEW);
+
+	ComputeStatsView *compute_stats = &split->region_split.right->group.first->compute_stats_view;
 	compute_stats->ctx   = ctx;
 	compute_stats->stats = &ui->latest_compute_stats;
 
 	ctx->ui_read_params = 1;
 
 	/* NOTE(rnp): shrink variable size once this fires */
-	ASSERT(ui->arena.beg - (u8 *)ui < KB(64));
+	assert(ui->arena.beg - (u8 *)ui < KB(64));
 }
 
 function void
 validate_ui_parameters(BeamformerUIParameters *p)
 {
 	if (p->output_min_coordinate[0] > p->output_max_coordinate[0])
-		SWAP(p->output_min_coordinate[0], p->output_max_coordinate[0])
+		swap(p->output_min_coordinate[0], p->output_max_coordinate[0]);
 	if (p->output_min_coordinate[2] > p->output_max_coordinate[2])
-		SWAP(p->output_min_coordinate[2], p->output_max_coordinate[2])
+		swap(p->output_min_coordinate[2], p->output_max_coordinate[2]);
 }
 
 function void
@@ -2896,7 +3025,8 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformFrame *frame_to_draw
 
 	/* NOTE: process interactions first because the user interacted with
 	 * the ui that was presented last frame */
-	ui_interact(ui, input, ctx->window_size);
+	Rect window_rect = {.size = {.w = ctx->window_size.w, .h = ctx->window_size.h}};
+	ui_interact(ui, input, window_rect);
 
 	if (ui->flush_params) {
 		i32 lock = BeamformerSharedMemoryLockKind_Parameters;
@@ -2915,7 +3045,6 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformFrame *frame_to_draw
 	}
 
 	/* NOTE(rnp): can't render to a different framebuffer in the middle of BeginDrawing()... */
-	Rect window_rect = {.size = {.w = ctx->window_size.w, .h = ctx->window_size.h}};
 	update_frame_views(ui, window_rect);
 
 	BeginDrawing();
@@ -2924,9 +3053,9 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformFrame *frame_to_draw
 		glClearNamedFramebufferfv(0, GL_DEPTH, 0, &one);
 
 		draw_ui_regions(ui, window_rect, input->mouse);
-		if (ui->interaction.type == IT_TEXT)
-			draw_active_text_box(ui, ui->interaction.active);
-		if (ui->interaction.type == IT_MENU)
-			draw_active_menu(ui, ui->arena, ui->interaction.active, input->mouse, window_rect);
+		draw_floating_widgets(ui, window_rect, input->mouse);
+
+		if (ui->interaction.kind == InteractionKind_Text)
+			draw_active_text_box(ui, ui->interaction.var);
 	EndDrawing();
 }
