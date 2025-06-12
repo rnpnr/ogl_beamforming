@@ -59,6 +59,9 @@ typedef struct v2_sll {
 	v2             v;
 } v2_sll;
 
+typedef struct BeamformerUI BeamformerUI;
+typedef struct Variable     Variable;
+
 typedef struct {
 	u8   buf[64];
 	i32  count;
@@ -66,6 +69,7 @@ typedef struct {
 	f32  cursor_blink_t;
 	f32  cursor_blink_scale;
 	Font *font, *hot_font;
+	Variable *container;
 } InputState;
 
 typedef enum {
@@ -94,9 +98,6 @@ typedef struct {
 } ScaleBar;
 
 typedef struct { f32 val, scale; } scaled_f32;
-
-typedef struct BeamformerUI BeamformerUI;
-typedef struct Variable Variable;
 
 typedef enum {
 	RSD_VERTICAL,
@@ -138,6 +139,7 @@ typedef enum {
 	VT_COMPUTE_LATEST_STATS_VIEW,
 	VT_COMPUTE_PROGRESS_BAR,
 	VT_SCALE_BAR,
+	VT_TEXT_BOX,
 	VT_UI_BUTTON,
 	VT_UI_FLOATING_WIDGET,
 	VT_UI_REGION_SPLIT,
@@ -918,14 +920,17 @@ add_button(BeamformerUI *ui, Variable *group, Arena *arena, s8 name, UIButtonID 
 }
 
 function Variable *
-add_floating_widget(BeamformerUI *ui, Arena *arena, FloatingWidgetKind kind, v2 at, Variable *reference)
+add_floating_widget(BeamformerUI *ui, Arena *arena, FloatingWidgetKind kind, v2 at,
+                    Variable *reference, b32 closable)
 {
 	Variable *result = add_variable(ui, 0, arena, s8(""), 0, VT_UI_FLOATING_WIDGET, ui->small_font);
 	result->floating_widget.rect.pos  = at;
 	result->floating_widget.kind      = kind;
 	result->floating_widget.reference = reference;
-	result->floating_widget.close     = add_button(ui, result, arena, s8(""), UI_BID_CLOSE_WIDGET,
-	                                               0, ui->small_font);
+	if (closable) {
+		result->floating_widget.close = add_button(ui, result, arena, s8(""),
+		                                           UI_BID_CLOSE_WIDGET, 0, ui->small_font);
+	}
 	result->parent = &ui->floating_widget_sentinal;
 	result->next   = ui->floating_widget_sentinal.next;
 	result->next->parent = result;
@@ -2238,41 +2243,6 @@ draw_ui_view(BeamformerUI *ui, Variable *ui_view, Rect r, v2 mouse, TextSpec tex
 	view->needed_height = size.y;
 }
 
-function void
-draw_active_text_box(BeamformerUI *ui, Variable *var)
-{
-	InputState *is = &ui->text_input_state;
-	Rect box       = ui->interaction.rect;
-	Font *font     = is->font;
-
-	s8 text          = {.len = is->count, .data = is->buf};
-	v2 text_size     = measure_text(*font, text);
-	v2 text_position = {.x = box.pos.x, .y = box.pos.y + (box.size.h - text_size.h) / 2};
-
-	f32 cursor_width   = (is->cursor == is->count) ? 0.55 * font->baseSize : 4;
-	f32 cursor_offset  = measure_text(*font, (s8){.data = text.data, .len = is->cursor}).w;
-	cursor_offset     += text_position.x;
-
-	box.size.w = MAX(box.size.w, text_size.w + cursor_width);
-	Rect background = extend_rect_centered(box, (v2){.x = 12, .y = 8});
-	box = extend_rect_centered(box, (v2){.x = 8, .y = 4});
-
-	Rect cursor = {
-		.pos  = {.x = cursor_offset, .y = text_position.y},
-		.size = {.w = cursor_width,  .h = text_size.h},
-	};
-
-	v4 cursor_colour = FOCUSED_COLOUR;
-	cursor_colour.a  = CLAMP01(is->cursor_blink_t);
-
-	TextSpec text_spec = {.font = font, .colour = lerp_v4(FG_COLOUR, HOVERED_COLOUR, var->hover_t)};
-
-	DrawRectangleRounded(background.rl, 0.2, 0, fade(BLACK, 0.8));
-	DrawRectangleRounded(box.rl, 0.2, 0, colour_from_normalized(BG_COLOUR));
-	draw_text(text, text_position, &text_spec);
-	DrawRectanglePro(cursor.rl, (Vector2){0}, 0, colour_from_normalized(cursor_colour));
-}
-
 function Rect
 draw_menu(BeamformerUI *ui, Arena arena, Variable *menu, Font *font, v2 at, v2 mouse, Rect window)
 {
@@ -2443,21 +2413,25 @@ draw_floating_widget_container(BeamformerUI *ui, Variable *var, v2 mouse, Rect b
 			fw->rect.pos.x -= delta_x;
 			fw->rect.pos.x  = MAX(0, fw->rect.pos.x);
 		}
-		Rect container = fw->rect;
-		container.pos.y  -= 5 + line_height;
-		container.size.y += 2 + line_height;
-		Rect handle = {{container.pos, (v2){.x = container.size.w, .y = 2 + line_height}}};
-		Rect close;
-		hover_interaction(ui, mouse, auto_interaction(container, var));
-		cut_rect_horizontal(handle, handle.size.w - handle.size.h - 6, 0, &close);
-		close.size.w = close.size.h;
 
+		Rect container = fw->rect;
+		if (fw->close) {
+			container.pos.y  -= 5 + line_height;
+			container.size.y += 2 + line_height;
+			Rect handle = {{container.pos, (v2){.x = container.size.w, .y = 2 + line_height}}};
+			Rect close;
+			hover_interaction(ui, mouse, auto_interaction(container, var));
+			cut_rect_horizontal(handle, handle.size.w - handle.size.h - 6, 0, &close);
+			close.size.w = close.size.h;
+			DrawRectangleRounded(handle.rl, 0.1, 0, colour_from_normalized(BG_COLOUR));
+			DrawRectangleRoundedLinesEx(handle.rl, 0.2, 0, 2, BLACK);
+			draw_close_button(ui, fw->close, mouse, close, (v2){{0.45, 0.45}});
+		} else {
+			hover_interaction(ui, mouse, auto_interaction(container, var));
+		}
 		f32 roundness = 12.0f / fw->rect.size.y;
-		DrawRectangleRounded(handle.rl, 0.1, 0, colour_from_normalized(BG_COLOUR));
-		DrawRectangleRoundedLinesEx(handle.rl, 0.2, 0, 2, BLACK);
 		DrawRectangleRounded(fw->rect.rl, roundness / 2, 0, colour_from_normalized(BG_COLOUR));
 		DrawRectangleRoundedLinesEx(fw->rect.rl, roundness, 0, 2, BLACK);
-		draw_close_button(ui, fw->close, mouse, close, (v2){{0.45, 0.45}});
 	}
 }
 
@@ -2472,17 +2446,40 @@ draw_floating_widgets(BeamformerUI *ui, Rect window_rect, v2 mouse)
 		FloatingWidget *fw = &var->floating_widget;
 		draw_floating_widget_container(ui, var, mouse, window_rect);
 
-		Rect draw_rect = {0};
 		switch (fw->kind) {
 		case FloatingWidgetKind_Menu:{
-			draw_rect = draw_menu(ui, ui->arena, fw->reference, &ui->small_font,
+			fw->rect = draw_menu(ui, ui->arena, fw->reference, &ui->small_font,
 			                      fw->rect.pos, mouse, window_rect);
 		}break;
 		case FloatingWidgetKind_TextBox:{
+			InputState *is = &ui->text_input_state;
+
+			f32 cursor_width = (is->cursor == is->count) ? 0.55 * is->font->baseSize : 4;
+			s8 text      = {.len = is->count, .data = is->buf};
+			v2 text_size = measure_text(*is->font, text);
+
+			f32 text_pad = 4.0f;
+			f32 desired_width = text_pad + text_size.w + cursor_width;
+			fw->rect.size = (v2){{MAX(desired_width, fw->rect.size.w), text_size.h}};
+
+			v2 text_position   = {{fw->rect.pos.x + text_pad / 2, fw->rect.pos.y}};
+			f32 cursor_offset  = measure_text(*is->font, (s8){is->cursor, text.data}).w;
+			cursor_offset     += text_position.x;
+
+			Rect cursor;
+			cursor.pos  = (v2){{cursor_offset, text_position.y}};
+			cursor.size = (v2){{cursor_width,  text_size.h}};
+
+			v4 cursor_colour = FOCUSED_COLOUR;
+			cursor_colour.a  = CLAMP01(is->cursor_blink_t);
+			v4 text_colour   = lerp_v4(FG_COLOUR, HOVERED_COLOUR, fw->reference->hover_t);
+
+			TextSpec text_spec = {.font = is->font, .colour = text_colour};
+			draw_text(text, text_position, &text_spec);
+			DrawRectanglePro(cursor.rl, (Vector2){0}, 0, colour_from_normalized(cursor_colour));
 		}break;
 		InvalidDefaultCase;
 		}
-		fw->rect = draw_rect;
 	}
 }
 
@@ -2523,12 +2520,14 @@ scroll_interaction(Variable *var, f32 delta)
 }
 
 function void
-begin_text_input(InputState *is, Rect r, Variable *var, v2 mouse)
+begin_text_input(InputState *is, Rect r, Variable *container, v2 mouse)
 {
+	assert(container->type == VT_UI_FLOATING_WIDGET);
 	Font *font = is->font = is->hot_font;
 	Stream s = {.cap = countof(is->buf), .data = is->buf};
-	stream_append_variable(&s, var);
+	stream_append_variable(&s, container->floating_widget.reference);
 	is->count = s.widx;
+	is->container = container;
 
 	/* NOTE: extra offset to help with putting a cursor at idx 0 */
 	#define TEXT_HALF_CHAR_WIDTH 10
@@ -2568,10 +2567,10 @@ end_text_input(InputState *is, Variable *var)
 	}
 }
 
-function void
+function b32
 update_text_input(InputState *is, Variable *var)
 {
-	ASSERT(is->cursor != -1);
+	assert(is->cursor != -1);
 
 	is->cursor_blink_t += is->cursor_blink_scale * dt_for_frame;
 	if (is->cursor_blink_t >= 1) is->cursor_blink_scale = -1.5f;
@@ -2615,6 +2614,9 @@ update_text_input(InputState *is, Variable *var)
 		         is->count - is->cursor - 1);
 		is->count--;
 	}
+
+	b32 result = IsKeyPressed(KEY_ENTER);
+	return result;
 }
 
 function void
@@ -2697,11 +2699,14 @@ ui_close_widget(BeamformerUI *ui, Variable *widget)
 		fw->reference->group.expanded  = 0;
 		fw->reference->group.container = 0;
 	}break;
+	case FloatingWidgetKind_TextBox:{
+		end_text_input(&ui->text_input_state, fw->reference);
+	}break;
 	InvalidDefaultCase;
 	}
 	widget->parent->next = widget->next;
 	widget->next->parent = widget->parent;
-	SLLPush(widget->floating_widget.close, ui->variable_freelist);
+	if (fw->close) SLLPush(fw->close, ui->variable_freelist);
 	SLLPush(widget, ui->variable_freelist);
 }
 
@@ -2761,7 +2766,16 @@ ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll)
 			case VT_UI_BUTTON:{ hot->kind = InteractionKind_Button; }break;
 			case VT_GROUP:{ hot->kind = InteractionKind_Set; }break;
 			case VT_UI_FLOATING_WIDGET:{
-				hot->kind = InteractionKind_Drag;
+				FloatingWidget *fw = &hot->var->floating_widget;
+				switch (fw->kind) {
+				case FloatingWidgetKind_Menu:{
+					hot->kind = InteractionKind_Drag;
+				}break;
+				case FloatingWidgetKind_TextBox:{
+					hot->kind = InteractionKind_Text;
+					begin_text_input(&ui->text_input_state, hot->rect, hot->var, input->mouse);
+				}break;
+				}
 				ui_widget_bring_to_front(&ui->floating_widget_sentinal, hot->var);
 			}break;
 			case VT_UI_VIEW:{
@@ -2787,8 +2801,11 @@ ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll)
 					hot->kind = InteractionKind_Scroll;
 				} else if (hot->var->flags & V_TEXT) {
 					hot->kind = InteractionKind_Text;
-					begin_text_input(&ui->text_input_state, hot->rect,
-					                 hot->var, input->mouse);
+					Variable *w = add_floating_widget(ui, &ui->arena,
+					                                  FloatingWidgetKind_TextBox,
+					                                  hot->rect.pos, hot->var, 0);
+					w->floating_widget.rect = hot->rect;
+					begin_text_input(&ui->text_input_state, hot->rect, w, input->mouse);
 				}
 			}break;
 			InvalidDefaultCase;
@@ -2805,6 +2822,7 @@ function void
 ui_end_interact(BeamformerUI *ui, v2 mouse)
 {
 	Interaction *it = &ui->interaction;
+	b32 start_compute = (it->var->flags & V_CAUSES_COMPUTE) != 0;
 	switch (it->kind) {
 	case InteractionKind_Nop:{}break;
 	case InteractionKind_Drag:{}break;
@@ -2822,20 +2840,21 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 			bv->ruler.state++;
 			switch (bv->ruler.state) {
 			case RS_START:
-			case RS_HOLD: {
+			case RS_HOLD:
+			{
 				v2 r_max = add_v2(it->rect.pos, it->rect.size);
 				v2 p = screen_point_to_world_2d(mouse, it->rect.pos, r_max,
 				                                XZ(bv->min_coordinate),
 				                                XZ(bv->max_coordinate));
 				if (bv->ruler.state == RS_START) bv->ruler.start = p;
 				else                             bv->ruler.end   = p;
-			} break;
-			default: bv->ruler.state = RS_NONE; break;
+			}break;
+			default:{ bv->ruler.state = RS_NONE; }break;
 			}
-		} break;
+		}break;
 		InvalidDefaultCase;
 		}
-	} break;
+	}break;
 	case InteractionKind_Menu:{
 		assert(it->var->type == VT_GROUP);
 		VariableGroup *g = &it->var->group;
@@ -2843,17 +2862,16 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 			ui_widget_bring_to_front(&ui->floating_widget_sentinal, g->container);
 		} else {
 			g->container = add_floating_widget(ui, &ui->arena, FloatingWidgetKind_Menu,
-			                                   mouse, it->var);
+			                                   mouse, it->var, 1);
 		}
 	}break;
 	case InteractionKind_Button:{ ui_button_interaction(ui, it->var); }break;
 	case InteractionKind_Scroll:{ scroll_interaction(it->var, GetMouseWheelMoveV().y); }break;
-	case InteractionKind_Text:{ end_text_input(&ui->text_input_state, it->var); }break;
+	case InteractionKind_Text:{ ui_close_widget(ui, ui->text_input_state.container); }break;
 	InvalidDefaultCase;
 	}
 
-	if (it->var->flags & V_CAUSES_COMPUTE)
-		ui->flush_params = 1;
+	if (start_compute) ui->flush_params = 1;
 	if (it->var->flags & V_UPDATE_VIEW) {
 		Variable *parent = it->var->parent;
 		BeamformerFrameView *frame;
@@ -2870,6 +2888,7 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 	ui->interaction = (Interaction){.kind = InteractionKind_None};
 }
 
+
 function void
 ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 {
@@ -2881,8 +2900,12 @@ ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 		b32 mouse_right_pressed = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
 		b32 wheel_moved         = GetMouseWheelMoveV().y != 0;
 		if (mouse_right_pressed || mouse_left_pressed || wheel_moved) {
-			if (ui->interaction.kind != InteractionKind_None)
-				ui_end_interact(ui, input->mouse);
+			/* NOTE(rnp): avoid ending when user clicks existing text box */
+			if (current == InteractionKind_Text) {
+				Interaction text_box = auto_interaction({0}, ui->text_input_state.container);
+				if (!interactions_equal(text_box, ui->hot_interaction))
+					ui_end_interact(ui, input->mouse);
+			}
 			ui_begin_interact(ui, input, wheel_moved);
 		}
 	}
@@ -2891,8 +2914,8 @@ ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 	case InteractionKind_Nop:{ ui->interaction.kind = InteractionKind_None; }break;
 	case InteractionKind_None:{}break;
 	case InteractionKind_Text:{
-		update_text_input(&ui->text_input_state, ui->interaction.var);
-		if (IsKeyPressed(KEY_ENTER)) ui_end_interact(ui, input->mouse);
+		if (update_text_input(&ui->text_input_state, ui->interaction.var))
+			ui_end_interact(ui, input->mouse);
 	}break;
 	case InteractionKind_Drag:{
 		if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
@@ -3054,8 +3077,5 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformFrame *frame_to_draw
 
 		draw_ui_regions(ui, window_rect, input->mouse);
 		draw_floating_widgets(ui, window_rect, input->mouse);
-
-		if (ui->interaction.kind == InteractionKind_Text)
-			draw_active_text_box(ui, ui->interaction.var);
 	EndDrawing();
 }
