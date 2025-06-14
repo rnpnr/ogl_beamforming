@@ -73,9 +73,9 @@ typedef struct {
 } InputState;
 
 typedef enum {
-	RS_NONE,
-	RS_START,
-	RS_HOLD,
+	RulerState_None,
+	RulerState_Start,
+	RulerState_Hold,
 } RulerState;
 
 typedef struct {
@@ -307,6 +307,7 @@ typedef enum {
 	InteractionKind_Button,
 	InteractionKind_Drag,
 	InteractionKind_Menu,
+	InteractionKind_Ruler,
 	InteractionKind_Scroll,
 	InteractionKind_Set,
 	InteractionKind_Text,
@@ -1527,6 +1528,13 @@ interactions_equal(Interaction a, Interaction b)
 }
 
 function b32
+interaction_is_sticky(Interaction a)
+{
+	b32 result = a.kind == InteractionKind_Text || a.kind == InteractionKind_Ruler;
+	return result;
+}
+
+function b32
 interaction_is_hot(BeamformerUI *ui, Interaction a)
 {
 	b32 result = interactions_equal(ui->hot_interaction, a);
@@ -1853,6 +1861,35 @@ draw_table(BeamformerUI *ui, Arena arena, Table *table, Rect draw_rect, TextSpec
 }
 
 function void
+draw_view_ruler(BeamformerFrameView *view, Arena a, Rect view_rect, TextSpec ts)
+{
+	v2 vr_max_p = add_v2(view_rect.pos, view_rect.size);
+	v2 start_p  = world_point_to_screen_2d(view->ruler.start, XZ(view->min_coordinate),
+	                                       XZ(view->max_coordinate), view_rect.pos, vr_max_p);
+	v2 end_p    = world_point_to_screen_2d(view->ruler.end, XZ(view->min_coordinate),
+		                               XZ(view->max_coordinate), view_rect.pos, vr_max_p);
+
+	Color rl_colour = colour_from_normalized(ts.colour);
+	DrawCircleV(start_p.rl, 3, rl_colour);
+	DrawLineEx(end_p.rl, start_p.rl, 2, rl_colour);
+	DrawCircleV(end_p.rl, 3, rl_colour);
+
+	Stream buf = arena_stream(a);
+	stream_append_f64(&buf, 1e3 * magnitude_v2(sub_v2(view->ruler.end, view->ruler.start)), 100);
+	stream_append_s8(&buf, s8(" mm"));
+
+	v2 txt_p = start_p;
+	v2 txt_s = measure_text(*ts.font, stream_to_s8(&buf));
+	v2 pixel_delta = sub_v2(start_p, end_p);
+	if (pixel_delta.y < 0) txt_p.y -= txt_s.y;
+	if (pixel_delta.x < 0) txt_p.x -= txt_s.x;
+	if (txt_p.x < view_rect.pos.x) txt_p.x = view_rect.pos.x;
+	if (txt_p.x + txt_s.x > vr_max_p.x) txt_p.x -= (txt_p.x + txt_s.x) - vr_max_p.x;
+
+	draw_text(stream_to_s8(&buf), txt_p, &ts);
+}
+
+function void
 draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect display_rect, v2 mouse)
 {
 	assert(var->type == VT_BEAMFORMER_FRAME_VIEW);
@@ -1981,39 +2018,7 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 		text_spec.limits.size.w += 16;
 	}
 
-	if (view->ruler.state != RS_NONE) {
-		v2 vr_max_p = add_v2(vr.pos, vr.size);
-		v2 start_p = world_point_to_screen_2d(view->ruler.start, XZ(view->min_coordinate),
-		                                      XZ(view->max_coordinate), vr.pos, vr_max_p);
-		v2 end_p   = clamp_v2_rect(mouse, vr);
-
-		if (view->ruler.state == RS_HOLD) {
-			end_p = world_point_to_screen_2d(view->ruler.end, XZ(view->min_coordinate),
-			                                 XZ(view->max_coordinate), vr.pos, vr_max_p);
-		}
-
-		v2 start_p_world = view->ruler.start;
-		v2 end_p_world   = screen_point_to_world_2d(end_p, vr.pos, vr_max_p,
-		                                            XZ(view->min_coordinate),
-		                                            XZ(view->max_coordinate));
-		v2 pixel_delta = sub_v2(start_p, end_p);
-		v2 m_delta     = sub_v2(end_p_world, start_p_world);
-
-		Color rl_colour = colour_from_normalized(text_spec.colour);
-		DrawCircleV(start_p.rl, 3, rl_colour);
-		DrawLineEx(end_p.rl, start_p.rl, 2, rl_colour);
-		DrawCircleV(end_p.rl, 3, rl_colour);
-
-		Stream buf = arena_stream(a);
-		stream_append_f64(&buf, 1e3 * magnitude_v2(m_delta), 100);
-		stream_append_s8(&buf, s8(" mm"));
-
-		v2 txt_p = start_p;
-		v2 txt_s = measure_text(*text_spec.font, stream_to_s8(&buf));
-		if (pixel_delta.y < 0) txt_p.y -= txt_s.y;
-		if (pixel_delta.x < 0) txt_p.x -= txt_s.x;
-		draw_text(stream_to_s8(&buf), txt_p, &text_spec);
-	}
+	if (view->ruler.state != RulerState_None) draw_view_ruler(view, a, vr, text_spec);
 
 	Table *table = table_new(&a, 3, 3, (TextAlignment []){TA_LEFT, TA_LEFT, TA_LEFT});
 	table_push_parameter_row(table, &a, view->gamma.name,     &view->gamma,     s8(""));
@@ -2782,9 +2787,27 @@ ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll)
 				if (scroll) hot->kind = InteractionKind_Scroll;
 				else        hot->kind = InteractionKind_Nop;
 			}break;
-			case VT_BEAMFORMER_FRAME_VIEW:
-			case VT_CYCLER:
-			{
+			case VT_BEAMFORMER_FRAME_VIEW:{
+				if (scroll) {
+					hot->kind = InteractionKind_Scroll;
+				} else {
+					hot->kind = InteractionKind_Nop;
+					BeamformerFrameView *bv = hot->var->generic;
+					switch (++bv->ruler.state) {
+					case RulerState_Start:{
+						hot->kind = InteractionKind_Ruler;
+						v2 r_max = add_v2(hot->rect.pos, hot->rect.size);
+						v2 p = screen_point_to_world_2d(input->mouse, hot->rect.pos, r_max,
+						                                XZ(bv->min_coordinate),
+						                                XZ(bv->max_coordinate));
+						bv->ruler.start = p;
+					}break;
+					case RulerState_Hold:{}break;
+					default:{ bv->ruler.state = RulerState_None; }break;
+					}
+				}
+			}break;
+			case VT_CYCLER:{
 				if (scroll) hot->kind = InteractionKind_Scroll;
 				else        hot->kind = InteractionKind_Set;
 			}break;
@@ -2835,23 +2858,6 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 			*it->var->cycler.state += 1;
 			*it->var->cycler.state %= it->var->cycler.cycle_length;
 		}break;
-		case VT_BEAMFORMER_FRAME_VIEW:{
-			BeamformerFrameView *bv = it->var->generic;
-			bv->ruler.state++;
-			switch (bv->ruler.state) {
-			case RS_START:
-			case RS_HOLD:
-			{
-				v2 r_max = add_v2(it->rect.pos, it->rect.size);
-				v2 p = screen_point_to_world_2d(mouse, it->rect.pos, r_max,
-				                                XZ(bv->min_coordinate),
-				                                XZ(bv->max_coordinate));
-				if (bv->ruler.state == RS_START) bv->ruler.start = p;
-				else                             bv->ruler.end   = p;
-			}break;
-			default:{ bv->ruler.state = RS_NONE; }break;
-			}
-		}break;
 		InvalidDefaultCase;
 		}
 	}break;
@@ -2864,6 +2870,10 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 			g->container = add_floating_widget(ui, &ui->arena, FloatingWidgetKind_Menu,
 			                                   mouse, it->var, 1);
 		}
+	}break;
+	case InteractionKind_Ruler:{
+		assert(it->var->type == VT_BEAMFORMER_FRAME_VIEW);
+		((BeamformerFrameView *)it->var->generic)->ruler.state = RulerState_None;
 	}break;
 	case InteractionKind_Button:{ ui_button_interaction(ui, it->var); }break;
 	case InteractionKind_Scroll:{ scroll_interaction(it->var, GetMouseWheelMoveV().y); }break;
@@ -2888,34 +2898,56 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 	ui->interaction = (Interaction){.kind = InteractionKind_None};
 }
 
+function void
+ui_sticky_interaction_check_end(BeamformerUI *ui, v2 mouse)
+{
+	Interaction *it = &ui->interaction;
+	switch (it->kind) {
+	case InteractionKind_Ruler:{
+		if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT) || !point_in_rect(mouse, it->rect))
+			ui_end_interact(ui, mouse);
+	}break;
+	case InteractionKind_Text:{
+		Interaction text_box = auto_interaction({{0}}, ui->text_input_state.container);
+		if (!interactions_equal(text_box, ui->hot_interaction))
+			ui_end_interact(ui, mouse);
+	}break;
+	InvalidDefaultCase;
+	}
+}
 
 function void
 ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 {
-	InteractionKind current = ui->interaction.kind;
-	if (current == InteractionKind_None || current == InteractionKind_Text) {
+	Interaction *it = &ui->interaction;
+	if (it->kind == InteractionKind_None || interaction_is_sticky(*it)) {
 		ui->hot_interaction = ui->next_interaction;
 
 		b32 mouse_left_pressed  = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
 		b32 mouse_right_pressed = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
 		b32 wheel_moved         = GetMouseWheelMoveV().y != 0;
 		if (mouse_right_pressed || mouse_left_pressed || wheel_moved) {
-			/* NOTE(rnp): avoid ending when user clicks existing text box */
-			if (current == InteractionKind_Text) {
-				Interaction text_box = auto_interaction({0}, ui->text_input_state.container);
-				if (!interactions_equal(text_box, ui->hot_interaction))
-					ui_end_interact(ui, input->mouse);
-			}
+			if (it->kind != InteractionKind_None)
+				ui_sticky_interaction_check_end(ui, input->mouse);
 			ui_begin_interact(ui, input, wheel_moved);
 		}
 	}
 
-	switch (ui->interaction.kind) {
-	case InteractionKind_Nop:{ ui->interaction.kind = InteractionKind_None; }break;
+	switch (it->kind) {
+	case InteractionKind_Nop:{ it->kind = InteractionKind_None; }break;
 	case InteractionKind_None:{}break;
 	case InteractionKind_Text:{
-		if (update_text_input(&ui->text_input_state, ui->interaction.var))
+		if (update_text_input(&ui->text_input_state, it->var))
 			ui_end_interact(ui, input->mouse);
+	}break;
+	case InteractionKind_Ruler:{
+		assert(it->var->type == VT_BEAMFORMER_FRAME_VIEW);
+		BeamformerFrameView *bv = it->var->generic;
+		v2 r_max = add_v2(it->rect.pos, it->rect.size);
+		v2 mouse = clamp_v2_rect(input->mouse, it->rect);
+		bv->ruler.end = screen_point_to_world_2d(mouse, it->rect.pos, r_max,
+		                                         XZ(bv->min_coordinate),
+		                                         XZ(bv->max_coordinate));
 	}break;
 	case InteractionKind_Drag:{
 		if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
