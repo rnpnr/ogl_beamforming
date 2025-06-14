@@ -139,10 +139,10 @@ typedef enum {
 	VT_COMPUTE_LATEST_STATS_VIEW,
 	VT_COMPUTE_PROGRESS_BAR,
 	VT_SCALE_BAR,
-	VT_TEXT_BOX,
 	VT_UI_BUTTON,
-	VT_UI_FLOATING_WIDGET,
+	VT_UI_MENU,
 	VT_UI_REGION_SPLIT,
+	VT_UI_TEXT_BOX,
 	VT_UI_VIEW,
 } VariableType;
 
@@ -163,16 +163,22 @@ typedef struct {
 } VariableGroup;
 
 typedef enum {
-	UI_VIEW_CUSTOM_TEXT = 1 << 0,
+	UIViewFlag_CustomText = 1 << 0,
+	UIViewFlag_Floating   = 1 << 1,
 } UIViewFlags;
 
 typedef struct {
-	Variable    *child;
-	Variable    *close;
-	Variable    *menu;
-	f32          needed_height;
-	f32          offset;
-	UIViewFlags  flags;
+	Variable *child;
+	Variable *close;
+	Variable *menu;
+	union {
+		struct {
+			v2 desired_size;
+			v2 offset;
+		};
+		Rect rect;
+	};
+	UIViewFlags flags;
 } UIView;
 
 /* X(id, text) */
@@ -187,8 +193,7 @@ typedef struct {
 
 #define X(id, text) UI_BID_ ##id,
 typedef enum {
-	UI_BID_CLOSE_VIEW,
-	UI_BID_CLOSE_WIDGET,
+	UI_BID_VIEW_CLOSE,
 	GLOBAL_MENU_BUTTONS
 	FRAME_VIEW_BUTTONS
 } UIButtonID;
@@ -210,19 +215,6 @@ typedef struct {
 } BeamformerVariable;
 
 typedef enum {
-	FloatingWidgetKind_Menu,
-	FloatingWidgetKind_TextBox,
-} FloatingWidgetKind;
-
-/* TODO(rnp): collapse with UIView? */
-typedef struct {
-	Variable *reference;
-	Variable *close;
-	Rect rect;
-	FloatingWidgetKind kind;
-} FloatingWidget;
-
-typedef enum {
 	V_INPUT          = 1 << 0,
 	V_TEXT           = 1 << 1,
 	V_RADIO_BUTTON   = 1 << 2,
@@ -237,7 +229,6 @@ struct Variable {
 		BeamformerVariable  beamformer_variable;
 		ComputeProgressBar  compute_progress_bar;
 		ComputeStatsView    compute_stats_view;
-		FloatingWidget      floating_widget;
 		RegionSplit         region_split;
 		ScaleBar            scale_bar;
 		UIButtonID          button;
@@ -921,25 +912,6 @@ add_button(BeamformerUI *ui, Variable *group, Arena *arena, s8 name, UIButtonID 
 }
 
 function Variable *
-add_floating_widget(BeamformerUI *ui, Arena *arena, FloatingWidgetKind kind, v2 at,
-                    Variable *reference, b32 closable)
-{
-	Variable *result = add_variable(ui, 0, arena, s8(""), 0, VT_UI_FLOATING_WIDGET, ui->small_font);
-	result->floating_widget.rect.pos  = at;
-	result->floating_widget.kind      = kind;
-	result->floating_widget.reference = reference;
-	if (closable) {
-		result->floating_widget.close = add_button(ui, result, arena, s8(""),
-		                                           UI_BID_CLOSE_WIDGET, 0, ui->small_font);
-	}
-	result->parent = &ui->floating_widget_sentinal;
-	result->next   = ui->floating_widget_sentinal.next;
-	result->next->parent = result;
-	ui->floating_widget_sentinal.next = result;
-	return result;
-}
-
-function Variable *
 add_ui_split(BeamformerUI *ui, Variable *parent, Arena *arena, s8 name, f32 fraction,
              RegionSplitDirection direction, Font font)
 {
@@ -961,17 +933,32 @@ add_global_menu(BeamformerUI *ui, Arena *arena, Variable *parent)
 }
 
 function Variable *
-add_ui_view(BeamformerUI *ui, Variable *parent, Arena *arena, s8 name, u32 view_flags, b32 closable)
+add_ui_view(BeamformerUI *ui, Variable *parent, Arena *arena, s8 name, u32 view_flags, b32 menu, b32 closable)
 {
 	Variable *result = add_variable(ui, parent, arena, name, 0, VT_UI_VIEW, ui->small_font);
 	UIView   *view   = &result->view;
 	view->flags      = view_flags;
-	view->menu       = add_global_menu(ui, arena, result);
+	if (menu) view->menu = add_global_menu(ui, arena, result);
 	if (closable) {
-		view->close = add_button(ui, 0, arena, s8(""), UI_BID_CLOSE_VIEW, 0, ui->small_font);
+		view->close = add_button(ui, 0, arena, s8(""), UI_BID_VIEW_CLOSE, 0, ui->small_font);
 		/* NOTE(rnp): we do this explicitly so that close doesn't end up in the view group */
 		view->close->parent = result;
 	}
+	return result;
+}
+
+function Variable *
+add_floating_view(BeamformerUI *ui, Arena *arena, VariableType type, v2 at, Variable *child, b32 closable)
+{
+	Variable *result = add_ui_view(ui, 0, arena, s8(""), UIViewFlag_Floating, 0, closable);
+	result->type          = type;
+	result->view.rect.pos = at;
+	result->view.child    = child;
+
+	result->parent = &ui->floating_widget_sentinal;
+	result->next   = ui->floating_widget_sentinal.next;
+	result->next->parent = result;
+	ui->floating_widget_sentinal.next = result;
 	return result;
 }
 
@@ -999,7 +986,7 @@ add_beamformer_parameters_view(Variable *parent, BeamformerCtx *ctx)
 	v2 v2_inf = {.x = -F32_INFINITY, .y = F32_INFINITY};
 
 	/* TODO(rnp): this can be closable once we have a way of opening new views */
-	Variable *result = add_ui_view(ui, parent, &ui->arena, s8("Parameters"), 0, 0);
+	Variable *result = add_ui_view(ui, parent, &ui->arena, s8("Parameters"), 0, 1, 0);
 	Variable *group  = result->view.child = add_variable(ui, result, &ui->arena, s8(""), 0,
 	                                                     VT_GROUP, ui->font);
 
@@ -1064,7 +1051,7 @@ add_beamformer_frame_view(BeamformerUI *ui, Variable *parent, Arena *arena,
                           BeamformerFrameViewType type, b32 closable)
 {
 	/* TODO(rnp): this can be always closable once we have a way of opening new views */
-	Variable *result = add_ui_view(ui, parent, arena, s8(""), UI_VIEW_CUSTOM_TEXT, closable);
+	Variable *result = add_ui_view(ui, parent, arena, s8(""), UIViewFlag_CustomText, 1, closable);
 	Variable *var = result->view.child = add_variable(ui, result, arena, s8(""), 0,
 	                                                  VT_BEAMFORMER_FRAME_VIEW, ui->small_font);
 
@@ -1144,7 +1131,7 @@ add_compute_progress_bar(Variable *parent, BeamformerCtx *ctx)
 {
 	BeamformerUI *ui = ctx->ui;
 	/* TODO(rnp): this can be closable once we have a way of opening new views */
-	Variable *result = add_ui_view(ui, parent, &ui->arena, s8(""), UI_VIEW_CUSTOM_TEXT, 0);
+	Variable *result = add_ui_view(ui, parent, &ui->arena, s8(""), UIViewFlag_CustomText, 1, 0);
 	result->view.child = add_variable(ui, result, &ui->arena, s8(""), 0,
 	                                  VT_COMPUTE_PROGRESS_BAR, ui->small_font);
 	ComputeProgressBar *bar = &result->view.child->compute_progress_bar;
@@ -1158,7 +1145,7 @@ function Variable *
 add_compute_stats_view(BeamformerUI *ui, Variable *parent, Arena *arena, VariableType type)
 {
 	/* TODO(rnp): this can be closable once we have a way of opening new views */
-	Variable *result   = add_ui_view(ui, parent, arena, s8(""), UI_VIEW_CUSTOM_TEXT, 0);
+	Variable *result   = add_ui_view(ui, parent, arena, s8(""), UIViewFlag_CustomText, 1, 0);
 	result->view.child = add_variable(ui, result, &ui->arena, s8(""), 0, type, ui->small_font);
 	return result;
 }
@@ -1597,7 +1584,7 @@ draw_title_bar(BeamformerUI *ui, Arena arena, Variable *ui_view, Rect r, v2 mous
 	UIView *view = &ui_view->view;
 
 	s8 title = ui_view->name;
-	if (view->flags & UI_VIEW_CUSTOM_TEXT) {
+	if (view->flags & UIViewFlag_CustomText) {
 		Stream buf = arena_stream(arena);
 		push_custom_view_title(&buf, ui_view->group.first);
 		title = arena_stream_commit(&arena, &buf);
@@ -2214,13 +2201,13 @@ draw_ui_view(BeamformerUI *ui, Variable *ui_view, Rect r, v2 mouse, TextSpec tex
 	ASSERT(ui_view->type == VT_UI_VIEW);
 	UIView *view = &ui_view->view;
 
-	if (view->needed_height - r.size.h < view->offset)
-		view->offset = view->needed_height - r.size.h;
+	if (view->desired_size.h - r.size.h < view->offset.h)
+		view->offset.h = view->desired_size.h - r.size.h;
 
-	if (view->needed_height - r.size.h < 0)
-		view->offset = 0;
+	if (view->desired_size.h - r.size.h < 0)
+		view->offset.h = 0;
 
-	r.pos.y -= view->offset;
+	r.pos.y -= view->offset.h;
 
 	v2 size = {0};
 
@@ -2245,7 +2232,7 @@ draw_ui_view(BeamformerUI *ui, Variable *ui_view, Rect r, v2 mouse, TextSpec tex
 	InvalidDefaultCase;
 	}
 
-	view->needed_height = size.y;
+	view->desired_size.h = size.y;
 }
 
 function Rect
@@ -2408,7 +2395,7 @@ draw_ui_regions(BeamformerUI *ui, Rect window, v2 mouse)
 function void
 draw_floating_widget_container(BeamformerUI *ui, Variable *var, v2 mouse, Rect bounds)
 {
-	FloatingWidget *fw = &var->floating_widget;
+	UIView *fw = &var->view;
 	if (fw->rect.size.x > 0 && fw->rect.size.y > 0) {
 		f32 line_height = ui->small_font.baseSize;
 
@@ -2447,16 +2434,15 @@ draw_floating_widgets(BeamformerUI *ui, Rect window_rect, v2 mouse)
 	     var != &ui->floating_widget_sentinal;
 	     var = var->parent)
 	{
-		assert(var->type == VT_UI_FLOATING_WIDGET);
-		FloatingWidget *fw = &var->floating_widget;
 		draw_floating_widget_container(ui, var, mouse, window_rect);
 
-		switch (fw->kind) {
-		case FloatingWidgetKind_Menu:{
-			fw->rect = draw_menu(ui, ui->arena, fw->reference, &ui->small_font,
-			                      fw->rect.pos, mouse, window_rect);
+		UIView *fw = &var->view;
+		switch (var->type) {
+		case VT_UI_MENU:{
+			fw->rect = draw_menu(ui, ui->arena, fw->child, &ui->small_font,
+			                     fw->rect.pos, mouse, window_rect);
 		}break;
-		case FloatingWidgetKind_TextBox:{
+		case VT_UI_TEXT_BOX:{
 			InputState *is = &ui->text_input_state;
 
 			f32 cursor_width = (is->cursor == is->count) ? 0.55 * is->font->baseSize : 4;
@@ -2477,7 +2463,7 @@ draw_floating_widgets(BeamformerUI *ui, Rect window_rect, v2 mouse)
 
 			v4 cursor_colour = FOCUSED_COLOUR;
 			cursor_colour.a  = CLAMP01(is->cursor_blink_t);
-			v4 text_colour   = lerp_v4(FG_COLOUR, HOVERED_COLOUR, fw->reference->hover_t);
+			v4 text_colour   = lerp_v4(FG_COLOUR, HOVERED_COLOUR, fw->child->hover_t);
 
 			TextSpec text_spec = {.font = is->font, .colour = text_colour};
 			draw_text(text, text_position, &text_spec);
@@ -2517,8 +2503,8 @@ scroll_interaction(Variable *var, f32 delta)
 		*var->cycler.state %= var->cycler.cycle_length;
 	}break;
 	case VT_UI_VIEW:{
-		var->view.offset += UI_SCROLL_SPEED * delta;
-		var->view.offset  = MAX(0, var->view.offset);
+		var->view.offset.h += UI_SCROLL_SPEED * delta;
+		var->view.offset.h  = MAX(0, var->view.offset.h);
 	}break;
 	InvalidDefaultCase;
 	}
@@ -2527,10 +2513,10 @@ scroll_interaction(Variable *var, f32 delta)
 function void
 begin_text_input(InputState *is, Rect r, Variable *container, v2 mouse)
 {
-	assert(container->type == VT_UI_FLOATING_WIDGET);
+	assert(container->type == VT_UI_TEXT_BOX);
 	Font *font = is->font = is->hot_font;
 	Stream s = {.cap = countof(is->buf), .data = is->buf};
-	stream_append_variable(&s, container->floating_widget.reference);
+	stream_append_variable(&s, container->view.child);
 	is->count = s.widx;
 	is->container = container;
 
@@ -2694,50 +2680,28 @@ ui_widget_bring_to_front(Variable *sentinal, Variable *widget)
 }
 
 function void
-ui_close_widget(BeamformerUI *ui, Variable *widget)
+ui_view_close(BeamformerUI *ui, Variable *view)
 {
-	assert(widget->type == VT_UI_FLOATING_WIDGET);
-	FloatingWidget *fw = &widget->floating_widget;
-	switch (fw->kind) {
-	case FloatingWidgetKind_Menu:{
-		assert(fw->reference->type == VT_GROUP);
-		fw->reference->group.expanded  = 0;
-		fw->reference->group.container = 0;
+	switch (view->type) {
+	case VT_UI_MENU:
+	case VT_UI_TEXT_BOX:
+	{
+		UIView *fw = &view->view;
+		if (view->type == VT_UI_MENU) {
+			assert(fw->child->type == VT_GROUP);
+			fw->child->group.expanded  = 0;
+			fw->child->group.container = 0;
+		} else {
+			end_text_input(&ui->text_input_state, fw->child);
+		}
+		view->parent->next = view->next;
+		view->next->parent = view->parent;
+		if (fw->close) SLLPush(fw->close, ui->variable_freelist);
+		SLLPush(view, ui->variable_freelist);
 	}break;
-	case FloatingWidgetKind_TextBox:{
-		end_text_input(&ui->text_input_state, fw->reference);
-	}break;
-	InvalidDefaultCase;
-	}
-	widget->parent->next = widget->next;
-	widget->next->parent = widget->parent;
-	if (fw->close) SLLPush(fw->close, ui->variable_freelist);
-	SLLPush(widget, ui->variable_freelist);
-}
-
-function void
-ui_button_interaction(BeamformerUI *ui, Variable *button)
-{
-	assert(button->type == VT_UI_BUTTON);
-	switch (button->button) {
-	case UI_BID_FV_EXPORT:{ ui_export_view(ui, button->parent->parent); }break;
-	case UI_BID_FV_COPY_HORIZONTAL:{
-		ui_copy_frame(ui, button->parent->parent, RSD_HORIZONTAL);
-	}break;
-	case UI_BID_FV_COPY_VERTICAL:{
-		ui_copy_frame(ui, button->parent->parent, RSD_VERTICAL);
-	}break;
-	case UI_BID_GM_OPEN_LIVE_VIEW_RIGHT:{
-		ui_add_live_frame_view(ui, button->parent->parent, RSD_HORIZONTAL);
-	}break;
-	case UI_BID_GM_OPEN_LIVE_VIEW_BELOW:{
-		ui_add_live_frame_view(ui, button->parent->parent, RSD_VERTICAL);
-	}break;
-	case UI_BID_CLOSE_WIDGET:{ ui_close_widget(ui, button->parent); }break;
-	case UI_BID_CLOSE_VIEW:{
-		Variable *view   = button->parent;
+	case VT_UI_VIEW:{
+		assert(view->parent->type == VT_UI_REGION_SPLIT);
 		Variable *region = view->parent;
-		assert(view->type == VT_UI_VIEW && region->type == VT_UI_REGION_SPLIT);
 
 		Variable *parent    = region->parent;
 		Variable *remaining = region->region_split.left;
@@ -2755,6 +2719,29 @@ ui_button_interaction(BeamformerUI *ui, Variable *button)
 
 		SLLPush(region, ui->variable_freelist);
 	}break;
+	InvalidDefaultCase;
+	}
+}
+
+function void
+ui_button_interaction(BeamformerUI *ui, Variable *button)
+{
+	assert(button->type == VT_UI_BUTTON);
+	switch (button->button) {
+	case UI_BID_FV_EXPORT:{ ui_export_view(ui, button->parent->parent); }break;
+	case UI_BID_VIEW_CLOSE:{ ui_view_close(ui, button->parent); }break;
+	case UI_BID_FV_COPY_HORIZONTAL:{
+		ui_copy_frame(ui, button->parent->parent, RSD_HORIZONTAL);
+	}break;
+	case UI_BID_FV_COPY_VERTICAL:{
+		ui_copy_frame(ui, button->parent->parent, RSD_VERTICAL);
+	}break;
+	case UI_BID_GM_OPEN_LIVE_VIEW_RIGHT:{
+		ui_add_live_frame_view(ui, button->parent->parent, RSD_HORIZONTAL);
+	}break;
+	case UI_BID_GM_OPEN_LIVE_VIEW_BELOW:{
+		ui_add_live_frame_view(ui, button->parent->parent, RSD_VERTICAL);
+	}break;
 	}
 }
 
@@ -2770,16 +2757,14 @@ ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll)
 			case VT_SCALE_BAR:{ hot->kind = InteractionKind_Set; }break;
 			case VT_UI_BUTTON:{ hot->kind = InteractionKind_Button; }break;
 			case VT_GROUP:{ hot->kind = InteractionKind_Set; }break;
-			case VT_UI_FLOATING_WIDGET:{
-				FloatingWidget *fw = &hot->var->floating_widget;
-				switch (fw->kind) {
-				case FloatingWidgetKind_Menu:{
+			case VT_UI_TEXT_BOX:
+			case VT_UI_MENU:
+			{
+				if (hot->var->type == VT_UI_MENU) {
 					hot->kind = InteractionKind_Drag;
-				}break;
-				case FloatingWidgetKind_TextBox:{
+				} else {
 					hot->kind = InteractionKind_Text;
 					begin_text_input(&ui->text_input_state, hot->rect, hot->var, input->mouse);
-				}break;
 				}
 				ui_widget_bring_to_front(&ui->floating_widget_sentinal, hot->var);
 			}break;
@@ -2824,10 +2809,9 @@ ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll)
 					hot->kind = InteractionKind_Scroll;
 				} else if (hot->var->flags & V_TEXT) {
 					hot->kind = InteractionKind_Text;
-					Variable *w = add_floating_widget(ui, &ui->arena,
-					                                  FloatingWidgetKind_TextBox,
-					                                  hot->rect.pos, hot->var, 0);
-					w->floating_widget.rect = hot->rect;
+					Variable *w = add_floating_view(ui, &ui->arena, VT_UI_TEXT_BOX,
+					                                hot->rect.pos, hot->var, 0);
+					w->view.rect = hot->rect;
 					begin_text_input(&ui->text_input_state, hot->rect, w, input->mouse);
 				}
 			}break;
@@ -2867,8 +2851,7 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 		if (g->container) {
 			ui_widget_bring_to_front(&ui->floating_widget_sentinal, g->container);
 		} else {
-			g->container = add_floating_widget(ui, &ui->arena, FloatingWidgetKind_Menu,
-			                                   mouse, it->var, 1);
+			g->container = add_floating_view(ui, &ui->arena, VT_UI_MENU, mouse, it->var, 1);
 		}
 	}break;
 	case InteractionKind_Ruler:{
@@ -2877,7 +2860,7 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 	}break;
 	case InteractionKind_Button:{ ui_button_interaction(ui, it->var); }break;
 	case InteractionKind_Scroll:{ scroll_interaction(it->var, GetMouseWheelMoveV().y); }break;
-	case InteractionKind_Text:{ ui_close_widget(ui, ui->text_input_state.container); }break;
+	case InteractionKind_Text:{ ui_view_close(ui, ui->text_input_state.container); }break;
 	InvalidDefaultCase;
 	}
 
@@ -2957,8 +2940,8 @@ ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 			v2 dMouse = sub_v2(input->mouse, input->last_mouse);
 
 			switch (ui->interaction.var->type) {
-			case VT_UI_FLOATING_WIDGET:{
-				v2 *pos = &ui->interaction.var->floating_widget.rect.pos;
+			case VT_UI_MENU:{
+				v2 *pos = &ui->interaction.var->view.rect.pos;
 				*pos = clamp_v2_rect(add_v2(*pos, dMouse), window_rect);
 			}break;
 			case VT_UI_REGION_SPLIT:{
