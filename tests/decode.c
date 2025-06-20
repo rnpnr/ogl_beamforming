@@ -1,0 +1,285 @@
+/* See LICENSE for license details. */
+#define LIB_FN function
+#include "ogl_beamformer_lib.c"
+
+#include <signal.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#define AVERAGE_SAMPLES 32
+//#define RF_TIME_SAMPLES 2432
+#define RF_TIME_SAMPLES 4096
+
+read_only global u32 decode_transmit_counts[] = {
+	2, 4, 8, 12, 16, 20, 24, 32, 40, 48, 64, 80, 96, 128, 160, 192, 256
+};
+
+typedef struct {
+	b32 loop;
+	b32 cuda;
+	b32 once;
+
+	u32 warmup_count;
+
+	char **remaining;
+	i32    remaining_count;
+} Options;
+
+global b32 g_should_exit;
+
+#define die(...) die_((char *)__func__, __VA_ARGS__)
+function no_return void
+die_(char *function_name, char *format, ...)
+{
+	if (function_name)
+		fprintf(stderr, "%s: ", function_name);
+
+	va_list ap;
+
+	va_start(ap, format);
+	vfprintf(stderr, format, ap);
+	va_end(ap);
+
+	os_exit(1);
+}
+
+#if OS_LINUX
+
+function void os_init_timer(void) { }
+
+function f64
+os_get_time(void)
+{
+	f64 result = (f64)os_get_timer_counter() / os_get_timer_frequency();
+	return result;
+}
+
+#elif OS_WINDOWS
+
+global os_w32_context os_context;
+
+function void
+os_init_timer(void)
+{
+	os_context.timer_frequency = os_get_timer_frequency();
+}
+
+function f64
+os_get_time(void)
+{
+	f64 result = (f64)os_get_timer_counter() / os_context.timer_frequency;
+	return result;
+}
+
+#else
+#error Unsupported Platform
+#endif
+
+#define shift_n(v, c, n) v += n, c -= n
+#define shift(v, c) shift_n(v, c, 1)
+
+function void
+usage(char *argv0)
+{
+	die("%s [--loop] [--cuda] [--warmup n]\n"
+	    "    --loop:    reupload data forever\n"
+	    "    --once:    only run a single frame\n"
+	    "    --cuda:    use cuda for decoding\n",
+	    "    --warmup:  warmup with n runs\n",
+	    argv0);
+}
+
+function b32
+s8_equal(s8 a, s8 b)
+{
+	b32 result = a.len == b.len;
+	for (iz i = 0; result && i < a.len; i++)
+		result &= a.data[i] == b.data[i];
+	return result;
+}
+
+function Options
+parse_argv(i32 argc, char *argv[])
+{
+	Options result = {0};
+
+	char *argv0 = argv[0];
+	shift(argv, argc);
+
+	while (argc > 0) {
+		s8 arg = c_str_to_s8(*argv);
+
+		if (s8_equal(arg, s8("--loop"))) {
+			shift(argv, argc);
+			result.loop = 1;
+		} else if (s8_equal(arg, s8("--cuda"))) {
+			shift(argv, argc);
+			result.cuda = 1;
+		} else if (s8_equal(arg, s8("--once"))) {
+			shift(argv, argc);
+			result.once = 1;
+		} else if (s8_equal(arg, s8("--warmup"))) {
+			shift(argv, argc);
+			if (argc) {
+				result.warmup_count = atoi(*argv);
+				shift(argv, argc);
+			}
+		} else if (arg.len > 0 && arg.data[0] == '-') {
+			usage(argv0);
+		} else {
+			break;
+		}
+	}
+
+	result.remaining       = argv;
+	result.remaining_count = argc;
+
+	return result;
+}
+
+function b32
+send_frame(i16 *restrict i16_data, u32 data_size)
+{
+	b32 result    = 0;
+	if (beamformer_push_data_with_compute(i16_data, data_size, IPT_XZ, 100))
+		result = beamformer_start_compute(-1);
+	if (!result) printf("lib error: %s\n", beamformer_get_last_error_string());
+	return result;
+}
+
+function uv4
+decoded_data_dim(u32 transmit_count)
+{
+	//uv4 result = {{4096,  128, transmit_count, 1}};
+	uv4 result = {{RF_TIME_SAMPLES,  128, transmit_count, 1}};
+	return result;
+}
+
+function uv2
+raw_data_dim(u32 transmit_count)
+{
+	uv4 dec = decoded_data_dim(transmit_count);
+	uv2 result = {{dec.x * transmit_count,  256}};
+	return result;
+}
+
+function iz
+data_size_for_transmit_count(u32 transmit_count)
+{
+	uv2 rf_dim = raw_data_dim(transmit_count);
+	iz  result = rf_dim.x * rf_dim.y * sizeof(i16);
+	return result;
+}
+
+function i16 *
+generate_test_data_for_transmit_count(u32 transmit_count)
+{
+	iz  rf_size = data_size_for_transmit_count(transmit_count);
+	i16 *result = malloc(rf_size);
+	if (!result) die("malloc\n");
+	return result;
+}
+
+function void
+send_parameters(Options *options, u32 transmit_count)
+{
+	BeamformerParameters bp = {0};
+	bp.decode = 1,
+	mem_copy(bp.dec_data_dim, decoded_data_dim(transmit_count).E, sizeof(bp.dec_data_dim));
+	mem_copy(bp.rf_raw_dim,   raw_data_dim(transmit_count).E,     sizeof(bp.rf_raw_dim));
+	beamformer_push_parameters(&bp, 0);
+
+	/* NOTE(rnp): use real channel mapping so that we still get ~random~ access pattern */
+	read_only local_persist i16 channel_mapping[] = {
+		102, 62, 71,  3,  100, 60, 82,  1,
+		78,  61, 72,  4,  64,  63, 101, 10,
+		103, 57, 107, 11, 99,  59, 81,  13,
+		73,  58, 79,  12, 98,  56, 80,  18,
+		88,  54, 108, 19, 97,  52, 106, 21,
+		70,  53, 109, 20, 96,  55, 87,  2,
+		86,  49, 110, 27, 95,  51, 105, 5,
+		65,  50, 111, 28, 94,  48, 104, 6,
+		89,  46, 115, 29, 93,  44, 113, 26,
+		90,  45, 112, 30, 92,  47, 114, 9,
+		85,  41, 116, 31, 91,  43, 118, 25,
+		83,  42, 119, 32, 84,  16, 117, 14,
+		77,  40, 123, 0,  76,  36, 121, 24,
+		74,  37, 120, 33, 75,  15, 122, 17,
+		69,  23, 124, 7,  68,  35, 126, 39,
+		66,  38, 127, 34, 67,  8,  125, 22
+	};
+	beamformer_push_channel_mapping(channel_mapping, countof(channel_mapping), 0);
+
+	i32 shader_stages[1];
+	if (options->cuda) shader_stages[0] = ComputeShaderKind_CudaDecode;
+	else               shader_stages[0] = ComputeShaderKind_Decode;
+	set_beamformer_pipeline(shader_stages, 1);
+}
+
+function f32
+execute_study(Options *options, u32 transmit_count, i16 *restrict data)
+{
+	send_parameters(options, transmit_count);
+	iz data_size = data_size_for_transmit_count(transmit_count);
+	for (u32 i = 0; !g_should_exit && i < options->warmup_count; i++)
+		send_frame(data, data_size);
+
+	f64 start = os_get_time();
+	for (u32 i = 0; !g_should_exit && i < AVERAGE_SAMPLES; i++)
+		send_frame(data, data_size);
+	f32 result = (os_get_time() - start) / (f32)AVERAGE_SAMPLES;
+
+	return result;
+}
+
+function void
+print_result(u32 transmit_count, f32 time)
+{
+	printf("decode %3u | %8.3f [ms] | %8.3f GB/s\n", transmit_count, time * 1e3,
+	       data_size_for_transmit_count(transmit_count) / (time * GB(1)));
+}
+
+function void
+sigint(i32 _signo)
+{
+	g_should_exit = 1;
+}
+
+extern i32
+main(i32 argc, char *argv[])
+{
+	Options options = parse_argv(argc, argv);
+
+	if (options.remaining_count)
+		usage(argv[0]);
+
+	os_init_timer();
+
+	signal(SIGINT, sigint);
+
+	u32 max_transmit_count = 0;
+	for (iz i = 0; i < countof(decode_transmit_counts); i++)
+		max_transmit_count = MAX(max_transmit_count, decode_transmit_counts[i]);
+
+	i16 *data = generate_test_data_for_transmit_count(max_transmit_count);
+	if (options.loop) {
+		for (;!g_should_exit;) {
+			u32 transmit_count = decode_transmit_counts[0];
+			f32 time = execute_study(&options, transmit_count, data);
+			if (!g_should_exit) print_result(transmit_count, time);
+		}
+	} else if (options.once) {
+		u32 transmit_count = decode_transmit_counts[0];
+		iz data_size = data_size_for_transmit_count(transmit_count);
+		send_parameters(&options, transmit_count);
+		send_frame(data, data_size);
+	} else {
+		for (iz i = 0; i < countof(decode_transmit_counts); i++) {
+			u32 transmit_count = decode_transmit_counts[i];
+			f32 time = execute_study(&options, transmit_count, data);
+			if (!g_should_exit) print_result(transmit_count, time);
+		}
+	}
+	return 0;
+}
