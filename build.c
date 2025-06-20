@@ -691,6 +691,7 @@ function b32
 build_tests(Arena arena, CommandList cc)
 {
 	#define TEST_PROGRAMS \
+		X("decode", W32_DECL(LINK_LIB("Synchronization"))) \
 		X("throughput", LINK_LIB("zstd"), W32_DECL(LINK_LIB("Synchronization")))
 
 	os_make_directory(OUTPUT("tests"));
