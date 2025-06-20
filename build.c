@@ -861,6 +861,7 @@ build_tests(Arena arena)
 
 	#define TEST_PROGRAMS \
 		X("throughput", LINK_LIB("m"), LINK_LIB("zstd"), W32_DECL(LINK_LIB("Synchronization"))) \
+		X("decode", LINK_LIB("m"), W32_DECL(LINK_LIB("Synchronization"))) \
 
 	os_make_directory(OUTPUT("tests"));
 	if (!is_msvc) cmd_append(&arena, &cc, "-Wno-unused-function");
