@@ -4,8 +4,8 @@
 
 #define BEAMFORMER_SHARED_MEMORY_VERSION (7UL)
 
-typedef struct BeamformComputeFrame BeamformComputeFrame;
-typedef struct ShaderReloadContext  ShaderReloadContext;
+typedef struct BeamformerComputeFrame BeamformerComputeFrame;
+typedef struct ShaderReloadContext    ShaderReloadContext;
 
 typedef enum {
 	BeamformerWorkKind_Compute,
@@ -58,7 +58,7 @@ typedef enum {BEAMFORMER_SHARED_MEMORY_LOCKS BeamformerSharedMemoryLockKind_Coun
 /* NOTE: discriminated union based on type */
 typedef struct {
 	union {
-		BeamformComputeFrame    *frame;
+		BeamformerComputeFrame  *frame;
 		BeamformerUploadContext  upload_context;
 		BeamformerExportContext  export_context;
 		ShaderReloadContext     *shader_reload_context;

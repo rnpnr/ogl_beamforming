@@ -39,6 +39,9 @@
   #define atomic_or_u32(ptr, n)          _InterlockedOr((volatile u32 *)(ptr), (n))
 
   #define atan2_f32(y, x) atan2f(y, x)
+  #define cos_f32(a)      cosf(a)
+  #define sin_f32(a)      sinf(a)
+  #define tan_f32(a)      tanf(a)
   #define ceil_f32(a)     ceilf(a)
   #define sqrt_f32(a)     sqrtf(a)
 
@@ -68,6 +71,9 @@
   #define atomic_store_u32              atomic_store_u64
 
   #define atan2_f32(y, x) __builtin_atan2f(y, x)
+  #define cos_f32(a)      __builtin_cosf(a)
+  #define sin_f32(a)      __builtin_sinf(a)
+  #define tan_f32(a)      __builtin_tanf(a)
   #define ceil_f32(a)     __builtin_ceilf(a)
   #define sqrt_f32(a)     __builtin_sqrtf(a)
 

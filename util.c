@@ -539,37 +539,45 @@ uv3_equal(uv3 a, uv3 b)
 function v3
 cross(v3 a, v3 b)
 {
-	v3 result = {
-		.x = a.y * b.z - a.z * b.y,
-		.y = a.z * b.x - a.x * b.z,
-		.z = a.x * b.y - a.y * b.x,
-	};
+	v3 result;
+	result.x = a.y * b.z - a.z * b.y;
+	result.y = a.z * b.x - a.x * b.z;
+	result.z = a.x * b.y - a.y * b.x;
 	return result;
 }
 
 function v3
-sub_v3(v3 a, v3 b)
+v3_sub(v3 a, v3 b)
 {
-	v3 result = {
-		.x = a.x - b.x,
-		.y = a.y - b.y,
-		.z = a.z - b.z,
-	};
+	v3 result;
+	result.x = a.x - b.x;
+	result.y = a.y - b.y;
+	result.z = a.z - b.z;
 	return result;
 }
 
 function f32
-length_v3(v3 a)
+v3_dot(v3 a, v3 b)
 {
-	f32 result = a.x * a.x + a.y * a.y + a.z * a.z;
+	f32 result = a.x * b.x + a.y * b.y + a.z * b.z;
+	return result;
+}
+
+function f32
+v3_length(v3 a)
+{
+	f32 result = v3_dot(a, a);
 	return result;
 }
 
 function v3
-normalize_v3(v3 a)
+v3_normalize(v3 a)
 {
-	f32 length = length_v3(a);
-	v3 result = {.x = a.x / length, .y = a.y / length, .z = a.z / length};
+	f32 length = v3_length(a);
+	v3 result;
+	result.x = a.x / length;
+	result.y = a.y / length;
+	result.z = a.z / length;
 	return result;
 }
 
@@ -677,13 +685,52 @@ v4_from_f32_array(f32 v[4])
 }
 
 function v4
-sub_v4(v4 a, v4 b)
+v4_sub(v4 a, v4 b)
 {
 	v4 result;
 	result.x = a.x - b.x;
 	result.y = a.y - b.y;
 	result.z = a.z - b.z;
 	result.w = a.w - b.w;
+	return result;
+}
+
+function f32
+v4_dot(v4 a, v4 b)
+{
+	f32 result = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+	return result;
+}
+
+function v4
+m4_row(m4 a, u32 row)
+{
+	v4 result;
+	result.E[0] = a.c[0].E[row];
+	result.E[1] = a.c[1].E[row];
+	result.E[2] = a.c[2].E[row];
+	result.E[3] = a.c[3].E[row];
+	return result;
+}
+
+function v4
+m4_column(m4 a, u32 column)
+{
+	v4 result = a.c[column];
+	return result;
+}
+
+function m4
+m4_mul(m4 a, m4 b)
+{
+	m4 result;
+	for (u32 i = 0; i < countof(result.E); i++) {
+		u32 base = i / 4;
+		u32 sub  = i % 4;
+		v4 v1 = m4_row(a, base);
+		v4 v2 = m4_column(b, sub);
+		result.E[i] = v4_dot(v1, v2);
+	}
 	return result;
 }
 

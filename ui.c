@@ -1,5 +1,6 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: MSAA for 3D views
  * [ ]: refactor: ui should be in its own thread and that thread should only be concerned with the ui
  * [ ]: refactor: ui shouldn't fully destroy itself on hot reload
  * [ ]: refactor: remove all the excessive measure_texts (cell drawing, hover_interaction in params table)
@@ -282,8 +283,8 @@ typedef struct BeamformerFrameView {
 	Variable *cycler;
 	u32 cycler_state;
 
-	v4 min_coordinate;
-	v4 max_coordinate;
+	v3 min_coordinate;
+	v3 max_coordinate;
 
 	Ruler ruler;
 
@@ -291,13 +292,14 @@ typedef struct BeamformerFrameView {
 	Variable dynamic_range;
 	Variable gamma;
 
-	FrameViewRenderContext *ctx;
-	BeamformFrame          *frame;
+	BeamformerFrame *frame;
 	struct BeamformerFrameView *prev, *next;
 
 	uv2 texture_dim;
 	u32 texture_mipmaps;
 	u32 texture;
+	/* NOTE(rnp): empty for 2D views */
+	u32 depth_texture;
 
 	BeamformerFrameViewKind kind;
 	b32 needs_update;
@@ -340,7 +342,7 @@ struct BeamformerUI {
 
 	BeamformerFrameView *views;
 	BeamformerFrameView *view_freelist;
-	BeamformFrame       *frame_freelist;
+	BeamformerFrame     *frame_freelist;
 
 	Interaction interaction;
 	Interaction hot_interaction;
@@ -348,9 +350,12 @@ struct BeamformerUI {
 
 	InputState  text_input_state;
 
+	/* TODO(rnp): ideally this isn't copied all over the place */
+	BeamformerRenderModel unit_cube_model;
+
 	v2_sll *scale_bar_savepoint_freelist;
 
-	BeamformFrame *latest_plane[BeamformerViewPlaneTag_Count + 1];
+	BeamformerFrame *latest_plane[BeamformerViewPlaneTag_Count + 1];
 
 	BeamformerUIParameters params;
 	b32                    flush_params;
@@ -825,6 +830,13 @@ resize_frame_view(BeamformerFrameView *view, uv2 dim)
 	view->texture_mipmaps = ctz_u32(MAX(dim.x, dim.y)) + 1;
 	/* TODO(rnp): HDR? */
 	glTextureStorage2D(view->texture, view->texture_mipmaps, GL_RGBA8, dim.x, dim.y);
+
+	if (view->kind == BeamformerFrameViewKind_3DXPlane) {
+		glDeleteTextures(1, &view->depth_texture);
+		glCreateTextures(GL_TEXTURE_2D, 1, &view->depth_texture);
+		glTextureStorage2D(view->depth_texture, 1, GL_DEPTH_COMPONENT24, dim.x, dim.y);
+	}
+
 	glGenerateTextureMipmap(view->texture);
 
 	/* NOTE(rnp): work around raylib's janky texture sampling */
@@ -1158,6 +1170,7 @@ add_beamformer_frame_view(BeamformerUI *ui, Variable *parent, Arena *arena,
 		bv->cycler = add_variable_cycler(ui, menu, arena, 0, ui->small_font, s8("Index:"),
 		                                 &bv->cycler_state, 0, MAX_BEAMFORMED_SAVED_FRAMES);
 	}break;
+	case BeamformerFrameViewKind_3DXPlane:{ resize_frame_view(bv, (uv2){{1024, 1024}}); }break;
 	default:{}break;
 	}
 
@@ -1237,7 +1250,6 @@ ui_fill_live_frame_view(BeamformerUI *ui, BeamformerFrameView *bv)
 	axial->max_value   = ui->params.output_max_coordinate + 2;
 	bv->axial_scale_bar_active->bool32   = 1;
 	bv->lateral_scale_bar_active->bool32 = 1;
-	bv->ctx = ui->frame_view_render_context;
 	bv->axial_scale_bar.flags   |= V_CAUSES_COMPUTE;
 	bv->lateral_scale_bar.flags |= V_CAUSES_COMPUTE;
 }
@@ -1280,14 +1292,13 @@ ui_copy_frame(BeamformerUI *ui, Variable *view, RegionSplitDirection direction)
 	axial->min_value   = &bv->min_coordinate.z;
 	axial->max_value   = &bv->max_coordinate.z;
 
-	bv->ctx                  = old->ctx;
 	bv->needs_update         = 1;
 	bv->threshold.real32     = old->threshold.real32;
 	bv->dynamic_range.real32 = old->dynamic_range.real32;
 	bv->gamma.real32         = old->gamma.real32;
 	bv->log_scale->bool32    = old->log_scale->bool32;
-	bv->min_coordinate       = old->frame->min_coordinate;
-	bv->max_coordinate       = old->frame->max_coordinate;
+	bv->min_coordinate       = old->frame->min_coordinate.xyz;
+	bv->max_coordinate       = old->frame->max_coordinate.xyz;
 
 	bv->frame = SLLPop(ui->frame_freelist);
 	if (!bv->frame) bv->frame = push_struct(&ui->arena, typeof(*bv->frame));
@@ -1360,6 +1371,80 @@ ui_export_view(BeamformerUI *ui, Variable *view)
 	}
 }
 
+function void
+set_camera(u32 program)
+{
+	f32 n = 0.1f;
+	f32 f = 2.0f;
+	f32 r = n * tan_f32(30.0f / 2 * PI / 180.0f);
+	f32 t = r * 1024.0f / 1024.0f;
+	f32 a = -(f + n) / (f - n);
+	f32 b = -2 * f * n / (f - n);
+
+	m4 projection;
+	projection.c[0] = (v4){{n / r, 0,     0,  0}};
+	projection.c[1] = (v4){{0,     n / t, 0,  0}};
+	projection.c[2] = (v4){{0,     0,     a, -1}};
+	projection.c[3] = (v4){{0,     0,     b,  0}};
+	//projection.c[0] = (v4){{n / r, 0,      0,    0}};
+	//projection.c[1] = (v4){{0,     n / t,  0,    0}};
+	//projection.c[2] = (v4){{0,     0,     -1,   -1}};
+	//projection.c[3] = (v4){{0,     0,     -2*n,  0}};
+	glProgramUniformMatrix4fv(program, FRAME_VIEW_PROJ_MATRIX_LOC, 1, 0, projection.E);
+
+	v3 camera     = {{0.45, -0.10, 0.45}};
+	v3 orthogonal = {{0, 1, 0}};
+	v3 normal     = v3_normalize(v3_sub(camera, (v3){0}));
+	v3 right = cross(orthogonal, normal);
+	v3 up    = cross(normal,     right);
+
+	v3 translate;
+	camera      = v3_sub((v3){0}, camera);
+	translate.x = v3_dot(camera, right);
+	translate.y = v3_dot(camera, up);
+	translate.z = v3_dot(camera, normal);
+
+	m4 transform;
+	transform.c[0] = (v4){{right.x,     up.x,        normal.x,    0}};
+	transform.c[1] = (v4){{right.y,     up.y,        normal.y,    0}};
+	transform.c[2] = (v4){{right.z,     up.z,        normal.z,    0}};
+	transform.c[3] = (v4){{translate.x, translate.y, translate.z, 1}};
+	glProgramUniformMatrix4fv(program, FRAME_VIEW_VIEW_MATRIX_LOC, 1, 0, transform.E);
+}
+
+function void
+render_3D_xplane(BeamformerUI *ui, BeamformerFrameView *view, FrameViewRenderContext *ctx)
+{
+	u32 program = ctx->shaders[1];
+	glBindVertexArray(ui->unit_cube_model.vao);
+	set_camera(program);
+
+	local_persist f32 x_plane_spin = 0.375f;
+	x_plane_spin += dt_for_frame * 0.25f;
+	if (x_plane_spin > 1.0f) x_plane_spin -= 1.0f;
+
+	u32 texture = 0;
+	v3 scale = v3_sub(view->max_coordinate, view->min_coordinate);
+	m4 model_transform = y_aligned_volume_transform(scale, (v3){0}, x_plane_spin + 0.125f);
+	glProgramUniformMatrix4fv(program, FRAME_VIEW_MODEL_MATRIX_LOC, 1, 0, model_transform.E);
+
+	if (ui->latest_plane[BeamformerViewPlaneTag_XZ])
+		texture = ui->latest_plane[BeamformerViewPlaneTag_XZ]->texture;
+	glBindTextureUnit(0, texture);
+	glDrawElements(GL_TRIANGLES, ui->unit_cube_model.elements, GL_UNSIGNED_SHORT,
+	               (void *)ui->unit_cube_model.elements_offset);
+
+	texture = 0;
+	if (ui->latest_plane[BeamformerViewPlaneTag_YZ])
+		texture = ui->latest_plane[BeamformerViewPlaneTag_YZ]->texture;
+	model_transform = y_aligned_volume_transform(scale, (v3){0}, x_plane_spin + 0.375f);
+	glProgramUniformMatrix4fv(program, FRAME_VIEW_MODEL_MATRIX_LOC, 1, 0, model_transform.E);
+
+	glBindTextureUnit(0, texture);
+	glDrawElements(GL_TRIANGLES, ui->unit_cube_model.elements, GL_UNSIGNED_SHORT,
+	               (void *)ui->unit_cube_model.elements_offset);
+}
+
 function b32
 view_update(BeamformerUI *ui, BeamformerFrameView *view)
 {
@@ -1368,8 +1453,8 @@ view_update(BeamformerUI *ui, BeamformerFrameView *view)
 		view->needs_update |= view->frame != ui->latest_plane[index];
 		view->frame         = ui->latest_plane[index];
 		if (view->needs_update) {
-			view->min_coordinate = v4_from_f32_array(ui->params.output_min_coordinate);
-			view->max_coordinate = v4_from_f32_array(ui->params.output_max_coordinate);
+			view->min_coordinate = v4_from_f32_array(ui->params.output_min_coordinate).xyz;
+			view->max_coordinate = v4_from_f32_array(ui->params.output_max_coordinate).xyz;
 		}
 	}
 
@@ -1377,39 +1462,60 @@ view_update(BeamformerUI *ui, BeamformerFrameView *view)
 	/* TODO(rnp): add method of setting a target size in frame view */
 	uv2 current = view->texture_dim;
 	uv2 target  = {.w = ui->params.output_points[0], .h = ui->params.output_points[2]};
-	if (view->kind != BeamformerFrameViewKind_Copy && !uv2_equal(current, target) && !uv2_equal(target, (uv2){0})) {
+	if (view->kind != BeamformerFrameViewKind_Copy &&
+	    view->kind != BeamformerFrameViewKind_3DXPlane &&
+	    !uv2_equal(current, target) && !uv2_equal(target, (uv2){0}))
+	{
 		resize_frame_view(view, target);
 		view->needs_update = 1;
 	}
 
-	return (view->ctx->updated || view->needs_update) && view->frame;
+	b32 result = view->kind == BeamformerFrameViewKind_3DXPlane;
+	result    |= (ui->frame_view_render_context->updated || view->needs_update) && view->frame;
+	return result;
 }
 
 function void
 update_frame_views(BeamformerUI *ui, Rect window)
 {
-	b32 fbo_bound = 0;
+	FrameViewRenderContext *ctx = ui->frame_view_render_context;
+	b32 fbo_bound = 0, shader_3d = 0;
 	for (BeamformerFrameView *view = ui->views; view; view = view->next) {
 		if (view_update(ui, view)) {
 			if (!fbo_bound) {
 				fbo_bound = 1;
-				glBindFramebuffer(GL_FRAMEBUFFER, view->ctx->framebuffer);
-				glUseProgram(view->ctx->shader);
-				glBindVertexArray(view->ctx->vao);
+				glBindFramebuffer(GL_FRAMEBUFFER, ctx->framebuffer);
+				glUseProgram(ctx->shaders[0]);
+				glEnable(GL_DEPTH_TEST);
 			}
-			glViewport(0, 0, view->texture_dim.w, view->texture_dim.h);
-			glNamedFramebufferTexture(view->ctx->framebuffer, GL_COLOR_ATTACHMENT0,
-			                          view->texture, 0);
-			glClearNamedFramebufferfv(view->ctx->framebuffer, GL_COLOR, 0,
-			                          (f32 []){0.79, 0.46, 0.77, 1});
-			glBindTextureUnit(0, view->frame->texture);
-			glProgramUniform1f(view->ctx->shader,  FRAME_VIEW_RENDER_DYNAMIC_RANGE_LOC, view->dynamic_range.real32);
-			glProgramUniform1f(view->ctx->shader,  FRAME_VIEW_RENDER_THRESHOLD_LOC,     view->threshold.real32);
-			glProgramUniform1f(view->ctx->shader,  FRAME_VIEW_RENDER_GAMMA_LOC,         view->gamma.scaled_real32.val);
-			glProgramUniform1ui(view->ctx->shader, FRAME_VIEW_RENDER_LOG_SCALE_LOC,     view->log_scale->bool32);
 
-			glDrawArrays(GL_TRIANGLES, 0, 6);
-			glGenerateTextureMipmap(view->texture);
+			if (view->kind == BeamformerFrameViewKind_3DXPlane) {
+				if (!shader_3d) { glUseProgram(ctx->shaders[1]); shader_3d = 1; }
+			} else {
+				if ( shader_3d) { glUseProgram(ctx->shaders[0]); shader_3d = 0; }
+			}
+
+			f32 one = 1.0f;
+			glNamedFramebufferTexture(ctx->framebuffer, GL_COLOR_ATTACHMENT0, view->texture, 0);
+			glNamedFramebufferTexture(ctx->framebuffer, GL_DEPTH_ATTACHMENT,  view->depth_texture, 0);
+			glClearNamedFramebufferfv(ctx->framebuffer, GL_COLOR, 0, BG_COLOUR.E);
+			glClearNamedFramebufferfv(ctx->framebuffer, GL_DEPTH, 0, &one);
+
+			u32 program = ctx->shaders[shader_3d];
+			glViewport(0, 0, view->texture_dim.w, view->texture_dim.h);
+			glProgramUniform1f(program,  FRAME_VIEW_THRESHOLD_LOC,     view->threshold.real32);
+			glProgramUniform1f(program,  FRAME_VIEW_DYNAMIC_RANGE_LOC, view->dynamic_range.real32);
+			glProgramUniform1f(program,  FRAME_VIEW_GAMMA_LOC,         view->gamma.scaled_real32.val);
+			glProgramUniform1ui(program, FRAME_VIEW_LOG_SCALE_LOC,     view->log_scale->bool32);
+
+			if (view->kind == BeamformerFrameViewKind_3DXPlane) {
+				render_3D_xplane(ui, view, ctx);
+			} else {
+				glBindVertexArray(ctx->vao);
+				glBindTextureUnit(0, view->frame->texture);
+				glDrawArrays(GL_TRIANGLES, 0, 6);
+				glGenerateTextureMipmap(view->texture);
+			}
 			view->needs_update = 0;
 		}
 	}
@@ -1418,6 +1524,7 @@ update_frame_views(BeamformerUI *ui, Rect window)
 		glViewport(window.pos.x, window.pos.y, window.size.w, window.size.h);
 		/* NOTE(rnp): I don't trust raylib to not mess with us */
 		glBindVertexArray(0);
+		glDisable(GL_DEPTH_TEST);
 	}
 }
 
@@ -1961,17 +2068,42 @@ draw_view_ruler(BeamformerFrameView *view, Arena a, Rect view_rect, TextSpec ts)
 }
 
 function void
+draw_3D_xplane_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect display_rect, v2 mouse)
+{
+	assert(var->type == VT_BEAMFORMER_FRAME_VIEW);
+	BeamformerFrameView *view  = var->generic;
+
+	f32 aspect = (f32)view->texture_dim.w / (f32)view->texture_dim.h;
+	Rect vr = display_rect;
+	if (aspect > 1.0f) vr.size.w = vr.size.h;
+	else               vr.size.h = vr.size.w;
+
+	if (vr.size.w > display_rect.size.w) {
+		vr.size.w -= (vr.size.w - display_rect.size.w);
+		vr.size.h  = vr.size.w / aspect;
+	} else if (vr.size.h > display_rect.size.h) {
+		vr.size.h -= (vr.size.h - display_rect.size.h);
+		vr.size.w  = vr.size.h * aspect;
+	}
+	vr.pos = add_v2(vr.pos, scale_v2(sub_v2(display_rect.size, vr.size), 0.5));
+
+	Rectangle  tex_r  = {0, 0, view->texture_dim.w, view->texture_dim.h};
+	NPatchInfo tex_np = {tex_r, 0, 0, 0, 0, NPATCH_NINE_PATCH};
+	DrawTextureNPatch(make_raylib_texture(view), tex_np, vr.rl, (Vector2){0}, 0, WHITE);
+}
+
+function void
 draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect display_rect, v2 mouse)
 {
 	assert(var->type == VT_BEAMFORMER_FRAME_VIEW);
-	BeamformerFrameView *view = var->generic;
-	BeamformFrame *frame      = view->frame;
+	BeamformerFrameView *view  = var->generic;
+	BeamformerFrame     *frame = view->frame;
 
 	v2 txt_s = measure_text(ui->small_font, s8("-288.8 mm"));
 	f32 scale_bar_size = 1.2 * txt_s.x + RULER_TICK_LENGTH;
 
-	v4 min = view->min_coordinate;
-	v4 max = view->max_coordinate;
+	v3 min = view->min_coordinate;
+	v3 max = view->max_coordinate;
 	v2 requested_dim = sub_v2(XZ(max), XZ(min));
 	f32 aspect = requested_dim.w / requested_dim.h;
 
@@ -2469,8 +2601,12 @@ draw_ui_view(BeamformerUI *ui, Variable *ui_view, Rect r, v2 mouse, TextSpec tex
 	}break;
 	case VT_BEAMFORMER_FRAME_VIEW: {
 		BeamformerFrameView *bv = var->generic;
-		if (frame_view_ready_to_present(bv))
-			draw_beamformer_frame_view(ui, ui->arena, var, r, mouse);
+		if (bv->kind == BeamformerFrameViewKind_3DXPlane) {
+				draw_3D_xplane_frame_view(ui, ui->arena, var, r, mouse);
+		} else {
+			if (frame_view_ready_to_present(bv))
+				draw_beamformer_frame_view(ui, ui->arena, var, r, mouse);
+		}
 	} break;
 	case VT_COMPUTE_PROGRESS_BAR: {
 		size = draw_compute_progress_bar(ui, ui->arena, &var->compute_progress_bar, r);
@@ -3149,6 +3285,7 @@ ui_init(BeamformerCtx *ctx, Arena store)
 	ui->os    = &ctx->os;
 	ui->arena = store;
 	ui->frame_view_render_context = &ctx->frame_view_render_context;
+	ui->unit_cube_model = ctx->csctx.unit_cube_model;
 
 	/* TODO: build these into the binary */
 	/* TODO(rnp): better font, this one is jank at small sizes */
@@ -3162,10 +3299,14 @@ ui_init(BeamformerCtx *ctx, Arena store)
 	                                             RSD_HORIZONTAL, ui->font);
 	split->region_split.left    = add_ui_split(ui, split, &ui->arena, s8(""), 0.475,
 	                                           RSD_VERTICAL, ui->font);
+	//split->region_split.right   = add_beamformer_frame_view(ui, split, &ui->arena,
+	//                                                        BeamformerFrameViewKind_Latest, 0);
 	split->region_split.right   = add_beamformer_frame_view(ui, split, &ui->arena,
-	                                                        BeamformerFrameViewKind_Latest, 0);
-
+	                                                        BeamformerFrameViewKind_3DXPlane, 0);
 	ui_fill_live_frame_view(ui, split->region_split.right->view.child->generic);
+	BeamformerFrameView *bv = split->region_split.right->view.child->generic;
+	bv->min_coordinate = (v3){{-60e-3, 0, 10e-3}};
+	bv->max_coordinate = (v3){{60e-3,  0, 165e-3}};
 
 	split = split->region_split.left;
 	split->region_split.left  = add_beamformer_parameters_view(split, ctx);
@@ -3192,7 +3333,7 @@ validate_ui_parameters(BeamformerUIParameters *p)
 }
 
 function void
-draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformFrame *frame_to_draw, BeamformerViewPlaneTag frame_plane)
+draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_draw, BeamformerViewPlaneTag frame_plane)
 {
 	BeamformerUI *ui = ctx->ui;
 	BeamformerSharedMemory *sm = ctx->shared_memory.region;

@@ -212,6 +212,42 @@ function FILE_WATCH_CALLBACK_FN(load_cuda_lib)
 	return result;
 }
 
+function BeamformerRenderModel
+render_model_from_arrays(f32 *vertices, f32 *normals, u16 *indices, u32 index_count)
+{
+	BeamformerRenderModel result = {0};
+
+	i32 buffer_size    = index_count * (6 * sizeof(f32) + sizeof(u16));
+	i32 indices_offset = index_count * (6 * sizeof(f32));
+	i32 vert_size      = index_count * 3 * sizeof(f32);
+	i32 ind_size       = index_count * sizeof(u16);
+
+	result.elements        = index_count;
+	result.elements_offset = indices_offset;
+
+	glCreateBuffers(1, &result.buffer);
+	glNamedBufferStorage(result.buffer, buffer_size, 0, GL_DYNAMIC_STORAGE_BIT);
+	glNamedBufferSubData(result.buffer, 0,              vert_size, vertices);
+	glNamedBufferSubData(result.buffer, vert_size,      vert_size, normals);
+	glNamedBufferSubData(result.buffer, indices_offset, ind_size,  indices);
+
+	glCreateVertexArrays(1, &result.vao);
+	glVertexArrayVertexBuffer(result.vao, 0, result.buffer, 0,         3 * sizeof(f32));
+	glVertexArrayVertexBuffer(result.vao, 1, result.buffer, vert_size, 3 * sizeof(f32));
+	glVertexArrayElementBuffer(result.vao, result.buffer);
+
+	glEnableVertexArrayAttrib(result.vao, 0);
+	glEnableVertexArrayAttrib(result.vao, 1);
+
+	glVertexArrayAttribFormat(result.vao, 0, 3, GL_FLOAT, 0, 0);
+	glVertexArrayAttribFormat(result.vao, 1, 3, GL_FLOAT, 0, vert_size);
+
+	glVertexArrayAttribBinding(result.vao, 0, 0);
+	glVertexArrayAttribBinding(result.vao, 1, 0);
+
+	return result;
+}
+
 #define GLFW_VISIBLE 0x00020004
 void glfwWindowHint(i32, i32);
 iptr glfwCreateWindow(i32, i32, char *, iptr, iptr);
@@ -375,14 +411,14 @@ setup_beamformer(BeamformerCtx *ctx, BeamformerInput *input, Arena *memory)
 	render_2d->name    = s8("shaders/render_2d.glsl");
 	render_2d->gl_type = GL_FRAGMENT_SHADER;
 	render_2d->kind    = BeamformerShaderKind_Render2D;
-	render_2d->shader  = &fvr->shader;
+	render_2d->shader  = fvr->shaders + 0;
 	render_2d->header  = s8(""
 	"layout(location = 0) in  vec2 texture_coordinate;\n"
 	"layout(location = 0) out vec4 v_out_colour;\n\n"
-	"layout(location = " str(FRAME_VIEW_RENDER_DYNAMIC_RANGE_LOC) ") uniform float u_db_cutoff = 60;\n"
-	"layout(location = " str(FRAME_VIEW_RENDER_THRESHOLD_LOC)     ") uniform float u_threshold = 40;\n"
-	"layout(location = " str(FRAME_VIEW_RENDER_GAMMA_LOC)         ") uniform float u_gamma     = 1;\n"
-	"layout(location = " str(FRAME_VIEW_RENDER_LOG_SCALE_LOC)     ") uniform bool  u_log_scale;\n"
+	"layout(location = " str(FRAME_VIEW_DYNAMIC_RANGE_LOC) ") uniform float u_db_cutoff = 60;\n"
+	"layout(location = " str(FRAME_VIEW_THRESHOLD_LOC)     ") uniform float u_threshold = 40;\n"
+	"layout(location = " str(FRAME_VIEW_GAMMA_LOC)         ") uniform float u_gamma     = 1;\n"
+	"layout(location = " str(FRAME_VIEW_LOG_SCALE_LOC)     ") uniform bool  u_log_scale;\n"
 	"\n#line 1\n");
 	render_2d->link = push_struct(memory, typeof(*render_2d));
 	render_2d->link->gl_type = GL_VERTEX_SHADER;
@@ -400,6 +436,129 @@ setup_beamformer(BeamformerCtx *ctx, BeamformerInput *input, Arena *memory)
 	"}\n");
 	reload_shader(&ctx->os, render_2d->path, (iptr)render_2d, *memory);
 	os_add_file_watch(&ctx->os, memory, render_2d->path, reload_shader, (iptr)render_2d);
+
+	ShaderReloadContext *render_3d = push_struct(memory, typeof(*render_3d));
+	render_3d->beamformer_context = ctx;
+	render_3d->path    = s8(static_path_join("shaders", "render_3d.frag.glsl"));
+	render_3d->name    = s8("shaders/render_3d.glsl");
+	render_3d->gl_type = GL_FRAGMENT_SHADER;
+	render_3d->kind    = BeamformerShaderKind_Render3D;
+	render_3d->shader  = fvr->shaders + 1;
+	render_3d->header  = s8(""
+	"layout(location = 0) in  vec3 normal;\n"
+	"layout(location = 1) in  vec3 texture_coordinate;\n\n"
+	"layout(location = 2) in  vec3 test_texture_coordinate;\n\n"
+	"layout(location = 0) out vec4 out_colour;\n\n"
+	"layout(location = " str(FRAME_VIEW_DYNAMIC_RANGE_LOC) ") uniform float u_db_cutoff = 60;\n"
+	"layout(location = " str(FRAME_VIEW_THRESHOLD_LOC)     ") uniform float u_threshold = 40;\n"
+	"layout(location = " str(FRAME_VIEW_GAMMA_LOC)         ") uniform float u_gamma     = 1;\n"
+	"layout(location = " str(FRAME_VIEW_LOG_SCALE_LOC)     ") uniform bool  u_log_scale;\n"
+	"layout(location = " str(FRAME_VIEW_BB_COLOUR_LOC)     ") uniform vec4  u_bb_colour   = vec4(" str(FRAME_VIEW_BB_COLOUR) ");\n"
+	"layout(location = " str(FRAME_VIEW_BB_FRACTION_LOC)   ") uniform float u_bb_fraction = " str(FRAME_VIEW_BB_FRACTION) ";\n"
+	"\n"
+	"layout(binding = 0) uniform sampler3D u_texture;\n"
+	"\n#line 1\n");
+
+	render_3d->link = push_struct(memory, typeof(*render_3d));
+	render_3d->link->gl_type = GL_VERTEX_SHADER;
+	render_3d->link->link    = render_3d;
+	render_3d->link->header  = s8(""
+	"layout(location = 0) in vec3 v_position;\n"
+	"layout(location = 1) in vec3 v_normal;\n"
+	"\n"
+	"layout(location = 0) out vec3 f_normal;\n"
+	"layout(location = 1) out vec3 f_texture_coordinate;\n"
+	"layout(location = 2) out vec3 f_orig_texture_coordinate;\n"
+	"\n"
+	"layout(location = " str(FRAME_VIEW_MODEL_MATRIX_LOC)  ") uniform mat4  u_model;\n"
+	"layout(location = " str(FRAME_VIEW_VIEW_MATRIX_LOC)   ") uniform mat4  u_view;\n"
+	"layout(location = " str(FRAME_VIEW_PROJ_MATRIX_LOC)   ") uniform mat4  u_projection;\n"
+	"\n"
+	"\n"
+	"void main()\n"
+	"{\n"
+	"\tvec3 pos = v_position;\n"
+	"\tf_orig_texture_coordinate = (2 * v_position + 1) / 2;\n"
+	//"\tif (v_position.y == -1) pos.x = clamp(v_position.x, -u_clip_fraction, u_clip_fraction);\n"
+	"\tvec3 tex_coord = (2 * pos + 1) / 2;\n"
+	"\tf_texture_coordinate = tex_coord.xzy;\n"
+	//"\tf_texture_coordinate = u_swizzle? tex_coord.xzy : tex_coord;\n"
+	//"\tf_normal    = normalize(mat3(u_model) * v_normal);\n"
+	"\tf_normal    = v_normal;\n"
+	"\tgl_Position = u_projection * u_view * u_model * vec4(pos, 1);\n"
+	"}\n");
+	reload_shader(&ctx->os, render_3d->path, (iptr)render_3d, *memory);
+	os_add_file_watch(&ctx->os, memory, render_3d->path, reload_shader, (iptr)render_3d);
+
+	f32 unit_cube_vertices[] = {
+		 0.5f,  0.5f, -0.5f,
+		 0.5f,  0.5f, -0.5f,
+		 0.5f,  0.5f, -0.5f,
+		 0.5f, -0.5f, -0.5f,
+		 0.5f, -0.5f, -0.5f,
+		 0.5f, -0.5f, -0.5f,
+		 0.5f,  0.5f,  0.5f,
+		 0.5f,  0.5f,  0.5f,
+		 0.5f,  0.5f,  0.5f,
+		 0.5f, -0.5f,  0.5f,
+		 0.5f, -0.5f,  0.5f,
+		 0.5f, -0.5f,  0.5f,
+		-0.5f,  0.5f, -0.5f,
+		-0.5f,  0.5f, -0.5f,
+		-0.5f,  0.5f, -0.5f,
+		-0.5f, -0.5f, -0.5f,
+		-0.5f, -0.5f, -0.5f,
+		-0.5f, -0.5f, -0.5f,
+		-0.5f,  0.5f,  0.5f,
+		-0.5f,  0.5f,  0.5f,
+		-0.5f,  0.5f,  0.5f,
+		-0.5f, -0.5f,  0.5f,
+		-0.5f, -0.5f,  0.5f,
+		-0.5f, -0.5f,  0.5f
+	};
+	f32 unit_cube_normals[] = {
+		 0.0f,  0.0f, -1.0f,
+		 0.0f,  1.0f,  0.0f,
+		 1.0f,  0.0f,  0.0f,
+		 0.0f,  0.0f, -1.0f,
+		 0.0f, -1.0f,  0.0f,
+		 1.0f,  0.0f,  0.0f,
+		 0.0f,  0.0f,  1.0f,
+		 0.0f,  1.0f,  0.0f,
+		 1.0f,  0.0f,  0.0f,
+		 0.0f,  0.0f,  1.0f,
+		 0.0f, -1.0f,  0.0f,
+		 1.0f,  0.0f,  0.0f,
+		 0.0f,  0.0f, -1.0f,
+		 0.0f,  1.0f,  0.0f,
+		-1.0f,  0.0f,  0.0f,
+		 0.0f,  0.0f, -1.0f,
+		 0.0f, -1.0f,  0.0f,
+		-1.0f,  0.0f,  0.0f,
+		 0.0f,  0.0f,  1.0f,
+		 0.0f,  1.0f,  0.0f,
+		-1.0f,  0.0f,  0.0f,
+		 0.0f,  0.0f,  1.0f,
+		 0.0f, -1.0f,  0.0f,
+		-1.0f,  0.0f,  0.0f
+	};
+	u16 unit_cube_indices[] = {
+		1,  13, 19,
+		1,  19, 7,
+		9,  6,  18,
+		9,  18, 21,
+		23, 20, 14,
+		23, 14, 17,
+		16, 4,  10,
+		16, 10, 22,
+		5,  2,  8,
+		5,  8,  11,
+		15, 12, 0,
+		15, 0,  3
+	};
+
+	cs->unit_cube_model = render_model_from_arrays(unit_cube_vertices, unit_cube_normals,
+	                                               unit_cube_indices, countof(unit_cube_indices));
 }
 
 function void

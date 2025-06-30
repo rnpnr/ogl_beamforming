@@ -57,13 +57,23 @@ typedef struct {
 	#undef X
 } CudaLib;
 
-#define FRAME_VIEW_RENDER_DYNAMIC_RANGE_LOC 1
-#define FRAME_VIEW_RENDER_THRESHOLD_LOC     2
-#define FRAME_VIEW_RENDER_GAMMA_LOC         3
-#define FRAME_VIEW_RENDER_LOG_SCALE_LOC     4
+/* TODO(rnp): this should be a UBO */
+#define FRAME_VIEW_MODEL_MATRIX_LOC   0
+#define FRAME_VIEW_VIEW_MATRIX_LOC    1
+#define FRAME_VIEW_PROJ_MATRIX_LOC    2
+#define FRAME_VIEW_DYNAMIC_RANGE_LOC  3
+#define FRAME_VIEW_THRESHOLD_LOC      4
+#define FRAME_VIEW_GAMMA_LOC          5
+#define FRAME_VIEW_LOG_SCALE_LOC      6
+#define FRAME_VIEW_BB_COLOUR_LOC      7
+#define FRAME_VIEW_BB_FRACTION_LOC    8
+
+#define FRAME_VIEW_BB_COLOUR   0.92, 0.88, 0.78, 1.0
+#define FRAME_VIEW_BB_FRACTION 0.007f
 
 typedef struct {
-	u32 shader;
+	/* NOTE(rnp): shaders[0] -> 2D render, shader[1] -> 3D render */
+	u32 shaders[2];
 	u32 framebuffer;
 	u32 vao;
 	u32 vbo;
@@ -73,6 +83,12 @@ typedef struct {
 #include "beamformer_parameters.h"
 #include "beamformer_work_queue.h"
 
+typedef struct {
+	iptr elements_offset;
+	i32  elements;
+	u32  buffer;
+	u32  vao;
+} BeamformerRenderModel;
 
 typedef struct {
 	u32 programs[BeamformerShaderKind_ComputeCount];
@@ -99,6 +115,8 @@ typedef struct {
 
 	uv4 dec_data_dim;
 	u32 rf_raw_size;
+
+	BeamformerRenderModel unit_cube_model;
 } ComputeShaderCtx;
 
 typedef enum {
@@ -142,7 +160,8 @@ typedef struct {
 	ComputeTimingInfo buffer[4096];
 } ComputeTimingTable;
 
-typedef struct BeamformFrame {
+typedef struct BeamformerFrame BeamformerFrame;
+struct BeamformerFrame {
 	uv3 dim;
 	u32 texture;
 
@@ -156,12 +175,12 @@ typedef struct BeamformFrame {
 	u32 compound_count;
 	u32 id;
 
-	struct BeamformFrame *next;
-} BeamformFrame;
+	BeamformerFrame *next;
+};
 
-struct BeamformComputeFrame {
-	BeamformFrame frame;
-	b32           ready_to_present;
+struct BeamformerComputeFrame {
+	BeamformerFrame frame;
+	b32             ready_to_present;
 	BeamformerViewPlaneTag view_plane_tag;
 };
 
@@ -194,14 +213,14 @@ typedef struct {
 	/* TODO(rnp): this is nasty and should be removed */
 	b32    ui_read_params;
 
-	BeamformComputeFrame beamform_frames[MAX_BEAMFORMED_SAVED_FRAMES];
-	BeamformComputeFrame *latest_frame;
+	BeamformerComputeFrame beamform_frames[MAX_BEAMFORMED_SAVED_FRAMES];
+	BeamformerComputeFrame *latest_frame;
 	u32 next_render_frame_index;
 	u32 display_frame_index;
 
 	/* NOTE: this will only be used when we are averaging */
-	u32                  averaged_frame_index;
-	BeamformComputeFrame averaged_frames[2];
+	u32                    averaged_frame_index;
+	BeamformerComputeFrame averaged_frames[2];
 
 	ComputeShaderCtx  csctx;
 

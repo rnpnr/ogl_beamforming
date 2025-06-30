@@ -55,8 +55,8 @@
 #define static_assert _Static_assert
 
 /* NOTE: garbage to get the prepocessor to properly stringize the value of a macro */
-#define str_(x) #x
-#define str(x) str_(x)
+#define str_(...) #__VA_ARGS__
+#define str(...) str_(__VA_ARGS__)
 
 #define countof(a)       (sizeof(a) / sizeof(*a))
 #define ARRAY_COUNT(a)   (sizeof(a) / sizeof(*a))

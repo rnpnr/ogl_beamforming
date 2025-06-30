@@ -21,6 +21,7 @@
 #define GL_MAX_3D_TEXTURE_SIZE             0x8073
 #define GL_MULTISAMPLE                     0x809D
 #define GL_CLAMP_TO_BORDER                 0x812D
+#define GL_CLAMP_TO_EDGE                   0x812F
 #define GL_DEPTH_COMPONENT24               0x81A6
 #define GL_MAJOR_VERSION                   0x821B
 #define GL_MINOR_VERSION                   0x821C

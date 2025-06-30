@@ -35,7 +35,7 @@ global renderdoc_end_frame_capture_fn   *end_frame_capture;
 #endif
 
 typedef struct {
-	BeamformComputeFrame *frames;
+	BeamformerComputeFrame *frames;
 	u32 capacity;
 	u32 offset;
 	u32 cursor;
@@ -66,10 +66,10 @@ compute_frame_iterator(BeamformerCtx *ctx, u32 start_index, u32 needed_frames)
 	return result;
 }
 
-function BeamformComputeFrame *
+function BeamformerComputeFrame *
 frame_next(ComputeFrameIterator *bfi)
 {
-	BeamformComputeFrame *result = 0;
+	BeamformerComputeFrame *result = 0;
 	if (bfi->cursor != bfi->needed_frames) {
 		u32 index = (bfi->offset + bfi->cursor++) % bfi->capacity;
 		result    = bfi->frames + index;
@@ -78,7 +78,7 @@ frame_next(ComputeFrameIterator *bfi)
 }
 
 function void
-alloc_beamform_frame(GLParams *gp, BeamformFrame *out, uv3 out_dim, s8 name, Arena arena)
+alloc_beamform_frame(GLParams *gp, BeamformerFrame *out, uv3 out_dim, s8 name, Arena arena)
 {
 	out->dim.x = MAX(1, out_dim.x);
 	out->dim.y = MAX(1, out_dim.y);
@@ -104,6 +104,10 @@ alloc_beamform_frame(GLParams *gp, BeamformFrame *out, uv3 out_dim, s8 name, Are
 	glDeleteTextures(1, &out->texture);
 	glCreateTextures(GL_TEXTURE_3D, 1, &out->texture);
 	glTextureStorage3D(out->texture, out->mips, GL_RG32F, out->dim.x, out->dim.y, out->dim.z);
+
+	glTextureParameteri(out->texture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTextureParameteri(out->texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
 	LABEL_GL_OBJECT(GL_TEXTURE, out->texture, stream_to_s8(&label));
 }
 
@@ -157,6 +161,34 @@ push_compute_timing_info(ComputeTimingTable *t, ComputeTimingInfo info)
 {
 	u32 index = atomic_add_u32(&t->write_index, 1) % countof(t->buffer);
 	t->buffer[index] = info;
+}
+
+function m4
+y_aligned_volume_transform(v3 extent, v3 translation, f32 rotation_turns)
+{
+	m4 S, R, T;
+	extent.y = MAX(0.005, extent.y);
+	extent.x = MAX(0.005, extent.x);
+
+	S.c[0] = (v4){{extent.x, 0,        0,        0}};
+	S.c[1] = (v4){{0,        extent.z, 0,        0}};
+	S.c[2] = (v4){{0,        0,        extent.y, 0}};
+	S.c[3] = (v4){{0,        0,        0,        1}};
+
+	f32 sa = sin_f32(rotation_turns * 2 * PI);
+	f32 ca = cos_f32(rotation_turns * 2 * PI);
+	R.c[0] = (v4){{ca, 0, -sa, 0}};
+	R.c[1] = (v4){{0,  1,  0,  0}};
+	R.c[2] = (v4){{sa, 0,  ca, 0}};
+	R.c[3] = (v4){{0,  0,  0,  1}};
+
+	T.c[0] = (v4){{1, 0, 0, 0}};
+	T.c[1] = (v4){{0, 1, 0, 0}};
+	T.c[2] = (v4){{0, 0, 1, 0}};
+	T.c[3] = (v4){{translation.x, translation.y, translation.z, 1}};
+
+	m4 result = m4_mul(m4_mul(R, S), T);
+	return result;
 }
 
 function b32
@@ -263,7 +295,7 @@ compute_cursor_finished(struct compute_cursor *cursor)
 }
 
 function void
-do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformComputeFrame *frame, BeamformerShaderKind shader)
+do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformerComputeFrame *frame, BeamformerShaderKind shader)
 {
 	ComputeShaderCtx *csctx    = &ctx->csctx;
 	BeamformerSharedMemory *sm = ctx->shared_memory.region;
@@ -373,9 +405,9 @@ do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformComputeFrame *frame, 
 	}break;
 	case BeamformerShaderKind_Sum:{
 		u32 aframe_index = ctx->averaged_frame_index % ARRAY_COUNT(ctx->averaged_frames);
-		BeamformComputeFrame *aframe = ctx->averaged_frames + aframe_index;
-		aframe->ready_to_present     = 0;
-		aframe->frame.id             = ctx->averaged_frame_index;
+		BeamformerComputeFrame *aframe = ctx->averaged_frames + aframe_index;
+		aframe->ready_to_present       = 0;
+		aframe->frame.id               = ctx->averaged_frame_index;
 		/* TODO(rnp): hack we need a better way of specifying which frames to sum;
 		 * this is fine for rolling averaging but what if we want to do something else */
 		assert(frame >= ctx->beamform_frames);
@@ -386,10 +418,10 @@ do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformComputeFrame *frame, 
 		u32 *in_textures = push_array(&arena, u32, MAX_BEAMFORMED_SAVED_FRAMES);
 		ComputeFrameIterator cfi = compute_frame_iterator(ctx, 1 + base_index - to_average,
 		                                                  to_average);
-		for (BeamformComputeFrame *it = frame_next(&cfi); it; it = frame_next(&cfi))
+		for (BeamformerComputeFrame *it = frame_next(&cfi); it; it = frame_next(&cfi))
 			in_textures[frame_count++] = it->frame.texture;
 
-		ASSERT(to_average == frame_count);
+		assert(to_average == frame_count);
 
 		do_sum_shader(csctx, in_textures, frame_count, 1 / (f32)frame_count,
 		              aframe->frame.texture, aframe->frame.dim);
@@ -541,7 +573,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 			BeamformerExportContext *ec = &work->export_context;
 			switch (ec->kind) {
 			case BeamformerExportKind_BeamformedData:{
-				BeamformComputeFrame *frame = ctx->latest_frame;
+				BeamformerComputeFrame *frame = ctx->latest_frame;
 				assert(frame->ready_to_present);
 				u32 texture  = frame->frame.texture;
 				uv3 dim      = frame->frame.dim;
@@ -644,7 +676,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 			atomic_store_u32(&cs->processing_compute, 1);
 			start_renderdoc_capture(gl_context);
 
-			BeamformComputeFrame *frame = work->frame;
+			BeamformerComputeFrame *frame = work->frame;
 			uv3 try_dim = make_valid_test_dim(bp->output_points);
 			if (!uv3_equal(try_dim, frame->frame.dim))
 				alloc_beamform_frame(&ctx->gl, &frame->frame, try_dim, s8("Beamformed_Data"), arena);
