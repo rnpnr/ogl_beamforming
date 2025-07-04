@@ -15,6 +15,8 @@ function OS_SHARED_MEMORY_UNLOCK_REGION_FN(os_shared_memory_region_unlock);
 function OS_WAKE_WAITERS_FN(os_wake_waiters);
 function OS_WRITE_FILE_FN(os_write_file);
 
+function OS_WRITE_NEW_FILE_FN(os_write_new_file);
+
 #include "opengl.h"
 #include "util_gl.c"
 
