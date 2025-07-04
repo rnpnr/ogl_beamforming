@@ -228,7 +228,8 @@ typedef struct {
 /* X(id, text) */
 #define FRAME_VIEW_BUTTONS \
 	X(FV_COPY_HORIZONTAL, "Copy Horizontal") \
-	X(FV_COPY_VERTICAL,   "Copy Vertical")
+	X(FV_COPY_VERTICAL,   "Copy Vertical")   \
+	X(FV_EXPORT,          "Export Bitmap")
 
 #define GLOBAL_MENU_BUTTONS \
 	X(GM_OPEN_VIEW_RIGHT,   "Open View Right") \
@@ -1284,6 +1285,9 @@ ui_beamformer_frame_view_convert(BeamformerUI *ui, Arena *arena, Variable *view,
 		fill_variable(bv->x_plane_shifts + 1, view, s8("YZ Shift"), V_INPUT|V_HIDES_CURSOR,
 		              VT_X_PLANE_SHIFT, ui->small_font);
 		bv->demo = add_variable(ui, menu, arena, s8("Demo Mode"), V_INPUT|V_RADIO_BUTTON, VT_B32, ui->small_font);
+		#define X(id, text) add_button(ui, menu, arena, s8(text), UI_BID_ ##id, 0, ui->small_font);
+		FRAME_VIEW_BUTTONS
+		#undef X
 	}break;
 	default:{
 		view->flags &= ~(u32)V_HIDES_CURSOR;
@@ -1510,6 +1514,121 @@ ui_copy_frame(BeamformerUI *ui, Variable *view, RegionSplitDirection direction)
 
 	BeamformerFrameView *bv = new_region->region_split.right->view.child->generic;
 	ui_beamformer_frame_view_copy_frame(ui, bv, old);
+}
+
+#include <stdlib.h>
+function void
+ui_export_view(BeamformerUI *ui, Variable *view)
+{
+	assert(view->type == VT_UI_VIEW);
+
+	BeamformerFrameView *bv = view->view.child->generic;
+
+	Arena scratch = ui->arena;
+
+	BeamformerFrame *f = bv->frame;
+	if (!f) f = ui->latest_plane[BeamformerViewPlaneTag_Count];
+	if (!f) return;
+
+	Stream sb = arena_stream(scratch);
+	stream_append_s8s(&sb, s8("."), os_path_separator());
+	push_acquisition_kind(&sb, f->acquisition_kind, f->compound_count);
+
+	switch (bv->kind) {
+	case BeamformerFrameViewKind_3DXPlane:{ stream_append_s8(&sb, s8("_X_Plane.bmp")); }break;
+	default:{
+		stream_append_byte(&sb, '_');
+		stream_append_hex_u64(&sb, f->id);
+
+		s8 base = stream_to_s8(&sb);
+		stream_append_s8(&sb, s8("_params.csv"));
+		s8 params_file = arena_stream_commit_and_reset(&scratch, &sb);
+
+		v3 min = f->min_coordinate, max = f->max_coordinate;
+
+		stream_append_s8(&sb, s8("min_coord,max_coord,size,dynamic_range\n"));
+		stream_append_f64(&sb, min.x, 1000); stream_append_byte(&sb, ',');
+		stream_append_f64(&sb, max.x, 1000); stream_append_byte(&sb, ',');
+		stream_append_i64(&sb, bv->texture_dim.w); stream_append_byte(&sb, ',');
+		stream_append_f64(&sb, bv->dynamic_range.real32, 100);
+		stream_append_byte(&sb, '\n');
+		stream_append_f64(&sb, min.z, 1000); stream_append_byte(&sb, ',');
+		stream_append_f64(&sb, max.z, 1000); stream_append_byte(&sb, ',');
+		stream_append_i64(&sb, bv->texture_dim.h); stream_append_byte(&sb, ',');
+		stream_append_byte(&sb, '\n');
+
+		if (!os_write_new_file((c8 *)params_file.data, stream_to_s8(&sb)))
+			os_write_file(os_error_handle(), s8("failed to export view parameters\n"));
+
+		stream_reset(&sb, 0);
+		stream_append_s8s(&sb, base, s8(".bmp"));
+	}break;
+	}
+
+	s8 file_name = arena_stream_commit_and_reset(&scratch, &sb);
+
+	#pragma pack(push, 1)
+	struct bmp_header {
+		u16 file_type;
+		u32 file_size;
+		u16 reserved_1;
+		u16 reserved_2;
+		u32 bitmap_offset;
+
+		u32 size;
+		i32 width;
+		i32 height;
+		u16 planes;
+		u16 bits_per_pixel;
+
+		u32 compression;
+		u32 size_of_bitmap;
+
+		i32 horizontal_resolution;
+		i32 vertical_resolution;
+		u32 colours_used;
+		u32 colours_important;
+
+		u32 red_mask;
+		u32 green_mask;
+		u32 blue_mask;
+		u32 alpha_mask;
+
+		u32 colour_space_type;
+		u32 cie_xyz_triples[9];
+		u32 gamma_red;
+		u32 gamma_green;
+		u32 gamma_blue;
+	};
+	#pragma pack(pop)
+
+	u32 texture_size = (u32)bv->texture_dim.x * (u32)bv->texture_dim.y * sizeof(u32);
+	u32 out_size = texture_size + round_up_power_of_2(sizeof(struct bmp_header));
+	u8 *out_buf  = calloc(out_size, 1);
+	if (out_buf) {
+		struct bmp_header *header = (struct bmp_header *)out_buf;
+		header->bitmap_offset  = out_size - texture_size;
+		header->file_type      = (u16)('M') << 8u | (u16)('B');
+		header->file_size      = out_size;
+		header->size           = 108;
+		header->width          = bv->texture_dim.x;
+		header->height         = -bv->texture_dim.y;
+		header->planes         = 1;
+		header->bits_per_pixel = 32;
+		header->compression    = 3;
+		header->size_of_bitmap = texture_size;
+		header->red_mask       = 0xFF000000;
+		header->green_mask     = 0x00FF0000;
+		header->blue_mask      = 0x0000FF00;
+		header->alpha_mask     = 0x000000FF;
+
+		glGetTextureImage(bv->textures[0], 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8, (i32)texture_size,
+		                  out_buf + header->bitmap_offset);
+		s8 raw = {.len = (iz)header->file_size, .data = out_buf};
+		if (!os_write_new_file((c8 *)file_name.data, raw))
+			os_write_file(os_error_handle(), s8("failed to export view\n"));
+		free(out_buf);
+	}
 }
 
 function v3
@@ -3525,6 +3644,7 @@ ui_button_interaction(BeamformerUI *ui, Variable *button)
 {
 	assert(button->type == VT_UI_BUTTON);
 	switch (button->button) {
+	case UI_BID_FV_EXPORT:{ ui_export_view(ui, button->parent->parent); }break;
 	case UI_BID_VIEW_CLOSE:{ ui_view_close(ui, button->parent); }break;
 	case UI_BID_FV_COPY_HORIZONTAL:{
 		ui_copy_frame(ui, button->parent->parent, RSD_HORIZONTAL);
