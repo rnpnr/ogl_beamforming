@@ -898,14 +898,14 @@ ui_beamformer_frame_view_release_subresources(BeamformerUI *ui, BeamformerFrameV
 	if (kind == BeamformerFrameViewKind_Copy && bv->frame) {
 		glDeleteTextures(1, &bv->frame->texture);
 		bv->frame->texture = 0;
-		SLLPush(bv->frame, ui->frame_freelist);
+		SLLPushFreelist(bv->frame, ui->frame_freelist);
 	}
 
 	if (kind != BeamformerFrameViewKind_3DXPlane) {
 		if (bv->axial_scale_bar.scale_bar.savepoint_stack)
-			SLLPush(bv->axial_scale_bar.scale_bar.savepoint_stack, ui->scale_bar_savepoint_freelist);
+			SLLPushFreelist(bv->axial_scale_bar.scale_bar.savepoint_stack, ui->scale_bar_savepoint_freelist);
 		if (bv->lateral_scale_bar.scale_bar.savepoint_stack)
-			SLLPush(bv->lateral_scale_bar.scale_bar.savepoint_stack, ui->scale_bar_savepoint_freelist);
+			SLLPushFreelist(bv->lateral_scale_bar.scale_bar.savepoint_stack, ui->scale_bar_savepoint_freelist);
 	}
 }
 
@@ -926,15 +926,15 @@ ui_variable_free(BeamformerUI *ui, Variable *var)
 					/* TODO(rnp): hack; use a sentinal */
 					if (bv == ui->views)
 						ui->views = bv->next;
-					SLLPush(bv, ui->view_freelist);
+					SLLPushFreelist(bv, ui->view_freelist);
 				}
 
-				Variable *next = var->next;
-				SLLPush(var, ui->variable_freelist);
+				Variable *next = var->next, *parent = var->parent;
+				SLLPushFreelist(var, ui->variable_freelist);
 				if (next) {
 					var = next;
 				} else {
-					var = var->parent;
+					var = parent;
 					/* NOTE(rnp): when we assign parent here we have already
 					 * released the children. Assign type so we don't loop */
 					if (var) var->type = VT_NULL;
@@ -985,7 +985,7 @@ function Variable *
 add_variable(BeamformerUI *ui, Variable *group, Arena *arena, s8 name, u32 flags,
              VariableType type, Font font)
 {
-	Variable *result = SLLPop(ui->variable_freelist);
+	Variable *result = SLLPopFreelist(ui->variable_freelist);
 	if (result) zero_struct(result);
 	else        result = push_struct(arena, Variable);
 	return fill_variable(result, group, name, flags, type, font);
@@ -1285,7 +1285,7 @@ ui_beamformer_frame_view_convert(BeamformerUI *ui, Arena *arena, Variable *view,
 function BeamformerFrameView *
 ui_beamformer_frame_view_new(BeamformerUI *ui, Arena *arena)
 {
-	BeamformerFrameView *result = SLLPop(ui->view_freelist);
+	BeamformerFrameView *result = SLLPopFreelist(ui->view_freelist);
 	if (result) zero_struct(result);
 	else        result = push_struct(arena, typeof(*result));
 	DLLPushDown(result, ui->views);
@@ -1409,7 +1409,7 @@ function void
 ui_beamformer_frame_view_copy_frame(BeamformerUI *ui, BeamformerFrameView *new, BeamformerFrameView *old)
 {
 	assert(old->frame);
-	new->frame = SLLPop(ui->frame_freelist);
+	new->frame = SLLPopFreelist(ui->frame_freelist);
 	if (!new->frame) new->frame = push_struct(&ui->arena, typeof(*new->frame));
 
 	mem_copy(new->frame, old->frame, sizeof(*new->frame));
@@ -3342,7 +3342,7 @@ scale_bar_interaction(BeamformerUI *ui, ScaleBar *sb, v2 mouse)
 			f32 max = new_coord;
 			if (min > max) swap(min, max);
 
-			v2_sll *savepoint = SLLPop(ui->scale_bar_savepoint_freelist);
+			v2_sll *savepoint = SLLPopFreelist(ui->scale_bar_savepoint_freelist);
 			if (!savepoint) savepoint = push_struct(&ui->arena, v2_sll);
 
 			savepoint->v.x = *sb->min_value;
@@ -3362,7 +3362,7 @@ scale_bar_interaction(BeamformerUI *ui, ScaleBar *sb, v2 mouse)
 			*sb->min_value      = savepoint->v.x;
 			*sb->max_value      = savepoint->v.y;
 			sb->savepoint_stack = savepoint->next;
-			SLLPush(savepoint, ui->scale_bar_savepoint_freelist);
+			SLLPushFreelist(savepoint, ui->scale_bar_savepoint_freelist);
 		}
 		sb->zoom_starting_coord = F32_INFINITY;
 	}
@@ -3403,8 +3403,8 @@ ui_view_close(BeamformerUI *ui, Variable *view)
 		}
 		view->parent->next = view->next;
 		view->next->parent = view->parent;
-		if (fw->close) SLLPush(fw->close, ui->variable_freelist);
-		SLLPush(view, ui->variable_freelist);
+		if (fw->close) SLLPushFreelist(fw->close, ui->variable_freelist);
+		SLLPushFreelist(view, ui->variable_freelist);
 	}break;
 	case VT_UI_VIEW:{
 		assert(view->parent->type == VT_UI_REGION_SPLIT);
@@ -3424,7 +3424,7 @@ ui_view_close(BeamformerUI *ui, Variable *view)
 		}
 		remaining->parent = parent;
 
-		SLLPush(region, ui->variable_freelist);
+		SLLPushFreelist(region, ui->variable_freelist);
 	}break;
 	InvalidDefaultCase;
 	}
@@ -3581,7 +3581,7 @@ ui_extra_actions(BeamformerUI *ui, Variable *var)
 				ui_beamformer_frame_view_copy_frame(ui, new, old);
 
 			DLLRemove(old);
-			SLLPush(old, ui->view_freelist);
+			SLLPushFreelist(old, ui->view_freelist);
 		}break;
 		InvalidDefaultCase;
 		}
@@ -3603,15 +3603,17 @@ function void
 ui_end_interact(BeamformerUI *ui, v2 mouse)
 {
 	Interaction *it = &ui->interaction;
-	b32 start_compute = (it->var->flags & V_CAUSES_COMPUTE) != 0;
+	Variable *parent = it->var->parent;
+	u32 flags = it->var->flags;
+
 	switch (it->kind) {
 	case InteractionKind_Nop:{}break;
 	case InteractionKind_Drag:{
 		switch (it->var->type) {
 		case VT_X_PLANE_SHIFT:{
-			assert(it->var->parent && it->var->parent->type == VT_BEAMFORMER_FRAME_VIEW);
+			assert(parent && parent->type == VT_BEAMFORMER_FRAME_VIEW);
 			XPlaneShift *xp = &it->var->x_plane_shift;
-			BeamformerFrameView *view = it->var->parent->generic;
+			BeamformerFrameView *view = parent->generic;
 			BeamformerViewPlaneTag plane = view_plane_tag_from_x_plane_shift(view, it->var);
 			f32 rotation  = x_plane_rotation_for_view_plane(view, plane);
 			m4 x_rotation = m4_rotation_about_y(rotation);
@@ -3660,9 +3662,10 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 	InvalidDefaultCase;
 	}
 
-	if (start_compute) ui->flush_params = 1;
-	if (it->var->flags & V_UPDATE_VIEW) {
-		Variable *parent = it->var->parent;
+	if (flags & V_CAUSES_COMPUTE)
+		ui->flush_params = 1;
+
+	if (flags & V_UPDATE_VIEW) {
 		BeamformerFrameView *frame = parent->generic;
 		/* TODO(rnp): more straight forward way of achieving this */
 		if (parent->type != VT_BEAMFORMER_FRAME_VIEW) {
@@ -3673,13 +3676,13 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 		frame->dirty = 1;
 	}
 
-	if (it->var->flags & V_LIVE_CONTROL)
+	if (flags & V_LIVE_CONTROL)
 		ui_live_control_update(ui, it->var->parent);
 
-	if (it->var->flags & V_HIDES_CURSOR)
+	if (flags & V_HIDES_CURSOR)
 		EnableCursor();
 
-	if (it->var->flags & V_EXTRA_ACTION)
+	if (flags & V_EXTRA_ACTION)
 		ui_extra_actions(ui, it->var);
 
 	ui->interaction = (Interaction){.kind = InteractionKind_None};
@@ -3805,6 +3808,18 @@ ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 	ui->next_interaction = (Interaction){.kind = InteractionKind_None};
 }
 
+/* NOTE(rnp): this only exists to make asan less annoying. do not waste
+ * people's time by freeing, closing, etc... */
+DEBUG_EXPORT BEAMFORMER_DEBUG_UI_DEINIT_FN(beamformer_debug_ui_deinit)
+{
+#ifdef ASAN_ACTIVE
+	BeamformerUI *ui = ctx->ui;
+	UnloadFont(ui->font);
+	UnloadFont(ui->small_font);
+	CloseWindow();
+#endif
+}
+
 function void
 ui_init(BeamformerCtx *ctx, Arena store)
 {
@@ -3872,6 +3887,8 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 
 	ui->latest_plane[BeamformerViewPlaneTag_Count] = frame_to_draw;
 	ui->latest_plane[frame_plane]                  = frame_to_draw;
+
+	asan_poison_region(ui->arena.beg, ui->arena.end - ui->arena.beg);
 
 	/* TODO(rnp): there should be a better way of detecting this */
 	if (ctx->ui_read_params) {

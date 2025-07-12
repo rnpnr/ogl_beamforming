@@ -27,7 +27,7 @@
   #define EXTRA_FLAGS     ""
 #else
   #define COMMON_FLAGS    "-std=c11", "-pipe", "-Wall"
-  #define DEBUG_FLAGS     "-O0", "-D_DEBUG", "-Wno-unused-function"
+  #define DEBUG_FLAGS     "-O0", "-D_DEBUG", "-Wno-unused-function", "-fsanitize=address"
   #define OPTIMIZED_FLAGS "-O3"
   #define EXTRA_FLAGS     "-Werror", "-Wextra", "-Wshadow", "-Wconversion", "-Wno-unused-parameter", \
                           "-Wno-error=unused-function", "-ffast-math"

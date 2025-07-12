@@ -200,6 +200,7 @@ function OS_ALLOC_ARENA_FN(os_alloc_arena)
 	if (!result.beg)
 		os_fatal(s8("os_alloc_arena: couldn't allocate memory\n"));
 	result.end = result.beg + capacity;
+	asan_poison_region(result.beg, result.end - result.beg);
 	return result;
 }
 

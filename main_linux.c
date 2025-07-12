@@ -114,6 +114,7 @@ main(void)
 	}
 
 	beamformer_invalidate_shared_memory(&ctx);
+	beamformer_debug_ui_deinit(&ctx);
 
 	/* NOTE: make sure this will get cleaned up after external
 	 * programs release their references */

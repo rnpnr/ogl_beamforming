@@ -141,4 +141,5 @@ main(void)
 	}
 
 	beamformer_invalidate_shared_memory(&ctx);
+	beamformer_debug_ui_deinit(&ctx);
 }

@@ -9,6 +9,7 @@
 global void *debug_lib;
 
 #define DEBUG_ENTRY_POINTS \
+	X(beamformer_debug_ui_deinit)      \
 	X(beamformer_frame_step)           \
 	X(beamformer_complete_compute)     \
 	X(beamformer_compute_setup)        \
@@ -268,6 +269,7 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 			os_wait_on_value(&ctx->sync_variable, 1, (u32)-1);
 			atomic_store_u32(&ctx->asleep, 0);
 		}
+		asan_poison_region(ctx->arena.beg, ctx->arena.end - ctx->arena.beg);
 		beamformer_complete_compute(ctx->user_context, ctx->arena, ctx->gl_context);
 	}
 

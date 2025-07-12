@@ -41,6 +41,17 @@
 #endif
 #define ASSERT assert
 
+#if defined(__has_feature) && (__has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__))
+  #define ASAN_ACTIVE 1
+  void __asan_poison_memory_region(void *, ptrdiff_t);
+  void __asan_unpoison_memory_region(void *, ptrdiff_t);
+  #define asan_poison_region(region, size)   __asan_poison_memory_region((region), (size))
+  #define asan_unpoison_region(region, size) __asan_unpoison_memory_region((region), (size))
+#else
+  #define asan_poison_region(...)
+  #define asan_unpoison_region(...)
+#endif
+
 #define INVALID_CODE_PATH ASSERT(0)
 #define INVALID_DEFAULT_CASE default: ASSERT(0); break
 #define InvalidCodePath assert(0)
@@ -78,11 +89,21 @@
 #define EachNonZeroEnumValue(type, it) (type it = (type)1; it < type##_Count; it = (type)(it + 1))
 
 /* NOTE(rnp): no guarantees about actually getting an element */
-#define SLLPop(list)     list; list = list ? list->next : 0
+#define SLLPop(list) list; list = list ? list->next : 0
 #define SLLPush(v, list) do { \
 	(v)->next = (list); \
 	(list)    = v;      \
 } while (0)
+
+#define SLLPopFreelist(list) list; do { \
+	asan_unpoison_region((list), sizeof(*(list))); \
+	(void)SLLPop((list)); \
+} while(0)
+
+#define SLLPushFreelist(v, list) do { \
+	SLLPush((v), (list));                  \
+	asan_poison_region((v), sizeof(*(v))); \
+} while(0)
 
 #define DLLPushDown(v, list) do { \
 	(v)->next = (list);                   \

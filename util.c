@@ -50,6 +50,7 @@ arena_alloc(Arena *a, iz len, uz align, iz count)
 	iz available = a->end - a->beg - (iz)padding;
 	assert((available >= 0 && count <= available / len));
 	void *p = a->beg + padding;
+	asan_unpoison_region(p, count * len);
 	a->beg += (iz)padding + count * len;
 	/* TODO: Performance? */
 	return mem_clear(p, 0, count * len);
@@ -381,6 +382,10 @@ arena_stream(Arena a)
 	Stream result = {0};
 	result.data   = a.beg;
 	result.cap    = (i32)(a.end - a.beg);
+
+	/* TODO(rnp): no idea what to do here if we want to maintain the ergonomics */
+	asan_unpoison_region(result.data, result.cap);
+
 	return result;
 }
 

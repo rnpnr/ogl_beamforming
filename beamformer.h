@@ -265,4 +265,7 @@ typedef BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute_fn);
                                                    ShaderReloadContext *src, Arena arena, s8 shader_name)
 typedef BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader_fn);
 
+#define BEAMFORMER_DEBUG_UI_DEINIT_FN(name) void name(BeamformerCtx *ctx)
+typedef BEAMFORMER_DEBUG_UI_DEINIT_FN(beamformer_debug_ui_deinit_fn);
+
 #endif /*_BEAMFORMER_H_ */
