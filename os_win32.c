@@ -136,7 +136,7 @@ os_get_module(char *name, Stream *e)
 function OS_WRITE_FILE_FN(os_write_file)
 {
 	i32 wlen = 0;
-	if (raw.len > 0 && raw.len <= U32_MAX) WriteFile(file, raw.data, raw.len, &wlen, 0);
+	if (raw.len > 0 && raw.len <= U32_MAX) WriteFile(file, raw.data, (i32)raw.len, &wlen, 0);
 	return raw.len == wlen;
 }
 
@@ -212,13 +212,12 @@ function OS_READ_WHOLE_FILE_FN(os_read_whole_file)
 	if (h >= 0 && GetFileInformationByHandle(h, &fileinfo)) {
 		iz filesize  = (iz)fileinfo.nFileSizeHigh << 32;
 		filesize    |= (iz)fileinfo.nFileSizeLow;
-		result       = s8_alloc(arena, filesize);
-
-		ASSERT(filesize <= (iz)U32_MAX);
-
-		i32 rlen;
-		if (!ReadFile(h, result.data, result.len, &rlen, 0) || rlen != result.len)
-			result = s8("");
+		if (filesize <= U32_MAX) {
+			result = s8_alloc(arena, filesize);
+			i32 rlen;
+			if (!ReadFile(h, result.data, (i32)result.len, &rlen, 0) || rlen != result.len)
+				result = s8("");
+		}
 	}
 	if (h >= 0) CloseHandle(h);
 
@@ -253,10 +252,11 @@ function SharedMemoryRegion
 os_create_shared_memory_area(Arena *arena, char *name, i32 lock_count, iz requested_capacity)
 {
 	iz capacity = os_round_up_to_page_size(requested_capacity);
+	assert(capacity <= (iz)U32_MAX);
 	SharedMemoryRegion result = {0};
-	iptr h = CreateFileMappingA(-1, 0, PAGE_READWRITE, 0, capacity, name);
+	iptr h = CreateFileMappingA(-1, 0, PAGE_READWRITE, 0, (u32)capacity, name);
 	if (h != INVALID_FILE) {
-		void *new = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, capacity);
+		void *new = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, (u32)capacity);
 		if (new) {
 			w32_shared_memory_context *ctx = push_struct(arena, typeof(*ctx));
 			ctx->semaphores   = push_array(arena, typeof(*ctx->semaphores), lock_count);

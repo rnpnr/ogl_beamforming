@@ -96,7 +96,7 @@ typedef enum {
 #define BEAMFORMER_UI_PARAMS \
 	X(output_min_coordinate, float,    [4], vec4,    , "/* [m] Back-Top-Left corner of output region */")                    \
 	X(output_max_coordinate, float,    [4], vec4,    , "/* [m] Front-Bottom-Right corner of output region */")               \
-	X(output_points,         uint32_t, [4], uvec4,   , "/* Width * Height * Depth * (Frame Average Count) */")               \
+	X(output_points,         int32_t,  [4], uvec4,   , "/* Width * Height * Depth * (Frame Average Count) */")               \
 	X(sampling_frequency,    float,       , float,   , "/* [Hz]  */")                                                        \
 	X(center_frequency,      float,       , float,   , "/* [Hz]  */")                                                        \
 	X(speed_of_sound,        float,       , float,   , "/* [m/s] */")                                                        \

@@ -1,9 +1,9 @@
 function void
-fill_kronecker_sub_matrix(i32 *out, i32 out_stride, i32 scale, i32 *b, uv2 b_dim)
+fill_kronecker_sub_matrix(i32 *out, i32 out_stride, i32 scale, i32 *b, iv2 b_dim)
 {
-	f32x4 vscale = dup_f32x4(scale);
-	for (u32 i = 0; i < b_dim.y; i++) {
-		for (u32 j = 0; j < b_dim.x; j += 4, b += 4) {
+	f32x4 vscale = dup_f32x4((f32)scale);
+	for (i32 i = 0; i < b_dim.y; i++) {
+		for (i32 j = 0; j < b_dim.x; j += 4, b += 4) {
 			f32x4 vb = cvt_i32x4_f32x4(load_i32x4(b));
 			store_i32x4(out + j, cvt_f32x4_i32x4(mul_f32x4(vscale, vb)));
 		}
@@ -13,13 +13,13 @@ fill_kronecker_sub_matrix(i32 *out, i32 out_stride, i32 scale, i32 *b, uv2 b_dim
 
 /* NOTE: this won't check for valid space/etc and assumes row major order */
 function void
-kronecker_product(i32 *out, i32 *a, uv2 a_dim, i32 *b, uv2 b_dim)
+kronecker_product(i32 *out, i32 *a, iv2 a_dim, i32 *b, iv2 b_dim)
 {
-	uv2 out_dim = {.x = a_dim.x * b_dim.x, .y = a_dim.y * b_dim.y};
-	ASSERT(out_dim.y % 4 == 0);
-	for (u32 i = 0; i < a_dim.y; i++) {
+	iv2 out_dim = {{a_dim.x * b_dim.x, a_dim.y * b_dim.y}};
+	assert(out_dim.y % 4 == 0);
+	for (i32 i = 0; i < a_dim.y; i++) {
 		i32 *vout = out;
-		for (u32 j = 0; j < a_dim.x; j++, a++) {
+		for (i32 j = 0; j < a_dim.x; j++, a++) {
 			fill_kronecker_sub_matrix(vout, out_dim.y, *a, b, b_dim);
 			vout += b_dim.y;
 		}
@@ -29,7 +29,7 @@ kronecker_product(i32 *out, i32 *a, uv2 a_dim, i32 *b, uv2 b_dim)
 
 /* NOTE/TODO: to support even more hadamard sizes use the Paley construction */
 function i32 *
-make_hadamard_transpose(Arena *a, u32 dim)
+make_hadamard_transpose(Arena *a, i32 dim)
 {
 	read_only local_persist	i32 hadamard_12_12_transpose[] = {
 		1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
@@ -76,7 +76,7 @@ make_hadamard_transpose(Arena *a, u32 dim)
 	b32 multiple_of_20 = dim % 20 == 0;
 	iz elements        = dim * dim;
 
-	u32 base_dim = 0;
+	i32 base_dim = 0;
 	if (power_of_2) {
 		base_dim  = dim;
 	} else if (multiple_of_20 && ISPOWEROF2(dim / 20)) {
@@ -95,9 +95,9 @@ make_hadamard_transpose(Arena *a, u32 dim)
 
 		#define IND(i, j) ((i) * dim + (j))
 		m[0] = 1;
-		for (u32 k = 1; k < dim; k *= 2) {
-			for (u32 i = 0; i < k; i++) {
-				for (u32 j = 0; j < k; j++) {
+		for (i32 k = 1; k < dim; k *= 2) {
+			for (i32 i = 0; i < k; i++) {
+				for (i32 j = 0; j < k; j++) {
 					i32 val = m[IND(i, j)];
 					m[IND(i + k, j)]     =  val;
 					m[IND(i, j + k)]     =  val;
@@ -108,27 +108,29 @@ make_hadamard_transpose(Arena *a, u32 dim)
 		#undef IND
 
 		i32 *m2 = 0;
-		uv2 m2_dim;
+		iv2 m2_dim;
 		switch (base_dim) {
-		case 12:{ m2 = hadamard_12_12_transpose; m2_dim = (uv2){{12, 12}}; }break;
-		case 20:{ m2 = hadamard_20_20_transpose; m2_dim = (uv2){{20, 20}}; }break;
+		case 12:{ m2 = hadamard_12_12_transpose; m2_dim = (iv2){{12, 12}}; }break;
+		case 20:{ m2 = hadamard_20_20_transpose; m2_dim = (iv2){{20, 20}}; }break;
 		}
-		if (m2) kronecker_product(result, m, (uv2){{dim, dim}}, m2, m2_dim);
+		if (m2) kronecker_product(result, m, (iv2){{dim, dim}}, m2, m2_dim);
 	}
 
 	return result;
 }
 
 function b32
-uv2_equal(uv2 a, uv2 b)
+iv2_equal(iv2 a, iv2 b)
 {
-	return a.x == b.x && a.y == b.y;
+	b32 result = a.x == b.x && a.y == b.y;
+	return result;
 }
 
 function b32
-uv3_equal(uv3 a, uv3 b)
+iv3_equal(iv3 a, iv3 b)
 {
-	return a.x == b.x && a.y == b.y && a.z == b.z;
+	b32 result = a.x == b.x && a.y == b.y && a.z == b.z;
+	return result;
 }
 
 function v2
@@ -187,8 +189,8 @@ function v2
 v2_floor(v2 a)
 {
 	v2 result;
-	result.x = (i32)a.x;
-	result.y = (i32)a.y;
+	result.x = (f32)((i32)a.x);
+	result.y = (f32)((i32)a.y);
 	return result;
 }
 
@@ -371,9 +373,7 @@ m4_mul(m4 a, m4 b)
 	for (u32 i = 0; i < countof(result.E); i++) {
 		u32 base = i / 4;
 		u32 sub  = i % 4;
-		v4 v1 = m4_row(a, base);
-		v4 v2 = m4_column(b, sub);
-		result.E[i] = v4_dot(v1, v2);
+		result.E[i] = v4_dot(m4_row(a, base), m4_column(b, sub));
 	}
 	return result;
 }
@@ -518,18 +518,18 @@ camera_look_at(v3 camera, v3 point)
 
 /* NOTE(rnp): adapted from "Essential Mathematics for Games and Interactive Applications" (Verth, Bishop) */
 function f32
-obb_raycast(m4 obb_orientation, v3 obb_size, v3 obb_center, ray ray)
+obb_raycast(m4 obb_orientation, v3 obb_size, v3 obb_center, ray r)
 {
-	v3 p = v3_sub(obb_center, ray.origin);
+	v3 p = v3_sub(obb_center, r.origin);
 	v3 X = obb_orientation.c[0].xyz;
 	v3 Y = obb_orientation.c[1].xyz;
 	v3 Z = obb_orientation.c[2].xyz;
 
 	/* NOTE(rnp): projects direction vector onto OBB axis */
 	v3 f;
-	f.x = v3_dot(X, ray.direction);
-	f.y = v3_dot(Y, ray.direction);
-	f.z = v3_dot(Z, ray.direction);
+	f.x = v3_dot(X, r.direction);
+	f.y = v3_dot(Y, r.direction);
+	f.z = v3_dot(Z, r.direction);
 
 	/* NOTE(rnp): projects relative vector onto OBB axis */
 	v3 e;

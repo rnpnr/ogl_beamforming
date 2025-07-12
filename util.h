@@ -37,7 +37,7 @@
   #define DEBUG_IMPORT global
   #define DEBUG_EXPORT function
   #define DEBUG_DECL(a)
-  #define assert(c)
+  #define assert(c) (void)(c)
 #endif
 #define ASSERT assert
 
@@ -58,7 +58,7 @@
 #define str_(...) #__VA_ARGS__
 #define str(...) str_(__VA_ARGS__)
 
-#define countof(a)       (sizeof(a) / sizeof(*a))
+#define countof(a)       (iz)(sizeof(a) / sizeof(*a))
 #define ARRAY_COUNT(a)   (sizeof(a) / sizeof(*a))
 #define ABS(x)           ((x) < 0 ? (-x) : (x))
 #define BETWEEN(x, a, b) ((x) >= (a) && (x) <= (b))
@@ -102,7 +102,7 @@
 #define I32_MAX          (0x7FFFFFFFL)
 #define U32_MAX          (0xFFFFFFFFUL)
 #define F32_INFINITY     (1e+300*1e+300)
-#define F32_EPSILON      (1e-6)
+#define F32_EPSILON      (1e-6f)
 #ifndef PI
   #define PI             (3.14159265358979323846f)
 #endif
@@ -129,7 +129,7 @@ typedef struct { u8 *beg, *end; } Arena;
 typedef struct { Arena *arena; u8 *old_beg; } TempArena;
 
 typedef struct { iz len; u8 *data; } s8;
-#define s8(s) (s8){.len = ARRAY_COUNT(s) - 1, .data = (u8 *)s}
+#define s8(s) (s8){.len = countof(s) - 1, .data = (u8 *)s}
 #define s8_comp(s) {sizeof(s) - 1, (u8 *)s}
 
 typedef struct { iz len; u16 *data; } s16;
@@ -221,8 +221,8 @@ typedef union {
 
 typedef struct {
 	u8   *data;
-	u32   widx;
-	u32   cap;
+	i32   widx;
+	i32   cap;
 	b32   errors;
 } Stream;
 
@@ -300,7 +300,7 @@ typedef OS_WRITE_FILE_FN(os_write_file_fn);
 #define OS_THREAD_ENTRY_POINT_FN(name) iptr name(iptr _ctx)
 typedef OS_THREAD_ENTRY_POINT_FN(os_thread_entry_point_fn);
 
-#define OS_SHARED_MEMORY_LOCK_REGION_FN(name) b32 name(SharedMemoryRegion *sm, i32 *locks, i32 lock_index, i32 timeout_ms)
+#define OS_SHARED_MEMORY_LOCK_REGION_FN(name) b32 name(SharedMemoryRegion *sm, i32 *locks, i32 lock_index, u32 timeout_ms)
 typedef OS_SHARED_MEMORY_LOCK_REGION_FN(os_shared_memory_region_lock_fn);
 
 #define OS_SHARED_MEMORY_UNLOCK_REGION_FN(name) void name(SharedMemoryRegion *sm, i32 *locks, i32 lock_index)
@@ -342,7 +342,7 @@ struct OS {
 	DEBUG_DECL(renderdoc_end_frame_capture_fn   *end_frame_capture;)
 };
 
-#define LABEL_GL_OBJECT(type, id, s) {s8 _s = (s); glObjectLabel(type, id, _s.len, (c8 *)_s.data);}
+#define LABEL_GL_OBJECT(type, id, s) {s8 _s = (s); glObjectLabel(type, id, (i32)_s.len, (c8 *)_s.data);}
 
 #include "util.c"
 #include "math.c"

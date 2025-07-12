@@ -24,10 +24,13 @@
   #define COMMON_FLAGS    "-nologo", "-std:c11", "-Fo:" OUTDIR "\\", "-Z7", "-Zo"
   #define DEBUG_FLAGS     "-Od", "-D_DEBUG"
   #define OPTIMIZED_FLAGS "-O2"
+  #define EXTRA_FLAGS     ""
 #else
   #define COMMON_FLAGS    "-std=c11", "-pipe", "-Wall"
   #define DEBUG_FLAGS     "-O0", "-D_DEBUG", "-Wno-unused-function"
   #define OPTIMIZED_FLAGS "-O3"
+  #define EXTRA_FLAGS     "-Werror", "-Wextra", "-Wshadow", "-Wconversion", "-Wno-unused-parameter", \
+                          "-Wno-error=unused-function", "-ffast-math"
 #endif
 
 #define is_aarch64 ARCH_ARM64
@@ -96,14 +99,14 @@
 #define shift(list, count) ((count)--, *(list)++)
 
 #define da_append_count(a, s, items, item_count) do { \
-	da_reserve((a), (s), (s)->count + (item_count));                            \
-	mem_copy((s)->data + (s)->count, (items), sizeof(*(items)) * (item_count)); \
-	(s)->count += (item_count);                                                 \
+	da_reserve((a), (s), (s)->count + (item_count));                                \
+	mem_copy((s)->data + (s)->count, (items), sizeof(*(items)) * (uz)(item_count)); \
+	(s)->count += (item_count);                                                     \
 } while (0)
 
 #define cmd_append_count da_append_count
 #define cmd_append(a, s, ...) da_append_count(a, s, ((char *[]){__VA_ARGS__}), \
-                                             (sizeof((char *[]){__VA_ARGS__}) / sizeof(char *)))
+                                              (iz)(sizeof((char *[]){__VA_ARGS__}) / sizeof(char *)))
 
 typedef struct {
 	char **data;
@@ -219,7 +222,7 @@ os_get_filetime(char *file)
 	struct stat sb;
 	u64 result = (u64)-1;
 	if (stat(file, &sb) != -1)
-		result = sb.st_mtim.tv_sec;
+		result = (u64)sb.st_mtim.tv_sec;
 	return result;
 }
 
@@ -244,7 +247,7 @@ os_wait_close_process(iptr handle)
 	b32 result = 0;
 	for (;;) {
 		i32   status;
-		iptr wait_pid = (iptr)waitpid(handle, &status, 0);
+		iptr wait_pid = (iptr)waitpid((i32)handle, &status, 0);
 		if (wait_pid == -1)
 			build_fatal("failed to wait on child process: %s", strerror(errno));
 		if (wait_pid == handle) {
@@ -436,6 +439,7 @@ check_rebuild_self(Arena arena, i32 argc, char *argv[])
 
 		Options options = {0};
 		CommandList c = cmd_base(&arena, &options);
+		cmd_append(&arena, &c, EXTRA_FLAGS);
 		if (!is_msvc) cmd_append(&arena, &c, "-Wno-unused-function");
 		cmd_append(&arena, &c, __FILE__, OUTPUT_EXE(binary));
 		if (is_msvc) cmd_append(&arena, &c, "/link", "-incremental:no", "-opt:ref");
@@ -759,9 +763,14 @@ main(i32 argc, char *argv[])
 	CommandList c = cmd_base(&arena, &options);
 	if (!check_build_raylib(arena, c, options.debug)) return 1;
 
+	/////////////////////////////////////
+	// extra flags (unusable for raylib)
+	cmd_append(&arena, &c, EXTRA_FLAGS);
+
+	/////////////////
+	// helpers/tests
 	result &= build_matlab_bindings(arena);
 	result &= build_helper_library(arena, c);
-
 	if (options.tests) result &= build_tests(arena, c);
 
 	//////////////////
@@ -803,7 +812,7 @@ main(i32 argc, char *argv[])
 	}
 
 	if (options.time) {
-		f64 seconds = (f64)(os_get_timer_counter() - start_time) / os_get_timer_frequency();
+		f64 seconds = (f64)(os_get_timer_counter() - start_time) / (f64)os_get_timer_frequency();
 		build_log_info("took %0.03f [s]", seconds);
 	}
 

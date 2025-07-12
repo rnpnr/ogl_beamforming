@@ -14,10 +14,10 @@
 #include <stdlib.h>
 #include <zstd.h>
 
-global u32 g_output_points[4] = {512, 1, 1024, 1};
-global v2  g_axial_extent     = {{ 10e-3, 165e-3}};
-global v2  g_lateral_extent   = {{-60e-3,  60e-3}};
-global f32 g_f_number         = 0.5;
+global i32 g_output_points[4] = {512, 1, 1024, 1};
+global v2  g_axial_extent     = {{ 10e-3f, 165e-3f}};
+global v2  g_lateral_extent   = {{-60e-3f,  60e-3f}};
+global f32 g_f_number         = 0.5f;
 
 typedef struct {
 	b32 loop;
@@ -79,7 +79,7 @@ function void os_init_timer(void) { }
 function f64
 os_get_time(void)
 {
-	f64 result = (f64)os_get_timer_counter() / os_get_timer_frequency();
+	f64 result = (f64)os_get_timer_counter() / (f64)os_get_timer_frequency();
 	return result;
 }
 
@@ -96,11 +96,11 @@ os_read_file_simp(char *fname)
 		die("couldn't stat file\n");
 
 	result.len  = st.st_size;
-	result.data = malloc(st.st_size);
+	result.data = malloc((uz)st.st_size);
 	if (!result.data)
 		die("couldn't alloc space for reading\n");
 
-	iz rlen = read(fd, result.data, st.st_size);
+	iz rlen = read(fd, result.data, (u32)st.st_size);
 	close(fd);
 
 	if (rlen != st.st_size)
@@ -122,7 +122,7 @@ os_init_timer(void)
 function f64
 os_get_time(void)
 {
-	f64 result = (f64)os_get_timer_counter() / os_context.timer_frequency;
+	f64 result = (f64)os_get_timer_counter() / (f64)os_context.timer_frequency;
 	return result;
 }
 
@@ -144,7 +144,7 @@ os_read_file_simp(char *fname)
 		die("couldn't alloc space for reading\n");
 
 	i32 rlen = 0;
-	if (!ReadFile(h, result.data, fileinfo.nFileSizeLow, &rlen, 0) && rlen != fileinfo.nFileSizeLow)
+	if (!ReadFile(h, result.data, (i32)fileinfo.nFileSizeLow, &rlen, 0) && rlen != (i32)fileinfo.nFileSizeLow)
 		die("couldn't read file: %s\n", fname);
 	CloseHandle(h);
 
@@ -168,28 +168,13 @@ stream_ensure_termination(Stream *s, u8 byte)
 	}
 }
 
-function void
-stream_append_u64_width(Stream *s, u64 n, u64 min_width)
-{
-	u8 tmp[64];
-	u8 *end = tmp + sizeof(tmp);
-	u8 *beg = end;
-	min_width = MIN(sizeof(tmp), min_width);
-
-	do { *--beg = '0' + (n % 10); } while (n /= 10);
-	while (end - beg > 0 &&  end - beg < min_width)
-		*--beg = '0';
-
-	stream_append(s, beg, end - beg);
-}
-
 function void *
 decompress_zstd_data(s8 raw)
 {
-	iz requested_size = ZSTD_getFrameContentSize(raw.data, raw.len);
+	uz requested_size = ZSTD_getFrameContentSize(raw.data, (uz)raw.len);
 	void *out         = malloc(requested_size);
 	if (out) {
-		iz decompressed = ZSTD_decompress(out, requested_size, raw.data, raw.len);
+		uz decompressed = ZSTD_decompress(out, requested_size, raw.data, (uz)raw.len);
 		if (decompressed != requested_size) {
 			free(out);
 			out = 0;
@@ -218,7 +203,7 @@ fill_beamformer_parameters_from_zemp_bp_v1(zemp_bp_v1 *zbp, BeamformerParameters
 	mem_copy(out->xdc_element_pitch, zbp->xdc_element_pitch, sizeof(out->xdc_element_pitch));
 	mem_copy(out->rf_raw_dim,        zbp->raw_data_dim,      sizeof(out->rf_raw_dim));
 
-	out->transmit_mode      = zbp->transmit_mode;
+	out->transmit_mode      = (i32)zbp->transmit_mode;
 	out->decode             = zbp->decode_mode;
 	out->das_shader_id      = zbp->beamform_mode;
 	out->time_offset        = zbp->time_offset;
@@ -269,7 +254,7 @@ parse_argv(i32 argc, char *argv[])
 		} else if (s8_equal(arg, s8("--frame"))) {
 			shift(argv, argc);
 			if (argc) {
-				result.frame_number = atoi(*argv);
+				result.frame_number = (u32)atoi(*argv);
 				shift(argv, argc);
 			}
 		} else if (arg.len > 0 && arg.data[0] == '-') {
@@ -322,7 +307,7 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	stream_append_s8(&path, study);
 	stream_ensure_termination(&path, OS_PATH_SEPARATOR_CHAR);
 	stream_append_s8(&path, study);
-	iz path_work_index = path.widx;
+	i32 path_work_index = path.widx;
 
 	stream_append_s8(&path, s8(".bp"));
 	stream_ensure_termination(&path, 0);
@@ -351,7 +336,7 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	bp.interpolate    = 0;
 
 	if (zbp->sparse_elements[0] == -1) {
-		for (u32 i = 0; i < countof(zbp->sparse_elements); i++)
+		for (i16 i = 0; i < countof(zbp->sparse_elements); i++)
 			zbp->sparse_elements[i] = i;
 	}
 
@@ -369,7 +354,7 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	free(zbp);
 
 	i32 shader_stages[16];
-	i32 shader_stage_count = 0;
+	u32 shader_stage_count = 0;
 	if (options->cuda) shader_stages[shader_stage_count++] = BeamformerShaderKind_CudaDecode;
 	else               shader_stages[shader_stage_count++] = BeamformerShaderKind_Decode;
 	shader_stages[shader_stage_count++] = BeamformerShaderKind_DASCompute;
@@ -382,12 +367,12 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	if (options->loop) {
 		u32 frame = 0;
 		f32 times[32] = {0};
-		f32 data_size = bp.rf_raw_dim[0] * bp.rf_raw_dim[1] * sizeof(*data);
+		f32 data_size = (f32)(bp.rf_raw_dim[0] * bp.rf_raw_dim[1] * sizeof(*data));
 		f64 start = os_get_time();
 		for (;!g_should_exit;) {
 			if (send_frame(data, &bp)) {
 				f64 now   = os_get_time();
-				f32 delta = now - start;
+				f32 delta = (f32)(now - start);
 				start = now;
 
 				if ((frame % 16) == 0) {

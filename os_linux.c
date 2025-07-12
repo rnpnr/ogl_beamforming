@@ -44,8 +44,8 @@ os_get_module(char *name, Stream *e)
 
 function OS_WRITE_FILE_FN(os_write_file)
 {
-	while (raw.len) {
-		iz r = write(file, raw.data, raw.len);
+	while (raw.len > 0) {
+		iz r = write((i32)file, raw.data, (uz)raw.len);
 		if (r < 0) return 0;
 		raw = s8_cut_head(raw, r);
 	}
@@ -78,7 +78,7 @@ os_get_timer_counter(void)
 {
 	struct timespec time = {0};
 	clock_gettime(CLOCK_MONOTONIC, &time);
-	u64 result = time.tv_sec * 1000000000ULL + time.tv_nsec;
+	u64 result = (u64)time.tv_sec * 1000000000ULL + (u64)time.tv_nsec;
 	return result;
 }
 
@@ -93,7 +93,7 @@ function OS_ALLOC_ARENA_FN(os_alloc_arena)
 {
 	Arena result = {0};
 	capacity   = os_round_up_to_page_size(capacity);
-	result.beg = mmap(0, capacity, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
+	result.beg = mmap(0, (uz)capacity, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
 	if (result.beg == MAP_FAILED)
 		os_fatal(s8("os_alloc_arena: couldn't allocate memory\n"));
 	result.end = result.beg + capacity;
@@ -108,7 +108,7 @@ function OS_READ_WHOLE_FILE_FN(os_read_whole_file)
 	i32 fd = open(file, O_RDONLY);
 	if (fd >= 0 && fstat(fd, &sb) >= 0) {
 		result = s8_alloc(arena, sb.st_size);
-		iz rlen = read(fd, result.data, result.len);
+		iz rlen = read(fd, result.data, (uz)result.len);
 		if (rlen != result.len)
 			result = s8("");
 	}
@@ -119,12 +119,13 @@ function OS_READ_WHOLE_FILE_FN(os_read_whole_file)
 
 function OS_WRITE_NEW_FILE_FN(os_write_new_file)
 {
-	iptr fd = open(fname, O_WRONLY|O_TRUNC|O_CREAT, 0600);
-	if (fd == INVALID_FILE)
-		return 0;
-	b32 ret = os_write_file(fd, raw);
-	close(fd);
-	return ret;
+	b32 result = 0;
+	i32 fd = open(fname, O_WRONLY|O_TRUNC|O_CREAT, 0600);
+	if (fd != INVALID_FILE) {
+		result = os_write_file(fd, raw);
+		close(fd);
+	}
+	return result;
 }
 
 function b32
@@ -142,7 +143,7 @@ os_create_shared_memory_area(Arena *arena, char *name, i32 lock_count, iz reques
 	SharedMemoryRegion result = {0};
 	i32 fd = shm_open(name, O_CREAT|O_RDWR, S_IRUSR|S_IWUSR);
 	if (fd > 0 && ftruncate(fd, capacity) != -1) {
-		void *new = mmap(0, capacity, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+		void *new = mmap(0, (uz)capacity, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
 		if (new != MAP_FAILED) result.region = new;
 	}
 	if (fd > 0) close(fd);
@@ -164,7 +165,7 @@ os_copy_file(char *name, char *new)
 			while (copied != sb.st_size) {
 				iz r = read(fd_old, buf, countof(buf));
 				if (r < 0) break;
-				iz w = write(fd_new, buf, r);
+				iz w = write(fd_new, buf, (uz)r);
 				if (w < 0) break;
 				copied += w;
 			}
@@ -232,8 +233,8 @@ function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
 		dir = da_push(a, fwctx);
 		dir->hash   = hash;
 		dir->name   = push_s8_zero(a, directory);
-		i32 mask    = IN_MOVED_TO|IN_CLOSE_WRITE;
-		dir->handle = inotify_add_watch(fwctx->handle, (c8 *)dir->name.data, mask);
+		u32 mask    = IN_MOVED_TO|IN_CLOSE_WRITE;
+		dir->handle = inotify_add_watch((i32)fwctx->handle, (c8 *)dir->name.data, mask);
 	}
 
 	FileWatch *fw = da_push(a, dir);
@@ -247,7 +248,7 @@ function iptr
 os_create_thread(Arena arena, iptr user_context, s8 name, os_thread_entry_point_fn *fn)
 {
 	pthread_t result;
-	pthread_create(&result, 0, (void *(*)(void *))fn, (void *)user_context);
+	pthread_create(&result, 0, (void *)fn, (void *)user_context);
 	pthread_setname_np(result, (char *)name.data);
 	return (iptr)result;
 }

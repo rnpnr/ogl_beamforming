@@ -43,7 +43,7 @@ dispatch_file_watch_events(OS *os, Arena arena)
 	struct inotify_event *event;
 
 	iz rlen;
-	while ((rlen = read(fwctx->handle, mem, 4096)) > 0) {
+	while ((rlen = read((i32)fwctx->handle, mem, 4096)) > 0) {
 		for (u8 *data = mem; data < mem + rlen; data += sizeof(*event) + event->len) {
 			event = (struct inotify_event *)data;
 			for (u32 i = 0; i < fwctx->count; i++) {
@@ -53,8 +53,8 @@ dispatch_file_watch_events(OS *os, Arena arena)
 
 				s8  file = c_str_to_s8(event->name);
 				u64 hash = s8_hash(file);
-				for (u32 i = 0; i < dir->count; i++) {
-					FileWatch *fw = dir->data + i;
+				for (u32 j = 0; j < dir->count; j++) {
+					FileWatch *fw = dir->data + j;
 					if (fw->hash == hash) {
 						stream_append_s8s(&path, dir->name, s8("/"), file);
 						stream_append_byte(&path, 0);
@@ -93,7 +93,7 @@ main(void)
 	os_wake_waiters(&ctx.os.compute_worker.sync_variable);
 
 	struct pollfd fds[1] = {{0}};
-	fds[0].fd     = ctx.os.file_watch_context.handle;
+	fds[0].fd     = (i32)ctx.os.file_watch_context.handle;
 	fds[0].events = POLLIN;
 
 	u64 last_time = os_get_timer_counter();
@@ -105,10 +105,10 @@ main(void)
 		u64 now = os_get_timer_counter();
 		input.last_mouse = input.mouse;
 		input.mouse.rl   = GetMousePosition();
-		input.dt         = (f64)(now - last_time) / os_get_timer_frequency();
+		input.dt         = (f32)((f64)(now - last_time) / (f64)os_get_timer_frequency());
 		last_time        = now;
 
-		beamformer_frame_step(&ctx, &temp_memory, &input);
+		beamformer_frame_step(&ctx, &input);
 
 		input.executable_reloaded = 0;
 	}

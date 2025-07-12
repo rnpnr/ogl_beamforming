@@ -106,7 +106,7 @@ try_push_work_queue(void)
 function b32
 lib_try_lock(BeamformerSharedMemoryLockKind lock, i32 timeout_ms)
 {
-	b32 result = os_shared_memory_region_lock(&g_shared_memory, g_bp->locks, (i32)lock, timeout_ms);
+	b32 result = os_shared_memory_region_lock(&g_shared_memory, g_bp->locks, (i32)lock, (u32)timeout_ms);
 	if (!result) g_lib_last_error = BF_LIB_ERR_KIND_SYNC_VARIABLE;
 	return result;
 }
@@ -154,15 +154,15 @@ beamformer_get_last_error_string(void)
 }
 
 b32
-set_beamformer_pipeline(i32 *stages, i32 stages_count)
+set_beamformer_pipeline(i32 *stages, u32 stages_count)
 {
 	b32 result = 0;
 	if (stages_count <= countof(g_bp->compute_stages)) {
 		if (check_shared_memory()) {
 			g_bp->compute_stages_count = 0;
-			for (i32 i = 0; i < stages_count; i++) {
+			for (u32 i = 0; i < stages_count; i++) {
 				if (BETWEEN(stages[i], 0, BeamformerShaderKind_ComputeCount)) {
-					g_bp->compute_stages[g_bp->compute_stages_count++] = stages[i];
+					g_bp->compute_stages[g_bp->compute_stages_count++] = (BeamformerShaderKind)stages[i];
 				}
 			}
 			result = g_bp->compute_stages_count == stages_count;
@@ -180,7 +180,7 @@ set_beamformer_pipeline(i32 *stages, i32 stages_count)
 b32
 beamformer_start_compute(i32 timeout_ms)
 {
-	i32 lock   = BeamformerSharedMemoryLockKind_DispatchCompute;
+	u32 lock   = BeamformerSharedMemoryLockKind_DispatchCompute;
 	b32 result = check_shared_memory() && lib_try_lock(lock, timeout_ms);
 	return result;
 }
@@ -188,7 +188,7 @@ beamformer_start_compute(i32 timeout_ms)
 b32
 beamformer_wait_for_compute_dispatch(i32 timeout_ms)
 {
-	i32 lock   = BeamformerSharedMemoryLockKind_DispatchCompute;
+	u32 lock   = BeamformerSharedMemoryLockKind_DispatchCompute;
 	b32 result = check_shared_memory() && lib_try_lock(lock, timeout_ms);
 	/* NOTE(rnp): if you are calling this function you are probably about
 	 * to start some other work and it might be better to not do this... */
@@ -366,7 +366,7 @@ beamformer_export_buffer(BeamformerExportContext export_context)
 }
 
 function b32
-beamformer_read_output(void *out, iz size, i32 timeout_ms)
+beamformer_read_output(void *out, uz size, i32 timeout_ms)
 {
 	b32 result = 0;
 	if (try_wait_sync(BeamformerSharedMemoryLockKind_ExportSync, timeout_ms)) {
@@ -380,7 +380,7 @@ beamformer_read_output(void *out, iz size, i32 timeout_ms)
 }
 
 b32
-beamform_data_synchronized(void *data, u32 data_size, u32 output_points[3], f32 *out_data, i32 timeout_ms)
+beamform_data_synchronized(void *data, u32 data_size, i32 output_points[3], f32 *out_data, i32 timeout_ms)
 {
 	b32 result = 0;
 	if (check_shared_memory()) {
@@ -392,13 +392,13 @@ beamform_data_synchronized(void *data, u32 data_size, u32 output_points[3], f32 
 		g_bp->parameters.output_points[1] = output_points[1];
 		g_bp->parameters.output_points[2] = output_points[2];
 
-		iz output_size = output_points[0] * output_points[1] * output_points[2] * sizeof(f32) * 2;
+		uz output_size = (u32)output_points[0] * (u32)output_points[1] * (u32)output_points[2] * sizeof(f32) * 2;
 		if (output_size <= BEAMFORMER_SCRATCH_SIZE &&
 		    beamformer_push_data_with_compute(data, data_size, 0, 0))
 		{
 			BeamformerExportContext export;
 			export.kind = BeamformerExportKind_BeamformedData;
-			export.size = output_size;
+			export.size = (u32)output_size;
 			if (beamformer_export_buffer(export) && beamformer_start_compute(0))
 				result = beamformer_read_output(out_data, output_size, timeout_ms);
 		} else {
@@ -431,7 +431,7 @@ beamformer_live_parameters_get_dirty_flag(void)
 		u32 flag = ctz_u32(g_bp->live_imaging_dirty_flags);
 		if (flag != 32) {
 			atomic_and_u32(&g_bp->live_imaging_dirty_flags, ~(1 << flag));
-			result = flag;
+			result = (i32)flag;
 		}
 	}
 	return result;

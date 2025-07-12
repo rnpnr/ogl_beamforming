@@ -30,8 +30,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { sys: ucrt64,  env: ucrt-x86_64,  cc: "gcc" }
-          - { sys: clang64, env: clang-x86_64, cc: "clang" }
+          - { sys: ucrt64,  env: ucrt-x86_64,  cc: "gcc",   extra: "" }
+          - { sys: clang64, env: clang-x86_64, cc: "clang", extra: "-fms-extensions" }
     defaults:
       run:
         shell: msys2 {0}
@@ -47,6 +47,6 @@ jobs:
 
       - name: Build
         run: |
-          ${{matrix.cc}} -march=native -O3 build.c -Iexternal/include -o build && \
+          ${{matrix.cc}} -march=native -O3 ${{matrix.extra}} build.c -Iexternal/include -o build && \
           ./build --tests && \
           ./build --debug

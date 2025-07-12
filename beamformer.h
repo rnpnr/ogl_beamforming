@@ -163,7 +163,7 @@ typedef struct {
 
 typedef struct BeamformerFrame BeamformerFrame;
 struct BeamformerFrame {
-	uv3 dim;
+	iv3 dim;
 	u32 texture;
 
 	/* NOTE: for use when displaying either prebeamformed frames or on the current frame
@@ -171,7 +171,7 @@ struct BeamformerFrame {
 	v4  min_coordinate;
 	v4  max_coordinate;
 
-	u32 mips;
+	i32 mips;
 	DASShaderKind das_shader_kind;
 	u32 compound_count;
 	u32 id;
@@ -206,7 +206,7 @@ typedef struct {
 typedef struct {
 	GLParams gl;
 
-	uv2 window_size;
+	iv2 window_size;
 	b32 should_exit;
 
 	Arena  ui_backing_store;
@@ -252,18 +252,17 @@ struct ShaderReloadContext {
 	BeamformerShaderKind kind;
 };
 
-#define BEAMFORMER_FRAME_STEP_FN(name) void name(BeamformerCtx *ctx, Arena *arena, \
-                                                 BeamformerInput *input)
+#define BEAMFORMER_FRAME_STEP_FN(name) void name(BeamformerCtx *ctx, BeamformerInput *input)
 typedef BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step_fn);
 
-#define BEAMFORMER_COMPUTE_SETUP_FN(name) void name(iptr user_context, Arena arena, iptr gl_context)
+#define BEAMFORMER_COMPUTE_SETUP_FN(name) void name(iptr user_context)
 typedef BEAMFORMER_COMPUTE_SETUP_FN(beamformer_compute_setup_fn);
 
 #define BEAMFORMER_COMPLETE_COMPUTE_FN(name) void name(iptr user_context, Arena arena, iptr gl_context)
 typedef BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute_fn);
 
-#define BEAMFORMER_RELOAD_SHADER_FN(name) b32 name(BeamformerCtx *ctx, ShaderReloadContext *src, \
-                                                   Arena arena, s8 shader_name)
+#define BEAMFORMER_RELOAD_SHADER_FN(name) b32 name(OS *os, BeamformerCtx *ctx, \
+                                                   ShaderReloadContext *src, Arena arena, s8 shader_name)
 typedef BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader_fn);
 
 #endif /*_BEAMFORMER_H_ */

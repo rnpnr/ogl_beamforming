@@ -16,7 +16,7 @@ mem_copy(void *restrict dest, void *restrict src, uz n)
 }
 
 function void
-mem_move(u8 *dest, u8 *src, iz n)
+mem_move(u8 *dest, u8 *src, uz n)
 {
 	if (dest < src) mem_copy(dest, src, n);
 	else            while (n) { n--; dest[n] = src[n]; }
@@ -40,28 +40,27 @@ arena_pop(Arena *a, iz length)
 #define push_array(a, t, n) (t *)arena_alloc(a, sizeof(t), _Alignof(t), n)
 #define push_struct(a, t)   (t *)arena_alloc(a, sizeof(t), _Alignof(t), 1)
 function void *
-arena_alloc(Arena *a, iz len, iz align, iz count)
+arena_alloc(Arena *a, iz len, uz align, iz count)
 {
 	/* NOTE: special case 0 arena */
 	if (a->beg == 0)
 		return 0;
 
-	iz padding   = -(uintptr_t)a->beg & (align - 1);
-	iz available = a->end - a->beg - padding;
-	if (available < 0 || count > available / len)
-		ASSERT(0 && "arena OOM\n");
+	uz padding   = -(uintptr_t)a->beg & (align - 1);
+	iz available = a->end - a->beg - (iz)padding;
+	assert((available >= 0 && count <= available / len));
 	void *p = a->beg + padding;
-	a->beg += padding + count * len;
+	a->beg += (iz)padding + count * len;
 	/* TODO: Performance? */
 	return mem_clear(p, 0, count * len);
 }
 
 #define arena_capacity(a, t) arena_capacity_(a, sizeof(t), _Alignof(t))
 function iz
-arena_capacity_(Arena *a, iz size, iz alignment)
+arena_capacity_(Arena *a, iz size, uz alignment)
 {
-	iz padding   = -(uintptr_t)a->beg & (alignment - 1);
-	iz available = a->end - a->beg - padding;
+	uz padding   = -(uintptr_t)a->beg & (alignment - 1);
+	iz available = a->end - a->beg - (iz)padding;
 	iz result    = available / size;
 	return result;
 }
@@ -78,7 +77,7 @@ enum { DA_INITIAL_CAP = 4 };
     : (s)->data + (s)->count++)
 
 function void *
-da_reserve_(Arena *a, void *data, iz *capacity, iz needed, iz align, iz size)
+da_reserve_(Arena *a, void *data, iz *capacity, iz needed, uz align, iz size)
 {
 	iz cap = *capacity;
 
@@ -86,7 +85,7 @@ da_reserve_(Arena *a, void *data, iz *capacity, iz needed, iz align, iz size)
 	 * on the stack or someone allocated something in the middle of the arena during usage) */
 	if (!data || a->beg != (u8 *)data + cap * size) {
 		void *copy = arena_alloc(a, size, align, cap);
-		if (data) mem_copy(copy, data, cap * size);
+		if (data) mem_copy(copy, data, (uz)(cap * size));
 		data = copy;
 	}
 
@@ -98,14 +97,14 @@ da_reserve_(Arena *a, void *data, iz *capacity, iz needed, iz align, iz size)
 }
 
 function Arena
-sub_arena(Arena *a, iz len, iz align)
+sub_arena(Arena *a, iz len, uz align)
 {
 	Arena result = {0};
 
-	iz padding = -(uintptr_t)a->beg & (align - 1);
+	uz padding = -(uintptr_t)a->beg & (align - 1);
 	result.beg   = a->beg + padding;
 	result.end   = result.beg + len;
-	arena_commit(a, len + padding);
+	arena_commit(a, len + (iz)padding);
 
 	return result;
 }
@@ -161,11 +160,11 @@ utf16_decode(u16 *data, iz length)
 	if (length) {
 		result.consumed = 1;
 		result.cp = data[0];
-		if (length > 1 && BETWEEN(data[0], 0xD800, 0xDBFF)
-		               && BETWEEN(data[1], 0xDC00, 0xDFFF))
+		if (length > 1 && BETWEEN(data[0], 0xD800u, 0xDBFFu)
+		               && BETWEEN(data[1], 0xDC00u, 0xDFFFu))
 		{
 			result.consumed = 2;
-			result.cp = ((data[0] - 0xD800) << 10) | ((data[1] - 0xDC00) + 0x10000);
+			result.cp = ((data[0] - 0xD800u) << 10u) | ((data[1] - 0xDC00u) + 0x10000u);
 		}
 	}
 	return result;
@@ -177,19 +176,19 @@ utf16_encode(u16 *out, u32 cp)
 	u32 result = 1;
 	if (cp == U32_MAX) {
 		out[0] = '?';
-	} else if (cp < 0x10000) {
-		out[0] = cp;
+	} else if (cp < 0x10000u) {
+		out[0] = (u16)cp;
 	} else {
-		u32 value = cp - 0x10000;
-		out[0] = 0xD800 + (value >> 10u);
-		out[1] = 0xDC00 + (value & 0x3FFu);
+		u32 value = cp - 0x10000u;
+		out[0] = (u16)(0xD800u + (value >> 10u));
+		out[1] = (u16)(0xDC00u + (value & 0x3FFu));
 		result = 2;
 	}
 	return result;
 }
 
 function Stream
-stream_alloc(Arena *a, iz cap)
+stream_alloc(Arena *a, i32 cap)
 {
 	Stream result = {.cap = cap};
 	result.data = push_array(a, u8, cap);
@@ -205,7 +204,7 @@ stream_to_s8(Stream *s)
 }
 
 function void
-stream_reset(Stream *s, iz index)
+stream_reset(Stream *s, i32 index)
 {
 	s->errors = s->cap <= index;
 	if (!s->errors)
@@ -213,7 +212,7 @@ stream_reset(Stream *s, iz index)
 }
 
 function void
-stream_commit(Stream *s, iz count)
+stream_commit(Stream *s, i32 count)
 {
 	s->errors |= !BETWEEN(s->widx + count, 0, s->cap);
 	if (!s->errors)
@@ -225,8 +224,8 @@ stream_append(Stream *s, void *data, iz count)
 {
 	s->errors |= (s->cap - s->widx) < count;
 	if (!s->errors) {
-		mem_copy(s->data + s->widx, data, count);
-		s->widx += count;
+		mem_copy(s->data + s->widx, data, (uz)count);
+		s->widx += (i32)count;
 	}
 }
 
@@ -257,13 +256,24 @@ stream_append_s8s_(Stream *s, s8 *strs, iz count)
 }
 
 function void
-stream_append_u64(Stream *s, u64 n)
+stream_append_u64_width(Stream *s, u64 n, u64 min_width)
 {
 	u8 tmp[64];
 	u8 *end = tmp + sizeof(tmp);
 	u8 *beg = end;
-	do { *--beg = '0' + (n % 10); } while (n /= 10);
+	min_width = MIN(sizeof(tmp), min_width);
+
+	do { *--beg = (u8)('0' + (n % 10)); } while (n /= 10);
+	while (end - beg > 0 && (uz)(end - beg) < min_width)
+		*--beg = '0';
+
 	stream_append(s, beg, end - beg);
+}
+
+function void
+stream_append_u64(Stream *s, u64 n)
+{
+	stream_append_u64_width(s, n, 0);
 }
 
 function void
@@ -274,7 +284,7 @@ stream_append_hex_u64(Stream *s, u64 n)
 		u8 *end = buf + sizeof(buf);
 		u8 *beg = end;
 		while (n) {
-			*--beg = "0123456789abcdef"[n & 0x0F];
+			*--beg = (u8)"0123456789abcdef"[n & 0x0F];
 			n >>= 4;
 		}
 		while (end - beg < 2)
@@ -290,11 +300,11 @@ stream_append_i64(Stream *s, i64 n)
 		stream_append_byte(s, '-');
 		n *= -1;
 	}
-	stream_append_u64(s, n);
+	stream_append_u64(s, (u64)n);
 }
 
 function void
-stream_append_f64(Stream *s, f64 f, i64 prec)
+stream_append_f64(Stream *s, f64 f, u64 prec)
 {
 	if (f < 0) {
 		stream_append_byte(s, '-');
@@ -302,16 +312,16 @@ stream_append_f64(Stream *s, f64 f, i64 prec)
 	}
 
 	/* NOTE: round last digit */
-	f += 0.5f / prec;
+	f += 0.5f / (f64)prec;
 
 	if (f >= (f64)(-1UL >> 1)) {
 		stream_append_s8(s, s8("inf"));
 	} else {
-		u64 integral = f;
-		u64 fraction = (f - integral) * prec;
+		u64 integral = (u64)f;
+		u64 fraction = (u64)((f - (f64)integral) * (f64)prec);
 		stream_append_u64(s, integral);
 		stream_append_byte(s, '.');
-		for (i64 i = prec / 10; i > 1; i /= 10) {
+		for (u64 i = prec / 10; i > 1; i /= 10) {
 			if (i > fraction)
 				stream_append_byte(s, '0');
 		}
@@ -346,13 +356,13 @@ stream_append_f64_e(Stream *s, f64 f)
 	}
 	#endif
 
-	i32 prec = 100;
+	u32 prec = 100;
 	stream_append_f64(s, f, prec);
 	stream_append_byte(s, 'e');
 	stream_append_byte(s, scale >= 0? '+' : '-');
-	for (i32 i = prec / 10; i > 1; i /= 10)
+	for (u32 i = prec / 10; i > 1; i /= 10)
 		stream_append_byte(s, '0');
-	stream_append_u64(s, ABS(scale));
+	stream_append_u64(s, (u64)ABS(scale));
 }
 
 function void
@@ -370,7 +380,7 @@ arena_stream(Arena a)
 {
 	Stream result = {0};
 	result.data   = a.beg;
-	result.cap    = a.end - a.beg;
+	result.cap    = (i32)(a.end - a.beg);
 	return result;
 }
 
@@ -487,7 +497,7 @@ function s8
 push_s8(Arena *a, s8 str)
 {
 	s8 result = s8_alloc(a, str.len);
-	mem_copy(result.data, str.data, result.len);
+	mem_copy(result.data, str.data, (uz)result.len);
 	return result;
 }
 
@@ -496,7 +506,7 @@ push_s8_zero(Arena *a, s8 str)
 {
 	s8 result   = s8_alloc(a, str.len + 1);
 	result.len -= 1;
-	mem_copy(result.data, str.data, result.len);
+	mem_copy(result.data, str.data, (uz)result.len);
 	return result;
 }
 

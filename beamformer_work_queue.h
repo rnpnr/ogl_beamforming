@@ -27,7 +27,7 @@ typedef enum {
 
 typedef struct {
 	BeamformerUploadKind kind;
-	i32 size;
+	u32 size;
 	i32 shared_memory_offset;
 } BeamformerUploadContext;
 
@@ -38,7 +38,7 @@ typedef enum {
 
 typedef struct {
 	BeamformerExportKind kind;
-	i32 size;
+	u32 size;
 } BeamformerExportContext;
 
 #define BEAMFORMER_SHARED_MEMORY_LOCKS \

@@ -9,8 +9,8 @@ beamform_work_queue_pop(BeamformWorkQueue *q)
 	static_assert(ISPOWEROF2(countof(q->work_items)), "queue capacity must be a power of 2");
 	u64 val  = atomic_load_u64(&q->queue);
 	u64 mask = countof(q->work_items) - 1;
-	u32 widx = val       & mask;
-	u32 ridx = val >> 32 & mask;
+	u64 widx = val       & mask;
+	u64 ridx = val >> 32 & mask;
 
 	if (ridx != widx)
 		result = q->work_items + ridx;
@@ -31,9 +31,9 @@ DEBUG_EXPORT BEAMFORM_WORK_QUEUE_PUSH_FN(beamform_work_queue_push)
 	static_assert(ISPOWEROF2(countof(q->work_items)), "queue capacity must be a power of 2");
 	u64 val  = atomic_load_u64(&q->queue);
 	u64 mask = countof(q->work_items) - 1;
-	u32 widx = val       & mask;
-	u32 ridx = val >> 32 & mask;
-	u32 next = (widx + 1) & mask;
+	u64 widx = val        & mask;
+	u64 ridx = val >> 32  & mask;
+	u64 next = (widx + 1) & mask;
 
 	if (val & 0x80000000)
 		atomic_and_u64(&q->queue, ~0x80000000);
@@ -53,11 +53,11 @@ DEBUG_EXPORT BEAMFORM_WORK_QUEUE_PUSH_COMMIT_FN(beamform_work_queue_push_commit)
 
 function void
 post_sync_barrier(SharedMemoryRegion *sm, BeamformerSharedMemoryLockKind lock, i32 *locks,
-                  os_shared_memory_region_unlock_fn *os_shared_memory_region_unlock)
+                  os_shared_memory_region_unlock_fn *shared_memory_region_unlock)
 {
 	/* NOTE(rnp): debug: here it is not a bug to release the lock if it
 	 * isn't held but elswhere it is */
 	DEBUG_DECL(if (locks[lock])) {
-		os_shared_memory_region_unlock(sm, locks, lock);
+		shared_memory_region_unlock(sm, locks, (i32)lock);
 	}
 }

@@ -113,7 +113,7 @@ function force_inline u32
 clz_u32(u32 a)
 {
 	u32 result = 32;
-	if (a) result = __builtin_clz(a);
+	if (a) result = (u32)__builtin_clz(a);
 	return result;
 }
 
@@ -121,7 +121,7 @@ function force_inline u32
 ctz_u32(u32 a)
 {
 	u32 result = 32;
-	if (a) result = __builtin_ctz(a);
+	if (a) result = (u32)__builtin_ctz(a);
 	return result;
 }
 

@@ -132,10 +132,10 @@ main(void)
 		u64 now = os_get_timer_counter();
 		input.last_mouse = input.mouse;
 		input.mouse.rl   = GetMousePosition();
-		input.dt         = (f64)(now - last_time) / w32_ctx.timer_frequency;
+		input.dt         = (f32)((f64)(now - last_time) / (f64)w32_ctx.timer_frequency);
 		last_time        = now;
 
-		beamformer_frame_step(&ctx, &temp_memory, &input);
+		beamformer_frame_step(&ctx, &input);
 
 		input.executable_reloaded = 0;
 	}

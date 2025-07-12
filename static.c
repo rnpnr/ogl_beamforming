@@ -79,8 +79,6 @@ struct gl_debug_ctx {
 function void
 gl_debug_logger(u32 src, u32 type, u32 id, u32 lvl, i32 len, const char *msg, const void *userctx)
 {
-	(void)src; (void)type; (void)id;
-
 	struct gl_debug_ctx *ctx = (struct gl_debug_ctx *)userctx;
 	Stream *e = &ctx->stream;
 	stream_append_s8s(e, s8("[OpenGL] "), (s8){.len = len, .data = (u8 *)msg}, s8("\n"));
@@ -120,7 +118,7 @@ validate_gl_requirements(GLParams *gl, Arena a)
 {
 	Stream s = arena_stream(a);
 
-	if (gl->max_ubo_size < sizeof(BeamformerParameters)) {
+	if (gl->max_ubo_size < (i32)sizeof(BeamformerParameters)) {
 		stream_append_s8(&s, s8("GPU must support UBOs of at least "));
 		stream_append_i64(&s, sizeof(BeamformerParameters));
 		stream_append_s8(&s, s8(" bytes!\n"));
@@ -136,18 +134,17 @@ validate_gl_requirements(GLParams *gl, Arena a)
 function void
 dump_gl_params(GLParams *gl, Arena a, OS *os)
 {
-	(void)gl; (void)a;
 #ifdef _DEBUG
 	s8 vendor = s8("vendor:");
-	iz max_width = vendor.len;
-	#define X(glname, name, suffix) if (s8(#name).len > max_width) max_width = s8(#name ":").len;
+	i32 max_width = (i32)vendor.len;
+	#define X(glname, name, suffix) if (s8(#name).len > max_width) max_width = (i32)s8(#name ":").len;
 	GL_PARAMETERS
 	#undef X
 	max_width++;
 
 	Stream s = arena_stream(a);
 	stream_append_s8s(&s, s8("---- GL Parameters ----\n"), vendor);
-	stream_pad(&s, ' ', max_width - vendor.len);
+	stream_pad(&s, ' ', max_width - (i32)vendor.len);
 	switch (gl->vendor_id) {
 	case GL_VENDOR_AMD:    stream_append_s8(&s, s8("AMD\n"));    break;
 	case GL_VENDOR_ARM:    stream_append_s8(&s, s8("ARM\n"));    break;
@@ -156,10 +153,10 @@ dump_gl_params(GLParams *gl, Arena a, OS *os)
 	}
 
 	#define X(glname, name, suffix) \
-		stream_append_s8(&s, s8(#name ":"));                \
-		stream_pad(&s, ' ', max_width - s8(#name ":").len); \
-		stream_append_i64(&s, gl->name);                    \
-		stream_append_s8(&s, s8(suffix));                   \
+		stream_append_s8(&s, s8(#name ":"));                     \
+		stream_pad(&s, ' ', max_width - (i32)s8(#name ":").len); \
+		stream_append_i64(&s, gl->name);                         \
+		stream_append_s8(&s, s8(suffix));                        \
 		stream_append_byte(&s, '\n');
 	GL_PARAMETERS
 	#undef X
@@ -171,7 +168,7 @@ dump_gl_params(GLParams *gl, Arena a, OS *os)
 function FILE_WATCH_CALLBACK_FN(reload_shader)
 {
 	ShaderReloadContext *ctx = (typeof(ctx))user_data;
-	return beamformer_reload_shader(ctx->beamformer_context, ctx, arena, ctx->name);
+	return beamformer_reload_shader(os, ctx->beamformer_context, ctx, arena, ctx->name);
 }
 
 function FILE_WATCH_CALLBACK_FN(reload_shader_indirect)
@@ -213,13 +210,13 @@ function FILE_WATCH_CALLBACK_FN(load_cuda_lib)
 }
 
 function BeamformerRenderModel
-render_model_from_arrays(f32 *vertices, f32 *normals, u32 vertices_size, u16 *indices, u32 index_count)
+render_model_from_arrays(f32 *vertices, f32 *normals, i32 vertices_size, u16 *indices, i32 index_count)
 {
 	BeamformerRenderModel result = {0};
 
-	i32 buffer_size    = vertices_size * 2 + index_count * sizeof(u16);
+	i32 buffer_size    = vertices_size * 2 + index_count * (i32)sizeof(u16);
 	i32 indices_offset = vertices_size * 2;
-	i32 indices_size   = index_count * sizeof(u16);
+	i32 indices_size   = index_count * (i32)sizeof(u16);
 
 	result.elements        = index_count;
 	result.elements_offset = indices_offset;
@@ -239,7 +236,7 @@ render_model_from_arrays(f32 *vertices, f32 *normals, u32 vertices_size, u16 *in
 	glEnableVertexArrayAttrib(result.vao, 1);
 
 	glVertexArrayAttribFormat(result.vao, 0, 3, GL_FLOAT, 0, 0);
-	glVertexArrayAttribFormat(result.vao, 1, 3, GL_FLOAT, 0, vertices_size);
+	glVertexArrayAttribFormat(result.vao, 1, 3, GL_FLOAT, 0, (u32)vertices_size);
 
 	glVertexArrayAttribBinding(result.vao, 0, 0);
 	glVertexArrayAttribBinding(result.vao, 1, 0);
@@ -259,7 +256,7 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 	glfwMakeContextCurrent(ctx->window_handle);
 	ctx->gl_context = os_get_native_gl_context(ctx->window_handle);
 
-	beamformer_compute_setup(ctx->user_context, ctx->arena, ctx->gl_context);
+	beamformer_compute_setup(ctx->user_context);
 
 	for (;;) {
 		for (;;) {
@@ -268,7 +265,7 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 				break;
 
 			atomic_store_u32(&ctx->asleep, 1);
-			os_wait_on_value(&ctx->sync_variable, 1, -1);
+			os_wait_on_value(&ctx->sync_variable, 1, (u32)-1);
 			atomic_store_u32(&ctx->asleep, 0);
 		}
 		beamformer_complete_compute(ctx->user_context, ctx->arena, ctx->gl_context);
@@ -284,7 +281,7 @@ setup_beamformer(BeamformerCtx *ctx, BeamformerInput *input, Arena *memory)
 {
 	debug_init(&ctx->os, (iptr)input, memory);
 
-	ctx->window_size  = (uv2){.w = 1280, .h = 840};
+	ctx->window_size  = (iv2){{1280, 840}};
 
 	SetConfigFlags(FLAG_VSYNC_HINT|FLAG_WINDOW_ALWAYS_RUN);
 	InitWindow(ctx->window_size.w, ctx->window_size.h, "OGL Beamformer");
@@ -531,7 +528,7 @@ beamformer_invalidate_shared_memory(BeamformerCtx *ctx)
 	atomic_store_u32(&sm->invalid, 1);
 	atomic_store_u32(&sm->external_work_queue.ridx, sm->external_work_queue.widx);
 	DEBUG_DECL(if (sm->locks[lock])) {
-		os_shared_memory_region_unlock(&ctx->shared_memory, sm->locks, lock);
+		os_shared_memory_region_unlock(&ctx->shared_memory, sm->locks, (i32)lock);
 	}
 
 	atomic_or_u32(&sm->live_imaging_dirty_flags, BeamformerLiveImagingDirtyFlags_StopImaging);
