@@ -47,6 +47,9 @@
   #define ceil_f32(a)     ceilf(a)
   #define sqrt_f32(a)     sqrtf(a)
 
+  #define exp_f64(a)      exp(a)
+  #define sqrt_f64(a)     sqrt(a)
+
 #else
   #define align_as(n)      __attribute__((aligned(n)))
   #define pack_struct(s) s __attribute__((packed))
@@ -81,6 +84,8 @@
   #define ceil_f32(a)     __builtin_ceilf(a)
   #define sqrt_f32(a)     __builtin_sqrtf(a)
 
+  #define exp_f64(a)      __builtin_exp(a)
+  #define sqrt_f64(a)     __builtin_sqrt(a)
 #endif
 
 #if COMPILER_MSVC

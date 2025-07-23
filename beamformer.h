@@ -113,6 +113,7 @@ typedef struct {
 	u32 raw_data_ssbo;
 	u32 shared_ubo;
 
+	u32 filter_textures[BEAMFORMER_FILTER_SLOTS];
 	u32 channel_mapping_texture;
 	u32 sparse_elements_texture;
 	u32 focal_vectors_texture;

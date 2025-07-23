@@ -2,7 +2,7 @@
 #ifndef _BEAMFORMER_WORK_QUEUE_H_
 #define _BEAMFORMER_WORK_QUEUE_H_
 
-#define BEAMFORMER_SHARED_MEMORY_VERSION (8UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (9UL)
 
 typedef struct BeamformerComputeFrame BeamformerComputeFrame;
 typedef struct ShaderReloadContext    ShaderReloadContext;
@@ -10,6 +10,7 @@ typedef struct ShaderReloadContext    ShaderReloadContext;
 typedef enum {
 	BeamformerWorkKind_Compute,
 	BeamformerWorkKind_ComputeIndirect,
+	BeamformerWorkKind_CreateFilter,
 	BeamformerWorkKind_ReloadShader,
 	BeamformerWorkKind_SendFrame,
 	BeamformerWorkKind_ExportBuffer,
@@ -17,12 +18,11 @@ typedef enum {
 } BeamformerWorkKind;
 
 typedef enum {
-	BU_KIND_CHANNEL_MAPPING,
-	BU_KIND_FOCAL_VECTORS,
-	BU_KIND_PARAMETERS,
-	BU_KIND_RF_DATA,
-	BU_KIND_SPARSE_ELEMENTS,
-	BU_KIND_LAST,
+	BeamformerUploadKind_ChannelMapping,
+	BeamformerUploadKind_FocalVectors,
+	BeamformerUploadKind_Parameters,
+	BeamformerUploadKind_RFData,
+	BeamformerUploadKind_SparseElements,
 } BeamformerUploadKind;
 
 typedef struct {
@@ -30,6 +30,24 @@ typedef struct {
 	u32 size;
 	i32 shared_memory_offset;
 } BeamformerUploadContext;
+
+typedef enum {
+	BeamformerFilterKind_Kaiser,
+	BeamformerFilterKind_MatchedSine,
+} BeamformerFilterKind;
+
+typedef struct {
+	BeamformerFilterKind kind;
+	union {
+		struct {
+			f32 beta;
+			f32 cutoff_frequency;
+		};
+		f32 xdc_center_frequency;
+	};
+	i16 length;
+	i16 slot;
+} BeamformerCreateFilterContext;
 
 typedef enum {
 	BeamformerExportKind_BeamformedData,
@@ -40,6 +58,10 @@ typedef struct {
 	BeamformerExportKind kind;
 	u32 size;
 } BeamformerExportContext;
+
+typedef union {
+	u8 filter_slot;
+} BeamformerShaderParameters;
 
 #define BEAMFORMER_SHARED_MEMORY_LOCKS \
 	X(None)            \
@@ -58,12 +80,13 @@ typedef enum {BEAMFORMER_SHARED_MEMORY_LOCKS BeamformerSharedMemoryLockKind_Coun
 /* NOTE: discriminated union based on type */
 typedef struct {
 	union {
-		BeamformerComputeFrame  *frame;
-		BeamformerUploadContext  upload_context;
-		BeamformerExportContext  export_context;
-		ShaderReloadContext     *shader_reload_context;
-		BeamformerViewPlaneTag   compute_indirect_plane;
-		void                    *generic;
+		BeamformerComputeFrame        *frame;
+		BeamformerCreateFilterContext  create_filter_context;
+		BeamformerExportContext        export_context;
+		BeamformerUploadContext        upload_context;
+		BeamformerViewPlaneTag         compute_indirect_plane;
+		ShaderReloadContext           *shader_reload_context;
+		void                          *generic;
 	};
 	BeamformerSharedMemoryLockKind lock;
 	BeamformerWorkKind kind;
@@ -123,8 +146,9 @@ typedef struct {
 		};
 	};
 
-	BeamformerShaderKind compute_stages[MAX_COMPUTE_SHADER_STAGES];
-	u32                  compute_stages_count;
+	BeamformerShaderParameters compute_shader_parameters[MAX_COMPUTE_SHADER_STAGES];
+	BeamformerShaderKind       compute_stages[MAX_COMPUTE_SHADER_STAGES];
+	u32                        compute_stages_count;
 
 	/* TODO(rnp): hack: we need a different way of dispatching work for export */
 	b32 start_compute_from_main;

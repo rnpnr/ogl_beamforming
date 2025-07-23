@@ -47,7 +47,7 @@ typedef struct {
 	f32 center_frequency;
 	f32 sampling_frequency;
 	f32 time_offset;
-	u32 transmit_mode;
+	i32 transmit_mode;
 } zemp_bp_v1;
 
 global b32 g_should_exit;
@@ -203,7 +203,7 @@ fill_beamformer_parameters_from_zemp_bp_v1(zemp_bp_v1 *zbp, BeamformerParameters
 	mem_copy(out->xdc_element_pitch, zbp->xdc_element_pitch, sizeof(out->xdc_element_pitch));
 	mem_copy(out->rf_raw_dim,        zbp->raw_data_dim,      sizeof(out->rf_raw_dim));
 
-	out->transmit_mode      = (i32)zbp->transmit_mode;
+	out->transmit_mode      = zbp->transmit_mode;
 	out->decode             = zbp->decode_mode;
 	out->das_shader_id      = zbp->beamform_mode;
 	out->time_offset        = zbp->time_offset;

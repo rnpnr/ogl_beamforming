@@ -60,6 +60,28 @@ LIB_FN uint32_t beamformer_push_parameters(BeamformerParameters *, int32_t timeo
 LIB_FN uint32_t beamformer_push_parameters_ui(BeamformerUIParameters *, int32_t timeout_ms);
 LIB_FN uint32_t beamformer_push_parameters_head(BeamformerParametersHead *, int32_t timeout_ms);
 
+////////////////////
+// Filter Creation
+
+/* Kaiser Low-Pass Parameter Selection
+ * see: "Discrete Time Signal Processing" (Oppenheim)
+ * δ:   fractional passband ripple
+ * ω_p: highest angular frequency of passband
+ * ω_s: lowest  angular frequency of stopband
+ * ω_c: cutoff angular frequency. midpoint of ω_s and ω_p
+ * M:   length of filter
+ *
+ * Define: A = -20log10(δ)
+ * β:
+ *   β = 0.1102(A - 8.7)                             if 50 <  A
+ *   β = 0.5842 * pow(A - 21, 0.4) + 0.07886(A − 21) if 21 <= A <= 50
+ *   β = 0                                           if       A <  21
+ * M:
+ *   M = (A - 8) / (2.285 (ω_s - ω_p))
+ */
+LIB_FN uint32_t beamformer_create_kaiser_low_pass_filter(float beta, f32 cutoff_frequency,
+                                                         int16_t length, uint8_t slot);
+
 //////////////////////////
 // Live Imaging Controls
 LIB_FN int32_t  beamformer_live_parameters_get_dirty_flag(void);

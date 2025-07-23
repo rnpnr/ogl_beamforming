@@ -26,6 +26,7 @@
 #define GL_MAJOR_VERSION                   0x821B
 #define GL_MINOR_VERSION                   0x821C
 #define GL_RG                              0x8227
+#define GL_R32F                            0x822E
 #define GL_RG32F                           0x8230
 #define GL_R8I                             0x8231
 #define GL_R16I                            0x8233

@@ -1,3 +1,5 @@
+#include "external/cephes.c"
+
 function void
 fill_kronecker_sub_matrix(i32 *out, i32 out_stride, i32 scale, i32 *b, iv2 b_dim)
 {
@@ -114,6 +116,26 @@ make_hadamard_transpose(Arena *a, i32 dim)
 		case 20:{ m2 = hadamard_20_20_transpose; m2_dim = (iv2){{20, 20}}; }break;
 		}
 		if (m2) kronecker_product(result, m, (iv2){{dim, dim}}, m2, m2_dim);
+	}
+
+	return result;
+}
+
+/* NOTE(rnp): adapted from "Discrete Time Signal Processing" (Oppenheim) */
+function f32 *
+kaiser_low_pass_filter(Arena *arena, f32 cutoff_frequency, f32 sampling_frequency, f32 beta, i32 length)
+{
+	f32 *result = push_array(arena, f32, length);
+	f32 wc      = 2 * PI * cutoff_frequency / sampling_frequency;
+	f32 a       = (f32)length / 2.0f;
+	f32 pi_i0_b = PI * (f32)cephes_i0(beta);
+
+	for (i32 n = 0; n < length; n++) {
+		f32 t       = (f32)n - a;
+		f32 impulse = !f32_cmp(t, 0) ? sin_f32(wc * t) / t : 1;
+		t           = t / a;
+		f32 window  = (f32)cephes_i0(beta * sqrt_f32(1 - t * t)) / pi_i0_b;
+		result[n]   = impulse * window;
 	}
 
 	return result;

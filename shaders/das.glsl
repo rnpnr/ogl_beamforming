@@ -20,6 +20,18 @@ layout(rg32f, binding = 2) readonly  restrict uniform image1D  focal_vectors;
 #define TX_MODE_TX_COLS(a) (((a) & 2) != 0)
 #define TX_MODE_RX_COLS(a) (((a) & 1) != 0)
 
+vec2 rotate_iq(vec2 iq, float time)
+{
+	vec2 result = iq;
+	if (center_frequency > 0) {
+		float arg    = radians(360) * center_frequency * time;
+		mat2  phasor = mat2( cos(arg), sin(arg),
+		                    -sin(arg), cos(arg));
+		result = phasor * iq;
+	}
+	return result;
+}
+
 /* NOTE: See: https://cubic.org/docs/hermite.htm */
 vec2 cubic(int base_index, float x)
 {
@@ -47,22 +59,26 @@ vec2 cubic(int base_index, float x)
 	vec2 T2 = C_SPLINE * (samples[3] - P1);
 
 	mat2x4 C = mat2x4(vec4(P1.x, P2.x, T1.x, T2.x), vec4(P1.y, P2.y, T1.y, T2.y));
-	return S * h * C;
+	float fs = sampling_frequency / decimation_rate;
+	vec2 result = rotate_iq(S * h * C, x / fs);
+	return result;
 }
 
 vec2 sample_rf(int channel, int transmit, float t)
 {
 	vec2 result;
-	int base_index = int(channel * dec_data_dim.x * dec_data_dim.z + transmit * dec_data_dim.x);
+	float fs         = sampling_frequency / decimation_rate;
+	int   base_index = int(channel * dec_data_dim.x * dec_data_dim.z + transmit * dec_data_dim.x);
 	if (interpolate) result = cubic(base_index, t);
-	else             result = rf_data[base_index + int(floor(t))];
+	else             result = rotate_iq(rf_data[base_index + int(round(t))], t / fs);
 	return result;
 }
 
 float sample_index(float distance)
 {
+	float  fs   = sampling_frequency / decimation_rate;
 	float  time = distance / speed_of_sound + time_offset;
-	return time * sampling_frequency;
+	return time * fs;
 }
 
 float apodize(float arg)

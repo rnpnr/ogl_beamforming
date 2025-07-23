@@ -15,7 +15,7 @@
 	X(CudaDecode,         0, "",         0, "CUDA Decode")   \
 	X(CudaHilbert,        1, "",         0, "CUDA Hilbert")  \
 	X(DAS,                2, "das",      1, "DAS")           \
-	X(Decode,             3, "decode",   1, "Decode")        \
+	X(Decode,             3, "decode",   1, "Decode (I16)")  \
 	X(DecodeFloat,        4, "",         1, "Decode (F32)")  \
 	X(DecodeFloatComplex, 5, "",         1, "Decode (F32C)") \
 	X(Demodulate,         6, "demod",    1, "Demodulate")    \
@@ -76,6 +76,10 @@ typedef enum {
 	X(EPIC_UHERCULES,  9, "EPIC-UHERCULES", 0) \
 	X(FLASH,          10, "Flash",          0)
 
+#define DEMOD_LOCAL_SIZE_X  64
+#define DEMOD_LOCAL_SIZE_Y   1
+#define DEMOD_LOCAL_SIZE_Z   1
+
 #define DECODE_LOCAL_SIZE_X  4
 #define DECODE_LOCAL_SIZE_Y  1
 #define DECODE_LOCAL_SIZE_Z 16
@@ -100,6 +104,8 @@ typedef enum {
 
 #define MAX_BEAMFORMED_SAVED_FRAMES 16
 #define MAX_COMPUTE_SHADER_STAGES   16
+
+#define BEAMFORMER_FILTER_SLOTS      4
 
 /* TODO(rnp): actually use a substruct but generate a header compatible with MATLAB */
 /* X(name, type, size, gltype, glsize, comment) */
@@ -141,6 +147,7 @@ typedef enum {
 	X(time_offset,       float,        , float,      , "/* pulse length correction time [s] */")
 
 #define BEAMFORMER_PARAMS_TAIL \
+	X(decimation_rate,   int32_t, , int,  , "/* Number of times to decimate */")         \
 	X(readi_group_id,   uint32_t, , uint, , "/* Which readi group this data is from */") \
 	X(readi_group_size, uint32_t, , uint, , "/* Size of readi transmit group */")
 
@@ -153,7 +160,7 @@ typedef struct {
 	BEAMFORMER_PARAMS_HEAD_V0
 	BEAMFORMER_UI_PARAMS
 	BEAMFORMER_PARAMS_TAIL
-	float _pad[2];
+	float _pad[1];
 } BeamformerParametersV0;
 
 /* NOTE: This struct follows the OpenGL std140 layout. DO NOT modify unless you have
@@ -162,7 +169,7 @@ typedef struct {
 	BEAMFORMER_PARAMS_HEAD
 	BEAMFORMER_UI_PARAMS
 	BEAMFORMER_PARAMS_TAIL
-	float _pad[2];
+	float _pad[1];
 } BeamformerParameters;
 #undef X
 
