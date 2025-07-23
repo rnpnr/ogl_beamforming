@@ -2625,8 +2625,9 @@ push_compute_time(Arena *arena, s8 prefix, f32 time)
 }
 
 function v2
-draw_compute_stats_bar_view(BeamformerUI *ui, Arena arena, ComputeShaderStats *stats, u32 *stages,
-                            u32 stages_count, f32 compute_time_sum, TextSpec ts, Rect r, v2 mouse)
+draw_compute_stats_bar_view(BeamformerUI *ui, Arena arena, ComputeShaderStats *stats,
+                            BeamformerShaderKind *stages, i32 stages_count, f32 compute_time_sum,
+                            TextSpec ts, Rect r, v2 mouse)
 {
 	read_only local_persist s8 frame_labels[] = {s8_comp("0:"), s8_comp("-1:"), s8_comp("-2:"), s8_comp("-3:")};
 	f32 total_times[countof(frame_labels)] = {0};
@@ -2636,7 +2637,7 @@ draw_compute_stats_bar_view(BeamformerUI *ui, Arena arena, ComputeShaderStats *s
 		cells[0].text = frame_labels[i];
 		u32 frame_index = (stats->latest_frame_index - i) % countof(stats->table.times);
 		u32 seen_shaders = 0;
-		for (u32 j = 0; j < stages_count; j++) {
+		for (i32 j = 0; j < stages_count; j++) {
 			if ((seen_shaders & (1u << stages[j])) == 0)
 				total_times[i] += stats->table.times[frame_index][stages[j]];
 			seen_shaders |= (1u << stages[j]);
@@ -2671,7 +2672,7 @@ draw_compute_stats_bar_view(BeamformerUI *ui, Arena arena, ComputeShaderStats *s
 		Rect rect;
 		rect.pos  = v2_add(cr.pos, (v2){{cr.size.w + table->cell_pad.w , cr.size.h * 0.15f}});
 		rect.size = (v2){.y = 0.7f * cr.size.h};
-		for (u32 i = 0; i < stages_count; i++) {
+		for (i32 i = 0; i < stages_count; i++) {
 			rect.size.w = total_width * stats->table.times[frame_index][stages[i]] / total_times[row_index];
 			Color color = colour_from_normalized(g_colour_palette[stages[i] % countof(g_colour_palette)]);
 			DrawRectangleRec(rect.rl, color);
@@ -2717,19 +2718,16 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 	assert(view->type == VT_COMPUTE_STATS_VIEW);
 
 	ComputeStatsView *csv = &view->compute_stats_view;
-	BeamformerSharedMemory *sm    = ui->shared_memory.region;
-	ComputeShaderStats     *stats = csv->compute_shader_stats;
+	BeamformerComputePipeline *cp    = &ui->beamformer_context->csctx.compute_pipeline;
+	ComputeShaderStats        *stats = csv->compute_shader_stats;
 	f32 compute_time_sum = 0;
-	u32 stages           = sm->compute_stages_count;
+	i32 stages           = cp->shader_count;
 	TextSpec text_spec   = {.font = &ui->font, .colour = FG_COLOUR, .flags = TF_LIMITED};
-
-	u32 compute_stages[MAX_COMPUTE_SHADER_STAGES];
-	mem_copy(compute_stages, sm->compute_stages, stages * sizeof(*compute_stages));
 
 	static_assert(BeamformerShaderKind_ComputeCount <= 32, "shader kind bitfield test");
 	u32 seen_shaders = 0;
-	for (u32 i = 0; i < stages; i++) {
-		BeamformerShaderKind index = compute_stages[i];
+	for (i32 i = 0; i < stages; i++) {
+		BeamformerShaderKind index = cp->shaders[i];
 		if ((seen_shaders & (1u << index)) == 0)
 			compute_time_sum += stats->average_times[index];
 		seen_shaders |= (1u << index);
@@ -2744,13 +2742,13 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 		read_only local_persist s8 labels[BeamformerShaderKind_ComputeCount] = {COMPUTE_SHADERS_INTERNAL};
 		#undef X
 		da_reserve(&arena, table, stages);
-		for (u32 i = 0; i < stages; i++) {
-			push_table_time_row(table, &arena, labels[compute_stages[i]],
-			                    stats->average_times[compute_stages[i]]);
+		for (i32 i = 0; i < stages; i++) {
+			push_table_time_row(table, &arena, labels[cp->shaders[i]],
+			                    stats->average_times[cp->shaders[i]]);
 		}
 	}break;
 	case ComputeStatsViewKind_Bar:{
-		result = draw_compute_stats_bar_view(ui, arena, stats, compute_stages, stages, compute_time_sum,
+		result = draw_compute_stats_bar_view(ui, arena, stats, cp->shaders, stages, compute_time_sum,
 		                                     text_spec, r, mouse);
 		r.pos = v2_add(r.pos, (v2){.y = result.y});
 	}break;

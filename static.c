@@ -331,9 +331,9 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	sm->version = BEAMFORMER_SHARED_MEMORY_VERSION;
 
 	/* NOTE: default compute shader pipeline */
-	sm->compute_stages[0]    = BeamformerShaderKind_Decode;
-	sm->compute_stages[1]    = BeamformerShaderKind_DAS;
-	sm->compute_stages_count = 2;
+	sm->shaders[0]   = BeamformerShaderKind_Decode;
+	sm->shaders[1]   = BeamformerShaderKind_DAS;
+	sm->shader_count = 2;
 
 	GLWorkerThreadContext *worker = &ctx->os.compute_worker;
 	/* TODO(rnp): we should lock this down after we have something working */

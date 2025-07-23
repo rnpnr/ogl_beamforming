@@ -20,6 +20,12 @@
 	#define RESULT_TYPE_CAST(x)  vec4((x), 0, 0)
 	#define SAMPLE_DATA_TYPE     vec2
 	#define SAMPLE_TYPE_CAST(x)  (x)
+#elif defined(INPUT_DATA_TYPE_INT16_COMPLEX)
+	#define INPUT_DATA_TYPE      int
+	#define RF_SAMPLES_PER_INDEX 1
+	#define RESULT_TYPE_CAST(x)  vec4((x), 0, 0)
+	#define SAMPLE_DATA_TYPE     vec2
+	#define SAMPLE_TYPE_CAST(x)  vec2(((x) << 16) >> 16, (x) >> 16)
 #else
 	#define INPUT_DATA_TYPE      int
 	#define RF_SAMPLES_PER_INDEX 2

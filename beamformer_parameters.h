@@ -12,19 +12,21 @@
 
 /* X(enumarant, number, shader file name, needs header, pretty name) */
 #define COMPUTE_SHADERS \
-	X(CudaDecode,         0, "",         0, "CUDA Decode")   \
-	X(CudaHilbert,        1, "",         0, "CUDA Hilbert")  \
-	X(DAS,                2, "das",      1, "DAS")           \
-	X(Decode,             3, "decode",   1, "Decode (I16)")  \
-	X(DecodeFloat,        4, "",         1, "Decode (F32)")  \
-	X(DecodeFloatComplex, 5, "",         1, "Decode (F32C)") \
-	X(Demodulate,         6, "demod",    1, "Demodulate")    \
-	X(MinMax,             7, "min_max",  0, "Min/Max")       \
-	X(Sum,                8, "sum",      0, "Sum")
+	X(CudaDecode,          0, "",         0, "CUDA Decode")      \
+	X(CudaHilbert,         1, "",         0, "CUDA Hilbert")     \
+	X(DAS,                 2, "das",      1, "DAS")              \
+	X(Decode,              3, "decode",   1, "Decode (I16)")     \
+	X(Demodulate,          4, "demod",    1, "Demodulate (I16)") \
+	X(MinMax,              5, "min_max",  0, "Min/Max")          \
+	X(Sum,                 6, "sum",      0, "Sum")
 
 #define COMPUTE_SHADERS_INTERNAL \
 	COMPUTE_SHADERS \
-	X(DASFast, 9, "", 1, "DAS (Fast)")
+	X(DecodeInt16Complex,  7, "",         1, "Decode (I16C)") \
+	X(DecodeFloat,         8, "",         1, "Decode (F32)")  \
+	X(DecodeFloatComplex,  9, "",         1, "Decode (F32C)") \
+	X(DemodulateFloat,    10, "",         1, "Demodulate (F32)") \
+	X(DASFast,            11, "",         1, "DAS (Fast)")
 
 typedef enum {
 	#define X(e, n, s, h, pn) BeamformerShaderKind_##e = n,
@@ -47,6 +49,24 @@ typedef struct {
 #define DECODE_TYPES \
 	X(NONE,     0, "None")     \
 	X(HADAMARD, 1, "Hadamard")
+
+#define BEAMFORMER_DATA_KIND_LIST \
+	X(Int16,          0) \
+	X(Int16Complex,   1) \
+	X(Float32,        2) \
+	X(Float32Complex, 3)
+
+#define X(k, id) BeamformerDataKind_##k = id,
+typedef enum {BEAMFORMER_DATA_KIND_LIST} BeamformerDataKind;
+#undef X
+
+#define BEAMFORMER_FILTER_KIND_LIST \
+	X(Kaiser,       0) \
+	X(MatchedSine,  1)
+
+#define X(k, id) BeamformerFilterKind_##k = id,
+typedef enum {BEAMFORMER_FILTER_KIND_LIST} BeamformerFilterKind;
+#undef X
 
 /* X(type, id, pretty name) */
 #define BEAMFORMER_VIEW_PLANE_TAG_LIST \

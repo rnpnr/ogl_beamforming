@@ -59,26 +59,23 @@ vec2 cubic(int base_index, float x)
 	vec2 T2 = C_SPLINE * (samples[3] - P1);
 
 	mat2x4 C = mat2x4(vec4(P1.x, P2.x, T1.x, T2.x), vec4(P1.y, P2.y, T1.y, T2.y));
-	float fs = sampling_frequency / decimation_rate;
-	vec2 result = rotate_iq(S * h * C, x / fs);
+	vec2 result = rotate_iq(S * h * C, x / sampling_frequency);
 	return result;
 }
 
 vec2 sample_rf(int channel, int transmit, float t)
 {
 	vec2 result;
-	float fs         = sampling_frequency / decimation_rate;
-	int   base_index = int(channel * dec_data_dim.x * dec_data_dim.z + transmit * dec_data_dim.x);
+	int base_index = int(channel * dec_data_dim.x * dec_data_dim.z + transmit * dec_data_dim.x);
 	if (interpolate) result = cubic(base_index, t);
-	else             result = rotate_iq(rf_data[base_index + int(round(t))], t / fs);
+	else             result = rotate_iq(rf_data[base_index + int(round(t))], t / sampling_frequency);
 	return result;
 }
 
 float sample_index(float distance)
 {
-	float  fs   = sampling_frequency / decimation_rate;
 	float  time = distance / speed_of_sound + time_offset;
-	return time * fs;
+	return time * sampling_frequency;
 }
 
 float apodize(float arg)

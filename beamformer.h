@@ -103,7 +103,27 @@ typedef struct {
 } BeamformerRenderModel;
 
 typedef struct {
+	BeamformerFilterKind kind;
+	u32 texture;
+	i32 length;
+	f32 sampling_frequency;
+} BeamformerFilter;
+
+typedef struct {
+	BeamformerShaderKind       shaders[MAX_COMPUTE_SHADER_STAGES];
+	BeamformerShaderParameters shader_parameters[MAX_COMPUTE_SHADER_STAGES];
+	i32                        shader_count;
+	BeamformerDataKind         data_kind;
+	/* TODO(rnp): this can be different from the configuration provided via the
+	 * the shared memory. In fact it could be split up based on shader */
+	BeamformerParameters       parameters;
+} BeamformerComputePipeline;
+
+typedef struct {
 	u32 programs[BeamformerShaderKind_ComputeCount];
+
+	BeamformerComputePipeline compute_pipeline;
+	BeamformerFilter filters[BEAMFORMER_FILTER_SLOTS];
 
 	/* NOTE: Decoded data is only relevant in the context of a single frame. We use two
 	 * buffers so that they can be swapped when chaining multiple compute stages */
@@ -113,7 +133,6 @@ typedef struct {
 	u32 raw_data_ssbo;
 	u32 shared_ubo;
 
-	u32 filter_textures[BEAMFORMER_FILTER_SLOTS];
 	u32 channel_mapping_texture;
 	u32 sparse_elements_texture;
 	u32 focal_vectors_texture;

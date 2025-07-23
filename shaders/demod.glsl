@@ -19,7 +19,7 @@ void main()
 	uint in_offset  = (dec_data_dim.x * dec_data_dim.z * channel + dec_data_dim.x * transmit);
 	uint out_offset = (dec_data_dim.x * dec_data_dim.z * channel + dec_data_dim.x * transmit) + out_sample;
 
-	float arg    = radians(360) * center_frequency / sampling_frequency;
+	float arg    = radians(360) * center_frequency / (sampling_frequency * decimation_rate);
 	vec2  result = vec2(0);
 	for (int i = 0; i < imageSize(filter_coefficients).x; i++) {
 		int index = int(in_sample + i);

@@ -8,17 +8,19 @@
 #endif
 
 #define BEAMFORMER_LIB_ERRORS \
-	X(NONE,                    0, "None") \
-	X(VERSION_MISMATCH,        1, "host-library version mismatch")                \
-	X(INVALID_ACCESS,          2, "library in invalid state")                     \
-	X(COMPUTE_STAGE_OVERFLOW,  3, "compute stage overflow: maximum stages: " str(MAX_COMPUTE_SHADER_STAGES)) \
-	X(INVALID_COMPUTE_STAGE,   4, "invalid compute shader stage")                 \
-	X(INVALID_IMAGE_PLANE,     5, "invalid image plane")                          \
-	X(BUFFER_OVERFLOW,         6, "passed buffer size exceeds available space")   \
-	X(WORK_QUEUE_FULL,         7, "work queue full")                              \
-	X(EXPORT_SPACE_OVERFLOW,   8, "not enough space for data export")             \
-	X(SHARED_MEMORY,           9, "failed to open shared memory region")          \
-	X(SYNC_VARIABLE,          10, "failed to acquire lock within timeout period")
+	X(NONE,                     0, "None") \
+	X(VERSION_MISMATCH,         1, "host-library version mismatch")                 \
+	X(INVALID_ACCESS,           2, "library in invalid state")                      \
+	X(COMPUTE_STAGE_OVERFLOW,   3, "compute stage overflow: maximum stages: " str(MAX_COMPUTE_SHADER_STAGES)) \
+	X(INVALID_COMPUTE_STAGE,    4, "invalid compute shader stage")                  \
+	X(INVALID_START_SHADER,     5, "starting shader not Decode or Demodulate")      \
+	X(INVALID_DEMOD_DATA_KIND,  6, "data kind for demodulation not Int16 or Float") \
+	X(INVALID_IMAGE_PLANE,      7, "invalid image plane")                           \
+	X(BUFFER_OVERFLOW,          8, "passed buffer size exceeds available space")    \
+	X(WORK_QUEUE_FULL,          9, "work queue full")                               \
+	X(EXPORT_SPACE_OVERFLOW,   10, "not enough space for data export")              \
+	X(SHARED_MEMORY,           11, "failed to open shared memory region")           \
+	X(SYNC_VARIABLE,           12, "failed to acquire lock within timeout period")
 
 #define X(type, num, string) BF_LIB_ERR_KIND_ ##type = num,
 typedef enum {BEAMFORMER_LIB_ERRORS} BeamformerLibErrorKind;
@@ -32,9 +34,6 @@ LIB_FN const char *beamformer_error_string(BeamformerLibErrorKind kind);
 
 /* IMPORTANT: timeout of -1 will block forever */
 
-LIB_FN uint32_t set_beamformer_parameters(BeamformerParametersV0 *);
-LIB_FN uint32_t set_beamformer_pipeline(int32_t *stages, uint32_t stages_count);
-LIB_FN uint32_t send_data(void *data, uint32_t data_size);
 /* NOTE: sends data and waits for (complex) beamformed data to be returned.
  * out_data: must be allocated by the caller as 2 floats per output point. */
 LIB_FN uint32_t beamform_data_synchronized(void *data, uint32_t data_size, int32_t output_points[3],
@@ -56,6 +55,8 @@ LIB_FN uint32_t beamformer_push_channel_mapping(int16_t *mapping,  uint32_t coun
 LIB_FN uint32_t beamformer_push_sparse_elements(int16_t *elements, uint32_t count, int32_t timeout_ms);
 LIB_FN uint32_t beamformer_push_focal_vectors(float     *vectors,  uint32_t count, int32_t timeout_ms);
 
+LIB_FN uint32_t beamformer_set_pipeline_stage_parameters(int32_t stage_index, int32_t parameter, int32_t timeout_ms);
+LIB_FN uint32_t beamformer_push_pipeline(int32_t *shaders, int32_t shader_count, BeamformerDataKind data_kind, int32_t timeout_ms);
 LIB_FN uint32_t beamformer_push_parameters(BeamformerParameters *, int32_t timeout_ms);
 LIB_FN uint32_t beamformer_push_parameters_ui(BeamformerUIParameters *, int32_t timeout_ms);
 LIB_FN uint32_t beamformer_push_parameters_head(BeamformerParametersHead *, int32_t timeout_ms);
@@ -79,7 +80,7 @@ LIB_FN uint32_t beamformer_push_parameters_head(BeamformerParametersHead *, int3
  * M:
  *   M = (A - 8) / (2.285 (ω_s - ω_p))
  */
-LIB_FN uint32_t beamformer_create_kaiser_low_pass_filter(float beta, f32 cutoff_frequency,
+LIB_FN uint32_t beamformer_create_kaiser_low_pass_filter(float beta, float cutoff_frequency,
                                                          int16_t length, uint8_t slot);
 
 //////////////////////////
@@ -87,3 +88,9 @@ LIB_FN uint32_t beamformer_create_kaiser_low_pass_filter(float beta, f32 cutoff_
 LIB_FN int32_t  beamformer_live_parameters_get_dirty_flag(void);
 LIB_FN uint32_t beamformer_set_live_parameters(BeamformerLiveImagingParameters *);
 LIB_FN BeamformerLiveImagingParameters *beamformer_get_live_parameters(void);
+
+//////////////
+// Legacy API
+LIB_FN uint32_t set_beamformer_parameters(BeamformerParametersV0 *);
+LIB_FN uint32_t set_beamformer_pipeline(int32_t *stages, int32_t stages_count);
+LIB_FN uint32_t send_data(void *data, uint32_t data_size);
