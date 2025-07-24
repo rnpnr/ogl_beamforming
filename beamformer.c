@@ -940,8 +940,6 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 			DEBUG_DECL(work->kind = BeamformerWorkKind_ComputeIndirect;)
 		} /* FALLTHROUGH */
 		case BeamformerWorkKind_Compute:{
-			post_sync_barrier(&ctx->shared_memory, work->lock, sm->locks);
-
 			push_compute_timing_info(ctx->compute_timing_table,
 			                         (ComputeTimingInfo){.kind = ComputeTimingInfoKind_ComputeFrameBegin});
 
@@ -958,6 +956,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 				BEAMFORMER_COMPUTE_UBO_LIST
 				#undef X
 			}
+
+			post_sync_barrier(&ctx->shared_memory, work->lock, sm->locks);
 
 			atomic_store_u32(&cs->processing_compute, 1);
 			start_renderdoc_capture(gl_context);
