@@ -757,6 +757,17 @@ build_matlab_bindings(Arena arena)
 		#undef X
 		if (!write_result) build_log_failure("%s", shader_stages_out);
 		result &= write_result;
+
+		sb.widx = 0;
+		char *data_kinds_out = OUTPUT("matlab/OGLBeamformerDataKind.m");
+		#define X(name, n, ...) stream_append_matlab_enumeration_field(&sb, s8(#name " (" str(n) ")"));
+		stream_begin_matlab_enumeration(&sb, s8("OGLBeamformerDataKind"), s8("int32"));
+		BEAMFORMER_DATA_KIND_LIST
+		stream_end_matlab_enumeration(&sb);
+		write_result = os_write_new_file(data_kinds_out, stream_to_s8(&sb));
+		#undef X
+		if (!write_result) build_log_failure("%s", data_kinds_out);
+		result &= write_result;
 	}
 
 	return result;
