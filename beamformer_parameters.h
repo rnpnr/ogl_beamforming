@@ -10,26 +10,26 @@
  *      be organized for simple offset access per frame).
  */
 
-/* X(enumarant, number, shader file name, needs header, pretty name) */
+/* X(enumarant, number, shader file name, pretty name) */
 #define COMPUTE_SHADERS \
-	X(CudaDecode,          0, "",         0, "CUDA Decode")      \
-	X(CudaHilbert,         1, "",         0, "CUDA Hilbert")     \
-	X(DAS,                 2, "das",      1, "DAS")              \
-	X(Decode,              3, "decode",   1, "Decode (I16)")     \
-	X(Demodulate,          4, "demod",    1, "Demodulate (I16)") \
-	X(MinMax,              5, "min_max",  0, "Min/Max")          \
-	X(Sum,                 6, "sum",      0, "Sum")
+	X(CudaDecode,          0, "",        "CUDA Decode")      \
+	X(CudaHilbert,         1, "",        "CUDA Hilbert")     \
+	X(DAS,                 2, "das",     "DAS")              \
+	X(Decode,              3, "decode",  "Decode (I16)")     \
+	X(Demodulate,          4, "demod",   "Demodulate (I16)") \
+	X(MinMax,              5, "min_max", "Min/Max")          \
+	X(Sum,                 6, "sum",     "Sum")
 
 #define COMPUTE_SHADERS_INTERNAL \
 	COMPUTE_SHADERS \
-	X(DecodeInt16Complex,  7, "",         1, "Decode (I16C)") \
-	X(DecodeFloat,         8, "",         1, "Decode (F32)")  \
-	X(DecodeFloatComplex,  9, "",         1, "Decode (F32C)") \
-	X(DemodulateFloat,    10, "",         1, "Demodulate (F32)") \
-	X(DASFast,            11, "",         1, "DAS (Fast)")
+	X(DecodeInt16Complex,  7, "",        "Decode (I16C)") \
+	X(DecodeFloat,         8, "",        "Decode (F32)")  \
+	X(DecodeFloatComplex,  9, "",        "Decode (F32C)") \
+	X(DemodulateFloat,    10, "",        "Demodulate (F32)") \
+	X(DASFast,            11, "",        "DAS (Fast)")
 
 typedef enum {
-	#define X(e, n, s, h, pn) BeamformerShaderKind_##e = n,
+	#define X(e, n, ...) BeamformerShaderKind_##e = n,
 	COMPUTE_SHADERS_INTERNAL
 	#undef X
 	BeamformerShaderKind_Render3D,
@@ -167,7 +167,7 @@ typedef enum {
 	X(time_offset,       float,        , float,      , "/* pulse length correction time [s] */")
 
 #define BEAMFORMER_PARAMS_TAIL \
-	X(decimation_rate,   int32_t, , int,  , "/* Number of times to decimate */")         \
+	X(decimation_rate,  uint32_t, , uint, , "/* Number of times to decimate */")         \
 	X(readi_group_id,   uint32_t, , uint, , "/* Which readi group this data is from */") \
 	X(readi_group_size, uint32_t, , uint, , "/* Size of readi transmit group */")
 
@@ -197,8 +197,7 @@ typedef struct {
 #if __STDC_VERSION__ >= 201112L
 _Static_assert((offsetof(BeamformerParameters, output_min_coordinate) & 15) == 0,
                "BeamformerParameters.output_min_coordinate must lie on a 16 byte boundary");
-_Static_assert((sizeof(BeamformerParameters) & 15) == 0,
-               "sizeof(BeamformerParameters) must be a multiple of 16");
+_Static_assert((sizeof(BeamformerParameters) & 15) == 0, "UBO size must be a multiple of 16");
 #endif
 
 #define BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST \

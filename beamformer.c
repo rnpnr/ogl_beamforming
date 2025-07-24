@@ -305,8 +305,8 @@ compute_cursor_finished(struct compute_cursor *cursor)
 function void
 plan_compute_pipeline(SharedMemoryRegion *os_sm, BeamformerComputePipeline *cp, BeamformerFilter *filters)
 {
-	BeamformerSharedMemory *sm  = os_sm->region;
-	BeamformerParameters   *bp  = &sm->parameters;
+	BeamformerSharedMemory *sm = os_sm->region;
+	BeamformerParameters   *bp = &cp->das_ubo_data;
 
 	i32 compute_lock = BeamformerSharedMemoryLockKind_ComputePipeline;
 	i32 params_lock  = BeamformerSharedMemoryLockKind_Parameters;
@@ -316,7 +316,7 @@ plan_compute_pipeline(SharedMemoryRegion *os_sm, BeamformerComputePipeline *cp, 
 	b32 demod_first  = sm->shaders[0] == BeamformerShaderKind_Demodulate;
 
 	os_shared_memory_region_lock(os_sm, sm->locks, params_lock, (u32)-1);
-	mem_copy(&cp->parameters, &sm->parameters, sizeof(cp->parameters));
+	mem_copy(bp, &sm->parameters, sizeof(*bp));
 	os_shared_memory_region_unlock(os_sm, sm->locks, params_lock);
 
 	b32 demodulating = 0;
@@ -342,9 +342,9 @@ plan_compute_pipeline(SharedMemoryRegion *os_sm, BeamformerComputePipeline *cp, 
 			}
 		}break;
 		case BeamformerShaderKind_Demodulate:{
-			if (demod_first && data_kind == BeamformerDataKind_Float32)
+			if (!demod_first || (demod_first && data_kind == BeamformerDataKind_Float32))
 				shader = BeamformerShaderKind_DemodulateFloat;
-			cp->parameters.time_offset += beamformer_filter_time_offset(filters + sp->filter_slot);
+			bp->time_offset += beamformer_filter_time_offset(filters + sp->filter_slot);
 			demodulating = 1;
 		}break;
 		case BeamformerShaderKind_DAS:{
@@ -357,15 +357,59 @@ plan_compute_pipeline(SharedMemoryRegion *os_sm, BeamformerComputePipeline *cp, 
 		cp->shaders[cp->shader_count] = shader;
 		cp->shader_parameters[cp->shader_count] = *sp;
 	}
+	os_shared_memory_region_unlock(os_sm, sm->locks, compute_lock);
 
-	if (demodulating) {
-		cp->parameters.sampling_frequency /= (f32)cp->parameters.decimation_rate;
-	} else {
-		cp->parameters.center_frequency = 0;
-		cp->parameters.decimation_rate  = 1;
+	BeamformerDecodeUBO *dp = &cp->decode_ubo_data;
+	dp->decode_mode    = bp->decode;
+	dp->transmit_count = bp->dec_data_dim[2];
+
+	if (decode_first) {
+		dp->input_channel_stride   = bp->rf_raw_dim[0];
+		dp->input_sample_stride    = 1;
+		dp->input_transmit_stride  = bp->dec_data_dim[0];
+
+		dp->output_channel_stride  = bp->dec_data_dim[0] * bp->dec_data_dim[2];
+		dp->output_sample_stride   = 1;
+		dp->output_transmit_stride = bp->dec_data_dim[0];
 	}
 
-	os_shared_memory_region_unlock(os_sm, sm->locks, compute_lock);
+	if (demodulating) {
+		BeamformerDemodulateUBO *mp = &cp->demod_ubo_data;
+		mp->sampling_frequency     = bp->sampling_frequency;
+		mp->demodulation_frequency = bp->center_frequency;
+		mp->decimation_rate        = bp->decimation_rate;
+
+		bp->sampling_frequency /= (f32)mp->decimation_rate;
+		bp->dec_data_dim[0]    /= mp->decimation_rate;
+
+		mp->input_sample_stride    = 1;
+		mp->input_transmit_stride  = bp->dec_data_dim[0] * mp->decimation_rate;
+		mp->output_channel_stride  = bp->dec_data_dim[0] * bp->dec_data_dim[2];
+
+		if (demod_first) {
+			/* NOTE(rnp): output optimized decode layout to skip first pass */
+			mp->input_channel_stride   = bp->rf_raw_dim[0];
+			mp->output_sample_stride   = bp->dec_data_dim[2];
+			mp->output_transmit_stride = 1;
+			mp->map_channels           = 1;
+
+			dp->input_channel_stride   = mp->output_channel_stride;
+			dp->input_sample_stride    = mp->output_sample_stride;
+			dp->input_transmit_stride  = mp->output_transmit_stride;
+
+			dp->output_channel_stride  = bp->dec_data_dim[0] * bp->dec_data_dim[2];
+			dp->output_sample_stride   = 1;
+			dp->output_transmit_stride = bp->dec_data_dim[0];
+		} else {
+			mp->input_channel_stride   = dp->output_channel_stride;
+			mp->output_sample_stride   = 1;
+			mp->output_transmit_stride = bp->dec_data_dim[0];
+			mp->map_channels           = 0;
+		}
+	} else {
+		bp->center_frequency = 0;
+		bp->decimation_rate  = 1;
+	}
 }
 
 function m4
@@ -422,31 +466,42 @@ do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformerComputeFrame *frame
 	case BeamformerShaderKind_Decode:
 	case BeamformerShaderKind_DecodeInt16Complex:
 	case BeamformerShaderKind_DecodeFloat:
-	case BeamformerShaderKind_DecodeFloatComplex:{
+	case BeamformerShaderKind_DecodeFloatComplex:
+	{
+		glBindBufferBase(GL_UNIFORM_BUFFER,        0, cp->ubos[BeamformerComputeUBOKind_Decode]);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, csctx->rf_data_ssbos[output_ssbo_idx]);
 		glBindImageTexture(0, csctx->hadamard_texture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R8I);
-		glBindImageTexture(1, csctx->channel_mapping_texture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R16I);
 
 		/* NOTE(rnp): decode 2 samples per dispatch when data is i16 */
 		f32 local_size_x = (f32)DECODE_LOCAL_SIZE_X;
 		if (shader == BeamformerShaderKind_Decode)
 			local_size_x *= 2;
 
+		uv3 dim = csctx->dec_data_dim.xyz;
 		iz raw_size = csctx->rf_raw_size;
-		glProgramUniform1ui(program, DECODE_FIRST_PASS_UNIFORM_LOC, 1);
-		glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, csctx->raw_data_ssbo, 0,        raw_size);
-		glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 2, csctx->raw_data_ssbo, raw_size, raw_size);
-		glDispatchCompute((u32)ceil_f32((f32)csctx->dec_data_dim.x / local_size_x),
-		                  (u32)ceil_f32((f32)csctx->dec_data_dim.y / DECODE_LOCAL_SIZE_Y),
-		                  (u32)ceil_f32((f32)csctx->dec_data_dim.z / DECODE_LOCAL_SIZE_Z));
+		if (shader == cp->shaders[0]) {
+			glBindImageTexture(1, csctx->channel_mapping_texture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R16I);
+			glProgramUniform1ui(program, DECODE_FIRST_PASS_UNIFORM_LOC, 1);
+			glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, csctx->raw_data_ssbo, 0,        raw_size);
+			glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 2, csctx->raw_data_ssbo, raw_size, raw_size);
+			glDispatchCompute((u32)ceil_f32((f32)dim.x / local_size_x),
+			                  (u32)ceil_f32((f32)dim.y / DECODE_LOCAL_SIZE_Y),
+			                  (u32)ceil_f32((f32)dim.z / DECODE_LOCAL_SIZE_Z));
+			glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+		}
 
-		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+		if (shader == cp->shaders[0]) {
+			glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, csctx->raw_data_ssbo, raw_size, raw_size);
+		} else {
+			dim = uv4_from_u32_array(cp->das_ubo_data.dec_data_dim).xyz;
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, csctx->rf_data_ssbos[input_ssbo_idx]);
+		}
 
 		glProgramUniform1ui(program, DECODE_FIRST_PASS_UNIFORM_LOC, 0);
-		glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, csctx->raw_data_ssbo, raw_size, raw_size);
-		glDispatchCompute((u32)ceil_f32((f32)csctx->dec_data_dim.x / local_size_x),
-		                  (u32)ceil_f32((f32)csctx->dec_data_dim.y / DECODE_LOCAL_SIZE_Y),
-		                  (u32)ceil_f32((f32)csctx->dec_data_dim.z / DECODE_LOCAL_SIZE_Z));
+		glDispatchCompute((u32)ceil_f32((f32)dim.x / local_size_x),
+		                  (u32)ceil_f32((f32)dim.y / DECODE_LOCAL_SIZE_Y),
+		                  (u32)ceil_f32((f32)dim.z / DECODE_LOCAL_SIZE_Z));
+		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
 		csctx->last_output_ssbo_index = !csctx->last_output_ssbo_index;
 	}break;
@@ -454,17 +509,27 @@ do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformerComputeFrame *frame
 		csctx->cuda_lib.decode(0, output_ssbo_idx, 0);
 		csctx->last_output_ssbo_index = !csctx->last_output_ssbo_index;
 	}break;
-	case BeamformerShaderKind_CudaHilbert:
+	case BeamformerShaderKind_CudaHilbert:{
 		csctx->cuda_lib.hilbert(input_ssbo_idx, output_ssbo_idx);
 		csctx->last_output_ssbo_index = !csctx->last_output_ssbo_index;
-		break;
-	case BeamformerShaderKind_Demodulate:{
-		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, csctx->rf_data_ssbos[input_ssbo_idx]);
+	}break;
+	case BeamformerShaderKind_Demodulate:
+	case BeamformerShaderKind_DemodulateFloat:
+	{
+		BeamformerDemodulateUBO *ubo = &cp->demod_ubo_data;
+		glBindBufferBase(GL_UNIFORM_BUFFER,        0, cp->ubos[BeamformerComputeUBOKind_Demodulate]);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, csctx->rf_data_ssbos[output_ssbo_idx]);
+		if (shader == cp->shaders[0]) {
+			glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, csctx->raw_data_ssbo, 0, csctx->rf_raw_size);
+		} else {
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, csctx->rf_data_ssbos[input_ssbo_idx]);
+		}
 
 		glBindImageTexture(0, csctx->filters[sp->filter_slot].texture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R32F);
+		if (ubo->map_channels)
+			glBindImageTexture(1, csctx->channel_mapping_texture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R16I);
 
-		f32 local_size_x = (f32)(DEMOD_LOCAL_SIZE_X * (f32)cp->parameters.decimation_rate);
+		f32 local_size_x = (f32)(DEMOD_LOCAL_SIZE_X * (f32)ubo->decimation_rate);
 		glDispatchCompute((u32)ceil_f32((f32)csctx->dec_data_dim.x / local_size_x),
 		                  (u32)ceil_f32((f32)csctx->dec_data_dim.y / DEMOD_LOCAL_SIZE_Y),
 		                  (u32)ceil_f32((f32)csctx->dec_data_dim.z / DEMOD_LOCAL_SIZE_Z));
@@ -489,6 +554,7 @@ do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformerComputeFrame *frame
 	case BeamformerShaderKind_DAS:
 	case BeamformerShaderKind_DASFast:
 	{
+		BeamformerParameters *ubo = &cp->das_ubo_data;
 		if (shader == BeamformerShaderKind_DASFast) {
 			glClearTexImage(frame->frame.texture, 0, GL_RED, GL_FLOAT, 0);
 			glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
@@ -497,25 +563,26 @@ do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformerComputeFrame *frame
 			glBindImageTexture(0, frame->frame.texture, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RG32F);
 		}
 
+		glBindBufferBase(GL_UNIFORM_BUFFER,        0, cp->ubos[BeamformerComputeUBOKind_DAS]);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, csctx->rf_data_ssbos[input_ssbo_idx]);
 		glBindImageTexture(1, csctx->sparse_elements_texture, 0, GL_FALSE, 0, GL_READ_ONLY,  GL_R16I);
 		glBindImageTexture(2, csctx->focal_vectors_texture,   0, GL_FALSE, 0, GL_READ_ONLY,  GL_RG32F);
 
-		m4 voxel_transform = das_voxel_transform_matrix(&cp->parameters);
+		m4 voxel_transform = das_voxel_transform_matrix(ubo);
 		glProgramUniform1ui(program, DAS_CYCLE_T_UNIFORM_LOC, cycle_t++);
 		glProgramUniformMatrix4fv(program, DAS_VOXEL_MATRIX_LOC, 1, 0, voxel_transform.E);
 
 		iv3 dim = frame->frame.dim;
 		if (shader == BeamformerShaderKind_DASFast) {
 			i32 loop_end;
-			if (cp->parameters.das_shader_id == DASShaderKind_RCA_VLS ||
-			    cp->parameters.das_shader_id == DASShaderKind_RCA_TPW)
+			if (ubo->das_shader_id == DASShaderKind_RCA_VLS ||
+			    ubo->das_shader_id == DASShaderKind_RCA_TPW)
 			{
 				/* NOTE(rnp): to avoid repeatedly sampling the whole focal vectors
 				 * texture we loop over transmits for VLS/TPW */
-				loop_end = (i32)cp->parameters.dec_data_dim[2];
+				loop_end = (i32)ubo->dec_data_dim[2];
 			} else {
-				loop_end = (i32)cp->parameters.dec_data_dim[1];
+				loop_end = (i32)ubo->dec_data_dim[1];
 			}
 			f32 percent_per_step = 1.0f / (f32)loop_end;
 			csctx->processing_progress = -percent_per_step;
@@ -569,7 +636,7 @@ do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformerComputeFrame *frame
 		assert(frame >= ctx->beamform_frames);
 		assert(frame < ctx->beamform_frames + countof(ctx->beamform_frames));
 		u32 base_index   = (u32)(frame - ctx->beamform_frames);
-		u32 to_average   = (u32)cp->parameters.output_points[3];
+		u32 to_average   = (u32)cp->das_ubo_data.output_points[3];
 		u32 frame_count  = 0;
 		u32 *in_textures = push_array(&arena, u32, MAX_BEAMFORMED_SAVED_FRAMES);
 		ComputeFrameIterator cfi = compute_frame_iterator(ctx, 1 + base_index - to_average,
@@ -597,12 +664,16 @@ shader_text_with_header(ShaderReloadContext *ctx, OS *os, Arena *arena)
 	stream_append_s8s(&sb, s8("#version 460 core\n\n"), ctx->header);
 
 	switch (ctx->kind) {
-	case BeamformerShaderKind_Demodulate:{
+	case BeamformerShaderKind_Demodulate:
+	case BeamformerShaderKind_DemodulateFloat:
+	{
 			stream_append_s8(&sb, s8(""
 			"layout(local_size_x = " str(DEMOD_LOCAL_SIZE_X) ", "
 			       "local_size_y = " str(DEMOD_LOCAL_SIZE_Y) ", "
 			       "local_size_z = " str(DEMOD_LOCAL_SIZE_Z) ") in;\n\n"
 			));
+			if (ctx->kind == BeamformerShaderKind_DemodulateFloat)
+				stream_append_s8(&sb, s8("#define INPUT_DATA_TYPE_FLOAT\n\n"));
 	}break;
 	case BeamformerShaderKind_DAS:
 	case BeamformerShaderKind_DASFast:
@@ -714,10 +785,6 @@ reload_compute_shader(BeamformerCtx *ctx, ShaderReloadContext *src, s8 name_extr
 	stream_append_s8s(&sb, src->name, name_extra);
 	s8  name   = arena_stream_commit(&arena, &sb);
 	b32 result = beamformer_reload_shader(&ctx->os, ctx, src, arena, name);
-	if (result) {
-		glUseProgram(*src->shader);
-		glBindBufferBase(GL_UNIFORM_BUFFER, 0, ctx->csctx.shared_ubo);
-	}
 	return result;
 }
 
@@ -735,8 +802,17 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 		case BeamformerWorkKind_ReloadShader:{
 			ShaderReloadContext *src = work->shader_reload_context;
 			b32 success = reload_compute_shader(ctx, src, s8(""), arena);
-			if (src->kind == BeamformerShaderKind_Decode) {
-				/* TODO(rnp): think of a better way of doing this */
+			/* TODO(rnp): think of a better way of doing this */
+			switch (src->kind) {
+			case BeamformerShaderKind_DAS:{
+				src->kind   = BeamformerShaderKind_DASFast;
+				src->shader = cs->programs + src->kind;
+				success &= reload_compute_shader(ctx, src, s8(" (Fast)"), arena);
+
+				src->kind   = BeamformerShaderKind_DAS;
+				src->shader = cs->programs + src->kind;
+			}break;
+			case BeamformerShaderKind_Decode:{
 				src->kind   = BeamformerShaderKind_DecodeFloatComplex;
 				src->shader = cs->programs + src->kind;
 				success &= reload_compute_shader(ctx, src, s8(" (F32C)"), arena);
@@ -751,15 +827,16 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 
 				src->kind   = BeamformerShaderKind_Decode;
 				src->shader = cs->programs + src->kind;
-			}
+			}break;
+			case BeamformerShaderKind_Demodulate:{
+				src->kind   = BeamformerShaderKind_DemodulateFloat;
+				src->shader = cs->programs + src->kind;
+				success &= reload_compute_shader(ctx, src, s8(" (F32)"), arena);
 
-			if (src->kind == BeamformerShaderKind_DAS) {
-				/* TODO(rnp): think of a better way of doing this */
-				src->kind   = BeamformerShaderKind_DASFast;
-				src->shader = cs->programs + BeamformerShaderKind_DASFast;
-				success &= reload_compute_shader(ctx, src, s8(" (Fast)"), arena);
-				src->kind   = BeamformerShaderKind_DAS;
-				src->shader = cs->programs + BeamformerShaderKind_DAS;
+				src->kind   = BeamformerShaderKind_Demodulate;
+				src->shader = cs->programs + src->kind;
+			}break;
+			default:{}break;
 			}
 
 			if (success && ctx->csctx.raw_data_ssbo) {
@@ -874,8 +951,12 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 			if (sm->dirty_regions & mask) {
 				plan_compute_pipeline(&ctx->shared_memory, cp, cs->filters);
 				atomic_store_u32(&ctx->ui_read_params, ctx->beamform_work_queue != q);
-				glNamedBufferSubData(cs->shared_ubo, 0, sizeof(cp->parameters), &cp->parameters);
 				atomic_and_u32(&sm->dirty_regions, ~mask);
+
+				#define X(k, t, v) glNamedBufferSubData(cp->ubos[BeamformerComputeUBOKind_##k], \
+				                                        0, sizeof(t), &cp->v ## _ubo_data);
+				BEAMFORMER_COMPUTE_UBO_LIST
+				#undef X
 			}
 
 			atomic_store_u32(&cs->processing_compute, 1);
@@ -1009,12 +1090,19 @@ coalesce_timing_table(ComputeTimingTable *t, ComputeShaderStats *stats)
 
 DEBUG_EXPORT BEAMFORMER_COMPUTE_SETUP_FN(beamformer_compute_setup)
 {
-	BeamformerCtx          *ctx = (BeamformerCtx *)user_context;
-	BeamformerSharedMemory *sm  = ctx->shared_memory.region;
-	ComputeShaderCtx       *cs  = &ctx->csctx;
+	BeamformerCtx             *ctx = (BeamformerCtx *)user_context;
+	BeamformerSharedMemory    *sm  = ctx->shared_memory.region;
+	ComputeShaderCtx          *cs  = &ctx->csctx;
+	BeamformerComputePipeline *cp  = &cs->compute_pipeline;
 
-	glCreateBuffers(1, &cs->shared_ubo);
-	glNamedBufferStorage(cs->shared_ubo, sizeof(sm->parameters), 0, GL_DYNAMIC_STORAGE_BIT);
+	glCreateBuffers(countof(cp->ubos), cp->ubos);
+	#define X(k, t, ...) \
+		glNamedBufferStorage(cp->ubos[BeamformerComputeUBOKind_##k], sizeof(t), \
+		                     0, GL_DYNAMIC_STORAGE_BIT); \
+		LABEL_GL_OBJECT(GL_BUFFER, cp->ubos[BeamformerComputeUBOKind_##k], s8(#t));
+
+		BEAMFORMER_COMPUTE_UBO_LIST
+	#undef X
 
 	glCreateTextures(GL_TEXTURE_1D, 1, &cs->channel_mapping_texture);
 	glCreateTextures(GL_TEXTURE_1D, 1, &cs->sparse_elements_texture);
@@ -1026,7 +1114,6 @@ DEBUG_EXPORT BEAMFORMER_COMPUTE_SETUP_FN(beamformer_compute_setup)
 	LABEL_GL_OBJECT(GL_TEXTURE, cs->channel_mapping_texture, s8("Channel_Mapping"));
 	LABEL_GL_OBJECT(GL_TEXTURE, cs->focal_vectors_texture,   s8("Focal_Vectors"));
 	LABEL_GL_OBJECT(GL_TEXTURE, cs->sparse_elements_texture, s8("Sparse_Elements"));
-	LABEL_GL_OBJECT(GL_BUFFER,  cs->shared_ubo,              s8("Beamformer_Parameters"));
 
 	glCreateQueries(GL_TIME_ELAPSED, countof(cs->shader_timer_ids), cs->shader_timer_ids);
 	glCreateQueries(GL_TIMESTAMP, 1, &cs->rf_data_timestamp_query);

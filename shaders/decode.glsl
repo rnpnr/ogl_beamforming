@@ -62,25 +62,27 @@ void main()
 	uint channel     = gl_GlobalInvocationID.y;
 	uint transmit    = gl_GlobalInvocationID.z;
 
-	uint rf_offset = (channel * rf_raw_dim.x + time_sample * dec_data_dim.z) / RF_SAMPLES_PER_INDEX;
+	uint rf_offset = (input_channel_stride * channel + transmit_count * time_sample) / RF_SAMPLES_PER_INDEX;
 	if (u_first_pass) {
-		int  rf_channel = imageLoad(channel_mapping, int(channel)).x;
-		uint in_off     = rf_channel * rf_raw_dim.x + transmit * dec_data_dim.x + time_sample;
+		uint in_off = input_channel_stride  * imageLoad(channel_mapping, int(channel)).x +
+		              input_transmit_stride * transmit +
+		              input_sample_stride   * time_sample;
 		out_rf_data[rf_offset + transmit] = rf_data[in_off / RF_SAMPLES_PER_INDEX];
 	} else {
-		/* NOTE(rnp): stores output as a 3D matrix with ordering of {samples, channels, transmits} */
-		uint out_off = dec_data_dim.x * dec_data_dim.z * channel + dec_data_dim.x * transmit + time_sample;
+		uint out_off = output_channel_stride  * channel +
+		               output_transmit_stride * transmit +
+		               output_sample_stride   * time_sample;
 
 		vec4 result = vec4(0);
-		switch (decode) {
+		switch (decode_mode) {
 		case DECODE_MODE_NONE: {
 			result = RESULT_TYPE_CAST(sample_rf_data(rf_offset + transmit));
 		} break;
 		case DECODE_MODE_HADAMARD: {
 			SAMPLE_DATA_TYPE sum = SAMPLE_DATA_TYPE(0);
-			for (int i = 0; i < dec_data_dim.z; i++)
+			for (int i = 0; i < transmit_count; i++)
 				sum += imageLoad(hadamard, ivec2(i, transmit)).x * sample_rf_data(rf_offset++);
-			result = RESULT_TYPE_CAST(sum) / float(dec_data_dim.z);
+			result = RESULT_TYPE_CAST(sum) / float(transmit_count);
 		} break;
 		}
 		out_data[out_off + 0] = result.xy;

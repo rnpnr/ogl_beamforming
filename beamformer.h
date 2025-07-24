@@ -109,14 +109,66 @@ typedef struct {
 	f32 sampling_frequency;
 } BeamformerFilter;
 
+/* X(name, type, gltype) */
+#define BEAMFORMER_DEMOD_UBO_PARAM_LIST \
+	X(input_channel_stride,   u32, uint)  \
+	X(input_sample_stride,    u32, uint)  \
+	X(input_transmit_stride,  u32, uint)  \
+	X(output_channel_stride,  u32, uint)  \
+	X(output_sample_stride,   u32, uint)  \
+	X(output_transmit_stride, u32, uint)  \
+	X(decimation_rate,        u32, uint)  \
+	X(map_channels,           b32, bool)  \
+	X(demodulation_frequency, f32, float) \
+	X(sampling_frequency,     f32, float)
+
+/* X(name, type, gltype) */
+#define BEAMFORMER_DECODE_UBO_PARAM_LIST \
+	X(input_channel_stride,   u32, uint) \
+	X(input_sample_stride,    u32, uint) \
+	X(input_transmit_stride,  u32, uint) \
+	X(output_channel_stride,  u32, uint) \
+	X(output_sample_stride,   u32, uint) \
+	X(output_transmit_stride, u32, uint) \
+	X(transmit_count,         u32, uint) \
+	X(decode_mode,            u32, uint)
+
+typedef align_as(16) struct {
+	#define X(name, type, ...) type name;
+	BEAMFORMER_DECODE_UBO_PARAM_LIST
+	#undef X
+} BeamformerDecodeUBO;
+static_assert((sizeof(BeamformerDecodeUBO) & 15) == 0, "UBO size must be a multiple of 16");
+
+typedef align_as(16) struct {
+	#define X(name, type, ...) type name;
+	BEAMFORMER_DEMOD_UBO_PARAM_LIST
+	#undef X
+	float _pad[2];
+} BeamformerDemodulateUBO;
+static_assert((sizeof(BeamformerDemodulateUBO) & 15) == 0, "UBO size must be a multiple of 16");
+
+/* TODO(rnp): das should remove redundant info and add voxel transform */
+#define BEAMFORMER_COMPUTE_UBO_LIST \
+	X(DAS,        BeamformerParameters,    das)    \
+	X(Decode,     BeamformerDecodeUBO,     decode) \
+	X(Demodulate, BeamformerDemodulateUBO, demod)
+
+#define X(k, ...) BeamformerComputeUBOKind_##k,
+typedef enum {BEAMFORMER_COMPUTE_UBO_LIST BeamformerComputeUBOKind_Count} BeamformerComputeUBOKind;
+#undef X
+
 typedef struct {
 	BeamformerShaderKind       shaders[MAX_COMPUTE_SHADER_STAGES];
 	BeamformerShaderParameters shader_parameters[MAX_COMPUTE_SHADER_STAGES];
 	i32                        shader_count;
 	BeamformerDataKind         data_kind;
-	/* TODO(rnp): this can be different from the configuration provided via the
-	 * the shared memory. In fact it could be split up based on shader */
-	BeamformerParameters       parameters;
+
+	u32 ubos[BeamformerComputeUBOKind_Count];
+
+	#define X(k, type, name) type name ##_ubo_data;
+	BEAMFORMER_COMPUTE_UBO_LIST
+	#undef X
 } BeamformerComputePipeline;
 
 typedef struct {
@@ -131,7 +183,6 @@ typedef struct {
 	u32 last_output_ssbo_index;
 
 	u32 raw_data_ssbo;
-	u32 shared_ubo;
 
 	u32 channel_mapping_texture;
 	u32 sparse_elements_texture;
