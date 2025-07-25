@@ -25,8 +25,9 @@
 	X(DecodeInt16Complex,  7, "",        "Decode (I16C)") \
 	X(DecodeFloat,         8, "",        "Decode (F32)")  \
 	X(DecodeFloatComplex,  9, "",        "Decode (F32C)") \
-	X(DemodulateFloat,    10, "",        "Demodulate (F32)") \
-	X(DASFast,            11, "",        "DAS (Fast)")
+	X(DecodeInt16ToFloat, 10, "",        "Decode (I16-F32)") \
+	X(DemodulateFloat,    11, "",        "Demodulate (F32)") \
+	X(DASFast,            12, "",        "DAS (Fast)")
 
 typedef enum {
 	#define X(e, n, ...) BeamformerShaderKind_##e = n,

@@ -164,6 +164,9 @@ typedef struct {
 	i32                        shader_count;
 	BeamformerDataKind         data_kind;
 
+	uv3 decode_dispatch;
+	uv3 demod_dispatch;
+
 	u32 ubos[BeamformerComputeUBOKind_Count];
 
 	#define X(k, type, name) type name ##_ubo_data;

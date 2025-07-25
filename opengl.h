@@ -77,6 +77,7 @@ typedef uint64_t  GLuint64;
 	X(glBindTextureUnit,                     void,   (GLuint unit, GLuint texture)) \
 	X(glBindVertexArray,                     void,   (GLuint array)) \
 	X(glBlitNamedFramebuffer,                void,   (GLuint sfb, GLuint dfb, GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GLint dy0, GLint dx1, GLint dy1, GLbitfield mask, GLenum filter)) \
+	X(glClearNamedBufferData,                void,   (GLuint buffer, GLenum internalformat, GLenum format, GLenum type, const void *data)) \
 	X(glClearNamedFramebufferfv,             void,   (GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLfloat *value)) \
 	X(glClearTexImage,                       void,   (GLuint texture, GLint level, GLenum format, GLenum type, const void *data)) \
 	X(glCompileShader,                       void,   (GLuint shader)) \

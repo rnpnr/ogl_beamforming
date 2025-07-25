@@ -1,5 +1,11 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: make decode output real values for real inputs and complex values for complex inputs
+ *      - this means that das should have a RF version and an IQ version
+ *      - this will also flip the current hack to support demodulate after decode to
+ *        being a hack to support CudaHilbert after decode
+ * [ ]: measure filtering performance when indexing forward on RF data
+ * [ ]: filter sampling frequency should be a filter creation parameter
  * [ ]: reinvestigate ring buffer raw_data_ssbo
  *      - to minimize latency the main thread should manage the subbuffer upload so that the
  *        compute thread can just keep computing. This way we can keep the copmute thread busy
@@ -71,7 +77,7 @@ beamformer_filter_time_offset(BeamformerFilter *f)
 	f32 result = 0;
 	switch (f->kind) {
 	case BeamformerFilterKind_Kaiser:{
-		result = -(f32)f->length / 2.0f / f->sampling_frequency;
+		result = (f32)f->length / 2.0f / f->sampling_frequency;
 	}break;
 	InvalidDefaultCase;
 	}
@@ -313,7 +319,6 @@ plan_compute_pipeline(SharedMemoryRegion *os_sm, BeamformerComputePipeline *cp, 
 	os_shared_memory_region_lock(os_sm, sm->locks, compute_lock, (u32)-1);
 
 	b32 decode_first = sm->shaders[0] == BeamformerShaderKind_Decode;
-	b32 demod_first  = sm->shaders[0] == BeamformerShaderKind_Demodulate;
 	b32 cuda_hilbert = 0;
 	b32 demodulate   = 0;
 
@@ -347,7 +352,10 @@ plan_compute_pipeline(SharedMemoryRegion *os_sm, BeamformerComputePipeline *cp, 
 				[BeamformerDataKind_Float32]        = BeamformerShaderKind_DecodeFloat,
 				[BeamformerDataKind_Float32Complex] = BeamformerShaderKind_DecodeFloatComplex,
 			};
-			if (decode_first) {
+			if (decode_first && demodulate) {
+				/* TODO(rnp): for now we assume that if we are demodulating the data is int16 */
+				shader = BeamformerShaderKind_DecodeInt16ToFloat;
+			} else if (decode_first) {
 				shader = decode_table[CLAMP(data_kind, 0, countof(decode_table) - 1)];
 			} else {
 				if (data_kind == BeamformerDataKind_Int16)
@@ -358,7 +366,7 @@ plan_compute_pipeline(SharedMemoryRegion *os_sm, BeamformerComputePipeline *cp, 
 			commit = 1;
 		}break;
 		case BeamformerShaderKind_Demodulate:{
-			if (!demod_first || (demod_first && data_kind == BeamformerDataKind_Float32))
+			if (decode_first || (!decode_first && data_kind == BeamformerDataKind_Float32))
 				shader = BeamformerShaderKind_DemodulateFloat;
 			bp->time_offset += beamformer_filter_time_offset(filters + sp->filter_slot);
 			commit = 1;
@@ -379,58 +387,89 @@ plan_compute_pipeline(SharedMemoryRegion *os_sm, BeamformerComputePipeline *cp, 
 	}
 	os_shared_memory_region_unlock(os_sm, sm->locks, compute_lock);
 
+	u32 time_compression = 1;
+	if (demodulate) time_compression = 2;
+
+	if (!demodulate) bp->center_frequency = 0;
+	bp->decimation_rate = MAX(bp->decimation_rate, 1);
+
+	cp->decode_dispatch.x = (u32)ceil_f32((f32)bp->dec_data_dim[0] / DECODE_LOCAL_SIZE_X);
+	cp->decode_dispatch.y = (u32)ceil_f32((f32)bp->dec_data_dim[1] / DECODE_LOCAL_SIZE_Y);
+	cp->decode_dispatch.z = (u32)ceil_f32((f32)bp->dec_data_dim[2] / DECODE_LOCAL_SIZE_Z);
+
+	/* NOTE(rnp): decode 2 samples per dispatch when data is i16 */
+	if (decode_first && cp->data_kind == BeamformerDataKind_Int16)
+		cp->decode_dispatch.x = (u32)ceil_f32((f32)cp->decode_dispatch.x / 2);
+
 	BeamformerDecodeUBO *dp = &cp->decode_ubo_data;
 	dp->decode_mode    = bp->decode;
 	dp->transmit_count = bp->dec_data_dim[2];
-
-	bp->decimation_rate = MAX(bp->decimation_rate, 1);
 
 	if (decode_first) {
 		dp->input_channel_stride   = bp->rf_raw_dim[0];
 		dp->input_sample_stride    = 1;
 		dp->input_transmit_stride  = bp->dec_data_dim[0];
 
-		dp->output_channel_stride  = bp->dec_data_dim[0] * bp->dec_data_dim[2];
+		dp->output_channel_stride  = bp->dec_data_dim[0] * bp->dec_data_dim[2] / time_compression;
 		dp->output_sample_stride   = 1;
-		dp->output_transmit_stride = bp->dec_data_dim[0];
+		dp->output_transmit_stride = bp->dec_data_dim[0] / time_compression;
+	} else {
+		dp->input_channel_stride   = bp->dec_data_dim[0] * bp->dec_data_dim[2] /
+		                             bp->decimation_rate / time_compression;
+		dp->input_sample_stride    = bp->dec_data_dim[2];
+		dp->input_transmit_stride  = 1;
+
+		dp->output_channel_stride  = dp->input_channel_stride;
+		dp->output_sample_stride   = 1;
+		dp->output_transmit_stride = bp->dec_data_dim[0] / bp->decimation_rate / time_compression;
 	}
 
+	/* NOTE(rnp): when we are demodulating we pretend that the sampler was alternating
+	 * between sampling the I portion and the Q portion of an IQ signal. Therefore there
+	 * is an implicit decimation factor of 2 which must always be included. All code here
+	 * assumes that the signal was sampled in such a way that supports this operation.
+	 * To recover IQ[n] from the sampled data (RF[n]) we do the following:
+	 *   I[n]  = RF[n]
+	 *   Q[n]  = RF[n + 1]
+	 *   IQ[n] = I[n] - j*Q[n]
+	 */
 	if (demodulate) {
 		BeamformerDemodulateUBO *mp = &cp->demod_ubo_data;
-		mp->sampling_frequency     = bp->sampling_frequency;
 		mp->demodulation_frequency = bp->center_frequency;
+		mp->sampling_frequency     = bp->sampling_frequency / (f32)time_compression;
 		mp->decimation_rate        = bp->decimation_rate;
+		mp->map_channels           = !decode_first;
 
-		bp->sampling_frequency /= (f32)mp->decimation_rate;
-		bp->dec_data_dim[0]    /= mp->decimation_rate;
+		if (decode_first) {
+			mp->input_channel_stride  = dp->output_channel_stride;
+			mp->input_sample_stride   = dp->output_sample_stride;
+			mp->input_transmit_stride = dp->output_transmit_stride;
 
-		mp->input_sample_stride    = 1;
-		mp->input_transmit_stride  = bp->dec_data_dim[0] * mp->decimation_rate;
-		mp->output_channel_stride  = bp->dec_data_dim[0] * bp->dec_data_dim[2];
-
-		if (demod_first) {
-			/* NOTE(rnp): output optimized decode layout to skip first pass */
-			mp->input_channel_stride   = bp->rf_raw_dim[0];
-			mp->output_sample_stride   = bp->dec_data_dim[2];
-			mp->output_transmit_stride = 1;
-			mp->map_channels           = 1;
-
-			dp->input_channel_stride   = mp->output_channel_stride;
-			dp->input_sample_stride    = mp->output_sample_stride;
-			dp->input_transmit_stride  = mp->output_transmit_stride;
-
-			dp->output_channel_stride  = bp->dec_data_dim[0] * bp->dec_data_dim[2];
-			dp->output_sample_stride   = 1;
-			dp->output_transmit_stride = bp->dec_data_dim[0];
-		} else {
-			mp->input_channel_stride   = dp->output_channel_stride;
+			mp->output_channel_stride  = bp->dec_data_dim[0] * bp->dec_data_dim[2] /
+			                             mp->decimation_rate / time_compression;
 			mp->output_sample_stride   = 1;
-			mp->output_transmit_stride = bp->dec_data_dim[0];
-			mp->map_channels           = 0;
+			mp->output_transmit_stride = bp->dec_data_dim[0] /  mp->decimation_rate / time_compression;
+		} else {
+			mp->input_channel_stride  = bp->rf_raw_dim[0] / time_compression;
+			mp->input_sample_stride   = 1;
+			mp->input_transmit_stride = bp->dec_data_dim[0] / time_compression;
+
+			/* NOTE(rnp): output optimized layout for decoding */
+			mp->output_channel_stride  = dp->input_channel_stride;
+			mp->output_sample_stride   = dp->input_sample_stride;
+			mp->output_transmit_stride = dp->input_transmit_stride;
+
+			u32 time_samples = bp->dec_data_dim[0] / mp->decimation_rate / time_compression;
+			cp->decode_dispatch.x = (u32)ceil_f32((f32)time_samples / DECODE_LOCAL_SIZE_X);
 		}
-	} else {
-		bp->center_frequency = 0;
-		bp->decimation_rate  = 1;
+
+		f32 local_size_x = DEMOD_LOCAL_SIZE_X * (f32)time_compression * (f32)mp->decimation_rate;
+		cp->demod_dispatch.x = (u32)ceil_f32((f32)bp->dec_data_dim[0] / local_size_x);
+		cp->demod_dispatch.y = (u32)ceil_f32((f32)bp->dec_data_dim[1] / DEMOD_LOCAL_SIZE_Y);
+		cp->demod_dispatch.z = (u32)ceil_f32((f32)bp->dec_data_dim[2] / DEMOD_LOCAL_SIZE_Z);
+
+		bp->sampling_frequency /= (f32)mp->decimation_rate * (f32)time_compression;
+		bp->dec_data_dim[0]    /= mp->decimation_rate * time_compression;
 	}
 }
 
@@ -489,40 +528,32 @@ do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformerComputeFrame *frame
 	case BeamformerShaderKind_DecodeInt16Complex:
 	case BeamformerShaderKind_DecodeFloat:
 	case BeamformerShaderKind_DecodeFloatComplex:
+	case BeamformerShaderKind_DecodeInt16ToFloat:
 	{
 		glBindBufferBase(GL_UNIFORM_BUFFER,        0, cp->ubos[BeamformerComputeUBOKind_Decode]);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, csctx->rf_data_ssbos[output_ssbo_idx]);
 		glBindImageTexture(0, csctx->hadamard_texture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R8I);
 
-		/* NOTE(rnp): decode 2 samples per dispatch when data is i16 */
-		f32 local_size_x = (f32)DECODE_LOCAL_SIZE_X;
-		if (shader == BeamformerShaderKind_Decode)
-			local_size_x *= 2;
-
-		uv3 dim = csctx->dec_data_dim.xyz;
 		iz raw_size = csctx->rf_raw_size;
 		if (shader == cp->shaders[0]) {
 			glBindImageTexture(1, csctx->channel_mapping_texture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R16I);
 			glProgramUniform1ui(program, DECODE_FIRST_PASS_UNIFORM_LOC, 1);
 			glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, csctx->raw_data_ssbo, 0,        raw_size);
 			glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 2, csctx->raw_data_ssbo, raw_size, raw_size);
-			glDispatchCompute((u32)ceil_f32((f32)dim.x / local_size_x),
-			                  (u32)ceil_f32((f32)dim.y / DECODE_LOCAL_SIZE_Y),
-			                  (u32)ceil_f32((f32)dim.z / DECODE_LOCAL_SIZE_Z));
+			glDispatchCompute(cp->decode_dispatch.x, cp->decode_dispatch.y, cp->decode_dispatch.z);
 			glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 		}
 
 		if (shader == cp->shaders[0]) {
 			glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, csctx->raw_data_ssbo, raw_size, raw_size);
 		} else {
-			dim = uv4_from_u32_array(cp->das_ubo_data.dec_data_dim).xyz;
 			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, csctx->rf_data_ssbos[input_ssbo_idx]);
 		}
 
 		glProgramUniform1ui(program, DECODE_FIRST_PASS_UNIFORM_LOC, 0);
-		glDispatchCompute((u32)ceil_f32((f32)dim.x / local_size_x),
-		                  (u32)ceil_f32((f32)dim.y / DECODE_LOCAL_SIZE_Y),
-		                  (u32)ceil_f32((f32)dim.z / DECODE_LOCAL_SIZE_Z));
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, csctx->rf_data_ssbos[output_ssbo_idx]);
+
+		glDispatchCompute(cp->decode_dispatch.x, cp->decode_dispatch.y, cp->decode_dispatch.z);
 		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
 		csctx->last_output_ssbo_index = !csctx->last_output_ssbo_index;
@@ -551,10 +582,7 @@ do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformerComputeFrame *frame
 		if (ubo->map_channels)
 			glBindImageTexture(1, csctx->channel_mapping_texture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R16I);
 
-		f32 local_size_x = (f32)(DEMOD_LOCAL_SIZE_X * (f32)ubo->decimation_rate);
-		glDispatchCompute((u32)ceil_f32((f32)csctx->dec_data_dim.x / local_size_x),
-		                  (u32)ceil_f32((f32)csctx->dec_data_dim.y / DEMOD_LOCAL_SIZE_Y),
-		                  (u32)ceil_f32((f32)csctx->dec_data_dim.z / DEMOD_LOCAL_SIZE_Z));
+		glDispatchCompute(cp->demod_dispatch.x, cp->demod_dispatch.y, cp->demod_dispatch.z);
 		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
 		csctx->last_output_ssbo_index = !csctx->last_output_ssbo_index;
@@ -726,24 +754,19 @@ shader_text_with_header(ShaderReloadContext *ctx, OS *os, Arena *arena)
 		#undef X
 	}break;
 	case BeamformerShaderKind_Decode:
-	case BeamformerShaderKind_DecodeInt16Complex:
 	case BeamformerShaderKind_DecodeFloat:
 	case BeamformerShaderKind_DecodeFloatComplex:
+	case BeamformerShaderKind_DecodeInt16Complex:
+	case BeamformerShaderKind_DecodeInt16ToFloat:
 	{
-		switch (ctx->kind) {
-		case BeamformerShaderKind_DecodeInt16Complex:{
-			stream_append_s8(&sb, s8("#define INPUT_DATA_TYPE_INT16_COMPLEX\n\n"));
-		}break;
-		case BeamformerShaderKind_DecodeFloat:{
-			stream_append_s8(&sb, s8("#define INPUT_DATA_TYPE_FLOAT\n\n"));
-		}break;
-		case BeamformerShaderKind_DecodeFloatComplex:{
-			stream_append_s8(&sb, s8("#define INPUT_DATA_TYPE_FLOAT_COMPLEX\n\n"));
-		}break;
-		default:{}break;
-		}
+		s8 define_table[] = {
+			[BeamformerShaderKind_DecodeFloatComplex] = s8("#define INPUT_DATA_TYPE_FLOAT_COMPLEX\n\n"),
+			[BeamformerShaderKind_DecodeFloat]        = s8("#define INPUT_DATA_TYPE_FLOAT\n\n"),
+			[BeamformerShaderKind_DecodeInt16Complex] = s8("#define INPUT_DATA_TYPE_INT16_COMPLEX\n\n"),
+			[BeamformerShaderKind_DecodeInt16ToFloat] = s8("#define OUTPUT_DATA_TYPE_FLOAT\n\n"),
+		};
 		#define X(type, id, pretty) "#define DECODE_MODE_" #type " " #id "\n"
-		stream_append_s8(&sb, s8(""
+		stream_append_s8s(&sb, define_table[ctx->kind], s8(""
 		"layout(local_size_x = " str(DECODE_LOCAL_SIZE_X) ", "
 		       "local_size_y = " str(DECODE_LOCAL_SIZE_Y) ", "
 		       "local_size_z = " str(DECODE_LOCAL_SIZE_Z) ") in;\n\n"
@@ -847,6 +870,10 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 				src->shader = cs->programs + src->kind;
 				success &= reload_compute_shader(ctx, src, s8(" (I16C)"),  arena);
 
+				src->kind   = BeamformerShaderKind_DecodeInt16ToFloat;
+				src->shader = cs->programs + src->kind;
+				success &= reload_compute_shader(ctx, src, s8(" (I16-F32)"),  arena);
+
 				src->kind   = BeamformerShaderKind_Decode;
 				src->shader = cs->programs + src->kind;
 			}break;
@@ -899,7 +926,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 		}break;
 		case BeamformerWorkKind_CreateFilter:{
 			BeamformerCreateFilterContext *fctx = &work->create_filter_context;
-			beamformer_filter_update(cs->filters + fctx->slot, fctx, sm->parameters.sampling_frequency, arena);
+			beamformer_filter_update(cs->filters + fctx->slot, fctx, sm->parameters.sampling_frequency / 2, arena);
 		}break;
 		case BeamformerWorkKind_UploadBuffer:{
 			os_shared_memory_region_lock(&ctx->shared_memory, sm->locks, (i32)work->lock, (u32)-1);
@@ -962,6 +989,10 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 			DEBUG_DECL(work->kind = BeamformerWorkKind_ComputeIndirect;)
 		} /* FALLTHROUGH */
 		case BeamformerWorkKind_Compute:{
+			DEBUG_DECL(glClearNamedBufferData(cs->rf_data_ssbos[0], GL_RG32F, GL_RG, GL_FLOAT, 0);)
+			DEBUG_DECL(glClearNamedBufferData(cs->rf_data_ssbos[1], GL_RG32F, GL_RG, GL_FLOAT, 0);)
+			DEBUG_DECL(glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);)
+
 			push_compute_timing_info(ctx->compute_timing_table,
 			                         (ComputeTimingInfo){.kind = ComputeTimingInfoKind_ComputeFrameBegin});
 
