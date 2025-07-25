@@ -59,16 +59,17 @@ vec2 cubic(int base_index, float x)
 	vec2 T2 = C_SPLINE * (samples[3] - P1);
 
 	mat2x4 C = mat2x4(vec4(P1.x, P2.x, T1.x, T2.x), vec4(P1.y, P2.y, T1.y, T2.y));
-	vec2 result = rotate_iq(S * h * C, x / sampling_frequency);
+	vec2 result = S * h * C;
 	return result;
 }
 
-vec2 sample_rf(int channel, int transmit, float t)
+vec2 sample_rf(int channel, int transmit, float index)
 {
-	vec2 result;
-	int base_index = int(channel * dec_data_dim.x * dec_data_dim.z + transmit * dec_data_dim.x);
-	if (interpolate) result = cubic(base_index, t);
-	else             result = rotate_iq(rf_data[base_index + int(round(t))], t / sampling_frequency);
+	vec2 result     = vec2(index >= 0) * vec2(round(index) + int(interpolate) < dec_data_dim.x);
+	int  base_index = int(channel * dec_data_dim.x * dec_data_dim.z + transmit * dec_data_dim.x);
+	if (interpolate) result *= cubic(base_index, index);
+	else             result *= rf_data[base_index + int(round(index))];
+	result = rotate_iq(result, index / sampling_frequency);
 	return result;
 }
 
@@ -133,9 +134,8 @@ vec3 RCA(vec3 world_point)
 		float apodization      = apodize(f_number * radians(180) / abs(xdc_world_point.y) * receive_vector.x);
 
 		if (apodization > 0) {
-			float sidx   = sample_index(transmit_distance + receive_distance);
-			vec2  valid  = vec2(sidx >= 0) * vec2(sidx < dec_data_dim.x);
-			result      += valid * apodization * sample_rf(channel, u_channel, sidx);
+			float sidx  = sample_index(transmit_distance + receive_distance);
+			result     += apodization * sample_rf(channel, u_channel, sidx);
 		}
 	}
 	return vec3(result, 0);
@@ -168,8 +168,7 @@ vec3 RCA(vec3 world_point)
 
 			if (apodization > 0) {
 				float sidx   = sample_index(transmit_distance + length(receive_vector));
-				vec2  valid  = vec2(sidx >= 0) * vec2(sidx < dec_data_dim.x);
-				vec2  value  = valid * apodization * sample_rf(rx_channel, transmit, sidx);
+				vec2  value  = apodization * sample_rf(rx_channel, transmit, sidx);
 				sum         += vec3(value, length(value));
 			}
 		}
@@ -210,9 +209,8 @@ vec3 HERCULES(vec3 world_point)
 			/* NOTE: tribal knowledge */
 			if (transmit == 0) apodization *= inversesqrt(dec_data_dim.z);
 
-			float sidx   = sample_index(transmit_distance + distance(xdc_world_point, element_position));
-			vec2  valid  = vec2(sidx >= 0) * vec2(sidx < dec_data_dim.x);
-			result      += valid * apodization * sample_rf(u_channel, transmit, sidx);
+			float sidx  = sample_index(transmit_distance + distance(xdc_world_point, element_position));
+			result     += apodization * sample_rf(u_channel, transmit, sidx);
 		}
 	}
 	return vec3(result, 0);
@@ -251,8 +249,7 @@ vec3 HERCULES(vec3 world_point)
 				if (transmit == 0) apodization *= inversesqrt(dec_data_dim.z);
 
 				float sidx   = sample_index(transmit_distance + distance(xdc_world_point, element_position));
-				vec2  valid  = vec2(sidx >= 0) * vec2(sidx < dec_data_dim.x);
-				vec2  value  = valid * apodization * sample_rf(rx_channel, transmit, sidx);
+				vec2  value  = apodization * sample_rf(rx_channel, transmit, sidx);
 				result      += vec3(value, length(value));
 			}
 		}
@@ -276,9 +273,8 @@ vec3 FORCES(vec3 world_point)
 			int   tx_channel      = uforces ? imageLoad(sparse_elements, transmit - int(uforces)).x : transmit;
 			vec3  transmit_center = vec3(xdc_element_pitch * vec2(tx_channel, floor(dec_data_dim.y / 2)), 0);
 
-			float sidx   = sample_index(distance(xdc_world_point, transmit_center) + receive_distance);
-			vec2  valid  = vec2(sidx >= 0) * vec2(sidx < dec_data_dim.x);
-			result      += valid * apodization * sample_rf(u_channel, transmit, sidx);
+			float sidx  = sample_index(distance(xdc_world_point, transmit_center) + receive_distance);
+			result     += apodization * sample_rf(u_channel, transmit, sidx);
 		}
 	}
 	return vec3(result, 0);
@@ -300,8 +296,7 @@ vec3 FORCES(vec3 world_point)
 				vec3  transmit_center = vec3(xdc_element_pitch * vec2(tx_channel, floor(dec_data_dim.y / 2)), 0);
 
 				float sidx   = sample_index(distance(xdc_world_point, transmit_center) + receive_distance);
-				vec2  valid  = vec2(sidx >= 0) * vec2(sidx < dec_data_dim.x);
-				vec2  value  = valid * apodization * sample_rf(rx_channel, tx_channel, sidx);
+				vec2  value  = apodization * sample_rf(rx_channel, tx_channel, sidx);
 				result      += vec3(value, length(value));
 			}
 		}
