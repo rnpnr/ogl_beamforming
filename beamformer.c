@@ -314,17 +314,32 @@ plan_compute_pipeline(SharedMemoryRegion *os_sm, BeamformerComputePipeline *cp, 
 
 	b32 decode_first = sm->shaders[0] == BeamformerShaderKind_Decode;
 	b32 demod_first  = sm->shaders[0] == BeamformerShaderKind_Demodulate;
+	b32 cuda_hilbert = 0;
+	b32 demodulate   = 0;
+
+	for (i32 i = 0; i < sm->shader_count; i++) {
+		switch (sm->shaders[i]) {
+		case BeamformerShaderKind_CudaHilbert:{ cuda_hilbert = 1; }break;
+		case BeamformerShaderKind_Demodulate:{  demodulate = 1;   }break;
+		default:{}break;
+		}
+	}
+
+	if (demodulate) cuda_hilbert = 0;
 
 	os_shared_memory_region_lock(os_sm, sm->locks, params_lock, (u32)-1);
 	mem_copy(bp, &sm->parameters, sizeof(*bp));
 	os_shared_memory_region_unlock(os_sm, sm->locks, params_lock);
 
-	b32 demodulating = 0;
 	BeamformerDataKind data_kind = sm->data_kind;
-	for (cp->shader_count = 0; cp->shader_count < sm->shader_count; cp->shader_count++) {
-		BeamformerShaderParameters *sp = sm->shader_parameters + cp->shader_count;
-		u32 shader = sm->shaders[cp->shader_count];
+	cp->shader_count = 0;
+	for (i32 i = 0; i < sm->shader_count; i++) {
+		BeamformerShaderParameters *sp = sm->shader_parameters + i;
+		u32 shader = sm->shaders[i];
+		b32 commit = 0;
+
 		switch (shader) {
+		case BeamformerShaderKind_CudaHilbert:{ commit = cuda_hilbert; }break;
 		case BeamformerShaderKind_Decode:{
 			BeamformerShaderKind decode_table[] = {
 				[BeamformerDataKind_Int16]          = BeamformerShaderKind_Decode,
@@ -340,28 +355,35 @@ plan_compute_pipeline(SharedMemoryRegion *os_sm, BeamformerComputePipeline *cp, 
 				else
 					shader = BeamformerShaderKind_DecodeFloatComplex;
 			}
+			commit = 1;
 		}break;
 		case BeamformerShaderKind_Demodulate:{
 			if (!demod_first || (demod_first && data_kind == BeamformerDataKind_Float32))
 				shader = BeamformerShaderKind_DemodulateFloat;
 			bp->time_offset += beamformer_filter_time_offset(filters + sp->filter_slot);
-			demodulating = 1;
+			commit = 1;
 		}break;
 		case BeamformerShaderKind_DAS:{
 			if (!bp->coherency_weighting)
 				shader = BeamformerShaderKind_DASFast;
+			commit = 1;
 		}break;
-		default:{}break;
+		default:{ commit = 1; }break;
 		}
 
-		cp->shaders[cp->shader_count] = shader;
-		cp->shader_parameters[cp->shader_count] = *sp;
+		if (commit) {
+			i32 index = cp->shader_count++;
+			cp->shaders[index] = shader;
+			cp->shader_parameters[index] = *sp;
+		}
 	}
 	os_shared_memory_region_unlock(os_sm, sm->locks, compute_lock);
 
 	BeamformerDecodeUBO *dp = &cp->decode_ubo_data;
 	dp->decode_mode    = bp->decode;
 	dp->transmit_count = bp->dec_data_dim[2];
+
+	bp->decimation_rate = MAX(bp->decimation_rate, 1);
 
 	if (decode_first) {
 		dp->input_channel_stride   = bp->rf_raw_dim[0];
@@ -373,7 +395,7 @@ plan_compute_pipeline(SharedMemoryRegion *os_sm, BeamformerComputePipeline *cp, 
 		dp->output_transmit_stride = bp->dec_data_dim[0];
 	}
 
-	if (demodulating) {
+	if (demodulate) {
 		BeamformerDemodulateUBO *mp = &cp->demod_ubo_data;
 		mp->sampling_frequency     = bp->sampling_frequency;
 		mp->demodulation_frequency = bp->center_frequency;
