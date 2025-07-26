@@ -132,7 +132,7 @@ kaiser_low_pass_filter(Arena *arena, f32 cutoff_frequency, f32 sampling_frequenc
 
 	for (i32 n = 0; n < length; n++) {
 		f32 t       = (f32)n - a;
-		f32 impulse = !f32_cmp(t, 0) ? sin_f32(wc * t) / t : 1;
+		f32 impulse = !f32_cmp(t, 0) ? sin_f32(wc * t) / t : wc;
 		t           = t / a;
 		f32 window  = (f32)cephes_i0(beta * sqrt_f32(1 - t * t)) / pi_i0_b;
 		result[n]   = impulse * window;
