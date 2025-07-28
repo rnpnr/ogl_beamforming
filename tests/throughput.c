@@ -407,7 +407,10 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	i16 *data = decompress_data_at_work_index(&path, options->frame_number);
 
 	if (options->loop) {
-		BeamformerLiveImagingParameters lip = {.active = 1};
+		BeamformerLiveImagingParameters lip = {.active = 1, .save_enabled = 1};
+		s8 short_name = s8("Throughput");
+		mem_copy(lip.save_name_tag, short_name.data, (uz)short_name.len);
+		lip.save_name_tag_length = (i32)short_name.len;
 		beamformer_set_live_parameters(&lip);
 
 		u32 frame = 0;
