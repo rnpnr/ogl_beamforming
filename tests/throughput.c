@@ -333,6 +333,22 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	bp.beamform_plane = 0;
 	bp.interpolate    = 0;
 
+	f32 xdc_frequency    = bp.center_frequency;
+	bp.decimation_rate   = 1;
+	bp.center_frequency  = bp.sampling_frequency / 4;
+	i16 filter_length    = 36;
+	f32 cutoff_frequency = 1.2e6;
+
+	beamformer_create_kaiser_low_pass_filter(5.65f, cutoff_frequency, bp.sampling_frequency / 2,
+	                                         filter_length, 0, 0);
+	beamformer_set_pipeline_stage_parameters(0, 0);
+
+	beamformer_create_matched_filter(xdc_frequency, bp.center_frequency,
+	                                 4 * bp.sampling_frequency / 2 / (f32)bp.decimation_rate,
+	                                 (i16)ceil_f32(4 * 2 * bp.sampling_frequency / 2 / bp.center_frequency),
+	                                 1, 0);
+	beamformer_set_pipeline_stage_parameters(2, 1);
+
 	if (zbp->sparse_elements[0] == -1) {
 		for (i16 i = 0; i < countof(zbp->sparse_elements); i++)
 			zbp->sparse_elements[i] = i;
@@ -353,8 +369,10 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 
 	i32 shader_stages[16];
 	u32 shader_stage_count = 0;
+	shader_stages[shader_stage_count++] = BeamformerShaderKind_Demodulate;
 	if (options->cuda) shader_stages[shader_stage_count++] = BeamformerShaderKind_CudaDecode;
 	else               shader_stages[shader_stage_count++] = BeamformerShaderKind_Decode;
+	shader_stages[shader_stage_count++] = BeamformerShaderKind_Filter;
 	shader_stages[shader_stage_count++] = BeamformerShaderKind_DAS;
 
 	beamformer_push_pipeline(shader_stages, shader_stage_count, BeamformerDataKind_Int16);
