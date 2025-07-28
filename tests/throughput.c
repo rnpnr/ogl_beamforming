@@ -337,6 +337,7 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	bp.decimation_rate = 1;
 	bp.demodulation_frequency = bp.sampling_frequency / 4;
 
+	#if 0
 	BeamformerFilterParameters kaiser = {0};
 	kaiser.Kaiser.beta             = 5.65f;
 	kaiser.Kaiser.cutoff_frequency = 2.0e6f;
@@ -346,6 +347,19 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	mem_copy(kaiser_parameters, &kaiser.Kaiser, sizeof(kaiser.Kaiser));
 	beamformer_create_filter(BeamformerFilterKind_Kaiser, kaiser_parameters,
 	                         countof(kaiser_parameters), bp.sampling_frequency / 2, 0, 0, 0);
+	beamformer_set_pipeline_stage_parameters(0, 0);
+	#endif
+
+	BeamformerFilterParameters matched = {0};
+	typeof(matched.MatchedChirp) *mp = &matched.MatchedChirp;
+	mp->duration      = 18e-6f;
+	mp->min_frequency = 2.9e6f - bp.demodulation_frequency;
+	mp->max_frequency = 6.0e6f - bp.demodulation_frequency;
+
+	f32 matched_parameters[sizeof(matched.MatchedChirp) / sizeof(f32)];
+	mem_copy(matched_parameters, mp, sizeof(*mp));
+	beamformer_create_filter(BeamformerFilterKind_MatchedChirp, matched_parameters,
+	                         countof(matched_parameters), bp.sampling_frequency / 2, 1, 0, 0);
 	beamformer_set_pipeline_stage_parameters(0, 0);
 
 	if (zbp->sparse_elements[0] == -1) {
@@ -379,7 +393,10 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	i16 *data = decompress_data_at_work_index(&path, options->frame_number);
 
 	if (options->loop) {
-		BeamformerLiveImagingParameters lip = {.active = 1};
+		BeamformerLiveImagingParameters lip = {.active = 1, .save_enabled = 1};
+		s8 short_name = s8("Foo Bar");
+		mem_copy(lip.save_name_tag, short_name.data, (uz)short_name.len);
+		lip.save_name_tag_length = (i32)short_name.len;
 		beamformer_set_live_parameters(&lip);
 
 		u32 frame = 0;
@@ -404,8 +421,16 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 				frame++;
 			}
 			i32 flag = beamformer_live_parameters_get_dirty_flag();
-			if (flag != -1 && (1 << flag) == BeamformerLiveImagingDirtyFlags_StopImaging)
-				break;
+			if (flag != -1) {
+				read_only local_persist const char *flag_name_table[] = {
+				#define X(name, ...) #name,
+				BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST
+				#undef X
+				};
+				printf("Got Live Flag: %s\n", flag_name_table[flag % countof(flag_name_table)]);
+				if ((1 << flag) == BeamformerLiveImagingDirtyFlags_StopImaging)
+					break;
+			}
 		}
 
 		lip.active = 0;
