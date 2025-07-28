@@ -1,5 +1,11 @@
 #include "external/cephes.c"
 
+typedef enum {
+	ConvolutionFlags_ComplexSignal = (1 << 0),
+	ConvolutionFlags_ComplexFilter = (1 << 1),
+	ConvolutionFlags_StoreReversed = (1 << 2),
+} ConvolutionFlags;
+
 function void
 fill_kronecker_sub_matrix(i32 *out, i32 out_stride, i32 scale, i32 *b, iv2 b_dim)
 {
@@ -121,26 +127,6 @@ make_hadamard_transpose(Arena *a, i32 dim)
 	return result;
 }
 
-/* NOTE(rnp): adapted from "Discrete Time Signal Processing" (Oppenheim) */
-function f32 *
-kaiser_low_pass_filter(Arena *arena, f32 cutoff_frequency, f32 sampling_frequency, f32 beta, i32 length)
-{
-	f32 *result = push_array(arena, f32, length);
-	f32 wc      = 2 * PI * cutoff_frequency / sampling_frequency;
-	f32 a       = (f32)length / 2.0f;
-	f32 pi_i0_b = PI * (f32)cephes_i0(beta);
-
-	for (i32 n = 0; n < length; n++) {
-		f32 t       = (f32)n - a;
-		f32 impulse = !f32_cmp(t, 0) ? sin_f32(wc * t) / t : wc;
-		t           = t / a;
-		f32 window  = (f32)cephes_i0(beta * sqrt_f32(1 - t * t)) / pi_i0_b;
-		result[n]   = impulse * window;
-	}
-
-	return result;
-}
-
 function b32
 iv2_equal(iv2 a, iv2 b)
 {
@@ -186,6 +172,15 @@ function v2
 v2_sub(v2 a, v2 b)
 {
 	v2 result = v2_add(a, v2_scale(b, -1.0f));
+	return result;
+}
+
+function v2
+complex_mul(v2 a, v2 b)
+{
+	v2 result;
+	result.x = a.x * b.x - a.y * b.y;
+	result.y = a.x * b.y + a.y * b.x;
 	return result;
 }
 
@@ -590,6 +585,156 @@ obb_raycast(m4 obb_orientation, v3 obb_size, v3 obb_center, ray r)
 		}
 	}
 
+	return result;
+}
+
+function f32 *
+convolve_real_real(Arena *arena, f32 *a, i32 a_length, f32 *b, i32 b_length, b32 reverse)
+{
+	i32  length = MAX(a_length, b_length);
+	f32 *result = push_array(arena, f32, length);
+	for (i32 i = 0; i < a_length; i++) {
+		for (i32 j = 0; j < b_length && i >= j; j++) {
+			if (reverse) result[length - 1 - i] += a[i - j] * b[j];
+			else         result[i]              += a[i - j] * b[j];
+		}
+	}
+	return result;
+}
+
+function v2 *
+convolve_real_complex(Arena *arena, f32 *r, i32 r_length, v2 *c, i32 c_length, b32 reverse)
+{
+	i32  length = MAX(r_length, c_length);
+	v2  *result	= push_array(arena, v2, length);
+
+	if (r_length == length) {
+		for (i32 i = 0; i < r_length; i++) {
+			for (i32 j = 0; j < c_length && i >= j; j++) {
+				if (reverse) result[length - 1 - i] = v2_add(result[i], v2_scale(c[j], r[i - j]));
+				else         result[i]              = v2_add(result[i], v2_scale(c[j], r[i - j]));
+			}
+		}
+	} else {
+		for (i32 i = 0; i < c_length; i++) {
+			for (i32 j = 0; j < r_length && i >= j; j++) {
+				if (reverse) result[i]              = v2_add(result[i], v2_scale(c[i - j], r[j]));
+				else         result[length - 1 - i] = v2_add(result[i], v2_scale(c[i - j], r[j]));
+			}
+		}
+	}
+	return result;
+}
+
+function v2 *
+convolve_complex_complex(Arena *arena, v2 *a, i32 a_length, v2 *b, i32 b_length, b32 reverse)
+{
+	i32  length = MAX(a_length, b_length);
+	v2  *result	= push_array(arena, v2, length);
+	for (i32 i = 0; i < a_length; i++) {
+		for (i32 j = 0; j < b_length && i >= j; j++) {
+			if (reverse) result[length - 1 - i] = v2_add(result[i], complex_mul(a[j], b[i - j]));
+			else         result[i]              = v2_add(result[i], complex_mul(a[j], b[i - j]));
+		}
+	}
+	return result;
+}
+
+function void *
+convolve(Arena *arena, ConvolutionFlags flags,
+         void *signal, i32 signal_length,
+         void *filter, i32 filter_length)
+{
+	void *result = 0;
+	b32 reversed = (flags & ConvolutionFlags_StoreReversed) != 0;
+	if ((flags & ConvolutionFlags_ComplexSignal) && (flags & ConvolutionFlags_ComplexFilter)) {
+		result = convolve_complex_complex(arena, signal, signal_length, filter, filter_length, reversed);
+	} else if (flags & ConvolutionFlags_ComplexSignal) {
+		assert((flags & ConvolutionFlags_ComplexFilter) == 0);
+		result = convolve_real_complex(arena, filter, filter_length, signal, signal_length, reversed);
+	} else if (flags & ConvolutionFlags_ComplexFilter) {
+		assert((flags & ConvolutionFlags_ComplexSignal) == 0);
+		result = convolve_real_complex(arena, signal, signal_length, filter, filter_length, reversed);
+	} else {
+		assert((flags & (ConvolutionFlags_ComplexSignal|ConvolutionFlags_ComplexFilter)) == 0);
+		result = convolve_real_real(arena, signal, signal_length, filter, filter_length, reversed);
+	}
+	return result;
+}
+
+/* NOTE(rnp): adapted from "Discrete Time Signal Processing" (Oppenheim) */
+function f32 *
+kaiser_low_pass_filter(Arena *arena, f32 cutoff_frequency, f32 sampling_frequency, f32 beta, i32 length)
+{
+	f32 *result = push_array(arena, f32, length);
+	f32 wc      = 2 * PI * cutoff_frequency / sampling_frequency;
+	f32 a       = (f32)length / 2.0f;
+	f32 pi_i0_b = PI * (f32)cephes_i0(beta);
+
+	for (i32 n = 0; n < length; n++) {
+		f32 t       = (f32)n - a;
+		f32 impulse = !f32_cmp(t, 0) ? sin_f32(wc * t) / t : wc;
+		t           = t / a;
+		f32 window  = (f32)cephes_i0(beta * sqrt_f32(1 - t * t)) / pi_i0_b;
+		result[n]   = impulse * window;
+	}
+
+	return result;
+}
+
+function void *
+matched_sine_filter(Arena *arena, f32 frequency, f32 sampling_frequency, i32 length, b32 complex)
+{
+	void *result;
+	if (complex) result = push_array(arena, v2,  length);
+	else         result = push_array(arena, f32, length);
+
+	f32 wc = 2 * PI * frequency / sampling_frequency;
+	for (i32 i = 0; i < length; i++) {
+		f32 window = 1.0f; //0.5f - 0.5f * cos_f32(2 * PI * (f32)i / ((f32)length - 1));
+		f32 sample = window * sin_f32(wc * (f32)i);
+		if (complex) ((v2  *)result)[i] = (v2){{sample, sample}};
+		else         ((f32 *)result)[i] = sample;
+	}
+	return result;
+}
+
+function void *
+matched_chirp_filter(Arena *arena, f32 duration, f32 min_frequency, f32 max_frequency,
+                     f32 sampling_frequency, i32 length, b32 complex)
+{
+	void *result;
+	if (complex) result = push_array(arena, v2,  length);
+	else         result = push_array(arena, f32, length);
+
+	f32 beta    = 5.65f;
+	f32 pi_i0_b = PI * (f32)cephes_i0(beta);
+	for (i32 i = 0; i < length; i++) {
+		f32 t      = ((f32)i - 0.5f * (f32)length) / (0.5f * (f32)length);
+		f32 window = (f32)cephes_i0(beta * sqrt_f32(1 - t * t)) / pi_i0_b;
+
+		f32 fc     = min_frequency + (f32)i * (max_frequency - min_frequency) / (f32)length;
+		f32 sample = window * sin_f32(2 * PI * fc * (f32)i / sampling_frequency);
+		if (complex) ((v2  *)result)[i] = (v2){{sample, sample}};
+		else         ((f32 *)result)[i] = sample;
+	}
+	return result;
+}
+
+function v2 *
+downconvert_to_baseband(Arena *arena, v2 *signal, i32 length, f32 demodulation_frequency, f32 sampling_frequency,
+                        f32 cutoff_frequency, f32 beta, i32 lowpass_length, ConvolutionFlags flags)
+{
+	flags |= ConvolutionFlags_ComplexSignal;
+
+	f32 arg = 2 * PI * demodulation_frequency / sampling_frequency;
+	for (i32 i = 0; i < length; i++) {
+		v2 rotator = {{cos_f32(arg * (f32)i), -sin_f32(arg * (f32)i)}};
+		signal[i]  = v2_mul(signal[i], rotator);
+	}
+
+	f32 *lowpass = kaiser_low_pass_filter(arena, cutoff_frequency, sampling_frequency, beta, lowpass_length);
+	v2  *result  = convolve(arena, flags, signal, length, lowpass, lowpass_length);
 	return result;
 }
 

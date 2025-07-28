@@ -611,13 +611,13 @@ parse_f64(s8 s)
 {
 	f64 integral = 0, fractional = 0, sign = 1;
 
-	if (s.len && *s.data == '-') {
+	if (s.len > 0 && *s.data == '-') {
 		sign = -1;
 		s.data++;
 		s.len--;
 	}
 
-	while (s.len && *s.data != '.') {
+	while (s.len > 0 && *s.data != '.') {
 		integral *= 10;
 		integral += *s.data - '0';
 		s.data++;
@@ -626,7 +626,7 @@ parse_f64(s8 s)
 
 	if (*s.data == '.') { s.data++; s.len--; }
 
-	while (s.len) {
+	while (s.len > 0) {
 		ASSERT(s.data[s.len - 1] != '.');
 		fractional /= 10;
 		fractional += (f64)(s.data[--s.len] - '0') / 10.0;

@@ -13,13 +13,16 @@ typedef enum {
 	BeamformerWorkKind_UploadBuffer,
 } BeamformerWorkKind;
 
+/* TODO(rnp): this is massively bloating the queue; think of some other
+ * way to communicate these to the beamformer */
 typedef struct {
 	union {
-		struct {f32 beta; f32 cutoff_frequency;};
-		f32 xdc_center_frequency;
+		#define X(kind, ...) struct {__VA_ARGS__ ;} kind;
+		BEAMFORMER_FILTER_KIND_LIST(f32, ;)
+		#undef X
 	};
 	f32 sampling_frequency;
-	i16 length;
+	b16 complex;
 } BeamformerFilterParameters;
 
 typedef struct {

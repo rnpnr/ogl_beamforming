@@ -16,18 +16,19 @@
 	X(CudaHilbert,         1, "",        "CUDA Hilbert")     \
 	X(DAS,                 2, "das",     "DAS")              \
 	X(Decode,              3, "decode",  "Decode (I16)")     \
-	X(Demodulate,          4, "demod",   "Demodulate (I16)") \
-	X(MinMax,              5, "min_max", "Min/Max")          \
-	X(Sum,                 6, "sum",     "Sum")
+	X(Filter,              4, "filter",  "Filter (F32C)")    \
+	X(Demodulate,          5, "",        "Demodulate (I16)") \
+	X(MinMax,              6, "min_max", "Min/Max")          \
+	X(Sum,                 7, "sum",     "Sum")
 
 #define COMPUTE_SHADERS_INTERNAL \
 	COMPUTE_SHADERS \
-	X(DecodeInt16Complex,  7, "",        "Decode (I16C)") \
-	X(DecodeFloat,         8, "",        "Decode (F32)")  \
-	X(DecodeFloatComplex,  9, "",        "Decode (F32C)") \
-	X(DecodeInt16ToFloat, 10, "",        "Decode (I16-F32)") \
-	X(DemodulateFloat,    11, "",        "Demodulate (F32)") \
-	X(DASFast,            12, "",        "DAS (Fast)")
+	X(DecodeInt16Complex,  8, "",        "Decode (I16C)") \
+	X(DecodeFloat,         9, "",        "Decode (F32)")  \
+	X(DecodeFloatComplex, 10, "",        "Decode (F32C)") \
+	X(DecodeInt16ToFloat, 11, "",        "Decode (I16-F32)") \
+	X(DemodulateFloat,    12, "",        "Demodulate (F32)") \
+	X(DASFast,            13, "",        "DAS (Fast)")
 
 typedef enum {
 	#define X(e, n, ...) BeamformerShaderKind_##e = n,
@@ -61,12 +62,15 @@ typedef struct {
 typedef enum {BEAMFORMER_DATA_KIND_LIST} BeamformerDataKind;
 #undef X
 
-#define BEAMFORMER_FILTER_KIND_LIST \
-	X(Kaiser,       0) \
-	X(MatchedSine,  1)
+/* TODO(rnp): this is an absolute abuse of the preprocessor, but now is
+ * not a good time to write a full metaprogram */
+#define BEAMFORMER_FILTER_KIND_LIST(type, _) \
+	X(Kaiser,       type cutoff_frequency _ type beta          _ type length) \
+	X(MatchedSine,  type tx_frequency     _ type cycle_count   _ type min_frequency _ type max_frequency) \
+	X(MatchedChirp, type duration         _ type min_frequency _ type max_frequency)
 
-#define X(k, id) BeamformerFilterKind_##k = id,
-typedef enum {BEAMFORMER_FILTER_KIND_LIST} BeamformerFilterKind;
+#define X(kind, ...) BeamformerFilterKind_##kind,
+typedef enum {BEAMFORMER_FILTER_KIND_LIST(,) BeamformerFilterKind_Count} BeamformerFilterKind;
 #undef X
 
 /* X(type, id, pretty name) */
@@ -97,9 +101,9 @@ typedef enum {
 	X(EPIC_UHERCULES,  9, "EPIC-UHERCULES", 0) \
 	X(FLASH,          10, "Flash",          0)
 
-#define DEMOD_LOCAL_SIZE_X  64
-#define DEMOD_LOCAL_SIZE_Y   1
-#define DEMOD_LOCAL_SIZE_Z   1
+#define FILTER_LOCAL_SIZE_X 64
+#define FILTER_LOCAL_SIZE_Y  1
+#define FILTER_LOCAL_SIZE_Z  1
 
 #define DECODE_LOCAL_SIZE_X  4
 #define DECODE_LOCAL_SIZE_Y  1

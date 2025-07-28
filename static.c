@@ -420,8 +420,8 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 			BEAMFORMER_DECODE_UBO_PARAM_LIST
 			"};\n\n"
 		),
-		[BeamformerShaderKind_Demodulate] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
-			BEAMFORMER_DEMOD_UBO_PARAM_LIST
+		[BeamformerShaderKind_Filter] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
+			BEAMFORMER_FILTER_UBO_PARAM_LIST
 			"};\n\n"
 		),
 		#undef X
