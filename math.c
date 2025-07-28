@@ -141,6 +141,45 @@ kaiser_low_pass_filter(Arena *arena, f32 cutoff_frequency, f32 sampling_frequenc
 	return result;
 }
 
+function f32 *
+matched_filter(Arena *arena, f32 xdc_center_frequency, f32 transmit_frequency,
+               f32 sampling_frequency, i32 length)
+{
+	f32 *result = push_array(arena, f32, length);
+	Arena tmp = *arena;
+	f32 *impulse  = push_array(&tmp, f32, length);
+	f32 *transmit = push_array(&tmp, f32, length);
+
+	/* NOTE(rnp): impulse response - 1 cycle sine with hamming applied */
+	{
+		f32 wc = 2 * PI * xdc_center_frequency / sampling_frequency;
+		i32 impulse_length = (i32)ceil_f32(sampling_frequency / xdc_center_frequency);
+		f32 ha = 2 * PI / (f32)(impulse_length - 1);
+		for (i32 i = 0; i < impulse_length; i++) {
+			f32 value  = sin_f32(wc * (f32)i);
+			f32 window = 0.5f - 0.5f * cos_f32(ha * (f32)i);
+			impulse[i] = value * window;
+		}
+	}
+
+	/* NOTE(rnp): transmit waveform - multi cycle sine pulse (length determines cycles) */
+	{
+		f32 wc = 2 * PI * transmit_frequency / sampling_frequency;
+		for (i32 i = 0; i < length; i++)
+			transmit[i] = sin_f32(wc * (f32)i);
+	}
+
+	/* NOTE(rnp): convolve to generate our expected signal; store with time reversal */
+	for (i32 i = 0; i < length; i++) {
+		for (i32 j = 0; j < length; j++) {
+			if (i - j >= 0)
+				result[length - 1 - i] += impulse[j] * transmit[i - j] / (f32)length;
+		}
+	}
+
+	return result;
+}
+
 function b32
 iv2_equal(iv2 a, iv2 b)
 {

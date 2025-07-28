@@ -4,7 +4,6 @@
  *      - this means that das should have a RF version and an IQ version
  *      - this will also flip the current hack to support demodulate after decode to
  *        being a hack to support CudaHilbert after decode
- * [ ]: filter sampling frequency should be a filter creation parameter
  * [ ]: measure performance of doing channel mapping in a separate shader
  * [ ]: BeamformWorkQueue -> BeamformerWorkQueue
  * [ ]: need to keep track of gpu memory in some way
@@ -116,6 +115,10 @@ beamformer_filter_update(BeamformerFilter *f, BeamformerFilterKind kind,
 		filter = kaiser_low_pass_filter(&arena, fp.cutoff_frequency, fp.sampling_frequency,
 		                                fp.beta, fp.length);
 	}break;
+	case BeamformerFilterKind_Matched:{
+		filter = matched_filter(&arena, fp.xdc_center_frequency, fp.tx_frequency,
+		                        fp.sampling_frequency, fp.length);
+	}break;
 	InvalidDefaultCase;
 	}
 
@@ -130,7 +133,9 @@ beamformer_filter_time_offset(BeamformerFilter *f)
 	f32 result = 0;
 	BeamformerFilterParameters *fp = &f->parameters;
 	switch (f->kind) {
-	case BeamformerFilterKind_Kaiser:{
+	case BeamformerFilterKind_Kaiser:
+	case BeamformerFilterKind_Matched:
+	{
 		result = (f32)fp->length / 2.0f / fp->sampling_frequency;
 	}break;
 	InvalidDefaultCase;
@@ -423,6 +428,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 		case BeamformerShaderKind_Demodulate:{
 			if (decode_first || (!decode_first && data_kind == BeamformerDataKind_Float32))
 				shader = BeamformerShaderKind_DemodulateFloat;
+		} /* FALLTHROUGH */
+		case BeamformerShaderKind_Filter:{
 			bp->time_offset += beamformer_filter_time_offset(cp->filters + sp->filter_slot);
 			commit = 1;
 		}break;
@@ -491,7 +498,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	 *   IQ[n] = I[n] - j*Q[n]
 	 */
 	if (demodulate) {
-		BeamformerDemodulateUBO *mp = &cp->demod_ubo_data;
+		BeamformerFilterUBO *mp    = &cp->demod_ubo_data;
 		mp->demodulation_frequency = bp->center_frequency;
 		mp->sampling_frequency     = bp->sampling_frequency / 2;
 		mp->decimation_rate        = bp->decimation_rate;
@@ -521,12 +528,24 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			cp->decode_dispatch.x = (u32)ceil_f32((f32)bp->dec_data_dim[0] / DECODE_LOCAL_SIZE_X);
 		}
 
-		cp->demod_dispatch.x = (u32)ceil_f32((f32)bp->dec_data_dim[0] / DEMOD_LOCAL_SIZE_X);
-		cp->demod_dispatch.y = (u32)ceil_f32((f32)bp->dec_data_dim[1] / DEMOD_LOCAL_SIZE_Y);
-		cp->demod_dispatch.z = (u32)ceil_f32((f32)bp->dec_data_dim[2] / DEMOD_LOCAL_SIZE_Z);
+		cp->demod_dispatch.x = (u32)ceil_f32((f32)bp->dec_data_dim[0] / FILTER_LOCAL_SIZE_X);
+		cp->demod_dispatch.y = (u32)ceil_f32((f32)bp->dec_data_dim[1] / FILTER_LOCAL_SIZE_Y);
+		cp->demod_dispatch.z = (u32)ceil_f32((f32)bp->dec_data_dim[2] / FILTER_LOCAL_SIZE_Z);
 	}
 	/* TODO(rnp): if IQ (* 8) else (* 4) */
 	cp->rf_size = bp->dec_data_dim[0] * bp->dec_data_dim[1] * bp->dec_data_dim[2] * 8;
+
+	BeamformerFilterUBO *flt = &cp->filter_ubo_data;
+	flt->demodulation_frequency = bp->center_frequency;
+	flt->sampling_frequency     = bp->sampling_frequency;
+	flt->decimation_rate        = 1;
+	flt->map_channels           = 0;
+	flt->output_channel_stride  = bp->dec_data_dim[0] * bp->dec_data_dim[2];
+	flt->output_sample_stride   = 1;
+	flt->output_transmit_stride = bp->dec_data_dim[0];
+	flt->input_channel_stride   = bp->dec_data_dim[0] * bp->dec_data_dim[2];
+	flt->input_sample_stride    = 1;
+	flt->input_transmit_stride  = bp->dec_data_dim[0];
 }
 
 function void
@@ -686,10 +705,15 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 	}break;
 	case BeamformerShaderKind_Demodulate:
 	case BeamformerShaderKind_DemodulateFloat:
+	case BeamformerShaderKind_Filter:
 	{
-		BeamformerDemodulateUBO *ubo = &cp->demod_ubo_data;
+		BeamformerFilterUBO *ubo = &cp->demod_ubo_data;
+		if (shader == BeamformerShaderKind_Filter)
+			ubo = &cp->filter_ubo_data;
 
-		glBindBufferBase(GL_UNIFORM_BUFFER,        0, cp->ubos[BeamformerComputeUBOKind_Demodulate]);
+		u32 index = shader == BeamformerShaderKind_Filter ? BeamformerComputeUBOKind_Filter
+		                                                  : BeamformerComputeUBOKind_Demodulate;
+		glBindBufferBase(GL_UNIFORM_BUFFER,        0, cp->ubos[index]);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, cc->ping_pong_ssbos[output_ssbo_idx]);
 		if (!ubo->map_channels)
 			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, cc->ping_pong_ssbos[input_ssbo_idx]);
@@ -828,14 +852,19 @@ shader_text_with_header(ShaderReloadContext *ctx, OS *os, Arena *arena)
 	switch (ctx->kind) {
 	case BeamformerShaderKind_Demodulate:
 	case BeamformerShaderKind_DemodulateFloat:
+	case BeamformerShaderKind_Filter:
 	{
-			stream_append_s8(&sb, s8(""
-			"layout(local_size_x = " str(DEMOD_LOCAL_SIZE_X) ", "
-			       "local_size_y = " str(DEMOD_LOCAL_SIZE_Y) ", "
-			       "local_size_z = " str(DEMOD_LOCAL_SIZE_Z) ") in;\n\n"
-			));
-			if (ctx->kind == BeamformerShaderKind_DemodulateFloat)
-				stream_append_s8(&sb, s8("#define INPUT_DATA_TYPE_FLOAT\n\n"));
+		if (ctx->kind != BeamformerShaderKind_Demodulate)
+			stream_append_s8(&sb, s8("#define INPUT_DATA_TYPE_FLOAT\n\n"));
+
+		if (ctx->kind != BeamformerShaderKind_Filter)
+			stream_append_s8(&sb, s8("#define DEMODULATE\n\n"));
+
+		stream_append_s8(&sb, s8(""
+		"layout(local_size_x = " str(FILTER_LOCAL_SIZE_X) ", "
+		       "local_size_y = " str(FILTER_LOCAL_SIZE_Y) ", "
+		       "local_size_z = " str(FILTER_LOCAL_SIZE_Z) ") in;\n\n"
+		));
 	}break;
 	case BeamformerShaderKind_DAS:
 	case BeamformerShaderKind_DASFast:
@@ -988,12 +1017,16 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 				src->kind   = BeamformerShaderKind_Decode;
 				src->shader = cs->programs + src->kind;
 			}break;
-			case BeamformerShaderKind_Demodulate:{
+			case BeamformerShaderKind_Filter:{
+				src->kind   = BeamformerShaderKind_Demodulate;
+				src->shader = cs->programs + src->kind;
+				success &= reload_compute_shader(ctx, src, s8(" (Demodulate I16)"), *arena);
+
 				src->kind   = BeamformerShaderKind_DemodulateFloat;
 				src->shader = cs->programs + src->kind;
-				success &= reload_compute_shader(ctx, src, s8(" (F32)"), *arena);
+				success &= reload_compute_shader(ctx, src, s8(" (Demodulate F32)"), *arena);
 
-				src->kind   = BeamformerShaderKind_Demodulate;
+				src->kind   = BeamformerShaderKind_Filter;
 				src->shader = cs->programs + src->kind;
 			}break;
 			default:{}break;

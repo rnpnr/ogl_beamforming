@@ -111,6 +111,9 @@ LIB_FN uint32_t beamformer_push_focal_vectors_at(float     *vectors,  uint32_t c
 LIB_FN uint32_t beamformer_create_kaiser_low_pass_filter(float beta, float cutoff_frequency,
                                                          float sampling_frequency, int16_t length,
                                                          uint8_t filter_slot, uint8_t parameter_block);
+LIB_FN uint32_t beamformer_create_matched_filter(float xdc_center_frequency, float transmit_frequency,
+                                                 float sampling_frequency, int16_t length,
+                                                 uint8_t filter_slot, uint8_t parameter_block);
 
 //////////////////////////
 // Live Imaging Controls

@@ -336,19 +336,15 @@ beamformer_create_filter(BeamformerFilterKind kind, BeamformerFilterParameters p
 	return result;
 }
 
-b32
-beamformer_create_kaiser_low_pass_filter(f32 beta, f32 cutoff_frequency, f32 sampling_frequency,
-                                         i16 length, u8 filter_slot, u8 parameter_block)
-{
-	BeamformerFilterParameters params = {
-		.beta               = beta,
-		.cutoff_frequency   = cutoff_frequency,
-		.sampling_frequency = sampling_frequency,
-		.length             = length,
-	};
-	b32 result = beamformer_create_filter(BeamformerFilterKind_Kaiser, params, filter_slot, parameter_block);
-	return result;
+#define X(kind, _i, name, _sp, parameters, ...) \
+b32 beamformer_create_##name ##_filter(__VA_ARGS__, f32 sampling_frequency, i16 length, u8 filter_slot, u8 parameter_block) \
+{ \
+	BeamformerFilterParameters fp = {{parameters}, sampling_frequency, length}; \
+	b32 result = beamformer_create_filter(BeamformerFilterKind_##kind, fp, filter_slot, parameter_block); \
+	return result; \
 }
+BEAMFORMER_FILTER_KIND_LIST
+#undef X
 
 function b32
 beamformer_flush_commands(i32 timeout_ms)

@@ -15,8 +15,9 @@ typedef enum {
 
 typedef struct {
 	union {
-		struct {f32 beta; f32 cutoff_frequency;};
-		f32 xdc_center_frequency;
+		#define X(_k, _i, _n, params, ...) struct params;
+		BEAMFORMER_FILTER_KIND_LIST
+		#undef X
 	};
 	f32 sampling_frequency;
 	i16 length;

@@ -69,6 +69,9 @@
 #define str_(...) #__VA_ARGS__
 #define str(...) str_(__VA_ARGS__)
 
+/* NOTE: cursed bullshit to work around preprocessor */
+#define COMMA ,
+
 #define countof(a)       (iz)(sizeof(a) / sizeof(*a))
 #define ARRAY_COUNT(a)   (sizeof(a) / sizeof(*a))
 #define ABS(x)           ((x) < 0 ? (-x) : (x))

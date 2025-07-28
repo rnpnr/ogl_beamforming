@@ -20,11 +20,17 @@ layout(std430, binding = 2) writeonly restrict buffer buffer_2 {
 layout(r32f, binding = 0) readonly restrict uniform  image1D filter_coefficients;
 layout(r16i, binding = 1) readonly restrict uniform iimage1D channel_mapping;
 
-vec2 rotate_iq(vec2 iq, uint index)
+#if defined(DEMODULATE)
+  #define run_filter demodulate
+#else
+  #define run_filter filter_base
+#endif
+
+vec2 rotate_iq(vec2 iq, int index)
 {
 	float arg    = radians(360) * demodulation_frequency * index / sampling_frequency;
-	mat2  phasor = mat2( cos(arg), sin(arg),
-	                    -sin(arg), cos(arg));
+	mat2  phasor = mat2(cos(arg), -sin(arg),
+	                    sin(arg),  cos(arg));
 	vec2  result = phasor * iq;
 	return result;
 }
@@ -32,6 +38,27 @@ vec2 rotate_iq(vec2 iq, uint index)
 vec2 sample_rf(uint index)
 {
 	vec2 result = SAMPLE_TYPE_CAST(in_data[index]);
+	return result;
+}
+
+vec2 filter_base(uint out_sample, uint in_offset, int index, int start, int target)
+{
+	vec2 result = vec2(0);
+	for (int i   = start; i < imageSize(filter_coefficients).x && index < target; i++, index++) {
+		vec2 iq  = rotate_iq(sample_rf(in_offset + index), int(out_sample));
+		result  += iq * imageLoad(filter_coefficients, imageSize(filter_coefficients).x - i - 1).x;
+	}
+	result = rotate_iq(result, -int(out_sample));
+	return result;
+}
+
+vec2 demodulate(uint out_sample, uint in_offset, int index, int start, int target)
+{
+	vec2 result = vec2(0);
+	for (int i = start; i < imageSize(filter_coefficients).x && index < target; i++, index++) {
+		vec2 iq  = sqrt(2.0f) * rotate_iq(sample_rf(in_offset + index) * vec2(1, -1), -index);
+		result  += iq * imageLoad(filter_coefficients, imageSize(filter_coefficients).x - i - 1).x;
+	}
 	return result;
 }
 
@@ -56,15 +83,10 @@ void main()
 	}
 
 	if (out_sample < target) {
-		vec2 result  = vec2(0);
-		int index    = int(in_sample) - imageSize(filter_coefficients).x;
-		int start    = index < 0 ? -index : 0;
+		int  index   = int(in_sample) - imageSize(filter_coefficients).x;
+		int  start   = index < 0 ? -index : 0;
 		index       += start;
-		target      *= int(decimation_rate);
-		for (int i = start; i < imageSize(filter_coefficients).x && index < target; i++, index++) {
-			vec2 iq = sqrt(2.0f) * rotate_iq(sample_rf(in_offset + index) * vec2(1, -1), index);
-			result += iq * imageLoad(filter_coefficients, imageSize(filter_coefficients).x - i - 1).x;
-		}
+		vec2 result  = run_filter(out_sample, in_offset, index, start, target * int(decimation_rate));
 		out_data[out_offset] = RESULT_TYPE_CAST(result);
 	}
 }
