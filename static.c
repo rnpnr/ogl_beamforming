@@ -10,10 +10,11 @@ global void *debug_lib;
 
 #define DEBUG_ENTRY_POINTS \
 	X(beamformer_debug_ui_deinit)      \
-	X(beamformer_frame_step)           \
 	X(beamformer_complete_compute)     \
 	X(beamformer_compute_setup)        \
+	X(beamformer_frame_step)           \
 	X(beamformer_reload_shader)        \
+	X(beamformer_rf_upload)            \
 	X(beamform_work_queue_push)        \
 	X(beamform_work_queue_push_commit)
 
@@ -28,7 +29,8 @@ function FILE_WATCH_CALLBACK_FN(debug_reload)
 
 	/* NOTE(rnp): spin until compute thread finishes its work (we will probably
 	 * never reload while compute is in progress but just incase). */
-	while (!atomic_load_u32(&os->compute_worker.asleep));
+	spin_wait(!atomic_load_u32(&os->compute_worker.asleep));
+	spin_wait(!atomic_load_u32(&os->upload_worker.asleep));
 
 	os_unload_library(debug_lib);
 	debug_lib = os_load_library(OS_DEBUG_LIB_NAME, OS_DEBUG_LIB_TEMP_NAME, &err);
@@ -250,6 +252,20 @@ void glfwWindowHint(i32, i32);
 iptr glfwCreateWindow(i32, i32, char *, iptr, iptr);
 void glfwMakeContextCurrent(iptr);
 
+function void
+worker_thread_sleep(GLWorkerThreadContext *ctx)
+{
+	for (;;) {
+		i32 expected = 0;
+		if (atomic_cas_u32(&ctx->sync_variable, &expected, 1))
+			break;
+
+		atomic_store_u32(&ctx->asleep, 1);
+		os_wait_on_value(&ctx->sync_variable, 1, (u32)-1);
+		atomic_store_u32(&ctx->asleep, 0);
+	}
+}
+
 function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 {
 	GLWorkerThreadContext *ctx = (GLWorkerThreadContext *)_ctx;
@@ -260,17 +276,31 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 	beamformer_compute_setup(ctx->user_context);
 
 	for (;;) {
-		for (;;) {
-			i32 expected = 0;
-			if (atomic_cas_u32(&ctx->sync_variable, &expected, 1))
-				break;
-
-			atomic_store_u32(&ctx->asleep, 1);
-			os_wait_on_value(&ctx->sync_variable, 1, (u32)-1);
-			atomic_store_u32(&ctx->asleep, 0);
-		}
+		worker_thread_sleep(ctx);
 		asan_poison_region(ctx->arena.beg, ctx->arena.end - ctx->arena.beg);
 		beamformer_complete_compute(ctx->user_context, ctx->arena, ctx->gl_context);
+	}
+
+	unreachable();
+
+	return 0;
+}
+
+function OS_THREAD_ENTRY_POINT_FN(upload_worker_thread_entry_point)
+{
+	GLWorkerThreadContext *ctx = (GLWorkerThreadContext *)_ctx;
+	glfwMakeContextCurrent(ctx->window_handle);
+	ctx->gl_context = os_get_native_gl_context(ctx->window_handle);
+
+	BeamformerUploadThreadContext *up = (typeof(up))ctx->user_context;
+	glCreateQueries(GL_TIMESTAMP, 1, &up->rf_buffer->data_timestamp_query);
+	/* NOTE(rnp): start this here so we don't have to worry about it being started or not */
+	glQueryCounter(up->rf_buffer->data_timestamp_query, GL_TIMESTAMP);
+
+	for (;;) {
+		worker_thread_sleep(ctx);
+		asan_poison_region(ctx->arena.beg, ctx->arena.end - ctx->arena.beg);
+		beamformer_rf_upload(up, ctx->arena);
 	}
 
 	unreachable();
@@ -281,7 +311,8 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 function void
 setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input)
 {
-	Arena  compute_arena = sub_arena(memory, MB(2), KB(4));
+	Arena  compute_arena = sub_arena(memory, MB(2),  KB(4));
+	Arena  upload_arena  = sub_arena(memory, KB(64), KB(4));
 	Stream error         = stream_alloc(memory, MB(1));
 	Arena  ui_arena      = sub_arena(memory, MB(2), KB(4));
 
@@ -296,6 +327,8 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	os_init(&ctx->os, memory);
 	ctx->os.compute_worker.arena  = compute_arena;
 	ctx->os.compute_worker.asleep = 1;
+	ctx->os.upload_worker.arena   = upload_arena;
+	ctx->os.upload_worker.asleep  = 1;
 
 	debug_init(&ctx->os, (iptr)input, memory);
 
@@ -334,16 +367,28 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	sm->shaders[1]   = BeamformerShaderKind_DAS;
 	sm->shader_count = 2;
 
+	ComputeShaderCtx *cs = &ctx->csctx;
+
 	GLWorkerThreadContext *worker = &ctx->os.compute_worker;
 	/* TODO(rnp): we should lock this down after we have something working */
 	worker->user_context  = (iptr)ctx;
-	worker->window_handle = glfwCreateWindow(320, 240, "", 0, raylib_window_handle);
+	worker->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
 	worker->handle        = os_create_thread(*memory, (iptr)worker, s8("[compute]"),
 	                                         compute_worker_thread_entry_point);
 
+	GLWorkerThreadContext         *upload = &ctx->os.upload_worker;
+	BeamformerUploadThreadContext *upctx  = push_struct(memory, typeof(*upctx));
+	upload->user_context = (iptr)upctx;
+	upctx->rf_buffer     = &cs->rf_buffer;
+	upctx->shared_memory = &ctx->shared_memory;
+	upctx->compute_timing_table = ctx->compute_timing_table;
+	upctx->compute_worker_sync  = &ctx->os.compute_worker.sync_variable;
+	upload->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
+	upload->handle        = os_create_thread(*memory, (iptr)upload, s8("[upload]"),
+	                                         upload_worker_thread_entry_point);
+
 	glfwMakeContextCurrent(raylib_window_handle);
 
-	ComputeShaderCtx *cs = &ctx->csctx;
 	if (ctx->gl.vendor_id == GL_VENDOR_NVIDIA
 	    && load_cuda_lib(&ctx->os, s8(OS_CUDA_LIB_NAME), (iptr)&cs->cuda_lib, *memory))
 	{
@@ -360,7 +405,7 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	gl_debug_ctx->os_error_handle = ctx->os.error_handle;
 	glDebugMessageCallback(gl_debug_logger, gl_debug_ctx);
 #ifdef _DEBUG
-	glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+	glEnable(GL_DEBUG_OUTPUT);
 #endif
 
 	read_only local_persist s8 compute_headers[BeamformerShaderKind_ComputeCount] = {

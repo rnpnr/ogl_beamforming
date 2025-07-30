@@ -290,10 +290,8 @@ decompress_data_at_work_index(Stream *path_base, u32 index)
 function b32
 send_frame(i16 *restrict i16_data, BeamformerParameters *restrict bp)
 {
-	b32 result    = 0;
 	u32 data_size = bp->rf_raw_dim[0] * bp->rf_raw_dim[1] * sizeof(i16);
-	if (beamformer_wait_for_compute_dispatch(10000))
-		result = beamformer_push_data_with_compute(i16_data, data_size, BeamformerViewPlaneTag_XZ);
+	b32 result    = beamformer_push_data_with_compute(i16_data, data_size, BeamformerViewPlaneTag_XZ);
 	if (!result && !g_should_exit) printf("lib error: %s\n", beamformer_get_last_error_string());
 
 	return result;
@@ -361,10 +359,15 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 
 	beamformer_push_pipeline(shader_stages, shader_stage_count, BeamformerDataKind_Int16);
 
+	beamformer_set_global_timeout(1000);
+
 	stream_reset(&path, path_work_index);
 	i16 *data = decompress_data_at_work_index(&path, options->frame_number);
 
 	if (options->loop) {
+		BeamformerLiveImagingParameters lip = {.active = 1};
+		beamformer_set_live_parameters(&lip);
+
 		u32 frame = 0;
 		f32 times[32] = {0};
 		f32 data_size = (f32)(bp.rf_raw_dim[0] * bp.rf_raw_dim[1] * sizeof(*data));
@@ -383,10 +386,16 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 					       delta * 1e3, sum * 1e3, data_size / (sum * (GB(1))));
 				}
 
-				times[frame & 31] = delta;
+				times[frame % countof(times)] = delta;
 				frame++;
 			}
+			i32 flag = beamformer_live_parameters_get_dirty_flag();
+			if (flag != -1 && (1 << flag) == BeamformerLiveImagingDirtyFlags_StopImaging)
+				break;
 		}
+
+		lip.active = 0;
+		beamformer_set_live_parameters(&lip);
 	} else {
 		send_frame(data, &bp);
 	}

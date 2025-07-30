@@ -5,15 +5,8 @@
  *      - this will also flip the current hack to support demodulate after decode to
  *        being a hack to support CudaHilbert after decode
  * [ ]: filter sampling frequency should be a filter creation parameter
- * [ ]: reinvestigate ring buffer raw_data_ssbo
- *      - to minimize latency the main thread should manage the subbuffer upload so that the
- *        compute thread can just keep computing. This way we can keep the copmute thread busy
- *        with work while we image.
- *      - In particular we will potentially need multiple GPUComputeContexts so that we
- *        can overwrite one while the other is in use.
- *      - make use of glFenceSync to guard buffer uploads
+ * [ ]: measure performance of doing channel mapping in a separate shader
  * [ ]: BeamformWorkQueue -> BeamformerWorkQueue
- * [ ]: bug: re-beamform on shader reload
  * [ ]: need to keep track of gpu memory in some way
  *      - want to be able to store more than 16 2D frames but limit 3D frames
  *      - maybe keep track of how much gpu memory is committed for beamformed images
@@ -164,12 +157,6 @@ alloc_shader_storage(BeamformerCtx *ctx, u32 rf_raw_size, Arena a)
 	glDeleteBuffers(ARRAY_COUNT(cs->rf_data_ssbos), cs->rf_data_ssbos);
 	glCreateBuffers(ARRAY_COUNT(cs->rf_data_ssbos), cs->rf_data_ssbos);
 
-	u32 storage_flags = GL_DYNAMIC_STORAGE_BIT;
-	glDeleteBuffers(1, &cs->raw_data_ssbo);
-	glCreateBuffers(1, &cs->raw_data_ssbo);
-	glNamedBufferStorage(cs->raw_data_ssbo, rf_raw_size, 0, storage_flags);
-	LABEL_GL_OBJECT(GL_BUFFER, cs->raw_data_ssbo, s8("Raw_RF_SSBO"));
-
 	uz rf_decoded_size = 2 * sizeof(f32) * cs->dec_data_dim.x * cs->dec_data_dim.y * cs->dec_data_dim.z;
 	Stream label = arena_stream(a);
 	stream_append_s8(&label, s8("Decoded_RF_SSBO_"));
@@ -182,7 +169,8 @@ alloc_shader_storage(BeamformerCtx *ctx, u32 rf_raw_size, Arena a)
 	}
 
 	/* NOTE(rnp): these are stubs when CUDA isn't supported */
-	cs->cuda_lib.register_buffers(cs->rf_data_ssbos, countof(cs->rf_data_ssbos), cs->raw_data_ssbo);
+	/* TODO(rnp): cuda should know that there is more than one raw rf ssbo */
+	cs->cuda_lib.register_buffers(cs->rf_data_ssbos, countof(cs->rf_data_ssbos), cs->rf_buffer.ssbo);
 	cs->cuda_lib.init(bp->rf_raw_dim, bp->dec_data_dim);
 
 	i32  order    = (i32)cs->dec_data_dim.z;
@@ -205,14 +193,14 @@ push_compute_timing_info(ComputeTimingTable *t, ComputeTimingInfo info)
 }
 
 function b32
-fill_frame_compute_work(BeamformerCtx *ctx, BeamformWork *work, BeamformerViewPlaneTag plane)
+fill_frame_compute_work(BeamformerCtx *ctx, BeamformWork *work, BeamformerViewPlaneTag plane, b32 indirect)
 {
 	b32 result = 0;
 	if (work) {
 		result = 1;
 		u32 frame_id    = atomic_add_u32(&ctx->next_render_frame_index, 1);
 		u32 frame_index = frame_id % countof(ctx->beamform_frames);
-		work->kind      = BeamformerWorkKind_Compute;
+		work->kind      = indirect? BeamformerWorkKind_ComputeIndirect : BeamformerWorkKind_Compute;
 		work->lock      = BeamformerSharedMemoryLockKind_DispatchCompute;
 		work->frame     = ctx->beamform_frames + frame_index;
 		work->frame->ready_to_present = 0;
@@ -534,7 +522,6 @@ do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformerFrame *frame,
 		glBindImageTexture(0, csctx->hadamard_texture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R8I);
 
 		if (shader == cp->shaders[0]) {
-			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, csctx->raw_data_ssbo);
 			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, csctx->rf_data_ssbos[input_ssbo_idx]);
 			glBindImageTexture(1, csctx->channel_mapping_texture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R16I);
 			glProgramUniform1ui(program, DECODE_FIRST_PASS_UNIFORM_LOC, 1);
@@ -566,10 +553,10 @@ do_compute_shader(BeamformerCtx *ctx, Arena arena, BeamformerFrame *frame,
 	case BeamformerShaderKind_DemodulateFloat:
 	{
 		BeamformerDemodulateUBO *ubo = &cp->demod_ubo_data;
-		u32 input = ubo->map_channels ? csctx->raw_data_ssbo : csctx->rf_data_ssbos[input_ssbo_idx];
 		glBindBufferBase(GL_UNIFORM_BUFFER,        0, cp->ubos[BeamformerComputeUBOKind_Demodulate]);
-		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, input);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, csctx->rf_data_ssbos[output_ssbo_idx]);
+		if (!ubo->map_channels)
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, csctx->rf_data_ssbos[input_ssbo_idx]);
 
 		glBindImageTexture(0, csctx->filters[sp->filter_slot].texture, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R32F);
 		if (ubo->map_channels)
@@ -877,9 +864,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 			default:{}break;
 			}
 
-
-			if (success && ctx->latest_frame) {
-				fill_frame_compute_work(ctx, work, ctx->latest_frame->view_plane_tag);
+			if (success && ctx->latest_frame && !sm->live_imaging_parameters.active) {
+				fill_frame_compute_work(ctx, work, ctx->latest_frame->view_plane_tag, 0);
 				can_commit = 0;
 			}
 		}break;
@@ -944,21 +930,6 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 				tex_format        = GL_RED_INTEGER;
 				tex_element_count = countof(sm->sparse_elements);
 			}break;
-			case BeamformerUploadKind_RFData:{
-				if (cs->rf_raw_size != uc->size ||
-				    !uv4_equal(cs->dec_data_dim, uv4_from_u32_array(bp->dec_data_dim)))
-				{
-					alloc_shader_storage(ctx, uc->size, arena);
-				}
-				buffer = cs->raw_data_ssbo;
-
-				ComputeTimingInfo info = {0};
-				info.kind = ComputeTimingInfoKind_RF_Data;
-				/* TODO(rnp): this could stall. what should we do about it? */
-				glGetQueryObjectui64v(cs->rf_data_timestamp_query, GL_QUERY_RESULT, &info.timer_count);
-				glQueryCounter(cs->rf_data_timestamp_query, GL_TIMESTAMP);
-				push_compute_timing_info(ctx->compute_timing_table, info);
-			}break;
 			InvalidDefaultCase;
 			}
 
@@ -972,12 +943,11 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 				                     (u8 *)sm + uc->shared_memory_offset);
 			}
 
-			atomic_and_u32(&sm->dirty_regions, ~(sm->dirty_regions & 1 << (work->lock - 1)));
+			mark_shared_memory_region_clean(sm, (i32)work->lock);
 			os_shared_memory_region_unlock(&ctx->shared_memory, sm->locks, (i32)work->lock);
 		}break;
 		case BeamformerWorkKind_ComputeIndirect:{
-			fill_frame_compute_work(ctx, work, work->compute_indirect_plane);
-			DEBUG_DECL(work->kind = BeamformerWorkKind_ComputeIndirect;)
+			fill_frame_compute_work(ctx, work, work->compute_indirect_plane, 1);
 		} /* FALLTHROUGH */
 		case BeamformerWorkKind_Compute:{
 			DEBUG_DECL(glClearNamedBufferData(cs->rf_data_ssbos[0], GL_RG32F, GL_RG, GL_FLOAT, 0);)
@@ -991,6 +961,12 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 			u32 mask = (1 << (BeamformerSharedMemoryLockKind_Parameters - 1)) |
 			           (1 << (BeamformerSharedMemoryLockKind_ComputePipeline - 1));
 			if (sm->dirty_regions & mask) {
+				if (cs->rf_raw_size != cs->rf_buffer.rf_size ||
+				    !uv4_equal(cs->dec_data_dim, uv4_from_u32_array(bp->dec_data_dim)))
+				{
+					alloc_shader_storage(ctx, cs->rf_buffer.rf_size, arena);
+				}
+
 				plan_compute_pipeline(&ctx->shared_memory, cp, cs->filters);
 				atomic_store_u32(&ctx->ui_read_params, ctx->beamform_work_queue != q);
 				atomic_and_u32(&sm->dirty_regions, ~mask);
@@ -1023,8 +999,40 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena arena, iptr gl_co
 			frame->das_shader_kind = bp->das_shader_id;
 			frame->compound_count  = bp->dec_data_dim[2];
 
+			/* NOTE(rnp): first stage requires access to raw data buffer directly so we break
+			 * it out into a separate step. This way data can get release as soon as possible */
+			if (cp->shader_count > 0) {
+				BeamformerRFBuffer *rf = &cs->rf_buffer;
+				u32 slot = rf->compute_index % countof(rf->compute_syncs);
+
+				/* NOTE(rnp): compute indirect is used when uploading data. in this case the thread
+				 * must wait on an upload fence. if the fence doesn't yet exist the thread must wait */
+				if (work->kind == BeamformerWorkKind_ComputeIndirect)
+					spin_wait(!atomic_load_u64(rf->upload_syncs + slot));
+
+				if (rf->upload_syncs[slot]) {
+					rf->compute_index++;
+					glWaitSync(rf->upload_syncs[slot], 0, GL_TIMEOUT_IGNORED);
+					glDeleteSync(rf->upload_syncs[slot]);
+				} else {
+					slot = (rf->compute_index - 1) % countof(rf->compute_syncs);
+				}
+
+				glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, rf->ssbo, slot * rf->rf_size, rf->rf_size);
+
+				glBeginQuery(GL_TIME_ELAPSED, cs->shader_timer_ids[0]);
+				do_compute_shader(ctx, arena, frame, cp->shaders[0], cp->shader_parameters + 0);
+				glEndQuery(GL_TIME_ELAPSED);
+
+				if (work->kind == BeamformerWorkKind_ComputeIndirect) {
+					rf->compute_syncs[slot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+					rf->upload_syncs[slot]  = 0;
+					memory_write_barrier();
+				}
+			}
+
 			b32 did_sum_shader = 0;
-			for (i32 i = 0; i < cp->shader_count; i++) {
+			for (i32 i = 1; i < cp->shader_count; i++) {
 				did_sum_shader |= cp->shaders[i] == BeamformerShaderKind_Sum;
 				glBeginQuery(GL_TIME_ELAPSED, cs->shader_timer_ids[i]);
 				do_compute_shader(ctx, arena, frame, cp->shaders[i], cp->shader_parameters + i);
@@ -1158,10 +1166,6 @@ DEBUG_EXPORT BEAMFORMER_COMPUTE_SETUP_FN(beamformer_compute_setup)
 	LABEL_GL_OBJECT(GL_TEXTURE, cs->sparse_elements_texture, s8("Sparse_Elements"));
 
 	glCreateQueries(GL_TIME_ELAPSED, countof(cs->shader_timer_ids), cs->shader_timer_ids);
-	glCreateQueries(GL_TIMESTAMP, 1, &cs->rf_data_timestamp_query);
-
-	/* NOTE(rnp): start this here so we don't have to worry about it being started or not */
-	glQueryCounter(cs->rf_data_timestamp_query, GL_TIMESTAMP);
 }
 
 DEBUG_EXPORT BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute)
@@ -1170,6 +1174,75 @@ DEBUG_EXPORT BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute)
 	BeamformerSharedMemory *sm = ctx->shared_memory.region;
 	complete_queue(ctx, &sm->external_work_queue, arena, gl_context);
 	complete_queue(ctx, ctx->beamform_work_queue, arena, gl_context);
+}
+
+function void
+beamformer_rf_buffer_allocate(BeamformerRFBuffer *rf, u32 rf_size, Arena arena)
+{
+	glUnmapNamedBuffer(rf->ssbo);
+	glDeleteBuffers(1, &rf->ssbo);
+	glCreateBuffers(1, &rf->ssbo);
+
+	rf_size = (u32)round_up_to((iz)rf_size, 64);
+	glNamedBufferStorage(rf->ssbo, countof(rf->compute_syncs) * rf_size, 0,
+	                     GL_DYNAMIC_STORAGE_BIT|GL_MAP_WRITE_BIT);
+	LABEL_GL_OBJECT(GL_BUFFER, rf->ssbo, s8("Raw_RF_SSBO"));
+	rf->rf_size = rf_size;
+}
+
+DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
+{
+	BeamformerSharedMemory *sm = ctx->shared_memory->region;
+
+	BeamformerSharedMemoryLockKind scratch_lock = BeamformerSharedMemoryLockKind_ScratchSpace;
+	BeamformerSharedMemoryLockKind upload_lock  = BeamformerSharedMemoryLockKind_UploadRF;
+	if (sm->locks[upload_lock] &&
+	    os_shared_memory_region_lock(ctx->shared_memory, sm->locks, (i32)scratch_lock, (u32)-1))
+	{
+		BeamformerRFBuffer *rf = ctx->rf_buffer;
+		if (rf->rf_size < sm->scratch_rf_size)
+			beamformer_rf_buffer_allocate(rf, sm->scratch_rf_size, arena);
+
+		u32 slot = rf->insertion_index++ % countof(rf->compute_syncs);
+
+		/* NOTE(rnp): if the rest of the code is functioning then the first
+		 * time the compute thread processes an upload it must have gone
+		 * through this path. therefore it is safe to spin until it gets processed */
+		spin_wait(atomic_load_u64(rf->upload_syncs + slot));
+
+		if (rf->compute_syncs[slot]) {
+			GLenum sync_result = glClientWaitSync(rf->compute_syncs[slot], 0, 1000000000);
+			if (sync_result == GL_TIMEOUT_EXPIRED || sync_result == GL_WAIT_FAILED) {
+				// TODO(rnp): what do?
+			}
+			glDeleteSync(rf->compute_syncs[slot]);
+		}
+
+		/* NOTE(rnp): nVidia's drivers really don't play nice with persistant mapping,
+		 * at least when it is a big as this one wants to be. mapping and unmapping the
+		 * desired range each time doesn't seem to introduce any performance hit */
+		u32 access = GL_MAP_WRITE_BIT|GL_MAP_FLUSH_EXPLICIT_BIT|GL_MAP_UNSYNCHRONIZED_BIT;
+		u8 *buffer = glMapNamedBufferRange(rf->ssbo, slot * rf->rf_size, (i32)rf->rf_size, access);
+
+		mem_copy(buffer, (u8 *)sm + BEAMFORMER_SCRATCH_OFF, rf->rf_size);
+		mark_shared_memory_region_clean(sm, (i32)scratch_lock);
+		os_shared_memory_region_unlock(ctx->shared_memory, sm->locks, (i32)scratch_lock);
+		post_sync_barrier(ctx->shared_memory, upload_lock, sm->locks);
+
+		glFlushMappedNamedBufferRange(rf->ssbo, 0, (i32)rf->rf_size);
+		glUnmapNamedBuffer(rf->ssbo);
+
+		rf->upload_syncs[slot]  = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+		rf->compute_syncs[slot] = 0;
+		memory_write_barrier();
+
+		os_wake_waiters(ctx->compute_worker_sync);
+
+		ComputeTimingInfo info = {.kind = ComputeTimingInfoKind_RF_Data};
+		glGetQueryObjectui64v(rf->data_timestamp_query, GL_QUERY_RESULT, &info.timer_count);
+		glQueryCounter(rf->data_timestamp_query, GL_TIMESTAMP);
+		push_compute_timing_info(ctx->compute_timing_table, info);
+	}
 }
 
 #include "ui.c"
@@ -1192,16 +1265,8 @@ DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 	}
 
 	BeamformerSharedMemory *sm = ctx->shared_memory.region;
-	if (sm->locks[BeamformerSharedMemoryLockKind_DispatchCompute] && ctx->os.compute_worker.asleep) {
-		if (sm->start_compute_from_main) {
-			BeamformWork *work = beamform_work_queue_push(ctx->beamform_work_queue);
-			BeamformerViewPlaneTag tag = ctx->latest_frame ? ctx->latest_frame->view_plane_tag : 0;
-			if (fill_frame_compute_work(ctx, work, tag))
-				beamform_work_queue_push_commit(ctx->beamform_work_queue);
-			atomic_store_u32(&sm->start_compute_from_main, 0);
-		}
-		os_wake_waiters(&ctx->os.compute_worker.sync_variable);
-	}
+	if (sm->locks[BeamformerSharedMemoryLockKind_UploadRF] != 0)
+		os_wake_waiters(&ctx->os.upload_worker.sync_variable);
 
 	BeamformerFrame        *frame = ctx->latest_frame;
 	BeamformerViewPlaneTag  tag   = frame? frame->view_plane_tag : 0;

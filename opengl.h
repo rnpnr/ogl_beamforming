@@ -11,6 +11,9 @@
 #include <GL/gl.h>
 
 /* NOTE: do not add extra 0s to these, even at the start -> garbage compilers will complain */
+#define GL_MAP_WRITE_BIT                   0x0002
+#define GL_MAP_FLUSH_EXPLICIT_BIT          0x0010
+#define GL_MAP_UNSYNCHRONIZED_BIT          0x0020
 #define GL_DYNAMIC_STORAGE_BIT             0x0100
 #define GL_SHADER_IMAGE_ACCESS_BARRIER_BIT 0x00000020
 #define GL_TEXTURE_UPDATE_BARRIER_BIT      0x00000100
@@ -30,7 +33,6 @@
 #define GL_RG32F                           0x8230
 #define GL_R8I                             0x8231
 #define GL_R16I                            0x8233
-#define GL_DEBUG_OUTPUT_SYNCHRONOUS        0x8242
 #define GL_MAX_COMPUTE_SHARED_MEMORY_SIZE  0x8262
 #define GL_BUFFER                          0x82E0
 #define GL_PROGRAM                         0x82E2
@@ -55,16 +57,24 @@
 #define GL_RENDERBUFFER                    0x8D41
 #define GL_RED_INTEGER                     0x8D94
 #define GL_TIMESTAMP                       0x8E28
+#define GL_MIN_MAP_BUFFER_ALIGNMENT        0x90BC
 #define GL_SHADER_STORAGE_BUFFER           0x90D2
 #define GL_MAX_SHADER_STORAGE_BLOCK_SIZE   0x90DE
 #define GL_MAX_SERVER_WAIT_TIMEOUT         0x9111
+#define GL_SYNC_GPU_COMMANDS_COMPLETE      0x9117
+#define GL_TIMEOUT_EXPIRED                 0x911B
+#define GL_WAIT_FAILED                     0x911D
 #define GL_TEXTURE_BUFFER_OFFSET_ALIGNMENT 0x919F
 #define GL_COMPUTE_SHADER                  0x91B9
+#define GL_DEBUG_OUTPUT                    0x92E0
+
+#define GL_TIMEOUT_IGNORED                 0xFFFFFFFFFFFFFFFFull
 
 typedef char      GLchar;
 typedef ptrdiff_t GLsizeiptr;
 typedef ptrdiff_t GLintptr;
 typedef uint64_t  GLuint64;
+typedef struct __GLsync *GLsync;
 
 /* X(name, ret, params) */
 #define OGLProcedureList \
@@ -80,6 +90,7 @@ typedef uint64_t  GLuint64;
 	X(glClearNamedBufferData,                void,   (GLuint buffer, GLenum internalformat, GLenum format, GLenum type, const void *data)) \
 	X(glClearNamedFramebufferfv,             void,   (GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLfloat *value)) \
 	X(glClearTexImage,                       void,   (GLuint texture, GLint level, GLenum format, GLenum type, const void *data)) \
+	X(glClientWaitSync,                      GLenum, (GLsync sync, GLbitfield flags, GLuint64 timeout)) \
 	X(glCompileShader,                       void,   (GLuint shader)) \
 	X(glCopyImageSubData,                    void,   (GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth)) \
 	X(glCreateBuffers,                       void,   (GLsizei n, GLuint *buffers)) \
@@ -94,9 +105,12 @@ typedef uint64_t  GLuint64;
 	X(glDeleteBuffers,                       void,   (GLsizei n, const GLuint *buffers)) \
 	X(glDeleteProgram,                       void,   (GLuint program)) \
 	X(glDeleteShader,                        void,   (GLuint shader)) \
+	X(glDeleteSync,                          void,   (GLsync sync)) \
 	X(glDispatchCompute,                     void,   (GLuint num_groups_x, GLuint num_groups_y, GLuint num_groups_z)) \
 	X(glEndQuery,                            void,   (GLenum target)) \
 	X(glEnableVertexArrayAttrib,             void,   (GLuint vao, GLuint index)) \
+	X(glFenceSync,                           GLsync, (GLenum condition, GLbitfield flags)) \
+	X(glFlushMappedNamedBufferRange,         void,   (GLuint buffer, GLintptr offset, GLsizei length)) \
 	X(glGenerateTextureMipmap,               void,   (GLuint texture)) \
 	X(glGetProgramInfoLog,                   void,   (GLuint program, GLsizei maxLength, GLsizei *length, GLchar *infoLog)) \
 	X(glGetProgramiv,                        void,   (GLuint program, GLenum pname, GLint *params)) \
@@ -105,6 +119,7 @@ typedef uint64_t  GLuint64;
 	X(glGetShaderiv,                         void,   (GLuint shader, GLenum pname, GLint *params)) \
 	X(glGetTextureImage,                     void,   (GLuint texture, GLint level, GLenum format, GLenum type, GLsizei bufSize, void *pixels)) \
 	X(glLinkProgram,                         void,   (GLuint program)) \
+	X(glMapNamedBufferRange,                 void *, (GLuint buffer, GLintptr offset, GLsizei length, GLbitfield access)) \
 	X(glMemoryBarrier,                       void,   (GLbitfield barriers)) \
 	X(glNamedBufferData,                     void,   (GLuint buffer, GLsizeiptr size, const void *data, GLenum usage)) \
 	X(glNamedBufferStorage,                  void,   (GLuint buffer, GLsizeiptr size, const void *data, GLbitfield flags)) \
@@ -129,11 +144,13 @@ typedef uint64_t  GLuint64;
 	X(glTextureSubImage1D,                   void,   (GLuint texture, GLint level, GLint xoff, GLsizei width, GLenum format, GLenum type, const void *pix)) \
 	X(glTextureSubImage2D,                   void,   (GLuint texture, GLint level, GLint xoff, GLint yoff, GLsizei width, GLsizei height, GLenum format, GLenum type, const void *pix)) \
 	X(glTextureSubImage3D,                   void,   (GLuint texture, GLint level, GLint xoff, GLint yoff, GLint zoff, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void *pix)) \
+	X(glUnmapNamedBuffer,                    GLboolean, (GLuint buffer)) \
 	X(glUseProgram,                          void,   (GLuint program)) \
 	X(glVertexArrayAttribBinding,            void,   (GLuint vao, GLuint attribindex, GLuint bindingindex)) \
 	X(glVertexArrayAttribFormat,             void,   (GLuint vao, GLuint attribindex, GLint size, GLenum type, GLboolean normalized, GLuint relativeoffset)) \
 	X(glVertexArrayElementBuffer,            void,   (GLuint vao, GLuint buffer)) \
-	X(glVertexArrayVertexBuffer,             void,   (GLuint vao, GLuint bindingindex, GLuint buffer, GLintptr offset, GLsizei stride))
+	X(glVertexArrayVertexBuffer,             void,   (GLuint vao, GLuint bindingindex, GLuint buffer, GLintptr offset, GLsizei stride)) \
+	X(glWaitSync,                            void,   (GLsync sync, GLbitfield flags, GLuint64 timeout))
 
 #define X(name, ret, params) typedef ret name##_fn params;
 OGLProcedureList

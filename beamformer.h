@@ -174,18 +174,32 @@ typedef struct {
 	#undef X
 } BeamformerComputePipeline;
 
+#define MAX_RAW_DATA_FRAMES_IN_FLIGHT 3
+typedef struct {
+	GLsync  upload_syncs[MAX_RAW_DATA_FRAMES_IN_FLIGHT];
+	GLsync  compute_syncs[MAX_RAW_DATA_FRAMES_IN_FLIGHT];
+
+	u32 ssbo;
+	u32 rf_size;
+
+	u32 data_timestamp_query;
+
+	u32 insertion_index;
+	u32 compute_index;
+} BeamformerRFBuffer;
+
 typedef struct {
 	u32 programs[BeamformerShaderKind_ComputeCount];
 
 	BeamformerComputePipeline compute_pipeline;
 	BeamformerFilter filters[BEAMFORMER_FILTER_SLOTS];
 
+	BeamformerRFBuffer rf_buffer;
+
 	/* NOTE: Decoded data is only relevant in the context of a single frame. We use two
 	 * buffers so that they can be swapped when chaining multiple compute stages */
 	u32 rf_data_ssbos[2];
 	u32 last_output_ssbo_index;
-
-	u32 raw_data_ssbo;
 
 	u32 channel_mapping_texture;
 	u32 sparse_elements_texture;
@@ -197,8 +211,6 @@ typedef struct {
 
 	f32 processing_progress;
 	b32 processing_compute;
-
-	u32 rf_data_timestamp_query;
 
 	u32 shader_timer_ids[MAX_COMPUTE_SHADER_STAGES];
 
@@ -247,6 +259,13 @@ typedef struct {
 	ComputeTimingInfo buffer[4096];
 } ComputeTimingTable;
 
+typedef struct {
+	BeamformerRFBuffer *rf_buffer;
+	SharedMemoryRegion *shared_memory;
+	ComputeTimingTable *compute_timing_table;
+	i32                *compute_worker_sync;
+} BeamformerUploadThreadContext;
+
 struct BeamformerFrame {
 	u32 texture;
 	b32 ready_to_present;
@@ -271,6 +290,7 @@ struct BeamformerFrame {
 #define GL_PARAMETERS \
 	X(MAJOR_VERSION,                   version_major,                   "")      \
 	X(MINOR_VERSION,                   version_minor,                   "")      \
+	X(MIN_MAP_BUFFER_ALIGNMENT,        min_map_buffer_alignment,        "")      \
 	X(TEXTURE_BUFFER_OFFSET_ALIGNMENT, texture_buffer_offset_alignment, "")      \
 	X(MAX_TEXTURE_BUFFER_SIZE,         max_texture_buffer_size,         "")      \
 	X(MAX_TEXTURE_SIZE,                max_2d_texture_dim,              "")      \
@@ -343,6 +363,9 @@ typedef BEAMFORMER_COMPUTE_SETUP_FN(beamformer_compute_setup_fn);
 
 #define BEAMFORMER_COMPLETE_COMPUTE_FN(name) void name(iptr user_context, Arena arena, iptr gl_context)
 typedef BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute_fn);
+
+#define BEAMFORMER_RF_UPLOAD_FN(name) void name(BeamformerUploadThreadContext *ctx, Arena arena)
+typedef BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload_fn);
 
 #define BEAMFORMER_RELOAD_SHADER_FN(name) b32 name(OS *os, BeamformerCtx *ctx, \
                                                    ShaderReloadContext *src, Arena arena, s8 shader_name)

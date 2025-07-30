@@ -87,6 +87,8 @@
 #define EachEnumValue(type, it)        (type it = (type)0; it < type##_Count; it = (type)(it + 1))
 #define EachNonZeroEnumValue(type, it) (type it = (type)1; it < type##_Count; it = (type)(it + 1))
 
+#define spin_wait(c) while ((c))
+
 /* NOTE(rnp): no guarantees about actually getting an element */
 #define SLLPop(list) list; list = list ? list->next : 0
 #define SLLPush(v, list) do { \
@@ -344,7 +346,9 @@ struct OS {
 	FileWatchContext file_watch_context;
 	iptr             context;
 	iptr             error_handle;
+
 	GLWorkerThreadContext compute_worker;
+	GLWorkerThreadContext upload_worker;
 
 	DEBUG_DECL(renderdoc_start_frame_capture_fn *start_frame_capture;)
 	DEBUG_DECL(renderdoc_end_frame_capture_fn   *end_frame_capture;)

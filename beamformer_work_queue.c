@@ -52,6 +52,25 @@ DEBUG_EXPORT BEAMFORM_WORK_QUEUE_PUSH_COMMIT_FN(beamform_work_queue_push_commit)
 }
 
 function void
+mark_shared_memory_region_dirty(BeamformerSharedMemory *sm, i32 index)
+{
+	atomic_or_u32(&sm->dirty_regions, (1 << (index - 1)));
+}
+
+function void
+mark_shared_memory_region_clean(BeamformerSharedMemory *sm, i32 index)
+{
+	atomic_and_u32(&sm->dirty_regions, ~(1 << (index - 1)));
+}
+
+function b32
+is_shared_memory_region_dirty(BeamformerSharedMemory *sm, i32 index)
+{
+	b32 result = (atomic_load_u32(&sm->dirty_regions) & (1 << (index - 1))) != 0;
+	return result;
+}
+
+function void
 post_sync_barrier(SharedMemoryRegion *sm, BeamformerSharedMemoryLockKind lock, i32 *locks)
 {
 	/* NOTE(rnp): debug: here it is not a bug to release the lock if it

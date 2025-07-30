@@ -2,7 +2,7 @@
 #ifndef _BEAMFORMER_WORK_QUEUE_H_
 #define _BEAMFORMER_WORK_QUEUE_H_
 
-#define BEAMFORMER_SHARED_MEMORY_VERSION (10UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (11UL)
 
 typedef struct BeamformerFrame     BeamformerFrame;
 typedef struct ShaderReloadContext ShaderReloadContext;
@@ -19,7 +19,6 @@ typedef enum {
 typedef enum {
 	BeamformerUploadKind_ChannelMapping,
 	BeamformerUploadKind_FocalVectors,
-	BeamformerUploadKind_RFData,
 	BeamformerUploadKind_SparseElements,
 } BeamformerUploadKind;
 
@@ -64,6 +63,7 @@ typedef union {
 	X(Parameters)      \
 	X(ScratchSpace)    \
 	X(SparseElements)  \
+	X(UploadRF)        \
 	X(ExportSync)      \
 	X(DispatchCompute)
 
@@ -73,6 +73,8 @@ typedef enum {BEAMFORMER_SHARED_MEMORY_LOCKS BeamformerSharedMemoryLockKind_Coun
 
 /* NOTE: discriminated union based on type */
 typedef struct {
+	BeamformerWorkKind kind;
+	BeamformerSharedMemoryLockKind lock;
 	union {
 		BeamformerFrame               *frame;
 		BeamformerCreateFilterContext  create_filter_context;
@@ -82,8 +84,6 @@ typedef struct {
 		ShaderReloadContext           *shader_reload_context;
 		void                          *generic;
 	};
-	BeamformerSharedMemoryLockKind lock;
-	BeamformerWorkKind kind;
 } BeamformWork;
 
 typedef struct {
@@ -147,11 +147,8 @@ typedef struct {
 	i32                        shader_count;
 	BeamformerDataKind         data_kind;
 
-	/* TODO(rnp): hack: we need a different way of dispatching work for export */
-	b32 start_compute_from_main;
-
-	/* TODO(rnp): this shouldn't be needed */
-	b32 export_next_frame;
+	/* TODO(rnp): this is really sucky. we need a better way to communicate this */
+	u32 scratch_rf_size;
 
 	BeamformerLiveImagingParameters live_imaging_parameters;
 	BeamformerLiveImagingDirtyFlags live_imaging_dirty_flags;

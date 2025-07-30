@@ -245,19 +245,46 @@ beamformer_create_kaiser_low_pass_filter(f32 beta, f32 cutoff_frequency, i16 len
 	return result;
 }
 
-b32
-beamformer_start_compute(i32 timeout_ms)
+function b32
+beamformer_flush_commands(i32 timeout_ms)
 {
-	u32 lock   = BeamformerSharedMemoryLockKind_DispatchCompute;
-	b32 result = check_shared_memory() && lib_try_lock(lock, timeout_ms);
+	b32 result = lib_try_lock(BeamformerSharedMemoryLockKind_DispatchCompute, timeout_ms);
+	return result;
+}
+
+function b32
+beamformer_compute_indirect(BeamformerViewPlaneTag tag)
+{
+	b32 result = check_shared_memory();
+	if (result) {
+		result = tag < BeamformerViewPlaneTag_Count;
+		if (result) {
+			BeamformWork *work = try_push_work_queue();
+			result = work != 0;
+			if (result) {
+				work->kind = BeamformerWorkKind_ComputeIndirect;
+				work->compute_indirect_plane = tag;
+				beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
+				beamformer_flush_commands(0);
+			}
+		} else {
+			g_beamformer_library_context.last_error = BF_LIB_ERR_KIND_INVALID_IMAGE_PLANE;
+		}
+	}
+	return result;
+}
+
+b32
+beamformer_start_compute(void)
+{
+	b32 result = beamformer_compute_indirect(0);
 	return result;
 }
 
 b32
 beamformer_wait_for_compute_dispatch(i32 timeout_ms)
 {
-	u32 lock   = BeamformerSharedMemoryLockKind_DispatchCompute;
-	b32 result = check_shared_memory() && lib_try_lock(lock, timeout_ms);
+	b32 result = beamformer_flush_commands(timeout_ms);
 	/* NOTE(rnp): if you are calling this function you are probably about
 	 * to start some other work and it might be better to not do this... */
 	if (result) lib_release_lock(BeamformerSharedMemoryLockKind_DispatchCompute);
@@ -270,10 +297,9 @@ locked_region_upload(void *region, void *data, u32 size, BeamformerSharedMemoryL
 {
 	b32 result = lib_try_lock(lock, timeout_ms);
 	if (result) {
-		if (dirty)
-			*dirty = atomic_load_u32(&g_beamformer_library_context.bp->dirty_regions) & (1 << (lock - 1));
+		if (dirty) *dirty = is_shared_memory_region_dirty(g_beamformer_library_context.bp, (i32)lock);
 		mem_copy(region, data, size);
-		atomic_or_u32(&g_beamformer_library_context.bp->dirty_regions, (1 << (lock - 1)));
+		mark_shared_memory_region_dirty(g_beamformer_library_context.bp, (i32)lock);
 		lib_release_lock(lock);
 	}
 	return result;
@@ -324,15 +350,17 @@ BEAMFORMER_UPLOAD_FNS
 #undef X
 
 function b32
-beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, b32 start_from_main)
+beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms)
 {
 	b32 result = 0;
 	if (data_size <= BEAMFORMER_MAX_RF_DATA_SIZE) {
-		result = beamformer_upload_buffer(data, data_size, BEAMFORMER_SCRATCH_OFF,
-		                                  BeamformerUploadKind_RFData,
-		                                  BeamformerSharedMemoryLockKind_ScratchSpace, timeout_ms);
-		if (result && start_from_main)
-			atomic_store_u32(&g_beamformer_library_context.bp->start_compute_from_main, 1);
+		if (lib_try_lock(BeamformerSharedMemoryLockKind_UploadRF, timeout_ms)) {
+			result = locked_region_upload((u8 *)g_beamformer_library_context.bp + BEAMFORMER_SCRATCH_OFF,
+			                              data, data_size, BeamformerSharedMemoryLockKind_ScratchSpace,
+			                              0, 0);
+			/* TODO(rnp): need a better way to communicate this */
+			if (result) g_beamformer_library_context.bp->scratch_rf_size = data_size;
+		}
 	} else {
 		g_beamformer_library_context.last_error = BF_LIB_ERR_KIND_BUFFER_OVERFLOW;
 	}
@@ -342,27 +370,14 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, b32 start_f
 b32
 beamformer_push_data(void *data, u32 data_size)
 {
-	return beamformer_push_data_base(data, data_size, g_beamformer_library_context.timeout_ms, 1);
+	return beamformer_push_data_base(data, data_size, g_beamformer_library_context.timeout_ms);
 }
 
 b32
 beamformer_push_data_with_compute(void *data, u32 data_size, u32 image_plane_tag)
 {
-	b32 result = beamformer_push_data_base(data, data_size, g_beamformer_library_context.timeout_ms, 0);
-	if (result) {
-		result = image_plane_tag < BeamformerViewPlaneTag_Count;
-		if (result) {
-			BeamformWork *work = try_push_work_queue();
-			if (work) {
-				work->kind = BeamformerWorkKind_ComputeIndirect;
-				work->compute_indirect_plane = image_plane_tag;
-				beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
-				result = beamformer_start_compute(0);
-			}
-		} else {
-			g_beamformer_library_context.last_error = BF_LIB_ERR_KIND_INVALID_IMAGE_PLANE;
-		}
-	}
+	b32 result = beamformer_push_data_base(data, data_size, g_beamformer_library_context.timeout_ms);
+	if (result) result = beamformer_compute_indirect(image_plane_tag);
 	return result;
 }
 
@@ -448,8 +463,7 @@ beamform_data_synchronized(void *data, u32 data_size, i32 output_points[3], f32 
 		g_beamformer_library_context.bp->parameters.output_points[2] = output_points[2];
 
 		uz output_size = (u32)output_points[0] * (u32)output_points[1] * (u32)output_points[2] * sizeof(f32) * 2;
-		if (output_size <= BEAMFORMER_SCRATCH_SIZE && beamformer_push_data_with_compute(data, data_size, 0))
-		{
+		if (output_size <= BEAMFORMER_SCRATCH_SIZE && beamformer_push_data_with_compute(data, data_size, 0)) {
 			BeamformerExportContext export;
 			export.kind = BeamformerExportKind_BeamformedData;
 			export.size = (u32)output_size;
@@ -457,7 +471,7 @@ beamform_data_synchronized(void *data, u32 data_size, i32 output_points[3], f32 
 				/* NOTE(rnp): if this fails it just means that the work from push_data hasn't
 				 * started yet. This is here to catch the other case where the work started
 				 * and finished before we finished queuing the export work item */
-				beamformer_start_compute(0);
+				beamformer_flush_commands(0);
 
 				result = beamformer_read_output(out_data, output_size, timeout_ms);
 			}
@@ -477,7 +491,7 @@ beamformer_compute_timings(BeamformerComputeStatsTable *output, i32 timeout_ms)
 		BeamformerExportContext export;
 		export.kind = BeamformerExportKind_Stats;
 		export.size = sizeof(*output);
-		if (beamformer_export_buffer(export) && beamformer_start_compute(0))
+		if (beamformer_export_buffer(export) && beamformer_flush_commands(0))
 			result = beamformer_read_output(output, sizeof(*output), timeout_ms);
 	}
 	return result;

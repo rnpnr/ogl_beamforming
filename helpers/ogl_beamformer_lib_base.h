@@ -51,8 +51,8 @@ LIB_FN uint32_t beamform_data_synchronized(void *data, uint32_t data_size, int32
 /* NOTE: downloads the last 32 frames worth of compute timings into output */
 LIB_FN uint32_t beamformer_compute_timings(BeamformerComputeStatsTable *output, int32_t timeout_ms);
 
-/* NOTE: tells the beamformer to start beamforming and waits until it starts or for timeout_ms */
-LIB_FN uint32_t beamformer_start_compute(int32_t timeout_ms);
+/* NOTE: tells the beamformer to start beamforming */
+LIB_FN uint32_t beamformer_start_compute(void);
 
 /* NOTE: waits for previously queued beamform to start or for timeout_ms */
 LIB_FN uint32_t beamformer_wait_for_compute_dispatch(int32_t timeout_ms);

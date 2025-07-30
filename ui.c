@@ -868,7 +868,7 @@ function void
 resize_frame_view(BeamformerFrameView *view, iv2 dim, b32 depth)
 {
 	glDeleteTextures(countof(view->textures), view->textures);
-	glCreateTextures(GL_TEXTURE_2D, countof(view->textures) - !!depth, view->textures);
+	glCreateTextures(GL_TEXTURE_2D, depth ? countof(view->textures) : countof(view->textures) - 1, view->textures);
 
 	view->texture_dim     = dim;
 	view->texture_mipmaps = (i32)ctz_u32((u32)MAX(dim.x, dim.y)) + 1;
@@ -2728,10 +2728,11 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 	InvalidDefaultCase;
 	}
 
+	u32 rf_size = ui->beamformer_context->csctx.rf_buffer.rf_size;
 	push_table_time_row_with_fps(table, &arena, s8("Compute Total:"),   compute_time_sum);
 	push_table_time_row_with_fps(table, &arena, s8("RF Upload Delta:"), stats->rf_time_delta_average);
-	push_table_memory_size_row(table, &arena, s8("Input RF Size:"), ui->beamformer_context->csctx.rf_raw_size);
-	if (ui->beamformer_context->csctx.rf_raw_size != cp->rf_size)
+	push_table_memory_size_row(table, &arena, s8("Input RF Size:"), rf_size);
+	if (rf_size != cp->rf_size)
 		push_table_memory_size_row(table, &arena, s8("DAS RF Size:"), cp->rf_size);
 
 	result = v2_add(result, table_extent(table, arena, text_spec.font));
@@ -3865,7 +3866,7 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 
 	/* TODO(rnp): there should be a better way of detecting this */
 	if (ctx->ui_read_params) {
-		mem_copy(&ui->params, &sm->parameters.output_min_coordinate, sizeof(ui->params));
+		mem_copy(&ui->params, &sm->parameters_ui, sizeof(ui->params));
 		ui->flush_params    = 0;
 		ctx->ui_read_params = 0;
 	}
@@ -3876,16 +3877,24 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 	ui_interact(ui, input, window_rect);
 
 	if (ui->flush_params) {
-		i32 lock = BeamformerSharedMemoryLockKind_Parameters;
 		validate_ui_parameters(&ui->params);
+		i32 lock = BeamformerSharedMemoryLockKind_Parameters;
 		if (ctx->latest_frame && os_shared_memory_region_lock(&ctx->shared_memory, sm->locks, lock, 0)) {
 			mem_copy(&sm->parameters_ui, &ui->params, sizeof(ui->params));
 			ui->flush_params = 0;
-			atomic_or_u32(&sm->dirty_regions, (1 << (lock - 1)));
-			b32 dispatch = os_shared_memory_region_lock(&ctx->shared_memory, sm->locks,
-			                                            BeamformerSharedMemoryLockKind_DispatchCompute, 0);
-			sm->start_compute_from_main |= dispatch & ctx->latest_frame->ready_to_present;
+			mark_shared_memory_region_dirty(sm, lock);
 			os_shared_memory_region_unlock(&ctx->shared_memory, sm->locks, lock);
+
+			BeamformerSharedMemoryLockKind dispatch_lock = BeamformerSharedMemoryLockKind_DispatchCompute;
+			if (!sm->live_imaging_parameters.active &&
+			    os_shared_memory_region_lock(&ctx->shared_memory, sm->locks, (i32)dispatch_lock, 0))
+			{
+				BeamformWork *work = beamform_work_queue_push(ctx->beamform_work_queue);
+				BeamformerViewPlaneTag tag = frame_to_draw ? frame_to_draw->view_plane_tag : 0;
+				if (fill_frame_compute_work(ctx, work, tag, 0))
+					beamform_work_queue_push_commit(ctx->beamform_work_queue);
+			}
+			os_wake_waiters(&ctx->os.compute_worker.sync_variable);
 		}
 	}
 
