@@ -201,6 +201,7 @@ beamformer_set_pipeline_stage_parameters(i32 stage_index, i32 parameter)
 		g_beamformer_library_context.bp->shader_parameters[stage_index].filter_slot = (u8)parameter;
 		atomic_or_u32(&g_beamformer_library_context.bp->dirty_regions, 1 << (lock - 1));
 		lib_release_lock(lock);
+		result = 1;
 	}
 	return result;
 }
