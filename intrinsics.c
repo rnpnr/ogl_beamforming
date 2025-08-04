@@ -19,7 +19,7 @@
 #endif
 
 #if COMPILER_MSVC
-  #define align_as(n)    __declspec(align(n))
+  #define alignas(n)     __declspec(align(n))
   #define pack_struct(s) __pragma(pack(push, 1)) s __pragma(pack(pop))
   #define no_return      __declspec(noreturn)
 
@@ -51,7 +51,7 @@
   #define sqrt_f64(a)     sqrt(a)
 
 #else
-  #define align_as(n)      __attribute__((aligned(n)))
+  #define alignas(n)       __attribute__((aligned(n)))
   #define pack_struct(s) s __attribute__((packed))
   #define no_return        __attribute__((noreturn))
 

@@ -123,10 +123,16 @@ typedef enum {
 #define MIN_MAX_MIPS_LEVEL_UNIFORM_LOC 1
 #define SUM_PRESCALE_UNIFORM_LOC       1
 
-#define MAX_BEAMFORMED_SAVED_FRAMES 16
-#define MAX_COMPUTE_SHADER_STAGES   16
-
-#define BEAMFORMER_FILTER_SLOTS      4
+#define BEAMFORMER_CONSTANTS_LIST \
+	X(FilterSlots,                4) \
+	X(MaxChannelCount,          256) \
+	X(MaxComputeShaderStages,    16) \
+	X(MaxParameterBlockSlots,    16) \
+	X(MaxRawDataFramesInFlight,   3) \
+	X(MaxSavedFrames,            16)
+#define X(k, v, ...) Beamformer##k = v,
+enum {BEAMFORMER_CONSTANTS_LIST};
+#undef X
 
 /* TODO(rnp): actually use a substruct but generate a header compatible with MATLAB */
 /* X(name, type, size, elements, gltype, glsize, comment) */

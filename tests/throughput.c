@@ -291,7 +291,7 @@ function b32
 send_frame(i16 *restrict i16_data, BeamformerParameters *restrict bp)
 {
 	u32 data_size = bp->rf_raw_dim[0] * bp->rf_raw_dim[1] * sizeof(i16);
-	b32 result    = beamformer_push_data_with_compute(i16_data, data_size, BeamformerViewPlaneTag_XZ);
+	b32 result    = beamformer_push_data_with_compute(i16_data, data_size, BeamformerViewPlaneTag_XZ, 0);
 	if (!result && !g_should_exit) printf("lib error: %s\n", beamformer_get_last_error_string());
 
 	return result;
@@ -339,7 +339,7 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	}
 
 	{
-		align_as(64) v2 focal_vectors[countof(zbp->focal_depths)];
+		alignas(64) v2 focal_vectors[countof(zbp->focal_depths)];
 		for (u32 i = 0; i < countof(zbp->focal_depths); i++)
 			focal_vectors[i] = (v2){{zbp->transmit_angles[i], zbp->focal_depths[i]}};
 		beamformer_push_focal_vectors((f32 *)focal_vectors, countof(focal_vectors));
@@ -352,7 +352,7 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	free(zbp);
 
 	i32 shader_stages[16];
-	i32 shader_stage_count = 0;
+	u32 shader_stage_count = 0;
 	if (options->cuda) shader_stages[shader_stage_count++] = BeamformerShaderKind_CudaDecode;
 	else               shader_stages[shader_stage_count++] = BeamformerShaderKind_Decode;
 	shader_stages[shader_stage_count++] = BeamformerShaderKind_DAS;

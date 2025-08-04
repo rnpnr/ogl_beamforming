@@ -138,7 +138,7 @@ os_file_exists(char *path)
 }
 
 function SharedMemoryRegion
-os_create_shared_memory_area(Arena *arena, char *name, i32 lock_count, iz requested_capacity)
+os_create_shared_memory_area(Arena *arena, char *name, u32 lock_count, iz requested_capacity)
 {
 	iz capacity = os_round_up_to_page_size(requested_capacity);
 	SharedMemoryRegion result = {0};

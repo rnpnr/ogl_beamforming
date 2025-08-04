@@ -8,20 +8,22 @@
 #endif
 
 #define BEAMFORMER_LIB_ERRORS \
-	X(NONE,                     0, "None") \
-	X(VERSION_MISMATCH,         1, "host-library version mismatch")                 \
-	X(INVALID_ACCESS,           2, "library in invalid state")                      \
-	X(COMPUTE_STAGE_OVERFLOW,   3, "compute stage overflow: maximum stages: " str(MAX_COMPUTE_SHADER_STAGES)) \
-	X(INVALID_COMPUTE_STAGE,    4, "invalid compute shader stage")                  \
-	X(INVALID_START_SHADER,     5, "starting shader not Decode or Demodulate")      \
-	X(INVALID_DEMOD_DATA_KIND,  6, "data kind for demodulation not Int16 or Float") \
-	X(INVALID_IMAGE_PLANE,      7, "invalid image plane")                           \
-	X(BUFFER_OVERFLOW,          8, "passed buffer size exceeds available space")    \
-	X(WORK_QUEUE_FULL,          9, "work queue full")                               \
-	X(EXPORT_SPACE_OVERFLOW,   10, "not enough space for data export")              \
-	X(SHARED_MEMORY,           11, "failed to open shared memory region")           \
-	X(SYNC_VARIABLE,           12, "failed to acquire lock within timeout period")  \
-	X(INVALID_TIMEOUT,         13, "invalid timeout value")
+	X(NONE,                         0, "None") \
+	X(VERSION_MISMATCH,             1, "host-library version mismatch")                 \
+	X(INVALID_ACCESS,               2, "library in invalid state")                      \
+	X(PARAMETER_BLOCK_OVERFLOW,     3, "parameter block count overflow")                \
+	X(PARAMETER_BLOCK_UNALLOCATED,  4, "push to unallocated parameter block")           \
+	X(COMPUTE_STAGE_OVERFLOW,       5, "compute stage overflow")                        \
+	X(INVALID_COMPUTE_STAGE,        6, "invalid compute shader stage")                  \
+	X(INVALID_START_SHADER,         7, "starting shader not Decode or Demodulate")      \
+	X(INVALID_DEMOD_DATA_KIND,      8, "data kind for demodulation not Int16 or Float") \
+	X(INVALID_IMAGE_PLANE,          9, "invalid image plane")                           \
+	X(BUFFER_OVERFLOW,             10, "passed buffer size exceeds available space")    \
+	X(WORK_QUEUE_FULL,             11, "work queue full")                               \
+	X(EXPORT_SPACE_OVERFLOW,       12, "not enough space for data export")              \
+	X(SHARED_MEMORY,               13, "failed to open shared memory region")           \
+	X(SYNC_VARIABLE,               14, "failed to acquire lock within timeout period")  \
+	X(INVALID_TIMEOUT,             15, "invalid timeout value")
 
 #define X(type, num, string) BF_LIB_ERR_KIND_ ##type = num,
 typedef enum {BEAMFORMER_LIB_ERRORS} BeamformerLibErrorKind;
@@ -54,21 +56,38 @@ LIB_FN uint32_t beamformer_compute_timings(BeamformerComputeStatsTable *output, 
 /* NOTE: tells the beamformer to start beamforming */
 LIB_FN uint32_t beamformer_start_compute(void);
 
+LIB_FN uint32_t beamformer_push_data_with_compute(void *data, uint32_t size,
+                                                  uint32_t image_plane_tag,
+                                                  uint32_t parameter_slot);
+
 /* NOTE: waits for previously queued beamform to start or for timeout_ms */
 LIB_FN uint32_t beamformer_wait_for_compute_dispatch(int32_t timeout_ms);
 
-LIB_FN uint32_t beamformer_push_data_with_compute(void *data, uint32_t size, uint32_t image_plane_tag);
 /* NOTE: these functions only queue an upload; you must flush (start_compute) */
 LIB_FN uint32_t beamformer_push_data(void *data, uint32_t size);
 LIB_FN uint32_t beamformer_push_channel_mapping(int16_t *mapping,  uint32_t count);
 LIB_FN uint32_t beamformer_push_sparse_elements(int16_t *elements, uint32_t count);
 LIB_FN uint32_t beamformer_push_focal_vectors(float     *vectors,  uint32_t count);
 
-LIB_FN uint32_t beamformer_set_pipeline_stage_parameters(int32_t stage_index, int32_t parameter);
-LIB_FN uint32_t beamformer_push_pipeline(int32_t *shaders, int32_t shader_count, BeamformerDataKind data_kind);
+///////////////////////////
+// Parameter Configuration
+LIB_FN uint32_t beamformer_reserve_parameter_blocks(uint32_t count);
+LIB_FN uint32_t beamformer_set_pipeline_stage_parameters(uint32_t stage_index, int32_t parameter);
+LIB_FN uint32_t beamformer_push_pipeline(int32_t *shaders, uint32_t shader_count, BeamformerDataKind data_kind);
 LIB_FN uint32_t beamformer_push_parameters(BeamformerParameters *);
 LIB_FN uint32_t beamformer_push_parameters_ui(BeamformerUIParameters *);
 LIB_FN uint32_t beamformer_push_parameters_head(BeamformerParametersHead *);
+
+LIB_FN uint32_t beamformer_set_pipeline_stage_parameters_at(uint32_t stage_index,
+                                                            int32_t  parameter,
+                                                            uint32_t parameter_slot);
+LIB_FN uint32_t beamformer_push_pipeline_at(int32_t *shaders, uint32_t shader_count,
+                                            BeamformerDataKind data_kind, uint32_t parameter_slot);
+LIB_FN uint32_t beamformer_push_parameters_at(BeamformerParameters *, uint32_t parameter_slot);
+
+LIB_FN uint32_t beamformer_push_channel_mapping_at(int16_t *mapping,  uint32_t count, uint32_t parameter_slot);
+LIB_FN uint32_t beamformer_push_sparse_elements_at(int16_t *elements, uint32_t count, uint32_t parameter_slot);
+LIB_FN uint32_t beamformer_push_focal_vectors_at(float     *vectors,  uint32_t count, uint32_t parameter_slot);
 
 ////////////////////
 // Filter Creation
@@ -90,7 +109,8 @@ LIB_FN uint32_t beamformer_push_parameters_head(BeamformerParametersHead *);
  *   M = (A - 8) / (2.285 (ω_s - ω_p))
  */
 LIB_FN uint32_t beamformer_create_kaiser_low_pass_filter(float beta, float cutoff_frequency,
-                                                         int16_t length, uint8_t slot);
+                                                         float sampling_frequency, int16_t length,
+                                                         uint8_t filter_slot, uint8_t parameter_block);
 
 //////////////////////////
 // Live Imaging Controls

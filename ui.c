@@ -394,6 +394,7 @@ struct BeamformerUI {
 
 	BeamformerUIParameters params;
 	b32                    flush_params;
+	u32 selected_parameter_block;
 
 	FrameViewRenderContext *frame_view_render_context;
 
@@ -656,7 +657,7 @@ push_custom_view_title(Stream *s, Variable *var)
 		}break;
 		case BeamformerFrameViewKind_Indexed:{
 			stream_append_s8(s, s8(": Index {"));
-			stream_append_u64(s, *bv->cycler->cycler.state % MAX_BEAMFORMED_SAVED_FRAMES);
+			stream_append_u64(s, *bv->cycler->cycler.state % BeamformerMaxSavedFrames);
 			stream_append_s8(s, s8("} ["));
 		}break;
 		case BeamformerFrameViewKind_3DXPlane:{ stream_append_s8(s, s8(": 3D X-Plane")); }break;
@@ -1273,7 +1274,7 @@ ui_beamformer_frame_view_convert(BeamformerUI *ui, Arena *arena, Variable *view,
 	}break;
 	case BeamformerFrameViewKind_Indexed:{
 		bv->cycler = add_variable_cycler(ui, menu, arena, 0, ui->small_font, s8("Index:"),
-		                                 &bv->cycler_state, 0, MAX_BEAMFORMED_SAVED_FRAMES);
+		                                 &bv->cycler_state, 0, BeamformerMaxSavedFrames);
 	}break;
 	default:{}break;
 	}
@@ -1316,8 +1317,8 @@ add_compute_progress_bar(Variable *parent, BeamformerCtx *ctx)
 	result->view.child = add_variable(ui, result, &ui->arena, s8(""), 0,
 	                                  VT_COMPUTE_PROGRESS_BAR, ui->small_font);
 	ComputeProgressBar *bar = &result->view.child->compute_progress_bar;
-	bar->progress   = &ctx->csctx.processing_progress;
-	bar->processing = &ctx->csctx.processing_compute;
+	bar->progress   = &ctx->compute_context.processing_progress;
+	bar->processing = &ctx->compute_context.processing_compute;
 
 	return result;
 }
@@ -2571,7 +2572,7 @@ push_compute_time(Arena *arena, s8 prefix, f32 time)
 
 function v2
 draw_compute_stats_bar_view(BeamformerUI *ui, Arena arena, ComputeShaderStats *stats,
-                            BeamformerShaderKind *stages, i32 stages_count, f32 compute_time_sum,
+                            BeamformerShaderKind *stages, u32 stages_count, f32 compute_time_sum,
                             TextSpec ts, Rect r, v2 mouse)
 {
 	read_only local_persist s8 frame_labels[] = {s8_comp("0:"), s8_comp("-1:"), s8_comp("-2:"), s8_comp("-3:")};
@@ -2582,7 +2583,7 @@ draw_compute_stats_bar_view(BeamformerUI *ui, Arena arena, ComputeShaderStats *s
 		cells[0].text = frame_labels[i];
 		u32 frame_index = (stats->latest_frame_index - i) % countof(stats->table.times);
 		u32 seen_shaders = 0;
-		for (i32 j = 0; j < stages_count; j++) {
+		for (u32 j = 0; j < stages_count; j++) {
 			if ((seen_shaders & (1u << stages[j])) == 0)
 				total_times[i] += stats->table.times[frame_index][stages[j]];
 			seen_shaders |= (1u << stages[j]);
@@ -2617,7 +2618,7 @@ draw_compute_stats_bar_view(BeamformerUI *ui, Arena arena, ComputeShaderStats *s
 		Rect rect;
 		rect.pos  = v2_add(cr.pos, (v2){{cr.size.w + table->cell_pad.w , cr.size.h * 0.15f}});
 		rect.size = (v2){.y = 0.7f * cr.size.h};
-		for (i32 i = 0; i < stages_count; i++) {
+		for (u32 i = 0; i < stages_count; i++) {
 			rect.size.w = total_width * stats->table.times[frame_index][stages[i]] / total_times[row_index];
 			Color color = colour_from_normalized(g_colour_palette[i % countof(g_colour_palette)]);
 			DrawRectangleRec(rect.rl, color);
@@ -2690,17 +2691,21 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 {
 	assert(view->type == VT_COMPUTE_STATS_VIEW);
 
-	ComputeStatsView *csv = &view->compute_stats_view;
-	BeamformerComputePipeline *cp    = &ui->beamformer_context->csctx.compute_pipeline;
-	ComputeShaderStats        *stats = csv->compute_shader_stats;
+	read_only local_persist BeamformerComputePlan dummy_plan = {0};
+	u32 selected_plan = ui->selected_parameter_block % BeamformerMaxParameterBlockSlots;
+	BeamformerComputePlan *cp = ui->beamformer_context->compute_context.compute_plans[selected_plan];
+	if (!cp) cp = &dummy_plan;
+
+	ComputeStatsView   *csv   = &view->compute_stats_view;
+	ComputeShaderStats *stats = csv->compute_shader_stats;
 	f32 compute_time_sum = 0;
-	i32 stages           = cp->shader_count;
+	u32 stages           = cp->pipeline.shader_count;
 	TextSpec text_spec   = {.font = &ui->font, .colour = FG_COLOUR, .flags = TF_LIMITED};
 
 	static_assert(BeamformerShaderKind_ComputeCount <= 32, "shader kind bitfield test");
 	u32 seen_shaders = 0;
-	for (i32 i = 0; i < stages; i++) {
-		BeamformerShaderKind index = cp->shaders[i];
+	for (u32 i = 0; i < stages; i++) {
+		BeamformerShaderKind index = cp->pipeline.shaders[i];
 		if ((seen_shaders & (1u << index)) == 0)
 			compute_time_sum += stats->average_times[index];
 		seen_shaders |= (1u << index);
@@ -2715,20 +2720,20 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 		read_only local_persist s8 labels[BeamformerShaderKind_ComputeCount] = {COMPUTE_SHADERS_INTERNAL};
 		#undef X
 		da_reserve(&arena, table, stages);
-		for (i32 i = 0; i < stages; i++) {
-			push_table_time_row(table, &arena, labels[cp->shaders[i]],
-			                    stats->average_times[cp->shaders[i]]);
+		for (u32 i = 0; i < stages; i++) {
+			push_table_time_row(table, &arena, labels[cp->pipeline.shaders[i]],
+			                    stats->average_times[cp->pipeline.shaders[i]]);
 		}
 	}break;
 	case ComputeStatsViewKind_Bar:{
-		result = draw_compute_stats_bar_view(ui, arena, stats, cp->shaders, stages, compute_time_sum,
-		                                     text_spec, r, mouse);
+		result = draw_compute_stats_bar_view(ui, arena, stats, cp->pipeline.shaders, stages,
+		                                     compute_time_sum, text_spec, r, mouse);
 		r.pos = v2_add(r.pos, (v2){.y = result.y});
 	}break;
 	InvalidDefaultCase;
 	}
 
-	u32 rf_size = ui->beamformer_context->csctx.rf_buffer.rf_size;
+	u32 rf_size = ui->beamformer_context->compute_context.rf_buffer.size;
 	push_table_time_row_with_fps(table, &arena, s8("Compute Total:"),   compute_time_sum);
 	push_table_time_row_with_fps(table, &arena, s8("RF Upload Delta:"), stats->rf_time_delta_average);
 	push_table_memory_size_row(table, &arena, s8("Input RF Size:"), rf_size);
@@ -3802,7 +3807,7 @@ ui_init(BeamformerCtx *ctx, Arena store)
 		ui = ctx->ui = push_struct(&store, typeof(*ui));
 		ui->arena = store;
 		ui->frame_view_render_context = &ctx->frame_view_render_context;
-		ui->unit_cube_model = ctx->csctx.unit_cube_model;
+		ui->unit_cube_model = ctx->compute_context.unit_cube_model;
 		ui->shared_memory   = ctx->shared_memory;
 		ui->beamformer_context = ctx;
 
@@ -3837,8 +3842,6 @@ ui_init(BeamformerCtx *ctx, Arena store)
 		split->region_split.left  = add_compute_progress_bar(split, ctx);
 		split->region_split.right = add_compute_stats_view(ui, split, &ui->arena, ctx);
 
-		ctx->ui_read_params = 1;
-
 		/* NOTE(rnp): shrink variable size once this fires */
 		assert((uz)(ui->arena.beg - (u8 *)ui) < KB(64));
 	}
@@ -3864,11 +3867,16 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 
 	asan_poison_region(ui->arena.beg, ui->arena.end - ui->arena.beg);
 
-	/* TODO(rnp): there should be a better way of detecting this */
-	if (ctx->ui_read_params) {
-		mem_copy(&ui->params, &sm->parameters_ui, sizeof(ui->params));
-		ui->flush_params    = 0;
-		ctx->ui_read_params = 0;
+	u32 selected_block = ui->selected_parameter_block % BeamformerMaxParameterBlockSlots;
+	u32 selected_mask  = 1 << selected_block;
+	if (ctx->ui_dirty_parameter_blocks & selected_mask) {
+		BeamformerParameterBlock *pb = beamformer_parameter_block_lock(&ctx->shared_memory, selected_block, 0);
+		if (pb) {
+			mem_copy(&ui->params, &pb->parameters_ui, sizeof(ui->params));
+			ui->flush_params = 0;
+			atomic_and_u32(&ctx->ui_dirty_parameter_blocks, ~selected_mask);
+			beamformer_parameter_block_unlock(&ctx->shared_memory, selected_block);
+		}
 	}
 
 	/* NOTE: process interactions first because the user interacted with
@@ -3878,23 +3886,26 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 
 	if (ui->flush_params) {
 		validate_ui_parameters(&ui->params);
-		i32 lock = BeamformerSharedMemoryLockKind_Parameters;
-		if (ctx->latest_frame && os_shared_memory_region_lock(&ctx->shared_memory, sm->locks, lock, 0)) {
-			mem_copy(&sm->parameters_ui, &ui->params, sizeof(ui->params));
-			ui->flush_params = 0;
-			mark_shared_memory_region_dirty(sm, lock);
-			os_shared_memory_region_unlock(&ctx->shared_memory, sm->locks, lock);
+		if (ctx->latest_frame) {
+			BeamformerParameterBlock *pb = beamformer_parameter_block_lock(&ctx->shared_memory, selected_block, 0);
+			if (pb) {
+				ui->flush_params = 0;
+				mem_copy(&pb->parameters_ui, &ui->params, sizeof(ui->params));
+				mark_parameter_block_region_dirty(ctx->shared_memory.region, selected_block,
+				                                  BeamformerParameterBlockRegion_Parameters);
+				beamformer_parameter_block_unlock(&ctx->shared_memory, selected_block);
 
-			BeamformerSharedMemoryLockKind dispatch_lock = BeamformerSharedMemoryLockKind_DispatchCompute;
-			if (!sm->live_imaging_parameters.active &&
-			    os_shared_memory_region_lock(&ctx->shared_memory, sm->locks, (i32)dispatch_lock, 0))
-			{
-				BeamformWork *work = beamform_work_queue_push(ctx->beamform_work_queue);
-				BeamformerViewPlaneTag tag = frame_to_draw ? frame_to_draw->view_plane_tag : 0;
-				if (fill_frame_compute_work(ctx, work, tag, 0))
-					beamform_work_queue_push_commit(ctx->beamform_work_queue);
+				BeamformerSharedMemoryLockKind dispatch_lock = BeamformerSharedMemoryLockKind_DispatchCompute;
+				if (!sm->live_imaging_parameters.active &&
+				    os_shared_memory_region_lock(&ctx->shared_memory, sm->locks, (i32)dispatch_lock, 0))
+				{
+					BeamformWork *work = beamform_work_queue_push(ctx->beamform_work_queue);
+					BeamformerViewPlaneTag tag = frame_to_draw ? frame_to_draw->view_plane_tag : 0;
+					if (fill_frame_compute_work(ctx, work, tag, selected_block, 0))
+						beamform_work_queue_push_commit(ctx->beamform_work_queue);
+				}
+				os_wake_waiters(&ctx->os.compute_worker.sync_variable);
 			}
-			os_wake_waiters(&ctx->os.compute_worker.sync_variable);
 		}
 	}
 

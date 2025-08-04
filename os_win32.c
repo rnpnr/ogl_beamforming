@@ -83,6 +83,7 @@ typedef struct {
 
 typedef struct {
 	iptr *semaphores;
+	u32   reserved_count;
 } w32_shared_memory_context;
 
 #define W32(r) __declspec(dllimport) r __stdcall
@@ -250,7 +251,7 @@ os_file_exists(char *path)
 }
 
 function SharedMemoryRegion
-os_create_shared_memory_area(Arena *arena, char *name, i32 lock_count, iz requested_capacity)
+os_create_shared_memory_area(Arena *arena, char *name, u32 lock_count, iz requested_capacity)
 {
 	iz capacity = os_round_up_to_page_size(requested_capacity);
 	assert(capacity <= (iz)U32_MAX);
@@ -260,21 +261,20 @@ os_create_shared_memory_area(Arena *arena, char *name, i32 lock_count, iz reques
 		void *new = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, (u32)capacity);
 		if (new) {
 			w32_shared_memory_context *ctx = push_struct(arena, typeof(*ctx));
-			ctx->semaphores   = push_array(arena, typeof(*ctx->semaphores), lock_count);
-			result.os_context = (iptr)ctx;
-			result.region     = new;
+			ctx->semaphores     = push_array(arena, typeof(*ctx->semaphores), lock_count);
+			ctx->reserved_count = lock_count;
+			result.os_context   = (iptr)ctx;
+			result.region       = new;
 
 			Stream sb = arena_stream(*arena);
 			stream_append_s8s(&sb, c_str_to_s8(name), s8("_lock_"));
-			for (i32 i = 0; i < lock_count; i++) {
+			for (u32 i = 0; i < lock_count; i++) {
 				Stream lb = sb;
-				stream_append_i64(&lb, i);
+				stream_append_u64(&lb, i);
 				stream_append_byte(&lb, 0);
 				ctx->semaphores[i] = CreateSemaphoreA(0, 1, 1, (c8 *)lb.data);
-				if (ctx->semaphores[i] == INVALID_FILE) {
-					os_fatal(s8("os_create_shared_memory_area: "
-					            "failed to create semaphore\n"));
-				}
+				if (ctx->semaphores[i] == INVALID_FILE)
+					os_fatal(s8("os_create_shared_memory_area: failed to create semaphore\n"));
 			}
 		}
 	}

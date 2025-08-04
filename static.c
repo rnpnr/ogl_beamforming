@@ -9,14 +9,11 @@
 global void *debug_lib;
 
 #define DEBUG_ENTRY_POINTS \
-	X(beamformer_debug_ui_deinit)      \
-	X(beamformer_complete_compute)     \
-	X(beamformer_compute_setup)        \
-	X(beamformer_frame_step)           \
-	X(beamformer_reload_shader)        \
-	X(beamformer_rf_upload)            \
-	X(beamform_work_queue_push)        \
-	X(beamform_work_queue_push_commit)
+	X(beamformer_debug_ui_deinit)  \
+	X(beamformer_complete_compute) \
+	X(beamformer_frame_step)       \
+	X(beamformer_reload_shader)    \
+	X(beamformer_rf_upload)
 
 #define X(name) global name ##_fn *name;
 DEBUG_ENTRY_POINTS
@@ -273,12 +270,14 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 	glfwMakeContextCurrent(ctx->window_handle);
 	ctx->gl_context = os_get_native_gl_context(ctx->window_handle);
 
-	beamformer_compute_setup(ctx->user_context);
+	BeamformerCtx *beamformer = (BeamformerCtx *)ctx->user_context;
+	glCreateQueries(GL_TIME_ELAPSED, countof(beamformer->compute_context.shader_timer_ids),
+	                beamformer->compute_context.shader_timer_ids);
 
 	for (;;) {
 		worker_thread_sleep(ctx);
 		asan_poison_region(ctx->arena.beg, ctx->arena.end - ctx->arena.beg);
-		beamformer_complete_compute(ctx->user_context, ctx->arena, ctx->gl_context);
+		beamformer_complete_compute(ctx->user_context, &ctx->arena, ctx->gl_context);
 	}
 
 	unreachable();
@@ -353,21 +352,19 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	ctx->compute_shader_stats = push_struct(memory, ComputeShaderStats);
 	ctx->compute_timing_table = push_struct(memory, ComputeTimingTable);
 
-	ctx->shared_memory = os_create_shared_memory_area(memory, OS_SHARED_MEMORY_NAME,
-	                                                  BeamformerSharedMemoryLockKind_Count,
+	/* TODO(rnp): I'm not sure if its a good idea to pre-reserve a bunch of semaphores
+	 * on w32 but thats what we are doing for now */
+	u32 lock_count = BeamformerSharedMemoryLockKind_Count + BeamformerMaxParameterBlockSlots;
+	ctx->shared_memory = os_create_shared_memory_area(memory, OS_SHARED_MEMORY_NAME, lock_count,
 	                                                  BEAMFORMER_SHARED_MEMORY_SIZE);
 	BeamformerSharedMemory *sm = ctx->shared_memory.region;
 	if (!sm) os_fatal(s8("Get more ram lol\n"));
 	mem_clear(sm, 0, sizeof(*sm));
 
 	sm->version = BEAMFORMER_SHARED_MEMORY_VERSION;
+	sm->reserved_parameter_blocks = 1;
 
-	/* NOTE: default compute shader pipeline */
-	sm->shaders[0]   = BeamformerShaderKind_Decode;
-	sm->shaders[1]   = BeamformerShaderKind_DAS;
-	sm->shader_count = 2;
-
-	ComputeShaderCtx *cs = &ctx->csctx;
+	BeamformerComputeContext *cs = &ctx->compute_context;
 
 	GLWorkerThreadContext *worker = &ctx->os.compute_worker;
 	/* TODO(rnp): we should lock this down after we have something working */
@@ -582,6 +579,9 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	cs->unit_cube_model = render_model_from_arrays(unit_cube_vertices, unit_cube_normals,
 	                                               sizeof(unit_cube_vertices),
 	                                               unit_cube_indices, countof(unit_cube_indices));
+
+	/* stfu gcc this is used */
+	DEBUG_DECL((void)BeamformerParameterBlockRegionOffsets;)
 }
 
 function void

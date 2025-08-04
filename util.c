@@ -23,9 +23,26 @@ mem_move(u8 *dest, u8 *src, uz n)
 }
 
 function u8 *
+arena_aligned_start(Arena a, uz alignment)
+{
+	uz padding = -(uintptr_t)a.beg & (alignment - 1);
+	u8 *result = a.beg + padding;
+	return result;
+}
+
+#define arena_capacity(a, t) arena_capacity_(a, sizeof(t), alignof(t))
+function iz
+arena_capacity_(Arena *a, iz size, uz alignment)
+{
+	iz available = a->end - arena_aligned_start(*a, alignment);
+	iz result    = available / size;
+	return result;
+}
+
+function u8 *
 arena_commit(Arena *a, iz size)
 {
-	ASSERT(a->end - a->beg >= size);
+	assert(a->end - a->beg >= size);
 	u8 *result = a->beg;
 	a->beg += size;
 	return result;
@@ -42,27 +59,16 @@ arena_pop(Arena *a, iz length)
 function void *
 arena_alloc(Arena *a, iz len, uz align, iz count)
 {
-	/* NOTE: special case 0 arena */
-	if (a->beg == 0)
-		return 0;
-
-	uz padding   = -(uintptr_t)a->beg & (align - 1);
-	iz available = a->end - a->beg - (iz)padding;
-	assert((available >= 0 && count <= available / len));
-	void *p = a->beg + padding;
-	asan_unpoison_region(p, count * len);
-	a->beg += (iz)padding + count * len;
-	/* TODO: Performance? */
-	return mem_clear(p, 0, count * len);
-}
-
-#define arena_capacity(a, t) arena_capacity_(a, sizeof(t), _Alignof(t))
-function iz
-arena_capacity_(Arena *a, iz size, uz alignment)
-{
-	uz padding   = -(uintptr_t)a->beg & (alignment - 1);
-	iz available = a->end - a->beg - (iz)padding;
-	iz result    = available / size;
+	void *result = 0;
+	if (a->beg) {
+		u8 *start = arena_aligned_start(*a, align);
+		iz available = a->end - start;
+		assert((available >= 0 && count <= available / len));
+		asan_unpoison_region(start, count * len);
+		a->beg = start + count * len;
+		/* TODO: Performance? */
+		result = mem_clear(start, 0, count * len);
+	}
 	return result;
 }
 

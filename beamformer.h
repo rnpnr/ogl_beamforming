@@ -91,7 +91,7 @@ typedef struct {
 } FrameViewRenderContext;
 
 #include "beamformer_parameters.h"
-#include "beamformer_work_queue.h"
+#include "beamformer_shared_memory.c"
 
 typedef struct {
 	iptr elements_offset;
@@ -102,9 +102,8 @@ typedef struct {
 
 typedef struct {
 	BeamformerFilterKind kind;
+	BeamformerFilterParameters parameters;
 	u32 texture;
-	i32 length;
-	f32 sampling_frequency;
 } BeamformerFilter;
 
 /* X(name, type, gltype) */
@@ -131,14 +130,14 @@ typedef struct {
 	X(transmit_count,         u32, uint) \
 	X(decode_mode,            u32, uint)
 
-typedef align_as(16) struct {
+typedef alignas(16) struct {
 	#define X(name, type, ...) type name;
 	BEAMFORMER_DECODE_UBO_PARAM_LIST
 	#undef X
 } BeamformerDecodeUBO;
 static_assert((sizeof(BeamformerDecodeUBO) & 15) == 0, "UBO size must be a multiple of 16");
 
-typedef align_as(16) struct {
+typedef alignas(16) struct {
 	#define X(name, type, ...) type name;
 	BEAMFORMER_DEMOD_UBO_PARAM_LIST
 	#undef X
@@ -156,31 +155,49 @@ static_assert((sizeof(BeamformerDemodulateUBO) & 15) == 0, "UBO size must be a m
 typedef enum {BEAMFORMER_COMPUTE_UBO_LIST BeamformerComputeUBOKind_Count} BeamformerComputeUBOKind;
 #undef X
 
-typedef struct {
-	BeamformerShaderKind       shaders[MAX_COMPUTE_SHADER_STAGES];
-	BeamformerShaderParameters shader_parameters[MAX_COMPUTE_SHADER_STAGES];
-	i32                        shader_count;
-	BeamformerDataKind         data_kind;
+#define BEAMFORMER_COMPUTE_TEXTURE_LIST \
+	X(ChannelMapping, GL_R16I)  \
+	X(FocalVectors,   GL_RG32F) \
+	X(SparseElements, GL_R16I)  \
+	X(Hadamard,       GL_R8I)
+
+typedef enum {
+	#define X(k, ...) BeamformerComputeTextureKind_##k,
+	BEAMFORMER_COMPUTE_TEXTURE_LIST
+	#undef X
+	BeamformerComputeTextureKind_Count
+} BeamformerComputeTextureKind;
+static_assert((BeamformerComputeTextureKind_Count - 1) == BeamformerComputeTextureKind_Hadamard,
+              "BeamformerComputeTextureKind_Hadamard must be end of TextureKinds");
+
+typedef struct BeamformerComputePlan BeamformerComputePlan;
+struct BeamformerComputePlan {
+	BeamformerComputePipeline pipeline;
 
 	uv3 decode_dispatch;
 	uv3 demod_dispatch;
 
-	u32  rf_size;
+	u32 rf_size;
+	i32 hadamard_order;
 
+	u32 textures[BeamformerComputeTextureKind_Count];
 	u32 ubos[BeamformerComputeUBOKind_Count];
+
+	BeamformerFilter filters[BeamformerFilterSlots];
 
 	#define X(k, type, name) type name ##_ubo_data;
 	BEAMFORMER_COMPUTE_UBO_LIST
 	#undef X
-} BeamformerComputePipeline;
 
-#define MAX_RAW_DATA_FRAMES_IN_FLIGHT 3
+	BeamformerComputePlan *next;
+};
+
 typedef struct {
-	GLsync  upload_syncs[MAX_RAW_DATA_FRAMES_IN_FLIGHT];
-	GLsync  compute_syncs[MAX_RAW_DATA_FRAMES_IN_FLIGHT];
+	GLsync upload_syncs[BeamformerMaxRawDataFramesInFlight];
+	GLsync compute_syncs[BeamformerMaxRawDataFramesInFlight];
 
 	u32 ssbo;
-	u32 rf_size;
+	u32 size;
 
 	u32 data_timestamp_query;
 
@@ -189,34 +206,27 @@ typedef struct {
 } BeamformerRFBuffer;
 
 typedef struct {
-	u32 programs[BeamformerShaderKind_ComputeCount];
-
-	BeamformerComputePipeline compute_pipeline;
-	BeamformerFilter filters[BEAMFORMER_FILTER_SLOTS];
-
+	u32                programs[BeamformerShaderKind_ComputeCount];
 	BeamformerRFBuffer rf_buffer;
 
-	/* NOTE: Decoded data is only relevant in the context of a single frame. We use two
-	 * buffers so that they can be swapped when chaining multiple compute stages */
-	u32 rf_data_ssbos[2];
+	BeamformerComputePlan *compute_plans[BeamformerMaxParameterBlockSlots];
+	BeamformerComputePlan *compute_plan_freelist;
+
+	/* NOTE(rnp): two interstage ssbos are allocated so that they may be used to
+	 * ping pong data between compute stages */
+	u32 ping_pong_ssbos[2];
 	u32 last_output_ssbo_index;
 
-	u32 channel_mapping_texture;
-	u32 sparse_elements_texture;
-	u32 focal_vectors_texture;
-	u32 hadamard_texture;
-
-	uv4 dec_data_dim;
-	u32 rf_raw_size;
+	u32 ping_pong_ssbo_size;
 
 	f32 processing_progress;
 	b32 processing_compute;
 
-	u32 shader_timer_ids[MAX_COMPUTE_SHADER_STAGES];
+	u32 shader_timer_ids[BeamformerMaxComputeShaderStages];
 
 	BeamformerRenderModel unit_cube_model;
 	CudaLib cuda_lib;
-} ComputeShaderCtx;
+} BeamformerComputeContext;
 
 typedef enum {
 	#define X(type, id, pretty, fixed_tx) DASShaderKind_##type = id,
@@ -315,10 +325,9 @@ typedef struct {
 
 	Arena  ui_backing_store;
 	void  *ui;
-	/* TODO(rnp): this is nasty and should be removed */
-	b32    ui_read_params;
+	u32    ui_dirty_parameter_blocks;
 
-	ComputeShaderCtx  csctx;
+	BeamformerComputeContext compute_context;
 
 	/* TODO(rnp): ideally this would go in the UI but its hard to manage with the UI
 	 * destroying itself on hot-reload */
@@ -334,7 +343,7 @@ typedef struct {
 
 	SharedMemoryRegion shared_memory;
 
-	BeamformerFrame beamform_frames[MAX_BEAMFORMED_SAVED_FRAMES];
+	BeamformerFrame beamform_frames[BeamformerMaxSavedFrames];
 	BeamformerFrame *latest_frame;
 	u32 next_render_frame_index;
 	u32 display_frame_index;
@@ -358,10 +367,7 @@ struct ShaderReloadContext {
 #define BEAMFORMER_FRAME_STEP_FN(name) void name(BeamformerCtx *ctx, BeamformerInput *input)
 typedef BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step_fn);
 
-#define BEAMFORMER_COMPUTE_SETUP_FN(name) void name(iptr user_context)
-typedef BEAMFORMER_COMPUTE_SETUP_FN(beamformer_compute_setup_fn);
-
-#define BEAMFORMER_COMPLETE_COMPUTE_FN(name) void name(iptr user_context, Arena arena, iptr gl_context)
+#define BEAMFORMER_COMPLETE_COMPUTE_FN(name) void name(iptr user_context, Arena *arena, iptr gl_context)
 typedef BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute_fn);
 
 #define BEAMFORMER_RF_UPLOAD_FN(name) void name(BeamformerUploadThreadContext *ctx, Arena arena)

@@ -308,23 +308,6 @@ v3_normalize(v3 a)
 	return result;
 }
 
-function uv4
-uv4_from_u32_array(u32 v[4])
-{
-	uv4 result;
-	result.E[0] = v[0];
-	result.E[1] = v[1];
-	result.E[2] = v[2];
-	result.E[3] = v[3];
-	return result;
-}
-
-function b32
-uv4_equal(uv4 a, uv4 b)
-{
-	return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
-}
-
 function v4
 v4_from_f32_array(f32 v[4])
 {
@@ -617,7 +600,7 @@ hsv_to_rgb(v4 hsv)
 	 * k(n)      = fmod((n + H * 6), 6)
 	 * (R, G, B) = (f(n = 5), f(n = 3), f(n = 1))
 	 */
-	align_as(16) f32 nval[4] = {5.0f, 3.0f, 1.0f, 0.0f};
+	alignas(16) f32 nval[4] = {5.0f, 3.0f, 1.0f, 0.0f};
 	f32x4 n   = load_f32x4(nval);
 	f32x4 H   = dup_f32x4(hsv.x);
 	f32x4 S   = dup_f32x4(hsv.y);
