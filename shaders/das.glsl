@@ -63,7 +63,7 @@ vec2 cubic(int base_index, float index)
 
 vec2 sample_rf(int channel, int transmit, float index)
 {
-	vec2 result     = vec2(index >= 0.0f) * vec2(int(index) + 2 * int(interpolate) < dec_data_dim.x);
+	vec2 result     = vec2(index >= 0.0f) * vec2((int(index) + 1 + int(interpolate)) < dec_data_dim.x);
 	int  base_index = channel * dec_data_dim.x * dec_data_dim.z + transmit * dec_data_dim.x;
 	if (interpolate) result *= cubic(base_index, index);
 	else             result *= rf_data[base_index + int(round(index))];
