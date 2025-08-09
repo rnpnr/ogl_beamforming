@@ -191,16 +191,19 @@ _Static_assert((sizeof(BeamformerParameters) & 15) == 0, "UBO size must be a mul
 	X(TransmitPower,     1) \
 	X(TGCControlPoints,  2) \
 	X(SaveData,          3) \
-	X(StopImaging,       4)
+	X(SaveNameTag,       4) \
+	X(StopImaging,       5)
 /* NOTE(rnp): if this exceeds 32 you need to fix the flag handling code */
 
 #define BEAMFORMER_LIVE_IMAGING_PARAMETERS_LIST \
-	X(active,              uint32_t, ,                               1) \
-	X(save_enabled,        uint32_t, ,                               1) \
-	X(save_active,         uint32_t, ,                               1) \
-	X(transmit_power,      float,    ,                               1) \
-	X(image_plane_offsets, float,    [BeamformerViewPlaneTag_Count], BeamformerViewPlaneTag_Count) \
-	X(tgc_control_points,  float,    [8],                            8)
+	X(active,               uint32_t, ,                               1)   \
+	X(save_enabled,         uint32_t, ,                               1)   \
+	X(save_active,          uint32_t, ,                               1)   \
+	X(transmit_power,       float,    ,                               1)   \
+	X(image_plane_offsets,  float,    [BeamformerViewPlaneTag_Count], BeamformerViewPlaneTag_Count) \
+	X(tgc_control_points,   float,    [8],                            8)   \
+	X(save_name_tag_length, int32_t,  ,                               1)   \
+	X(save_name_tag,        char,     [128],                          128)
 
 #define X(name, type, size, ...) type name size;
 typedef struct {BEAMFORMER_LIVE_IMAGING_PARAMETERS_LIST} BeamformerLiveImagingParameters;

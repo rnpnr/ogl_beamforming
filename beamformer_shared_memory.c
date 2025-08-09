@@ -1,5 +1,5 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (12UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (13UL)
 
 typedef struct BeamformerFrame     BeamformerFrame;
 typedef struct ShaderReloadContext ShaderReloadContext;
@@ -41,9 +41,7 @@ typedef struct {
 	u32 size;
 } BeamformerExportContext;
 
-/* TODO(rnp): remove the None lock */
 #define BEAMFORMER_SHARED_MEMORY_LOCKS \
-	X(None)            \
 	X(ScratchSpace)    \
 	X(UploadRF)        \
 	X(ExportSync)      \
@@ -86,7 +84,7 @@ typedef struct {
 } BeamformWorkQueue;
 
 #define BEAMFORMER_SHARED_MEMORY_SIZE             (GB(2))
-#define BEAMFORMER_SHARED_MEMORY_MIN_SCRATCH_SIZE (BEAMFORMER_SHARED_MEMORY_SIZE - \
+#define BEAMFORMER_SHARED_MEMORY_MAX_SCRATCH_SIZE (BEAMFORMER_SHARED_MEMORY_SIZE - \
                                                    sizeof(BeamformerSharedMemory) - \
                                                    sizeof(BeamformerParameterBlock))
 
