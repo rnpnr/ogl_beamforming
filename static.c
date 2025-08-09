@@ -185,25 +185,26 @@ function FILE_WATCH_CALLBACK_FN(reload_shader_indirect)
 	return 1;
 }
 
-function FILE_WATCH_CALLBACK_FN(load_cuda_lib)
+function FILE_WATCH_CALLBACK_FN(load_cuda_library)
 {
-	CudaLib *cl = (CudaLib *)user_data;
-	b32 result  = os_file_exists((c8 *)path.data);
+	local_persist void *cuda_library_handle;
+
+	b32 result = os_file_exists((c8 *)path.data);
 	if (result) {
 		Stream err = arena_stream(arena);
 
-		stream_append_s8(&err, s8("loading CUDA lib: " OS_CUDA_LIB_NAME "\n"));
-		os_unload_library(cl->lib);
-		cl->lib = os_load_library((c8 *)path.data, OS_CUDA_LIB_TEMP_NAME, &err);
-		#define X(name, symname) cl->name = os_lookup_dynamic_symbol(cl->lib, symname, &err);
-		CUDA_LIB_FNS
+		stream_append_s8(&err, s8("loading CUDA library: " OS_CUDA_LIB_NAME "\n"));
+		os_unload_library(cuda_library_handle);
+		cuda_library_handle = os_load_library((c8 *)path.data, OS_CUDA_LIB_TEMP_NAME, &err);
+		#define X(name, symname) cuda_## name = os_lookup_dynamic_symbol(cuda_library_handle, symname, &err);
+		CUDALibraryProcedureList
 		#undef X
 
 		os_write_file(os->error_handle, stream_to_s8(&err));
 	}
 
-	#define X(name, symname) if (!cl->name) cl->name = cuda_ ## name ## _stub;
-	CUDA_LIB_FNS
+	#define X(name, symname) if (!cuda_## name) cuda_## name = cuda_ ## name ## _stub;
+	CUDALibraryProcedureList
 	#undef X
 
 	return result;
@@ -386,14 +387,13 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 
 	glfwMakeContextCurrent(raylib_window_handle);
 
+	#define X(name, ...) cuda_## name = cuda_## name ##_stub;
+	CUDALibraryProcedureList
+	#undef X
 	if (ctx->gl.vendor_id == GL_VENDOR_NVIDIA
-	    && load_cuda_lib(&ctx->os, s8(OS_CUDA_LIB_NAME), (iptr)&cs->cuda_lib, *memory))
+	    && load_cuda_library(&ctx->os, s8(OS_CUDA_LIB_NAME), 0, *memory))
 	{
-		os_add_file_watch(&ctx->os, memory, s8(OS_CUDA_LIB_NAME), load_cuda_lib, (iptr)&cs->cuda_lib);
-	} else {
-		#define X(name, symname) if (!cs->cuda_lib.name) cs->cuda_lib.name = cuda_ ## name ## _stub;
-		CUDA_LIB_FNS
-		#undef X
+		os_add_file_watch(&ctx->os, memory, s8(OS_CUDA_LIB_NAME), load_cuda_library, 0);
 	}
 
 	/* NOTE: set up OpenGL debug logging */
