@@ -254,8 +254,8 @@ alloc_shader_storage(BeamformerCtx *ctx, u32 decoded_data_size, Arena arena)
 	 * need to do. For now grab out of parameter block 0 but it is not correct */
 	BeamformerParameterBlock *pb = beamformer_parameter_block(ctx->shared_memory.region, 0);
 	/* NOTE(rnp): these are stubs when CUDA isn't supported */
-	cc->cuda_lib.register_buffers(cc->ping_pong_ssbos, countof(cc->ping_pong_ssbos), cc->rf_buffer.ssbo);
-	cc->cuda_lib.init(pb->parameters.rf_raw_dim, pb->parameters.dec_data_dim);
+	cuda_register_buffers(cc->ping_pong_ssbos, countof(cc->ping_pong_ssbos), cc->rf_buffer.ssbo);
+	cuda_init(pb->parameters.rf_raw_dim, pb->parameters.dec_data_dim);
 }
 
 function void
@@ -376,18 +376,18 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	BeamformerParameters *bp = &cp->das_ubo_data;
 
 	b32 decode_first = pb->pipeline.shaders[0] == BeamformerShaderKind_Decode;
-	b32 cuda_hilbert = 0;
-	b32 demodulate   = 0;
+	b32 run_cuda_hilbert = 0;
+	b32 demodulate       = 0;
 
 	for (u32 i = 0; i < pb->pipeline.shader_count; i++) {
 		switch (pb->pipeline.shaders[i]) {
-		case BeamformerShaderKind_CudaHilbert:{ cuda_hilbert = 1; }break;
-		case BeamformerShaderKind_Demodulate:{  demodulate = 1;   }break;
+		case BeamformerShaderKind_CudaHilbert:{ run_cuda_hilbert = 1; }break;
+		case BeamformerShaderKind_Demodulate:{  demodulate = 1;       }break;
 		default:{}break;
 		}
 	}
 
-	if (demodulate) cuda_hilbert = 0;
+	if (demodulate) run_cuda_hilbert = 0;
 
 	mem_copy(bp, &pb->parameters, sizeof(*bp));
 
@@ -399,7 +399,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 		b32 commit = 0;
 
 		switch (shader) {
-		case BeamformerShaderKind_CudaHilbert:{ commit = cuda_hilbert; }break;
+		case BeamformerShaderKind_CudaHilbert:{ commit = run_cuda_hilbert; }break;
 		case BeamformerShaderKind_Decode:{
 			BeamformerShaderKind decode_table[] = {
 				[BeamformerDataKind_Int16]          = BeamformerShaderKind_Decode,
@@ -575,7 +575,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 				texture_type   = GL_SHORT;
 				texture_format = GL_RED_INTEGER;
 				/* TODO(rnp): cuda lib */
-				ctx->compute_context.cuda_lib.set_channel_mapping(pb->channel_mapping);
+				cuda_set_channel_mapping(pb->channel_mapping);
 			}break;
 			case BeamformerParameterBlockRegion_FocalVectors:{
 				texture_kind   = BeamformerComputeTextureKind_FocalVectors;
@@ -677,11 +677,11 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 		cc->last_output_ssbo_index = !cc->last_output_ssbo_index;
 	}break;
 	case BeamformerShaderKind_CudaDecode:{
-		cc->cuda_lib.decode(0, output_ssbo_idx, 0);
+		cuda_decode(0, output_ssbo_idx, 0);
 		cc->last_output_ssbo_index = !cc->last_output_ssbo_index;
 	}break;
 	case BeamformerShaderKind_CudaHilbert:{
-		cc->cuda_lib.hilbert(input_ssbo_idx, output_ssbo_idx);
+		cuda_hilbert(input_ssbo_idx, output_ssbo_idx);
 		cc->last_output_ssbo_index = !cc->last_output_ssbo_index;
 	}break;
 	case BeamformerShaderKind_Demodulate:

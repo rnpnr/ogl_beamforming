@@ -52,19 +52,16 @@ CUDA_HILBERT_FN(cuda_hilbert_stub) {}
 typedef CUDA_SET_CHANNEL_MAPPING_FN(cuda_set_channel_mapping_fn);
 CUDA_SET_CHANNEL_MAPPING_FN(cuda_set_channel_mapping_stub) {}
 
-#define CUDA_LIB_FNS \
+#define CUDALibraryProcedureList \
 	X(decode,              "cuda_decode")              \
 	X(hilbert,             "cuda_hilbert")             \
 	X(init,                "init_cuda_configuration")  \
 	X(register_buffers,    "register_cuda_buffers")    \
 	X(set_channel_mapping, "cuda_set_channel_mapping")
 
-typedef struct {
-	void *lib;
-	#define X(name, symname) cuda_ ## name ## _fn *name;
-	CUDA_LIB_FNS
-	#undef X
-} CudaLib;
+#define X(name, ...) DEBUG_IMPORT cuda_## name ##_fn *cuda_## name;
+CUDALibraryProcedureList
+#undef X
 
 /* TODO(rnp): this should be a UBO */
 #define FRAME_VIEW_MODEL_MATRIX_LOC   0
@@ -225,7 +222,6 @@ typedef struct {
 	u32 shader_timer_ids[BeamformerMaxComputeShaderStages];
 
 	BeamformerRenderModel unit_cube_model;
-	CudaLib cuda_lib;
 } BeamformerComputeContext;
 
 typedef enum {

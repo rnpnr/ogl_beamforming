@@ -874,10 +874,7 @@ main(i32 argc, char *argv[])
 	cmd_append(&arena, &c, OS_MAIN, OUTPUT_EXE("ogl"));
 	cmd_pdb(&arena, &c, "ogl");
 	if (options.debug) {
-		/* NOTE(rnp): (gnu) ld doesn't properly export global symbols without this */
-		if (is_gcc) cmd_append(&arena, &c, "-Wl,--export-dynamic");
-
-		if (!is_w32)  cmd_append(&arena, &c, "-Wl,-rpath,.");
+		if (!is_w32)  cmd_append(&arena, &c, "-Wl,--export-dynamic", "-Wl,-rpath,.");
 		if (!is_msvc) cmd_append(&arena, &c, "-L.");
 		cmd_append(&arena, &c, LINK_LIB("raylib"));
 	} else {
