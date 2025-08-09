@@ -560,7 +560,7 @@ beamform_data_synchronized(void *data, u32 data_size, i32 output_points[3], f32 
 b32
 beamformer_compute_timings(BeamformerComputeStatsTable *output, i32 timeout_ms)
 {
-	static_assert(sizeof(*output) <= BEAMFORMER_SHARED_MEMORY_MIN_SCRATCH_SIZE,
+	static_assert(sizeof(*output) <= BEAMFORMER_SHARED_MEMORY_MAX_SCRATCH_SIZE,
 	              "timing table size exceeds scratch space");
 
 	b32 result = 0;

@@ -1,5 +1,30 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: refactor: ui kind of needs to be mostly thrown away
+ *      - want all drawing to be immediate mode
+ *      - only layout information should be retained
+ *        - leaf nodes of layout have a kind associated which
+ *          instructs the builder code on how to build the view
+ *      - ui items (currently called Variables) are stored in a hash
+ *        table and are looked up for state information at frame building time
+ *        - removed/recycled when last building frame index is less than drawing frame index
+ *      - building:
+ *        - loop over tiled layout tree and floating layout tree as is currently done
+ *          - this will build current frame ui draw tree
+ *        - for each view use a stack structure with grouping, similar to how tables are made
+ *          - more general though: sub groups contain a draw axis (x or y)
+ *        - each ui item gets looked up in the hash table for previous frame drawing info
+ *          - this can then be used to construct a "ui comm" which contains relevant info
+ *            about how that ui item is being interacted with
+ *      - drawing:
+ *        - must be separated into layout constraint solving and rendering
+ *        - layout constraint solving handles sizing, clipping, etc.
+ *          - this will need multiple passes per subgroup to allow for autosizing
+ *          - pay attention to the fixed size points in the hierarchy. fixed size
+ *            items are complete once their children are complete.
+ *        - rendering simply uses the rect/clipping regions produced by layout
+ *          to send draw commands
+ * [ ]: bug: resizing live view causes texture to jump around
  * [ ]: bug: group at end of parameter listing
  * [ ]: refactor: ui should be in its own thread and that thread should only be concerned with the ui
  * [ ]: refactor: remove all the excessive measure_texts (cell drawing, hover_interaction in params table)
@@ -76,9 +101,10 @@ typedef struct BeamformerUI BeamformerUI;
 typedef struct Variable     Variable;
 
 typedef struct {
-	u8   buf[64];
+	u8   buf[128];
 	i32  count;
 	i32  cursor;
+	b32  numeric;
 	UIBlinker cursor_blink;
 	Font *font, *hot_font;
 	Variable *container;
@@ -159,6 +185,7 @@ typedef enum {
 	VT_COMPUTE_STATS_VIEW,
 	VT_COMPUTE_PROGRESS_BAR,
 	VT_LIVE_CONTROLS_VIEW,
+	VT_LIVE_CONTROLS_STRING,
 	VT_SCALE_BAR,
 	VT_UI_BUTTON,
 	VT_UI_MENU,
@@ -339,8 +366,10 @@ struct BeamformerLiveControlsView {
 	Variable tgc_control_points[countof(((BeamformerLiveImagingParameters *)0)->tgc_control_points)];
 	Variable save_button;
 	Variable stop_button;
+	Variable save_text;
 	UIBlinker save_button_blink;
 	u32      hot_field_flag;
+	u32      active_field_flag;
 };
 
 typedef enum {
@@ -594,6 +623,11 @@ stream_append_variable(Stream *s, Variable *var)
 		u32 index = *var->cycler.state;
 		if (var->cycler.labels) stream_append_s8(s, var->cycler.labels[index]);
 		else                    stream_append_u64(s, index);
+	}break;
+	case VT_LIVE_CONTROLS_STRING:{
+		BeamformerLiveImagingParameters *lip = var->generic;
+		stream_append_s8(s, (s8){.data = (u8 *)lip->save_name_tag, .len = lip->save_name_tag_length});
+		if (lip->save_name_tag_length <= 0) stream_append_s8(s, s8("Tag..."));
 	}break;
 	InvalidDefaultCase;
 	}
@@ -1389,6 +1423,10 @@ add_live_controls_view(BeamformerUI *ui, Variable *parent, Arena *arena)
 	fill_variable(&lv->save_button, view, s8("Save Data"), V_INPUT|V_LIVE_CONTROL,
 	              VT_CYCLER, ui->small_font);
 	fill_variable_cycler(&lv->save_button, &lip->save_active, save_labels, countof(save_labels));
+
+	fill_variable(&lv->save_text, view, s8(""), V_INPUT|V_TEXT|V_LIVE_CONTROL,
+	              VT_LIVE_CONTROLS_STRING, ui->small_font);
+	lv->save_text.generic = lip;
 
 	return result;
 }
@@ -2790,14 +2828,13 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 }
 
 function v2
-draw_live_controls_view(BeamformerUI *ui, Variable *var, Rect r, v2 mouse)
+draw_live_controls_view(BeamformerUI *ui, Variable *var, Rect r, v2 mouse, Arena arena)
 {
 	BeamformerSharedMemory          *sm  = ui->shared_memory.region;
 	BeamformerLiveImagingParameters *lip = &sm->live_imaging_parameters;
 	BeamformerLiveControlsView      *lv  = var->generic;
 
 	TextSpec text_spec = {.font = &ui->font, .colour = FG_COLOUR, .flags = TF_LIMITED};
-	text_spec.limits.size.w = r.size.w;
 
 	v2 slider_size = {{MIN(140.0f, r.size.w), (f32)ui->font.baseSize}};
 	v2 button_size = {{MIN(r.size.w, slider_size.x + (f32)ui->font.baseSize), (f32)ui->font.baseSize * 1.5f}};
@@ -2805,6 +2842,8 @@ draw_live_controls_view(BeamformerUI *ui, Variable *var, Rect r, v2 mouse)
 	f32 text_off   = r.pos.x + 0.5f * MAX(0, (r.size.w - slider_size.w - (f32)ui->font.baseSize));
 	f32 slider_off = r.pos.x + 0.5f * (r.size.w - slider_size.w);
 	f32 button_off = r.pos.x + 0.5f * (r.size.w - button_size.w);
+
+	text_spec.limits.size.w = r.size.w - (text_off - r.pos.x);
 
 	v2 at = {{text_off, r.pos.y}};
 
@@ -2840,10 +2879,24 @@ draw_live_controls_view(BeamformerUI *ui, Variable *var, Rect r, v2 mouse)
 		v4 border_colour = BORDER_COLOUR;
 		if (active) border_colour = v4_lerp(BORDER_COLOUR, FOCUSED_COLOUR, ease_in_out_cubic(save_t));
 
+		at.x  = text_off;
+		at.y += draw_text(s8("File Tag:"), at, &text_spec).y;
+		at.x += (f32)text_spec.font->baseSize / 2;
+		text_spec.limits.size.w -= (f32)text_spec.font->baseSize;
+
+		v4 save_text_colour = FG_COLOUR;
+		if (lip->save_name_tag_length <= 0)
+			save_text_colour.a = 0.6f;
+		at.y += draw_variable(ui, arena, &lv->save_text, at, mouse, save_text_colour, text_spec).y;
+		text_spec.limits.size.w += (f32)text_spec.font->baseSize;
+
+		at.x  = button_off;
 		at.y += (f32)ui->font.baseSize * 0.25f;
 		at.y += draw_fancy_button(ui, &lv->save_button, label, (Rect){.pos = at, .size = button_size},
 		                          border_colour, mouse, text_spec).y;
 
+		if (interaction_is_hot(ui, auto_interaction(r, &lv->save_text)))
+			lv->hot_field_flag = BeamformerLiveImagingDirtyFlags_SaveNameTag;
 		if (interaction_is_hot(ui, auto_interaction(r, &lv->save_button)))
 			lv->hot_field_flag = BeamformerLiveImagingDirtyFlags_SaveData;
 	}
@@ -3060,7 +3113,7 @@ draw_ui_view(BeamformerUI *ui, Variable *ui_view, Rect r, v2 mouse, TextSpec tex
 			r.pos.y += 0.5f * (r.size.h - view->rect.size.h);
 		BeamformerSharedMemory *sm = ui->shared_memory.region;
 		if (sm->live_imaging_parameters.active)
-			size = draw_live_controls_view(ui, var, r, mouse);
+			size = draw_live_controls_view(ui, var, r, mouse, ui->arena);
 	}break;
 	InvalidDefaultCase;
 	}
@@ -3254,6 +3307,13 @@ begin_text_input(InputState *is, Rect r, Variable *container, v2 mouse)
 	is->count = s.widx;
 	is->container = container;
 
+	is->numeric = container->view.child->type != VT_LIVE_CONTROLS_STRING;
+	if (container->view.child->type == VT_LIVE_CONTROLS_STRING) {
+		BeamformerLiveImagingParameters *lip = container->view.child->generic;
+		if (lip->save_name_tag_length <= 0)
+			is->count = 0;
+	}
+
 	/* NOTE: extra offset to help with putting a cursor at idx 0 */
 	f32 text_half_char_width = 10.0f;
 	f32 hover_p = CLAMP01((mouse.x - r.pos.x) / r.size.w);
@@ -3272,7 +3332,8 @@ begin_text_input(InputState *is, Rect r, Variable *container, v2 mouse)
 function void
 end_text_input(InputState *is, Variable *var)
 {
-	f32 value = (f32)parse_f64((s8){.len = is->count, .data = is->buf});
+	f32 value = 0;
+	if (is->numeric) value = (f32)parse_f64((s8){.len = is->count, .data = is->buf});
 
 	switch (var->type) {
 	case VT_SCALED_F32:{ var->scaled_real32.val = value; }break;
@@ -3281,6 +3342,11 @@ end_text_input(InputState *is, Variable *var)
 		BeamformerVariable *bv = &var->beamformer_variable;
 		*bv->store = CLAMP(value / bv->display_scale, bv->limits.x, bv->limits.y);
 		var->hover_t = 0;
+	}break;
+	case VT_LIVE_CONTROLS_STRING:{
+		BeamformerLiveImagingParameters *lip = var->generic;
+		mem_copy(lip->save_name_tag, is->buf, (uz)is->count % countof(lip->save_name_tag));
+		lip->save_name_tag_length = is->count % countof(lip->save_name_tag);
 	}break;
 	InvalidDefaultCase;
 	}
@@ -3301,7 +3367,7 @@ update_text_input(InputState *is, Variable *var)
 	     is->count < countof(is->buf) && key > 0;
 	     key = GetCharPressed())
 	{
-		b32 allow_key = (BETWEEN(key, '0', '9') || (key == '.') ||
+		b32 allow_key = !is->numeric || (BETWEEN(key, '0', '9') || (key == '.') ||
 		                 (key == '-' && is->cursor == 0));
 		if (allow_key) {
 			mem_move(is->buf + is->cursor + 1,
@@ -3543,6 +3609,7 @@ ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll)
 				else        hot.kind = InteractionKind_Set;
 			}break;
 			case VT_BEAMFORMER_VARIABLE:
+			case VT_LIVE_CONTROLS_STRING:
 			case VT_F32:
 			case VT_SCALED_F32:
 			{
@@ -3563,6 +3630,12 @@ ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll)
 		}
 
 		ui->interaction = hot;
+
+		if (ui->interaction.var->flags & V_LIVE_CONTROL) {
+			assert(ui->interaction.var->parent->type == VT_LIVE_CONTROLS_VIEW);
+			BeamformerLiveControlsView *lv = ui->interaction.var->parent->generic;
+			lv->active_field_flag = lv->hot_field_flag;
+		}
 
 		if (ui->interaction.var->flags & V_HIDES_CURSOR) {
 			HideCursor();
@@ -3614,7 +3687,7 @@ ui_live_control_update(BeamformerUI *ui, Variable *controls)
 	assert(controls->type == VT_LIVE_CONTROLS_VIEW);
 	BeamformerSharedMemory *sm = ui->shared_memory.region;
 	BeamformerLiveControlsView *lv = controls->generic;
-	atomic_or_u32(&sm->live_imaging_dirty_flags, lv->hot_field_flag);
+	atomic_or_u32(&sm->live_imaging_dirty_flags, lv->active_field_flag);
 }
 
 function void
