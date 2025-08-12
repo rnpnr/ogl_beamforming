@@ -622,14 +622,27 @@ hsv_to_rgb(v4 hsv)
 }
 
 function f32
-ease_cubic(f32 t)
+ease_in_out_cubic(f32 t)
 {
 	f32 result;
 	if (t < 0.5f) {
 		result = 4.0f * t * t * t;
 	} else {
-		f32 c  = -2.0f * t + 2.0f;
-		result =  1.0f - c * c * c / 2.0f;
+		t      = -2.0f * t + 2.0f;
+		result =  1.0f - t * t * t / 2.0f;
+	}
+	return result;
+}
+
+function f32
+ease_in_out_quartic(f32 t)
+{
+	f32 result;
+	if (t < 0.5f) {
+		result = 8.0f * t * t * t * t;
+	} else {
+		t      = -2.0f * t + 2.0f;
+		result =  1.0f - t * t * t * t / 2.0f;
 	}
 	return result;
 }

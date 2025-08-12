@@ -926,13 +926,11 @@ DEBUG_EXPORT BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader)
 		link = link->link;
 	} while (link != src);
 
-	u32 new_program = load_shader(&ctx->os, arena, shader_texts, shader_types, shader_count, shader_name);
-	if (new_program) {
-		glDeleteProgram(*src->shader);
-		*src->shader = new_program;
-		if (src->kind == BeamformerShaderKind_Render3D) ctx->frame_view_render_context.updated = 1;
-	}
-	return new_program != 0;
+	glDeleteProgram(*src->shader);
+	*src->shader = load_shader(&ctx->os, arena, shader_texts, shader_types, shader_count, shader_name);
+	if (src->kind == BeamformerShaderKind_Render3D) ctx->frame_view_render_context.updated = 1;
+
+	return 1;
 }
 
 function b32

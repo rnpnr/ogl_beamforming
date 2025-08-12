@@ -20,7 +20,6 @@
  *      do a redraw on every refresh until completed.
  * [ ]: show full non-truncated string on hover
  * [ ]: refactor: hovered element type and show hovered element in full even when truncated
- * [ ]: visual indicator for broken shader stage gh#27
  * [ ]: bug: cross-plane view with different dimensions for each plane
  * [ ]: refactor: make table_skip_rows useful
  * [ ]: refactor: better method of grouping variables for views such as FrameView/ComputeStatsView
@@ -68,6 +67,11 @@ typedef struct v2_sll {
 	v2             v;
 } v2_sll;
 
+typedef struct {
+	f32 t;
+	f32 scale;
+} UIBlinker;
+
 typedef struct BeamformerUI BeamformerUI;
 typedef struct Variable     Variable;
 
@@ -75,8 +79,7 @@ typedef struct {
 	u8   buf[64];
 	i32  count;
 	i32  cursor;
-	f32  cursor_blink_t;
-	f32  cursor_blink_scale;
+	UIBlinker cursor_blink;
 	Font *font, *hot_font;
 	Variable *container;
 } InputState;
@@ -132,6 +135,7 @@ typedef struct {
 	ComputeShaderStats *compute_shader_stats;
 	Variable           *cycler;
 	ComputeStatsViewKind kind;
+	UIBlinker blink;
 } ComputeStatsView;
 
 typedef struct {
@@ -335,8 +339,7 @@ struct BeamformerLiveControlsView {
 	Variable tgc_control_points[countof(((BeamformerLiveImagingParameters *)0)->tgc_control_points)];
 	Variable save_button;
 	Variable stop_button;
-	f32      save_button_blink_t;
-	f32      save_button_blink_scale;
+	UIBlinker save_button_blink;
 	u32      hot_field_flag;
 };
 
@@ -505,6 +508,16 @@ typedef struct {
 	TextAlignment alignment;
 	Rect          cell_rect;
 } TableIterator;
+
+function f32
+ui_blinker_update(UIBlinker *b, f32 scale)
+{
+	b->t += b->scale * dt_for_frame;
+	if (b->t >= 1.0f) b->scale = -scale;
+	if (b->t <= 0.0f) b->scale =  scale;
+	f32 result = b->t;
+	return result;
+}
 
 function v2
 measure_glyph(Font font, u32 glyph)
@@ -2702,6 +2715,8 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 	u32 stages           = cp->pipeline.shader_count;
 	TextSpec text_spec   = {.font = &ui->font, .colour = FG_COLOUR, .flags = TF_LIMITED};
 
+	ui_blinker_update(&csv->blink, BLINK_SPEED);
+
 	static_assert(BeamformerShaderKind_ComputeCount <= 32, "shader kind bitfield test");
 	u32 seen_shaders = 0;
 	for (u32 i = 0; i < stages; i++) {
@@ -2741,7 +2756,33 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 		push_table_memory_size_row(table, &arena, s8("DAS RF Size:"), cp->rf_size);
 
 	result = v2_add(result, table_extent(table, arena, text_spec.font));
-	draw_table(ui, arena, table, r, text_spec, (v2){0}, 0);
+
+	u32 row_index = 0;
+	u32 *programs = ui->beamformer_context->compute_context.programs;
+	TableIterator *it = table_iterator_new(table, TIK_ROWS, &arena, 0, r.pos, text_spec.font);
+	for (TableRow *row = table_iterator_next(it, &arena);
+	     row;
+	     row = table_iterator_next(it, &arena), row_index++)
+	{
+		Table *t = it->frame.table;
+		Rect cell_rect = it->cell_rect;
+		for (i32 column = 0; column < t->columns; column++) {
+			TableCell *cell = (TableCell *)it->row->data + column;
+			cell_rect.size.w = t->widths[column];
+			text_spec.limits.size.w = r.size.w - (cell_rect.pos.x - it->start_x);
+
+			if (column == 0 && row_index < stages && programs[cp->pipeline.shaders[row_index]] == 0) {
+				text_spec.colour = v4_lerp(FG_COLOUR, FOCUSED_COLOUR, ease_in_out_quartic(csv->blink.t));
+			} else {
+				text_spec.colour = FG_COLOUR;
+			}
+
+			draw_table_cell(ui, arena, cell, cell_rect, t->alignment[column], text_spec, mouse);
+
+			cell_rect.pos.x += cell_rect.size.w + t->cell_pad.w;
+		}
+	}
+
 	return result;
 }
 
@@ -2764,7 +2805,7 @@ draw_live_controls_view(BeamformerUI *ui, Variable *var, Rect r, v2 mouse)
 
 	v2 at = {{text_off, r.pos.y}};
 
-	v4 hsv_power_slider = {{0.35f * ease_cubic(1.0f - lip->transmit_power), 0.65f, 0.65f, 1}};
+	v4 hsv_power_slider = {{0.35f * ease_in_out_cubic(1.0f - lip->transmit_power), 0.65f, 0.65f, 1}};
 	at.y += draw_text(s8("Power:"), at, &text_spec).y;
 	at.x  = slider_off;
 	at.y += draw_variable_slider(ui, &lv->transmit_power, (Rect){.pos = at, .size = slider_size},
@@ -2792,12 +2833,9 @@ draw_live_controls_view(BeamformerUI *ui, Variable *var, Rect r, v2 mouse)
 		b32 active = lip->save_active;
 		s8  label  = lv->save_button.cycler.labels[active % lv->save_button.cycler.cycle_length];
 
-		lv->save_button_blink_t += lv->save_button_blink_scale * dt_for_frame;
-		if (lv->save_button_blink_t >= 1.0f) lv->save_button_blink_scale = -BLINK_SPEED;
-		if (lv->save_button_blink_t <= 0.0f) lv->save_button_blink_scale =  BLINK_SPEED;
-
+		f32 save_t = ui_blinker_update(&lv->save_button_blink, BLINK_SPEED);
 		v4 border_colour = BORDER_COLOUR;
-		if (active) border_colour = v4_lerp(border_colour, FOCUSED_COLOUR, ease_cubic(lv->save_button_blink_t));
+		if (active) border_colour = v4_lerp(BORDER_COLOUR, FOCUSED_COLOUR, ease_in_out_cubic(save_t));
 
 		at.y += (f32)ui->font.baseSize * 0.25f;
 		at.y += draw_fancy_button(ui, &lv->save_button, label, (Rect){.pos = at, .size = button_size},
@@ -3160,7 +3198,7 @@ draw_floating_widgets(BeamformerUI *ui, Rect window_rect, v2 mouse)
 			cursor.size = (v2){{cursor_width,  text_size.h}};
 
 			v4 cursor_colour = FOCUSED_COLOUR;
-			cursor_colour.a  = CLAMP01(is->cursor_blink_t);
+			cursor_colour.a  = ease_in_out_cubic(is->cursor_blink.t);
 			v4 text_colour   = v4_lerp(FG_COLOUR, HOVERED_COLOUR, fw->child->hover_t);
 
 			TextSpec input_text_spec = {.font = is->font, .colour = text_colour};
@@ -3250,9 +3288,7 @@ update_text_input(InputState *is, Variable *var)
 {
 	assert(is->cursor != -1);
 
-	is->cursor_blink_t += is->cursor_blink_scale * dt_for_frame;
-	if (is->cursor_blink_t >= 1.0f) is->cursor_blink_scale = -BLINK_SPEED;
-	if (is->cursor_blink_t <= 0.0f) is->cursor_blink_scale =  BLINK_SPEED;
+	ui_blinker_update(&is->cursor_blink, BLINK_SPEED);
 
 	var->hover_t -= 2 * HOVER_SPEED * dt_for_frame;
 	var->hover_t  = CLAMP01(var->hover_t);
