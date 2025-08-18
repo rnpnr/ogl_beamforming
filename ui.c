@@ -2771,7 +2771,10 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 			cell_rect.size.w = t->widths[column];
 			text_spec.limits.size.w = r.size.w - (cell_rect.pos.x - it->start_x);
 
-			if (column == 0 && row_index < stages && programs[cp->pipeline.shaders[row_index]] == 0) {
+			if (column == 0 && row_index < stages && programs[cp->pipeline.shaders[row_index]] == 0 &&
+			    cp->pipeline.shaders[row_index] != BeamformerShaderKind_CudaHilbert &&
+			    cp->pipeline.shaders[row_index] != BeamformerShaderKind_CudaDecode)
+			{
 				text_spec.colour = v4_lerp(FG_COLOUR, FOCUSED_COLOUR, ease_in_out_quartic(csv->blink.t));
 			} else {
 				text_spec.colour = FG_COLOUR;
