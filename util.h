@@ -15,9 +15,15 @@
 #define typeof __typeof__
 #endif
 
+#if OS_WINDOWS
+  #define EXPORT __declspec(dllexport)
+#else
+  #define EXPORT
+#endif
+
 #ifdef _DEBUG
+  #define DEBUG_EXPORT EXPORT
   #if OS_WINDOWS
-    #define DEBUG_EXPORT __declspec(dllexport)
     #ifdef _BEAMFORMER_DLL
       #define DEBUG_IMPORT __declspec(dllimport)
     #else
@@ -29,7 +35,6 @@
     #else
       #define DEBUG_IMPORT
     #endif
-    #define DEBUG_EXPORT
   #endif
   #define DEBUG_DECL(a) a
   #define assert(c) do { if (!(c)) debugbreak(); } while (0)
