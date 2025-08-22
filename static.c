@@ -1,4 +1,9 @@
 /* See LICENSE for license details. */
+
+/* NOTE(rnp): magic variables to force discrete GPU usage on laptops with multiple devices */
+EXPORT i32 NvOptimusEnablement = 1;
+EXPORT i32 AmdPowerXpressRequestHighPerformance = 1;
+
 #ifndef _DEBUG
 
 #include "beamformer.c"
