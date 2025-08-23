@@ -657,7 +657,7 @@ build_helper_library(Arena arena, CommandList cc)
 	/////////////
 	// header
 	char *lib_header_out = OUTPUT("ogl_beamformer_lib.h");
-	if (needs_rebuild(lib_header_out, "beamformer_parameters.h", "helpers/ogl_beamformer_lib_base.h")) {
+	if (needs_rebuild(lib_header_out, "helpers/ogl_beamformer_lib_base.h")) {
 		s8 parameters_header = os_read_whole_file(&arena, "beamformer_parameters.h");
 		s8 base_header       = os_read_whole_file(&arena, "helpers/ogl_beamformer_lib_base.h");
 		result = parameters_header.len != 0 && base_header.len != 0 &&
@@ -710,6 +710,45 @@ build_tests(Arena arena, CommandList cc)
 	return result;
 }
 
+typedef struct {
+	s8 *data;
+	iz  count;
+	iz  capacity;
+} s8_list;
+
+function void
+s8_split(s8 str, s8 *left, s8 *right, u8 byte)
+{
+	iz i;
+	for (i = 0; i < str.len; i++) if (str.data[i] == byte) break;
+
+	if (left) *left = (s8){.data = str.data, .len = i};
+	if (right) {
+		right->data = str.data + i + 1;
+		right->len  = MAX(0, str.len - (i + 1));
+	}
+}
+
+function s8
+s8_trim(s8 in)
+{
+	s8 result = in;
+	for (iz i = 0; i < in.len && *result.data == ' '; i++) result.data++;
+	result.len -= result.data - in.data;
+	for (; result.len > 0 && result.data[result.len - 1] == ' '; result.len--);
+	return result;
+}
+
+function void
+s8_list_from_s8(s8_list *list, Arena *arena, s8 str)
+{
+	s8 right = str, left;
+	while (right.len > 0) {
+		s8_split(right, &left, &right, ' ');
+		left = s8_trim(left);
+		if (left.len > 0) { *da_push(arena, list) = left; }
+	}
+}
 
 typedef struct {
 	Stream stream;
@@ -733,27 +772,18 @@ meta_indent(MetaprogramContext *m)
 		stream_append_byte(&m->stream, '\t');
 }
 
+#define meta_push(m, ...) meta_push_(m, arg_list(s8, __VA_ARGS__))
 function void
-meta_begin_scope(MetaprogramContext *m, s8 line)
+meta_push_(MetaprogramContext *m, s8 *items, iz count)
 {
-	meta_indent(m);
-	m->indentation_level++;
-	stream_append_s8s(&m->stream, line, s8("\n"));
+	stream_append_s8s_(&m->stream, items, count);
 }
 
-function void
-meta_push_line(MetaprogramContext *m, s8 line)
-{
-	meta_indent(m);
-	stream_append_s8s(&m->stream, line, s8("\n"));
-}
-
-function void
-meta_end_scope(MetaprogramContext *m, s8 line)
-{
-	m->indentation_level--;
-	meta_push_line(m, line);
-}
+#define meta_begin_line(m, ...)  do { meta_indent(m); meta_push(m, __VA_ARGS__);           } while(0)
+#define meta_end_line(m, ...)    do {                 meta_push(m, __VA_ARGS__, s8("\n")); } while(0)
+#define meta_push_line(m, ...)   do { meta_indent(m); meta_push(m, __VA_ARGS__, s8("\n")); } while(0)
+#define meta_begin_scope(m, ...) do { meta_push_line(m, __VA_ARGS__); (m)->indentation_level++; } while(0)
+#define meta_end_scope(m, ...)   do { (m)->indentation_level--; meta_push_line(m, __VA_ARGS__); } while(0)
 
 #define meta_begin_matlab_class_cracker(_1, _2, FN, ...) FN
 #define meta_begin_matlab_class_1(m, name) meta_begin_scope(m, s8("classdef " name))
@@ -774,10 +804,19 @@ meta_push_matlab_property(MetaprogramContext *m, s8 name, i64 length)
 	stream_append_s8(&m->stream, s8(")\n"));
 }
 
+function void
+meta_push_matlab_enum_with_value(MetaprogramContext *m, s8 name, i32 value)
+{
+	meta_indent(m);
+	stream_append_s8s(&m->stream, name, s8(" ("));
+	stream_append_i64(&m->stream, value);
+	stream_append_s8(&m->stream, s8(")\n"));
+}
+
 function b32
 meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 {
-	while (m->indentation_level > 0) meta_end_scope((m), s8("end"));
+	while (m->indentation_level > 0) meta_end_scope(m, s8("end"));
 	b32 result = meta_write_and_reset(m, path);
 	return result;
 }
@@ -788,9 +827,10 @@ build_matlab_bindings(Arena arena)
 	b32 result = 1;
 	os_make_directory(OUTPUT("matlab"));
 
+	Arena scratch = sub_arena(&arena, MB(1), 16);
+
 	char *out = OUTPUT("matlab/OGLBeamformerLiveFeedbackFlags.m");
-	/* NOTE(rnp): if one file is outdated all files are outdated */
-	if (needs_rebuild(out, "beamformer_parameters.h")) {
+	if (needs_rebuild(out)) {
 		/* TODO(rnp): recreate/clear directory incase these file names change */
 		MetaprogramContext m = {.stream = arena_stream(arena)};
 
@@ -800,16 +840,65 @@ build_matlab_bindings(Arena arena)
 		BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST
 		result &= meta_end_and_write_matlab(&m, out);
 
-		meta_begin_matlab_class(&m, "OGLBeamformerShaderStage", "int32");
-		meta_begin_scope(&m, s8("enumeration"));
-		COMPUTE_SHADERS
-		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerShaderStage.m"));
-
 		meta_begin_matlab_class(&m, "OGLBeamformerDataKind", "int32");
 		meta_begin_scope(&m, s8("enumeration"));
 		BEAMFORMER_DATA_KIND_LIST
 		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerDataKind.m"));
 		#undef X
+
+		#define X(kind, ...) meta_push_matlab_enum_with_value(&m, s8(#kind), BeamformerFilterKind_## kind);
+		meta_begin_matlab_class(&m, "OGLBeamformerFilterKind", "int32");
+		meta_begin_scope(&m, s8("enumeration"));
+		BEAMFORMER_FILTER_KIND_LIST(,)
+		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerFilterKind.m"));
+		#undef X
+
+		#define X(kind, ...) meta_push_matlab_enum_with_value(&m, s8(#kind), BeamformerShaderKind_## kind);
+		meta_begin_matlab_class(&m, "OGLBeamformerShaderStage", "int32");
+		meta_begin_scope(&m, s8("enumeration"));
+		COMPUTE_SHADERS
+		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerShaderStage.m"));
+		#undef X
+
+		os_make_directory(OUTPUT("matlab/+OGLBeamformerFilter"));
+		#define X(kind, ...) {OUTPUT("matlab/+OGLBeamformerFilter/" #kind ".m"), s8(#kind),  s8(#__VA_ARGS__)},
+		read_only local_persist struct {char *out; s8 class, args;} filter_table[] = {
+			BEAMFORMER_FILTER_KIND_LIST(,)
+		};
+		#undef X
+
+		s8_list members = {0};
+		for EachElement(filter_table, filter) {
+			typeof(*filter_table) *f = filter_table + filter;
+			members.count = 0;
+			s8_list_from_s8(&members, &scratch, f->args);
+			meta_begin_scope(&m, s8("classdef "), f->class, s8(" < OGLBeamformerFilter.BaseFilter"));
+
+			meta_begin_scope(&m, s8("properties"));
+			for (iz it = 0; it < members.count; it++)
+				meta_push_matlab_property(&m, members.data[it], 1);
+			meta_end_scope(&m, s8("end"));
+
+			meta_begin_scope(&m, s8("methods"));
+			meta_begin_line(&m, s8("function obj = "), f->class, s8("("));
+			for (iz it = 0; it < members.count; it++)
+				meta_push(&m, it > 0 ? s8(", ") : s8(""), members.data[it]);
+			meta_end_line(&m, s8(")"));
+
+			m.indentation_level++;
+			for (iz it = 0; it < members.count; it++)
+				meta_push_line(&m, s8("obj."), members.data[it], s8(" = "), members.data[it], s8(";"));
+			result &= meta_end_and_write_matlab(&m, f->out);
+		}
+
+		meta_begin_matlab_class(&m, "BaseFilter");
+		meta_begin_scope(&m, s8("methods"));
+		meta_begin_scope(&m, s8("function out = Flatten(obj)"));
+		meta_push_line(&m, s8("fields = struct2cell(struct(obj));"));
+		meta_push_line(&m, s8("out    = zeros(1, numel(fields));"));
+		meta_begin_scope(&m, s8("for i = 1:numel(fields)"));
+		meta_push_line(&m, s8("out(i) = fields{i};"));
+		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/+OGLBeamformerFilter/BaseFilter.m"));
 
 		#define X(name, __t, __s, elements, ...) meta_push_line(&m, s8(#name "(1," #elements ")"));
 		meta_begin_matlab_class(&m, "OGLBeamformerParameters");

@@ -23,7 +23,9 @@
 	X(EXPORT_SPACE_OVERFLOW,       12, "not enough space for data export")              \
 	X(SHARED_MEMORY,               13, "failed to open shared memory region")           \
 	X(SYNC_VARIABLE,               14, "failed to acquire lock within timeout period")  \
-	X(INVALID_TIMEOUT,             15, "invalid timeout value")
+	X(INVALID_TIMEOUT,             15, "invalid timeout value")                         \
+	X(INVALID_FILTER_KIND,         16, "invalid filter kind")                           \
+	X(INVALID_FILTER_PARAM_COUNT,  17, "invalid parameters count passed for filter")
 
 #define X(type, num, string) BF_LIB_ERR_KIND_ ##type = num,
 typedef enum {BEAMFORMER_LIB_ERRORS} BeamformerLibErrorKind;
@@ -108,9 +110,10 @@ LIB_FN uint32_t beamformer_push_focal_vectors_at(float     *vectors,  uint32_t c
  * M:
  *   M = (A - 8) / (2.285 (ω_s - ω_p))
  */
-LIB_FN uint32_t beamformer_create_kaiser_low_pass_filter(float beta, float cutoff_frequency,
-                                                         float sampling_frequency, int16_t length,
-                                                         uint8_t filter_slot, uint8_t parameter_block);
+
+LIB_FN uint32_t beamformer_create_filter(BeamformerFilterKind kind, float *filter_parameters,
+                                         uint32_t filter_parameter_count, float sampling_frequency,
+                                         uint32_t complex, uint8_t filter_slot, uint8_t parameter_block);
 
 //////////////////////////
 // Live Imaging Controls

@@ -98,13 +98,15 @@ typedef struct {
 } BeamformerRenderModel;
 
 typedef struct {
-	BeamformerFilterKind kind;
+	BeamformerFilterKind       kind;
 	BeamformerFilterParameters parameters;
+	f32 time_delay;
+	i32 length;
 	u32 texture;
 } BeamformerFilter;
 
 /* X(name, type, gltype) */
-#define BEAMFORMER_DEMOD_UBO_PARAM_LIST \
+#define BEAMFORMER_FILTER_UBO_PARAM_LIST \
 	X(input_channel_stride,   u32, uint)  \
 	X(input_sample_stride,    u32, uint)  \
 	X(input_transmit_stride,  u32, uint)  \
@@ -136,17 +138,19 @@ static_assert((sizeof(BeamformerDecodeUBO) & 15) == 0, "UBO size must be a multi
 
 typedef alignas(16) struct {
 	#define X(name, type, ...) type name;
-	BEAMFORMER_DEMOD_UBO_PARAM_LIST
+	BEAMFORMER_FILTER_UBO_PARAM_LIST
 	#undef X
 	float _pad[2];
-} BeamformerDemodulateUBO;
-static_assert((sizeof(BeamformerDemodulateUBO) & 15) == 0, "UBO size must be a multiple of 16");
+} BeamformerFilterUBO;
+static_assert((sizeof(BeamformerFilterUBO) & 15) == 0, "UBO size must be a multiple of 16");
 
 /* TODO(rnp): das should remove redundant info and add voxel transform */
+/* TODO(rnp): need 1 UBO per filter slot */
 #define BEAMFORMER_COMPUTE_UBO_LIST \
-	X(DAS,        BeamformerParameters,    das)    \
-	X(Decode,     BeamformerDecodeUBO,     decode) \
-	X(Demodulate, BeamformerDemodulateUBO, demod)
+	X(DAS,        BeamformerParameters, das)    \
+	X(Decode,     BeamformerDecodeUBO,  decode) \
+	X(Filter,     BeamformerFilterUBO,  filter) \
+	X(Demodulate, BeamformerFilterUBO,  demod)
 
 #define X(k, ...) BeamformerComputeUBOKind_##k,
 typedef enum {BEAMFORMER_COMPUTE_UBO_LIST BeamformerComputeUBOKind_Count} BeamformerComputeUBOKind;

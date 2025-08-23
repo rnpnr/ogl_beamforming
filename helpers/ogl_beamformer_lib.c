@@ -317,7 +317,7 @@ beamformer_push_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data
 }
 
 function b32
-beamformer_create_filter(BeamformerFilterKind kind, BeamformerFilterParameters params, u8 filter_slot, u8 parameter_block)
+beamformer_create_filter_base(BeamformerFilterKind kind, BeamformerFilterParameters params, u8 filter_slot, u8 parameter_block)
 {
 	b32 result = 0;
 	if (check_shared_memory()) {
@@ -337,16 +337,23 @@ beamformer_create_filter(BeamformerFilterKind kind, BeamformerFilterParameters p
 }
 
 b32
-beamformer_create_kaiser_low_pass_filter(f32 beta, f32 cutoff_frequency, f32 sampling_frequency,
-                                         i16 length, u8 filter_slot, u8 parameter_block)
+beamformer_create_filter(BeamformerFilterKind kind, f32 *filter_parameters, u32 filter_parameter_count,
+                         f32 sampling_frequency, b32 complex, u8 filter_slot, u8 parameter_block)
 {
-	BeamformerFilterParameters params = {
-		.beta               = beta,
-		.cutoff_frequency   = cutoff_frequency,
-		.sampling_frequency = sampling_frequency,
-		.length             = length,
-	};
-	b32 result = beamformer_create_filter(BeamformerFilterKind_Kaiser, params, filter_slot, parameter_block);
+	b32 result = 0;
+	if (lib_error_check(kind >= 0 && kind < BeamformerFilterKind_Count, BF_LIB_ERR_KIND_INVALID_FILTER_KIND)) {
+		BeamformerFilterParameters fp = {.sampling_frequency = sampling_frequency, .complex = complex != 0};
+		#define X(kind, ...) sizeof(fp.kind),
+		read_only local_persist u32 kind_sizes[] = {BEAMFORMER_FILTER_KIND_LIST(,)};
+		#undef X
+		if (lib_error_check(kind_sizes[kind] == sizeof(f32) * filter_parameter_count,
+		                    BF_LIB_ERR_KIND_INVALID_FILTER_PARAM_COUNT))
+		{
+			/* NOTE(rnp): any filter kind struct works as base offset of union */
+			mem_copy(&fp.Kaiser, filter_parameters, kind_sizes[kind]);
+			result = beamformer_create_filter_base(kind, fp, filter_slot, parameter_block);
+		}
+	}
 	return result;
 }
 

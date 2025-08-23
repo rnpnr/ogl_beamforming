@@ -17,14 +17,32 @@ layout(std430, binding = 2) writeonly restrict buffer buffer_2 {
 	DATA_TYPE out_data[];
 };
 
-layout(r32f, binding = 0) readonly restrict uniform  image1D filter_coefficients;
 layout(r16i, binding = 1) readonly restrict uniform iimage1D channel_mapping;
 
-vec2 rotate_iq(vec2 iq, uint index)
+#if COMPLEX_FILTER
+	layout(rg32f, binding = 0) readonly restrict uniform  image1D filter_coefficients;
+	#define apply_filter(iq, h) complex_mul((iq), (h).xy)
+#else
+	layout(r32f, binding = 0) readonly restrict uniform  image1D filter_coefficients;
+	#define apply_filter(iq, h) ((iq) * (h).x)
+#endif
+
+vec2 complex_mul(vec2 a, vec2 b)
+{
+	mat2 m = mat2(b.x, b.y, -b.y, b.x);
+	vec2 result = m * a;
+	return result;
+}
+
+vec2 rotate_iq(vec2 iq, int index)
 {
 	float arg    = radians(360) * demodulation_frequency * index / sampling_frequency;
-	mat2  phasor = mat2( cos(arg), sin(arg),
-	                    -sin(arg), cos(arg));
+	/* TODO(rnp): this can be optimized based on the sampling mode. for  4x sampling
+	 * (NS200BW) coefficients cycle through (cos) {1, 0, -1, 0} (sin) {0, -1, 0, 1}
+	 * so we don't actually need to use the special function unit.  There should be an
+	 * equivalent for BS100BW and BS50BW as well */
+	mat2  phasor = mat2(cos(arg), -sin(arg),
+	                    sin(arg),  cos(arg));
 	vec2  result = phasor * iq;
 	return result;
 }
@@ -56,15 +74,25 @@ void main()
 	}
 
 	if (out_sample < target) {
+		target *= int(decimation_rate);
+
 		vec2 result  = vec2(0);
-		int index    = int(in_sample) - imageSize(filter_coefficients).x;
-		int start    = index < 0 ? -index : 0;
-		index       += start;
-		target      *= int(decimation_rate);
-		for (int i = start; i < imageSize(filter_coefficients).x && index < target; i++, index++) {
-			vec2 iq = sqrt(2.0f) * rotate_iq(sample_rf(in_offset + index) * vec2(1, -1), index);
-			result += iq * imageLoad(filter_coefficients, imageSize(filter_coefficients).x - i - 1).x;
+		int a_length = target;
+		int b_length = imageSize(filter_coefficients).x;
+		int index    = int(in_sample);
+
+		const float scale = bool(COMPLEX_FILTER) ? 1 : sqrt(2);
+
+		for (int j = max(0, index - b_length); j < min(index, a_length); j++) {
+			vec2 iq  = sample_rf(in_offset + j);
+			vec4 h   = imageLoad(filter_coefficients, index - j);
+		#if defined(DEMODULATE)
+			result  += scale * apply_filter(rotate_iq(iq * vec2(1, -1), -j), h);
+		#else
+			result  += apply_filter(iq, h);
+		#endif
 		}
+
 		out_data[out_offset] = RESULT_TYPE_CAST(result);
 	}
 }

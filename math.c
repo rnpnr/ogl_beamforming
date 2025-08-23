@@ -121,26 +121,6 @@ make_hadamard_transpose(Arena *a, i32 dim)
 	return result;
 }
 
-/* NOTE(rnp): adapted from "Discrete Time Signal Processing" (Oppenheim) */
-function f32 *
-kaiser_low_pass_filter(Arena *arena, f32 cutoff_frequency, f32 sampling_frequency, f32 beta, i32 length)
-{
-	f32 *result = push_array(arena, f32, length);
-	f32 wc      = 2 * PI * cutoff_frequency / sampling_frequency;
-	f32 a       = (f32)length / 2.0f;
-	f32 pi_i0_b = PI * (f32)cephes_i0(beta);
-
-	for (i32 n = 0; n < length; n++) {
-		f32 t       = (f32)n - a;
-		f32 impulse = !f32_cmp(t, 0) ? sin_f32(wc * t) / t : wc;
-		t           = t / a;
-		f32 window  = (f32)cephes_i0(beta * sqrt_f32(1 - t * t)) / pi_i0_b;
-		result[n]   = impulse * window;
-	}
-
-	return result;
-}
-
 function b32
 iv2_equal(iv2 a, iv2 b)
 {
@@ -213,6 +193,13 @@ v2_floor(v2 a)
 	v2 result;
 	result.x = (f32)((i32)a.x);
 	result.y = (f32)((i32)a.y);
+	return result;
+}
+
+function f32
+v2_magnitude_squared(v2 a)
+{
+	f32 result = a.x * a.x + a.y * a.y;
 	return result;
 }
 
@@ -590,6 +577,92 @@ obb_raycast(m4 obb_orientation, v3 obb_size, v3 obb_center, ray r)
 		}
 	}
 
+	return result;
+}
+
+function f32
+complex_filter_first_moment(v2 *filter, i32 length, f32 sampling_frequency)
+{
+	f32 n = 0, d = 0;
+	for (i32 i = 0; i < length; i++) {
+		f32 t = v2_magnitude_squared(filter[i]);
+		n += (f32)i * t;
+		d += t;
+	}
+	f32 result = n / d / sampling_frequency;
+	return result;
+}
+
+function f32
+real_filter_first_moment(f32 *filter, i32 length, f32 sampling_frequency)
+{
+	f32 n = 0, d = 0;
+	for (i32 i = 0; i < length; i++) {
+		f32 t = filter[i] * filter[i];
+		n += (f32)i * t;
+		d += t;
+	}
+	f32 result = n / d / sampling_frequency;
+	return result;
+}
+
+function f32
+tukey_window(f32 t, f32 tapering)
+{
+	f32 r = tapering;
+	f32 result = 1;
+	if (t < r / 2)      result = 0.5f * (1 + cos_f32(2 * PI * (t - r / 2)     / r));
+	if (t >= 1 - r / 2) result = 0.5f * (1 + cos_f32(2 * PI * (t - 1 + r / 2) / r));
+	return result;
+}
+
+/* NOTE(rnp): adapted from "Discrete Time Signal Processing" (Oppenheim) */
+function f32 *
+kaiser_low_pass_filter(Arena *arena, f32 cutoff_frequency, f32 sampling_frequency, f32 beta, i32 length)
+{
+	f32 *result = push_array(arena, f32, length);
+	f32 wc      = 2 * PI * cutoff_frequency / sampling_frequency;
+	f32 a       = (f32)length / 2.0f;
+	f32 pi_i0_b = PI * (f32)cephes_i0(beta);
+
+	for (i32 n = 0; n < length; n++) {
+		f32 t       = (f32)n - a;
+		f32 impulse = !f32_cmp(t, 0) ? sin_f32(wc * t) / t : wc;
+		t           = t / a;
+		f32 window  = (f32)cephes_i0(beta * sqrt_f32(1 - t * t)) / pi_i0_b;
+		result[n]   = impulse * window;
+	}
+
+	return result;
+}
+
+function f32 *
+rf_chirp(Arena *arena, f32 min_frequency, f32 max_frequency, f32 sampling_frequency,
+         i32 length, b32 reverse)
+{
+	f32 *result = push_array(arena, f32, length);
+	for (i32 i = 0; i < length; i++) {
+		i32 index = reverse? length - 1 - i : i;
+		f32 fc    = min_frequency + (f32)i * (max_frequency - min_frequency) / (2 * (f32)length);
+		f32 arg   = 2 * PI * fc * (f32)i / sampling_frequency;
+		result[index] = sin_f32(arg) * tukey_window((f32)i / (f32)length, 0.2f);
+	}
+	return result;
+}
+
+function v2 *
+baseband_chirp(Arena *arena, f32 min_frequency, f32 max_frequency, f32 sampling_frequency,
+               i32 length, b32 reverse, f32 scale)
+{
+	v2 *result    = push_array(arena, v2, length);
+	f32 conjugate = reverse ? -1 : 1;
+	for (i32 i = 0; i < length; i++) {
+		i32 index = reverse? length - 1 - i : i;
+		f32 fc    = min_frequency + (f32)i * (max_frequency - min_frequency) / (2 * (f32)length);
+		f32 arg   = 2 * PI * fc * (f32)i / sampling_frequency;
+		v2 sample = {{scale * cos_f32(arg), conjugate * scale * sin_f32(arg)}};
+		result[index] = v2_scale(sample, tukey_window((f32)i / (f32)length, 0.2f));
+	}
 	return result;
 }
 
