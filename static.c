@@ -425,14 +425,14 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 			BEAMFORMER_DECODE_UBO_PARAM_LIST
 			"};\n\n"
 		),
-		[BeamformerShaderKind_Demodulate] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
-			BEAMFORMER_DEMOD_UBO_PARAM_LIST
+		[BeamformerShaderKind_Filter] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
+			BEAMFORMER_FILTER_UBO_PARAM_LIST
 			"};\n\n"
 		),
 		#undef X
 	};
 
-	#define X(e, sn, f, pretty_name) do if (s8(f).len > 0) { \
+	#define X(e, f, ...) do if (s8(f).len > 0) { \
 		ShaderReloadContext *src = push_struct(memory, typeof(*src)); \
 		src->beamformer_context  = ctx;                               \
 		src->header  = compute_headers[BeamformerShaderKind_##e];     \
