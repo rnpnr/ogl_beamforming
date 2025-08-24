@@ -659,11 +659,14 @@ stream_append_variable_group(Stream *s, Variable *var)
 function s8
 push_das_shader_kind(Stream *s, DASShaderKind shader, u32 transmit_count)
 {
-	#define X(type, id, pretty, fixed_tx) s8_comp(pretty),
-	read_only local_persist s8 pretty_names[DASShaderKind_Count + 1] = {DAS_TYPES s8_comp("Invalid")};
+	#define X(__1, __2, pretty, ...) s8_comp(pretty),
+	read_only local_persist s8 pretty_names[DASShaderKind_Count + 1] = {
+		DAS_SHADER_KIND_LIST
+		s8_comp("Invalid")
+	};
 	#undef X
-	#define X(type, id, pretty, fixed_tx) fixed_tx,
-	read_only local_persist u8 fixed_transmits[DASShaderKind_Count + 1] = {DAS_TYPES 0};
+	#define X(__1, __2, __3, fixed_tx) fixed_tx,
+	read_only local_persist u8 fixed_transmits[DASShaderKind_Count + 1] = {DAS_SHADER_KIND_LIST};
 	#undef X
 
 	stream_append_s8(s, pretty_names[MIN(shader, DASShaderKind_Count)]);
@@ -1171,8 +1174,8 @@ add_beamformer_parameters_view(Variable *parent, BeamformerCtx *ctx)
 	add_beamformer_variable(ui, group, &ui->arena, s8("Sampling Frequency:"), s8("[MHz]"),
 	                        &bp->sampling_frequency, (v2){0}, 1e-6f, 0, 0, ui->font);
 
-	add_beamformer_variable(ui, group, &ui->arena, s8("Center Frequency:"), s8("[MHz]"),
-	                        &bp->center_frequency, (v2){.y = 100e6f}, 1e-6f, 1e5f,
+	add_beamformer_variable(ui, group, &ui->arena, s8("Demodulation Frequency:"), s8("[MHz]"),
+	                        &bp->demodulation_frequency, (v2){.y = 100e6f}, 1e-6f, 1e5f,
 	                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 
 	add_beamformer_variable(ui, group, &ui->arena, s8("Speed of Sound:"), s8("[m/s]"),
@@ -1248,8 +1251,8 @@ ui_beamformer_frame_view_convert(BeamformerUI *ui, Arena *arena, Variable *view,
 	bv->threshold.real32          = old? old->threshold.real32          : 55.0f;
 	bv->gamma.scaled_real32.val   = old? old->gamma.scaled_real32.val   : 1.0f;
 	bv->gamma.scaled_real32.scale = old? old->gamma.scaled_real32.scale : 0.05f;
-	bv->min_coordinate = (old && old->frame)? old->frame->min_coordinate.xyz : (v3){0};
-	bv->max_coordinate = (old && old->frame)? old->frame->max_coordinate.xyz : (v3){0};
+	bv->min_coordinate = (old && old->frame)? old->frame->min_coordinate : (v3){0};
+	bv->max_coordinate = (old && old->frame)? old->frame->max_coordinate : (v3){0};
 
 	#define X(_t, pretty) s8_comp(pretty),
 	read_only local_persist s8 kind_labels[] = {BEAMFORMER_FRAME_VIEW_KIND_LIST};
@@ -1501,8 +1504,8 @@ beamformer_frame_view_plane_size(BeamformerUI *ui, BeamformerFrameView *view)
 {
 	v3 result;
 	if (view->kind == BeamformerFrameViewKind_3DXPlane) {
-		v3 min = v4_from_f32_array(ui->params.output_min_coordinate).xyz;
-		v3 max = v4_from_f32_array(ui->params.output_max_coordinate).xyz;
+		v3 min = v3_from_f32_array(ui->params.output_min_coordinate);
+		v3 max = v3_from_f32_array(ui->params.output_max_coordinate);
 		result = v3_sub(max, min);
 		swap(result.y, result.z);
 		result.x = MAX(1e-3f, result.x);
@@ -1711,8 +1714,8 @@ view_update(BeamformerUI *ui, BeamformerFrameView *view)
 		view->dirty |= view->frame != ui->latest_plane[index];
 		view->frame  = ui->latest_plane[index];
 		if (view->dirty) {
-			view->min_coordinate = v4_from_f32_array(ui->params.output_min_coordinate).xyz;
-			view->max_coordinate = v4_from_f32_array(ui->params.output_max_coordinate).xyz;
+			view->min_coordinate = v3_from_f32_array(ui->params.output_min_coordinate);
+			view->max_coordinate = v3_from_f32_array(ui->params.output_max_coordinate);
 		}
 	}
 

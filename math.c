@@ -221,6 +221,16 @@ cross(v3 a, v3 b)
 }
 
 function v3
+v3_from_f32_array(f32 v[3])
+{
+	v3 result;
+	result.E[0] = v[0];
+	result.E[1] = v[1];
+	result.E[2] = v[2];
+	return result;
+}
+
+function v3
 v3_abs(v3 a)
 {
 	v3 result;
@@ -292,17 +302,6 @@ function v3
 v3_normalize(v3 a)
 {
 	v3 result = v3_scale(a, 1.0f / v3_magnitude(a));
-	return result;
-}
-
-function v4
-v4_from_f32_array(f32 v[4])
-{
-	v4 result;
-	result.E[0] = v[0];
-	result.E[1] = v[1];
-	result.E[2] = v[2];
-	result.E[3] = v[3];
 	return result;
 }
 

@@ -36,14 +36,32 @@ vec2 complex_mul(vec2 a, vec2 b)
 
 vec2 rotate_iq(vec2 iq, int index)
 {
-	float arg    = radians(360) * demodulation_frequency * index / sampling_frequency;
-	/* TODO(rnp): this can be optimized based on the sampling mode. for  4x sampling
-	 * (NS200BW) coefficients cycle through (cos) {1, 0, -1, 0} (sin) {0, -1, 0, 1}
-	 * so we don't actually need to use the special function unit.  There should be an
-	 * equivalent for BS100BW and BS50BW as well */
-	mat2  phasor = mat2(cos(arg), -sin(arg),
-	                    sin(arg),  cos(arg));
-	vec2  result = phasor * iq;
+	vec2 result;
+	/* TODO(rnp): this doesn't give us the same performance boost as hardcoding the mode */
+	switch (shader_flags & ShaderFlags_SamplingModeMask) {
+	case SamplingMode_NS200BW:{
+		// fs = 2 * fd
+		// arg = PI * index
+		// cos -> 1 -1  1 -1
+		// sin -> 0  0  0  0
+		/* NOTE(rnp): faster than taking iq or -iq, good job shader compiler */
+		if (bool(index & 1)) result = mat2(-1, 0, 0, -1) * iq;
+		else                 result = mat2( 1, 0, 0,  1) * iq;
+	}break;
+	case SamplingMode_BS100BW:{
+		// fs  = fd
+		// arg = 2 * PI * index
+		// cos -> 1 1 1 1
+		// sin -> 0 0 0 0
+		result = iq;
+	}break;
+	default:{
+		float arg    = radians(360) * demodulation_frequency * index / sampling_frequency;
+		mat2  phasor = mat2(cos(arg), -sin(arg),
+		                    sin(arg),  cos(arg));
+		result = phasor * iq;
+	}break;
+	}
 	return result;
 }
 
@@ -60,6 +78,7 @@ void main()
 	uint channel    = gl_GlobalInvocationID.y;
 	uint transmit   = gl_GlobalInvocationID.z;
 
+	bool map_channels = bool(shader_flags & ShaderFlags_MapChannels);
 	uint in_channel = map_channels ? imageLoad(channel_mapping, int(channel)).x : channel;
 	uint in_offset  = input_channel_stride * in_channel + input_transmit_stride * transmit;
 	uint out_offset = output_channel_stride  * channel +

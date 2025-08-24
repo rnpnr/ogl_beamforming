@@ -2,7 +2,7 @@
 #include <stdint.h>
 
 /* TODO(rnp):
- * [ ]: Have a method for the library caller to take ownership of a "compute context"
+ * [ ]: shader kinds have ballooned; shader stats table needs to be compressed
  * [ ]: Upload previously exported data for display. maybe this is a UI thing but doing it
  *      programatically would be nice.
  * [ ]: Add interface for multi frame upload. RF upload already uses an offset into SM so
@@ -61,6 +61,31 @@ typedef struct {
 	X(NONE,     0, "None")     \
 	X(HADAMARD, 1, "Hadamard")
 
+#define SAMPLING_MODES_LIST \
+	X(NS200BW, 0) \
+	X(BS100BW, 1) \
+	X(BS50BW,  2)
+
+#define TRANSMIT_MODES_LIST \
+	X(Rows)    \
+	X(Columns)
+
+#define RECEIVE_MODES_LIST \
+	X(Rows)    \
+	X(Columns)
+
+#define X(k, ...) BeamformerTransmitMode_## k,
+typedef enum {TRANSMIT_MODES_LIST} BeamformerTransmitModes;
+#undef X
+
+#define X(k, ...) BeamformerReceiveMode_## k,
+typedef enum {RECEIVE_MODES_LIST} BeamformerReceiveModes;
+#undef X
+
+#define X(k, v, ...) BeamformerSamplingMode_## k = v,
+typedef enum {SAMPLING_MODES_LIST BeamformerSamplingMode_Count} BeamformerSamplingModes;
+#undef X
+
 #define BEAMFORMER_DATA_KIND_LIST \
 	X(Int16,          0) \
 	X(Int16Complex,   1) \
@@ -96,7 +121,7 @@ typedef enum {
 } BeamformerViewPlaneTag;
 
 /* X(type, id, pretty name, fixed transmits) */
-#define DAS_TYPES \
+#define DAS_SHADER_KIND_LIST \
 	X(FORCES,          0, "FORCES",         1) \
 	X(UFORCES,         1, "UFORCES",        0) \
 	X(HERCULES,        2, "HERCULES",       1) \
@@ -107,7 +132,7 @@ typedef enum {
 	X(EPIC_FORCES,     7, "EPIC-FORCES",    1) \
 	X(EPIC_UFORCES,    8, "EPIC-UFORCES",   0) \
 	X(EPIC_UHERCULES,  9, "EPIC-UHERCULES", 0) \
-	X(FLASH,          10, "Flash",          0)
+	X(Flash,          10, "Flash",          0)
 
 #define FILTER_LOCAL_SIZE_X 64
 #define FILTER_LOCAL_SIZE_Y  1
@@ -129,8 +154,7 @@ typedef enum {
 
 #define DAS_VOXEL_OFFSET_UNIFORM_LOC  2
 #define DAS_CYCLE_T_UNIFORM_LOC       3
-#define DAS_VOXEL_MATRIX_LOC          4
-#define DAS_FAST_CHANNEL_UNIFORM_LOC  5
+#define DAS_FAST_CHANNEL_UNIFORM_LOC  4
 
 #define MIN_MAX_MIPS_LEVEL_UNIFORM_LOC 1
 #define SUM_PRESCALE_UNIFORM_LOC       1
@@ -146,57 +170,44 @@ typedef enum {
 enum {BEAMFORMER_CONSTANTS_LIST};
 #undef X
 
-/* TODO(rnp): actually use a substruct but generate a header compatible with MATLAB */
-/* X(name, type, size, elements, gltype, glsize, comment) */
-#define BEAMFORMER_UI_PARAMS \
-	X(output_min_coordinate, float,    [4], 4, vec4,    , "/* [m] Back-Top-Left corner of output region */")                    \
-	X(output_max_coordinate, float,    [4], 4, vec4,    , "/* [m] Front-Bottom-Right corner of output region */")               \
-	X(output_points,         int32_t,  [4], 4, uvec4,   , "/* Width * Height * Depth * (Frame Average Count) */")               \
-	X(sampling_frequency,    float,       , 1, float,   , "/* [Hz]  */")                                                        \
-	X(center_frequency,      float,       , 1, float,   , "/* [Hz]  */")                                                        \
-	X(speed_of_sound,        float,       , 1, float,   , "/* [m/s] */")                                                        \
-	X(off_axis_pos,          float,       , 1, float,   , "/* [m] Position on screen normal to beamform in TPW/VLSHERCULES */") \
-	X(beamform_plane,        int32_t,     , 1, int,     , "/* Plane to Beamform in TPW/VLS/HERCULES */")                        \
-	X(f_number,              float,       , 1, float,   , "/* F# (set to 0 to disable) */")                                     \
-	X(interpolate,           uint32_t,    , 1, bool,    , "/* Perform Cubic Interpolation of RF Samples */")                    \
-	X(coherency_weighting,   uint32_t,    , 1, bool,    , "/* Apply coherency weighting to output data */")                     \
-	X(decimation_rate,       uint32_t,    , 1, uint,    , "/* Number of times to decimate */")
-
+/* X(name, type, size, elements, comment) */
 #define BEAMFORMER_PARAMS_HEAD \
-	X(xdc_transform,     float,    [16], 16, mat4,       , "/* IMPORTANT: column major order */")                                      \
-	X(dec_data_dim,      uint32_t, [4] ,  4, ivec4,      , "/* Samples * Channels * Acquisitions; last element ignored */")            \
-	X(xdc_element_pitch, float,    [2] ,  2, vec2,       , "/* [m] Transducer Element Pitch {row, col} */")                            \
-	X(rf_raw_dim,        uint32_t, [2] ,  2, ivec2,      , "/* Raw Data Dimensions */")                                                \
-	X(transmit_mode,     int32_t,      ,  1, int,        , "/* Method/Orientation of Transmit */")                                     \
-	X(decode,            uint32_t,     ,  1, uint,       , "/* Decode or just reshape data */")                                        \
-	X(das_shader_id,     uint32_t,     ,  1, uint,       , "")                                                                         \
-	X(time_offset,       float,        ,  1, float,      , "/* pulse length correction time [s] */")
+	X(xdc_transform,          float,    [16], 16, "IMPORTANT: column major order")           \
+	X(xdc_element_pitch,      float,     [2],  2, "[m] Transducer Element Pitch {row, col}") \
+	X(raw_data_dimensions,    uint32_t,  [2],  2, "Raw Data Dimensions")                     \
+	X(sample_count,           uint32_t,     ,  1, "")                                        \
+	X(channel_count,          uint32_t,     ,  1, "")                                        \
+	X(acquisition_count,      uint32_t,     ,  1, "")                                        \
+	X(das_shader_id,          uint32_t,     ,  1, "")                                        \
+	X(time_offset,            float,        ,  1, "pulse length correction time [s]")        \
+	X(decode,                 uint8_t,      ,  1, "Decode or just reshape data")             \
+	X(transmit_mode,          uint8_t,      ,  1, "Method/Orientation of Transmit")          \
+	X(receive_mode,           uint8_t,      ,  1, "Method/Orientation of Receive")           \
+	X(sampling_mode,          uint8_t,      ,  1, "")
 
-#define BEAMFORMER_PARAMS_TAIL \
-	X(readi_group_id,   uint32_t, , 1, uint, , "/* Which readi group this data is from */") \
-	X(readi_group_size, uint32_t, , 1, uint, , "/* Size of readi transmit group */")
+#define BEAMFORMER_UI_PARAMS \
+	X(output_min_coordinate,  float,     [3], 3, "[m] Back-Top-Left corner of output region")                     \
+	X(output_max_coordinate,  float,     [3], 3, "[m] Front-Bottom-Right corner of output region")                \
+	X(output_points,          int32_t,   [4], 4, "Width * Height * Depth * (Frame Average Count)")                \
+	X(sampling_frequency,     float,        , 1, "[Hz]")                                                          \
+	X(demodulation_frequency, float,        , 1, "[Hz]")                                                          \
+	X(speed_of_sound,         float,        , 1, "[m/s]")                                                         \
+	X(f_number,               float,        , 1, "F# (set to 0 to disable)")                                      \
+	X(off_axis_pos,           float,        , 1, "[m] Position on screen normal to beamform in TPW/VLS/HERCULES") \
+	X(interpolate,            uint32_t,     , 1, "Perform Cubic Interpolation of RF Samples")                     \
+	X(coherency_weighting,    uint32_t,     , 1, "Apply coherency weighting to output data")                      \
+	X(beamform_plane,         uint32_t,     , 1, "Plane to Beamform in TPW/VLS/HERCULES")                         \
+	X(decimation_rate,        uint32_t,     , 1, "Number of times to decimate")
 
-#define X(name, type, size, __e, gltype, glsize, comment) type name size;
-typedef struct { BEAMFORMER_UI_PARAMS }    BeamformerUIParameters;
-typedef struct { BEAMFORMER_PARAMS_HEAD }  BeamformerParametersHead;
-typedef struct { BEAMFORMER_PARAMS_TAIL }  BeamformerParametersTail;
+#define X(name, type, size, ...) type name size;
+typedef struct {BEAMFORMER_PARAMS_HEAD} BeamformerParametersHead;
+typedef struct {BEAMFORMER_UI_PARAMS}   BeamformerUIParameters;
 
-/* NOTE: This struct follows the OpenGL std140 layout. DO NOT modify unless you have
- * read and understood the rules, particulary with regards to _member alignment_ */
 typedef struct {
 	BEAMFORMER_PARAMS_HEAD
 	BEAMFORMER_UI_PARAMS
-	BEAMFORMER_PARAMS_TAIL
-	float _pad[1];
 } BeamformerParameters;
 #undef X
-
-/* NOTE(rnp): keep this header importable for old C versions */
-#if __STDC_VERSION__ >= 201112L
-_Static_assert((offsetof(BeamformerParameters, output_min_coordinate) & 15) == 0,
-               "BeamformerParameters.output_min_coordinate must lie on a 16 byte boundary");
-_Static_assert((sizeof(BeamformerParameters) & 15) == 0, "UBO size must be a multiple of 16");
-#endif
 
 #define BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST \
 	X(ImagePlaneOffsets, 0) \

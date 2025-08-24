@@ -860,6 +860,27 @@ build_matlab_bindings(Arena arena)
 		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerShaderStage.m"));
 		#undef X
 
+		#define X(kind, ...) meta_push_matlab_enum_with_value(&m, s8(#kind), BeamformerTransmitMode_## kind);
+		meta_begin_matlab_class(&m, "OGLBeamformerTransmitModes", "int32");
+		meta_begin_scope(&m, s8("enumeration"));
+		TRANSMIT_MODES_LIST
+		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerTransmitModes.m"));
+		#undef X
+
+		#define X(kind, ...) meta_push_matlab_enum_with_value(&m, s8(#kind), BeamformerReceiveMode_## kind);
+		meta_begin_matlab_class(&m, "OGLBeamformerReceiveModes", "int32");
+		meta_begin_scope(&m, s8("enumeration"));
+		RECEIVE_MODES_LIST
+		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerReceiveModes.m"));
+		#undef X
+
+		#define X(kind, v, ...) meta_push_line(&m, s8(#kind " (" #v ")"));
+		meta_begin_matlab_class(&m, "OGLBeamformerSamplingModes", "int32");
+		meta_begin_scope(&m, s8("enumeration"));
+		SAMPLING_MODES_LIST
+		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerSamplingModes.m"));
+		#undef X
+
 		os_make_directory(OUTPUT("matlab/+OGLBeamformerFilter"));
 		#define X(kind, ...) {OUTPUT("matlab/+OGLBeamformerFilter/" #kind ".m"), s8(#kind),  s8(#__VA_ARGS__)},
 		read_only local_persist struct {char *out; s8 class, args;} filter_table[] = {
@@ -905,7 +926,6 @@ build_matlab_bindings(Arena arena)
 		meta_begin_scope(&m, s8("properties"));
 		BEAMFORMER_PARAMS_HEAD
 		BEAMFORMER_UI_PARAMS
-		BEAMFORMER_PARAMS_TAIL
 		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerParameters.m"));
 
 		meta_begin_matlab_class(&m, "OGLBeamformerParametersHead");

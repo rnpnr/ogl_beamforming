@@ -105,6 +105,24 @@ typedef struct {
 	u32 texture;
 } BeamformerFilter;
 
+#define DAS_SHADER_FLAGS_LIST \
+	X(RxColumns,          (1 << 0)) \
+	X(TxColumns,          (1 << 1)) \
+	X(Interpolate,        (1 << 2)) \
+	X(CoherencyWeighting, (1 << 3))
+
+#define X(k, v, ...) DASShaderFlags_## k = v,
+typedef enum {DAS_SHADER_FLAGS_LIST} DASShaderFlags;
+#undef X
+
+static_assert(BeamformerSamplingMode_Count < 4, "filter sample mode mask borked");
+#define FILTER_SHADER_FLAGS_LIST \
+	X(SamplingModeMask, ((1 << 0) | (1 << 1))) \
+	X(MapChannels,      (1 << 2))
+#define X(k, v, ...) FilterShaderFlags_## k = v,
+typedef enum {FILTER_SHADER_FLAGS_LIST} FilterShaderFlags;
+#undef X
+
 /* X(name, type, gltype) */
 #define BEAMFORMER_FILTER_UBO_PARAM_LIST \
 	X(input_channel_stride,   u32, uint)  \
@@ -114,7 +132,7 @@ typedef struct {
 	X(output_sample_stride,   u32, uint)  \
 	X(output_transmit_stride, u32, uint)  \
 	X(decimation_rate,        u32, uint)  \
-	X(map_channels,           b32, bool)  \
+	X(shader_flags,           u32, int)   \
 	X(demodulation_frequency, f32, float) \
 	X(sampling_frequency,     f32, float)
 
@@ -128,6 +146,22 @@ typedef struct {
 	X(output_transmit_stride, u32, uint) \
 	X(transmit_count,         u32, uint) \
 	X(decode_mode,            u32, uint)
+
+/* X(name, type, gltype) */
+#define BEAMFORMER_DAS_UBO_PARAM_LIST \
+	X(voxel_transform,        m4,  mat4)  \
+	X(xdc_transform,          m4,  mat4)  \
+	X(xdc_element_pitch,      v2,  vec2)  \
+	X(sampling_frequency,     f32, float) \
+	X(demodulation_frequency, f32, float) \
+	X(speed_of_sound,         f32, float) \
+	X(time_offset,            f32, float) \
+	X(f_number,               f32, float) \
+	X(shader_flags,           u32, int)   \
+	X(shader_kind,            u32, uint)  \
+	X(sample_count,           u32, uint)  \
+	X(channel_count,          u32, uint)  \
+	X(acquisition_count,      u32, uint)
 
 typedef alignas(16) struct {
 	#define X(name, type, ...) type name;
@@ -144,13 +178,20 @@ typedef alignas(16) struct {
 } BeamformerFilterUBO;
 static_assert((sizeof(BeamformerFilterUBO) & 15) == 0, "UBO size must be a multiple of 16");
 
+typedef alignas(16) struct {
+	#define X(name, type, ...) type name;
+	BEAMFORMER_DAS_UBO_PARAM_LIST
+	#undef X
+} BeamformerDASUBO;
+static_assert((sizeof(BeamformerDASUBO) & 15) == 0, "UBO size must be a multiple of 16");
+
 /* TODO(rnp): das should remove redundant info and add voxel transform */
 /* TODO(rnp): need 1 UBO per filter slot */
 #define BEAMFORMER_COMPUTE_UBO_LIST \
-	X(DAS,        BeamformerParameters, das)    \
-	X(Decode,     BeamformerDecodeUBO,  decode) \
-	X(Filter,     BeamformerFilterUBO,  filter) \
-	X(Demodulate, BeamformerFilterUBO,  demod)
+	X(DAS,        BeamformerDASUBO,    das)    \
+	X(Decode,     BeamformerDecodeUBO, decode) \
+	X(Filter,     BeamformerFilterUBO, filter) \
+	X(Demodulate, BeamformerFilterUBO, demod)
 
 #define X(k, ...) BeamformerComputeUBOKind_##k,
 typedef enum {BEAMFORMER_COMPUTE_UBO_LIST BeamformerComputeUBOKind_Count} BeamformerComputeUBOKind;
@@ -180,6 +221,11 @@ struct BeamformerComputePlan {
 
 	u32 rf_size;
 	i32 hadamard_order;
+
+	v3  min_coordinate;
+	v3  max_coordinate;
+	iv3 output_points;
+	i32 average_frames;
 
 	u32 textures[BeamformerComputeTextureKind_Count];
 	u32 ubos[BeamformerComputeUBOKind_Count];
@@ -229,8 +275,8 @@ typedef struct {
 } BeamformerComputeContext;
 
 typedef enum {
-	#define X(type, id, pretty, fixed_tx) DASShaderKind_##type = id,
-	DAS_TYPES
+	#define X(type, id, ...) DASShaderKind_##type = id,
+	DAS_SHADER_KIND_LIST
 	#undef X
 	DASShaderKind_Count
 } DASShaderKind;
@@ -285,8 +331,8 @@ struct BeamformerFrame {
 
 	/* NOTE: for use when displaying either prebeamformed frames or on the current frame
 	 * when we intend to recompute on the next frame */
-	v4  min_coordinate;
-	v4  max_coordinate;
+	v3  min_coordinate;
+	v3  max_coordinate;
 
 	// metadata
 	u32                    id;
