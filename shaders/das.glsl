@@ -14,17 +14,11 @@ layout(rg32f, binding = 2) readonly  restrict uniform image1D  focal_vectors;
 
 #define C_SPLINE 0.5
 
-#define TX_ROWS 0
-#define TX_COLS 1
-
-#define TX_MODE_TX_COLS(a) (((a) & 2) != 0)
-#define TX_MODE_RX_COLS(a) (((a) & 1) != 0)
-
 vec2 rotate_iq(vec2 iq, float time)
 {
 	vec2 result = iq;
-	if (center_frequency > 0) {
-		float arg    = radians(360) * center_frequency * time;
+	if (demodulation_frequency > 0) {
+		float arg    = radians(360) * demodulation_frequency * time;
 		mat2  phasor = mat2( cos(arg), sin(arg),
 		                    -sin(arg), cos(arg));
 		result = phasor * iq;
@@ -35,7 +29,7 @@ vec2 rotate_iq(vec2 iq, float time)
 /* NOTE: See: https://cubic.org/docs/hermite.htm */
 vec2 cubic(int base_index, float index)
 {
-	mat4 h = mat4(
+	const mat4 h = mat4(
 		 2, -3,  0, 1,
 		-2,  3,  0, 0,
 		 1, -2,  1, 0,
@@ -63,8 +57,9 @@ vec2 cubic(int base_index, float index)
 
 vec2 sample_rf(int channel, int transmit, float index)
 {
-	vec2 result     = vec2(index >= 0.0f) * vec2((int(index) + 1 + int(interpolate)) < dec_data_dim.x);
-	int  base_index = channel * dec_data_dim.x * dec_data_dim.z + transmit * dec_data_dim.x;
+	bool interpolate = bool(shader_flags & ShaderFlags_Interpolate);
+	vec2 result     = vec2(index >= 0.0f) * vec2((int(index) + 1 + int(interpolate)) < sample_count);
+	int  base_index = int(channel * sample_count * acquisition_count + transmit * sample_count);
 	if (interpolate) result *= cubic(base_index, index);
 	else             result *= rf_data[base_index + int(round(index))];
 	result = rotate_iq(result, index / sampling_frequency);
@@ -110,8 +105,8 @@ float cylindrical_wave_transmit_distance(vec3 point, float focal_depth, float tr
 #if DAS_FAST
 vec3 RCA(vec3 world_point)
 {
-	bool  tx_rows         = !TX_MODE_TX_COLS(transmit_mode);
-	bool  rx_rows         = !TX_MODE_RX_COLS(transmit_mode);
+	bool  tx_rows         = bool((shader_flags & ShaderFlags_TxColumns) == 0);
+	bool  rx_rows         = bool((shader_flags & ShaderFlags_RxColumns) == 0);
 	vec2  xdc_world_point = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
 	vec2  focal_vector    = imageLoad(focal_vectors, u_channel).xy;
 	float transmit_angle  = radians(focal_vector.x);
@@ -126,7 +121,7 @@ vec3 RCA(vec3 world_point)
 	}
 
 	vec2 result = vec2(0);
-	for (int channel = 0; channel < dec_data_dim.y; channel++) {
+	for (int channel = 0; channel < channel_count; channel++) {
 		vec2  receive_vector   = xdc_world_point - rca_plane_projection(vec3(channel * xdc_element_pitch, 0), rx_rows);
 		float receive_distance = length(receive_vector);
 		float apodization      = apodize(f_number * radians(180) / abs(xdc_world_point.y) * receive_vector.x);
@@ -141,12 +136,12 @@ vec3 RCA(vec3 world_point)
 #else
 vec3 RCA(vec3 world_point)
 {
-	bool tx_rows         = !TX_MODE_TX_COLS(transmit_mode);
-	bool rx_rows         = !TX_MODE_RX_COLS(transmit_mode);
+	bool tx_rows         = bool((shader_flags & ShaderFlags_TxColumns) == 0);
+	bool rx_rows         = bool((shader_flags & ShaderFlags_RxColumns) == 0);
 	vec2 xdc_world_point = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
 
 	vec3 sum = vec3(0);
-	for (int transmit = 0; transmit < dec_data_dim.z; transmit++) {
+	for (int transmit = 0; transmit < acquisition_count; transmit++) {
 		vec2  focal_vector   = imageLoad(focal_vectors, transmit).xy;
 		float transmit_angle = radians(focal_vector.x);
 		float focal_depth    = focal_vector.y;
@@ -159,7 +154,7 @@ vec3 RCA(vec3 world_point)
 			                                                       transmit_angle, tx_rows);
 		}
 
-		for (int rx_channel = 0; rx_channel < dec_data_dim.y; rx_channel++) {
+		for (int rx_channel = 0; rx_channel < channel_count; rx_channel++) {
 			vec3  rx_center      = vec3(rx_channel * xdc_element_pitch, 0);
 			vec2  receive_vector = xdc_world_point - rca_plane_projection(rx_center, rx_rows);
 			float apodization    = apodize(f_number * radians(180) / abs(xdc_world_point.y) * receive_vector.x);
@@ -178,10 +173,10 @@ vec3 RCA(vec3 world_point)
 #if DAS_FAST
 vec3 HERCULES(vec3 world_point)
 {
-	bool  uhercules       = das_shader_id == DAS_ID_UHERCULES;
+	bool  uhercules       = shader_kind == ShaderKind_UHERCULES;
 	vec3  xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
-	bool  tx_rows         = !TX_MODE_TX_COLS(transmit_mode);
-	bool  rx_cols         =  TX_MODE_RX_COLS(transmit_mode);
+	bool  tx_rows         = bool((shader_flags & ShaderFlags_TxColumns) == 0);
+	bool  rx_cols         = bool((shader_flags & ShaderFlags_RxColumns));
 	vec2  focal_vector    = imageLoad(focal_vectors, 0).xy;
 	float transmit_angle  = radians(focal_vector.x);
 	float focal_depth     = focal_vector.y;
@@ -195,7 +190,7 @@ vec3 HERCULES(vec3 world_point)
 	}
 
 	vec2 result = vec2(0);
-	for (int transmit = int(uhercules); transmit < dec_data_dim.z; transmit++) {
+	for (int transmit = int(uhercules); transmit < acquisition_count; transmit++) {
 		int tx_channel = uhercules ? imageLoad(sparse_elements, transmit - int(uhercules)).x : transmit;
 		vec3 element_position;
 		if (rx_cols) element_position = vec3(u_channel,  tx_channel, 0) * vec3(xdc_element_pitch, 0);
@@ -205,7 +200,7 @@ vec3 HERCULES(vec3 world_point)
 		                            distance(xdc_world_point.xy, element_position.xy));
 		if (apodization > 0) {
 			/* NOTE: tribal knowledge */
-			if (transmit == 0) apodization *= inversesqrt(dec_data_dim.z);
+			if (transmit == 0) apodization *= inversesqrt(acquisition_count);
 
 			float sidx  = sample_index(transmit_distance + distance(xdc_world_point, element_position));
 			result     += apodization * sample_rf(u_channel, transmit, sidx);
@@ -216,10 +211,10 @@ vec3 HERCULES(vec3 world_point)
 #else
 vec3 HERCULES(vec3 world_point)
 {
-	bool  uhercules       = das_shader_id == DAS_ID_UHERCULES;
+	bool  uhercules       = shader_kind == ShaderKind_UHERCULES;
 	vec3  xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
-	bool  tx_rows         = !TX_MODE_TX_COLS(transmit_mode);
-	bool  rx_cols         =  TX_MODE_RX_COLS(transmit_mode);
+	bool  tx_rows         = bool((shader_flags & ShaderFlags_TxColumns) == 0);
+	bool  rx_cols         = bool((shader_flags & ShaderFlags_RxColumns));
 	vec2  focal_vector    = imageLoad(focal_vectors, 0).xy;
 	float transmit_angle  = radians(focal_vector.x);
 	float focal_depth     = focal_vector.y;
@@ -233,9 +228,9 @@ vec3 HERCULES(vec3 world_point)
 	}
 
 	vec3 result = vec3(0);
-	for (int transmit = int(uhercules); transmit < dec_data_dim.z; transmit++) {
+	for (int transmit = int(uhercules); transmit < acquisition_count; transmit++) {
 		int tx_channel = uhercules ? imageLoad(sparse_elements, transmit - int(uhercules)).x : transmit;
-		for (int rx_channel = 0; rx_channel < dec_data_dim.y; rx_channel++) {
+		for (int rx_channel = 0; rx_channel < channel_count; rx_channel++) {
 			vec3 element_position;
 			if (rx_cols) element_position = vec3(rx_channel, tx_channel, 0) * vec3(xdc_element_pitch, 0);
 			else         element_position = vec3(tx_channel, rx_channel, 0) * vec3(xdc_element_pitch, 0);
@@ -244,7 +239,7 @@ vec3 HERCULES(vec3 world_point)
 			                            distance(xdc_world_point.xy, element_position.xy));
 			if (apodization > 0) {
 				/* NOTE: tribal knowledge */
-				if (transmit == 0) apodization *= inversesqrt(dec_data_dim.z);
+				if (transmit == 0) apodization *= inversesqrt(acquisition_count);
 
 				float sidx   = sample_index(transmit_distance + distance(xdc_world_point, element_position));
 				vec2  value  = apodization * sample_rf(rx_channel, transmit, sidx);
@@ -259,7 +254,7 @@ vec3 HERCULES(vec3 world_point)
 #if DAS_FAST
 vec3 FORCES(vec3 world_point)
 {
-	bool  uforces          = das_shader_id == DAS_ID_UFORCES;
+	bool  uforces          = shader_kind == ShaderKind_UFORCES;
 	vec3  xdc_world_point  = (xdc_transform * vec4(world_point, 1)).xyz;
 	float receive_distance = distance(xdc_world_point.xz, vec2(u_channel * xdc_element_pitch.x, 0));
 	float apodization      = apodize(f_number * radians(180) / abs(xdc_world_point.z) *
@@ -267,9 +262,9 @@ vec3 FORCES(vec3 world_point)
 
 	vec2 result = vec2(0);
 	if (apodization > 0) {
-		for (int transmit = int(uforces); transmit < dec_data_dim.z; transmit++) {
+		for (int transmit = int(uforces); transmit < acquisition_count; transmit++) {
 			int   tx_channel      = uforces ? imageLoad(sparse_elements, transmit - int(uforces)).x : transmit;
-			vec3  transmit_center = vec3(xdc_element_pitch * vec2(tx_channel, floor(dec_data_dim.y / 2)), 0);
+			vec3  transmit_center = vec3(xdc_element_pitch * vec2(tx_channel, floor(channel_count / 2)), 0);
 
 			float sidx  = sample_index(distance(xdc_world_point, transmit_center) + receive_distance);
 			result     += apodization * sample_rf(u_channel, transmit, sidx);
@@ -280,18 +275,18 @@ vec3 FORCES(vec3 world_point)
 #else
 vec3 FORCES(vec3 world_point)
 {
-	bool uforces         = das_shader_id == DAS_ID_UFORCES;
+	bool uforces         = shader_kind == ShaderKind_UFORCES;
 	vec3 xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
 
 	vec3 result = vec3(0);
-	for (int rx_channel = 0; rx_channel < dec_data_dim.y; rx_channel++) {
+	for (int rx_channel = 0; rx_channel < channel_count; rx_channel++) {
 		float receive_distance = distance(xdc_world_point.xz, vec2(rx_channel * xdc_element_pitch.x, 0));
 		float apodization      = apodize(f_number * radians(180) / abs(xdc_world_point.z) *
 		                                 (xdc_world_point.x - rx_channel * xdc_element_pitch.x));
 		if (apodization > 0) {
-			for (int transmit = int(uforces); transmit < dec_data_dim.z; transmit++) {
+			for (int transmit = int(uforces); transmit < acquisition_count; transmit++) {
 				int   tx_channel      = uforces ? imageLoad(sparse_elements, transmit - int(uforces)).x : transmit;
-				vec3  transmit_center = vec3(xdc_element_pitch * vec2(tx_channel, floor(dec_data_dim.y / 2)), 0);
+				vec3  transmit_center = vec3(xdc_element_pitch * vec2(tx_channel, floor(channel_count / 2)), 0);
 
 				float sidx   = sample_index(distance(xdc_world_point, transmit_center) + receive_distance);
 				vec2  value  = apodization * sample_rf(rx_channel, tx_channel, sidx);
@@ -313,29 +308,30 @@ void main()
 	out_voxel += u_voxel_offset;
 #endif
 
-	vec3 world_point = (u_voxel_transform * vec4(out_voxel, 1)).xyz;
+	vec3 world_point = (voxel_transform * vec4(out_voxel, 1)).xyz;
 
-	switch (das_shader_id) {
-	case DAS_ID_FORCES:
-	case DAS_ID_UFORCES:
+	switch (shader_kind) {
+	case ShaderKind_FORCES:
+	case ShaderKind_UFORCES:
 	{
 		sum += FORCES(world_point);
 	}break;
-	case DAS_ID_HERCULES:
-	case DAS_ID_UHERCULES:
+	case ShaderKind_HERCULES:
+	case ShaderKind_UHERCULES:
 	{
 		sum += HERCULES(world_point);
 	}break;
-	case DAS_ID_FLASH:
-	case DAS_ID_RCA_TPW:
-	case DAS_ID_RCA_VLS:
+	case ShaderKind_Flash:
+	case ShaderKind_RCA_TPW:
+	case ShaderKind_RCA_VLS:
 	{
 		sum += RCA(world_point);
 	}break;
 	}
 
 	/* TODO(rnp): scale such that brightness remains ~constant */
-	if (coherency_weighting) sum.xy *= sum.xy / (sum.z + float(sum.z == 0));
+	if (bool(shader_flags & ShaderFlags_CoherencyWeighting))
+		sum.xy *= sum.xy / (sum.z + float(sum.z == 0));
 
 	imageStore(u_out_data_tex, out_voxel, vec4(sum.xy, 0, 0));
 }

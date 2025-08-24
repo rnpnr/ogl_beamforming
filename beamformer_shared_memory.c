@@ -1,5 +1,5 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (13UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (14UL)
 
 typedef struct BeamformerFrame     BeamformerFrame;
 typedef struct ShaderReloadContext ShaderReloadContext;
@@ -126,7 +126,6 @@ typedef struct {
 		struct {
 			BeamformerParametersHead parameters_head;
 			BeamformerUIParameters   parameters_ui;
-			BeamformerParametersTail parameters_tail;
 		};
 	};
 
@@ -232,6 +231,13 @@ beamformer_parameter_block(BeamformerSharedMemory *sm, u32 block)
 {
 	assert(sm->reserved_parameter_blocks >= block);
 	BeamformerParameterBlock *result = (typeof(result))((u8 *)(sm + 1) + block * sizeof(*result));
+	return result;
+}
+
+function b32
+beamformer_parameter_block_dirty(BeamformerSharedMemory *sm, u32 block)
+{
+	b32 result = beamformer_parameter_block(sm, block)->dirty_regions != 0;
 	return result;
 }
 

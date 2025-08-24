@@ -196,20 +196,23 @@ read_zemp_bp_v1(u8 *path)
 }
 
 function void
-fill_beamformer_parameters_from_zemp_bp_v1(zemp_bp_v1 *zbp, BeamformerParameters *out)
+beamformer_parameters_from_zemp_bp_v1(zemp_bp_v1 *zbp, BeamformerParameters *out)
 {
-	mem_copy(out->xdc_transform,     zbp->xdc_transform,     sizeof(out->xdc_transform));
-	mem_copy(out->dec_data_dim,      zbp->decoded_data_dim,  sizeof(out->dec_data_dim));
-	mem_copy(out->xdc_element_pitch, zbp->xdc_element_pitch, sizeof(out->xdc_element_pitch));
-	mem_copy(out->rf_raw_dim,        zbp->raw_data_dim,      sizeof(out->rf_raw_dim));
+	mem_copy(out->xdc_transform,       zbp->xdc_transform,     sizeof(out->xdc_transform));
+	mem_copy(out->xdc_element_pitch,   zbp->xdc_element_pitch, sizeof(out->xdc_element_pitch));
+	mem_copy(out->raw_data_dimensions, zbp->raw_data_dim,      sizeof(out->raw_data_dimensions));
 
-	out->transmit_mode      = zbp->transmit_mode;
-	out->decode             = zbp->decode_mode;
-	out->das_shader_id      = zbp->beamform_mode;
-	out->time_offset        = zbp->time_offset;
-	out->sampling_frequency = zbp->sampling_frequency;
-	out->center_frequency   = zbp->center_frequency;
-	out->speed_of_sound     = zbp->speed_of_sound;
+	out->sample_count           = zbp->decoded_data_dim[0];
+	out->channel_count          = zbp->decoded_data_dim[1];
+	out->acquisition_count      = zbp->decoded_data_dim[2];
+	out->transmit_mode          = (u8)((zbp->transmit_mode & 2) >> 1);
+	out->receive_mode           = (u8)((zbp->transmit_mode & 1) >> 0);
+	out->decode                 = (u8)zbp->decode_mode;
+	out->das_shader_id          = zbp->beamform_mode;
+	out->time_offset            = zbp->time_offset;
+	out->sampling_frequency     = zbp->sampling_frequency;
+	out->demodulation_frequency = zbp->center_frequency;
+	out->speed_of_sound         = zbp->speed_of_sound;
 }
 
 #define shift_n(v, c, n) v += n, c -= n
@@ -290,7 +293,7 @@ decompress_data_at_work_index(Stream *path_base, u32 index)
 function b32
 send_frame(i16 *restrict i16_data, BeamformerParameters *restrict bp)
 {
-	u32 data_size = bp->rf_raw_dim[0] * bp->rf_raw_dim[1] * sizeof(i16);
+	u32 data_size = bp->raw_data_dimensions[0] * bp->raw_data_dimensions[1] * sizeof(i16);
 	b32 result    = beamformer_push_data_with_compute(i16_data, data_size, BeamformerViewPlaneTag_XZ, 0);
 	if (!result && !g_should_exit) printf("lib error: %s\n", beamformer_get_last_error_string());
 
@@ -314,7 +317,7 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	if (!zbp) die("failed to unpack parameters file\n");
 
 	BeamformerParameters bp = {0};
-	fill_beamformer_parameters_from_zemp_bp_v1(zbp, &bp);
+	beamformer_parameters_from_zemp_bp_v1(zbp, &bp);
 
 	mem_copy(bp.output_points, g_output_points, sizeof(bp.output_points));
 	bp.output_points[3] = 1;
@@ -322,16 +325,28 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	bp.output_min_coordinate[0] = g_lateral_extent.x;
 	bp.output_min_coordinate[1] = 0;
 	bp.output_min_coordinate[2] = g_axial_extent.x;
-	bp.output_min_coordinate[3] = 0;
 
 	bp.output_max_coordinate[0] = g_lateral_extent.y;
 	bp.output_max_coordinate[1] = 0;
 	bp.output_max_coordinate[2] = g_axial_extent.y;
-	bp.output_max_coordinate[3] = 0;
 
 	bp.f_number       = g_f_number;
 	bp.beamform_plane = 0;
-	bp.interpolate    = 0;
+	bp.interpolate    = 1;
+
+	bp.decimation_rate = 1;
+	bp.demodulation_frequency = bp.sampling_frequency / 4;
+
+	BeamformerFilterParameters kaiser = {0};
+	kaiser.Kaiser.beta             = 5.65f;
+	kaiser.Kaiser.cutoff_frequency = 2.0e6f;
+	kaiser.Kaiser.length           = 36;
+
+	f32 kaiser_parameters[sizeof(kaiser.Kaiser) / sizeof(f32)];
+	mem_copy(kaiser_parameters, &kaiser.Kaiser, sizeof(kaiser.Kaiser));
+	beamformer_create_filter(BeamformerFilterKind_Kaiser, kaiser_parameters,
+	                         countof(kaiser_parameters), bp.sampling_frequency / 2, 0, 0, 0);
+	beamformer_set_pipeline_stage_parameters(0, 0);
 
 	if (zbp->sparse_elements[0] == -1) {
 		for (i16 i = 0; i < countof(zbp->sparse_elements); i++)
@@ -349,10 +364,9 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	beamformer_push_sparse_elements(zbp->sparse_elements, countof(zbp->sparse_elements));
 	beamformer_push_parameters(&bp);
 
-	free(zbp);
-
 	i32 shader_stages[16];
 	u32 shader_stage_count = 0;
+	shader_stages[shader_stage_count++] = BeamformerShaderKind_Demodulate;
 	if (options->cuda) shader_stages[shader_stage_count++] = BeamformerShaderKind_CudaDecode;
 	else               shader_stages[shader_stage_count++] = BeamformerShaderKind_Decode;
 	shader_stages[shader_stage_count++] = BeamformerShaderKind_DAS;
@@ -370,7 +384,7 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 
 		u32 frame = 0;
 		f32 times[32] = {0};
-		f32 data_size = (f32)(bp.rf_raw_dim[0] * bp.rf_raw_dim[1] * sizeof(*data));
+		f32 data_size = (f32)(bp.raw_data_dimensions[0] * bp.raw_data_dimensions[1] * sizeof(*data));
 		f64 start = os_get_time();
 		for (;!g_should_exit;) {
 			if (send_frame(data, &bp)) {
@@ -397,9 +411,11 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 		lip.active = 0;
 		beamformer_set_live_parameters(&lip);
 	} else {
-		send_frame(data, &bp);
+		for (u32 i = 0; i < zbp->raw_data_dim[2]; i++)
+			send_frame(data + i * bp.raw_data_dimensions[0] * bp.raw_data_dimensions[1], &bp);
 	}
 
+	free(zbp);
 	free(data);
 }
 

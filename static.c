@@ -411,16 +411,12 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 #endif
 
 	read_only local_persist s8 compute_headers[BeamformerShaderKind_ComputeCount] = {
-		#define X(name, type, size, __e, gltype, glsize, comment) "\t" #gltype " " #name #glsize "; " comment "\n"
-		[BeamformerShaderKind_DAS] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
-			BEAMFORMER_PARAMS_HEAD
-			BEAMFORMER_UI_PARAMS
-			BEAMFORMER_PARAMS_TAIL
-			"};\n\n"
-		),
-		#undef X
 		/* X(name, type, gltype) */
 		#define X(name, t, gltype) "\t" #gltype " " #name ";\n"
+		[BeamformerShaderKind_DAS] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
+			BEAMFORMER_DAS_UBO_PARAM_LIST
+			"};\n\n"
+		),
 		[BeamformerShaderKind_Decode] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
 			BEAMFORMER_DECODE_UBO_PARAM_LIST
 			"};\n\n"
