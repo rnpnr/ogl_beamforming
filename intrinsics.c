@@ -25,6 +25,8 @@
 
   #define debugbreak()  __debugbreak()
   #define unreachable() __assume(0)
+  #define setjmp(b)     (void)(b)
+  #define longjmp(b)    debugbreak()
 
   #define memory_write_barrier()       _WriteBarrier()
 
@@ -50,6 +52,7 @@
   #define exp_f64(a)      exp(a)
   #define sqrt_f64(a)     sqrt(a)
 
+  #define popcnt_u64(a)   __popcnt64(a)
 #else
   #define alignas(n)       __attribute__((aligned(n)))
   #define pack_struct(s) s __attribute__((packed))
@@ -62,6 +65,8 @@
     #define debugbreak() asm volatile ("int3; nop")
   #endif
   #define unreachable() __builtin_unreachable()
+  #define setjmp        __builtin_setjmp
+  #define longjmp       __builtin_longjmp
 
   #define memory_write_barrier()        asm volatile ("" ::: "memory")
 
@@ -86,6 +91,8 @@
 
   #define exp_f64(a)      __builtin_exp(a)
   #define sqrt_f64(a)     __builtin_sqrt(a)
+
+  #define popcnt_u64(a)   (u64)__builtin_popcountl(a)
 #endif
 
 #if COMPILER_MSVC

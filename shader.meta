@@ -1,0 +1,29 @@
+@ShaderGroup(Compute)
+{
+	@Shader(Filter)
+	{
+		@Permute(BeamformerDataKind) [I16C, F32, F32C]
+		{
+			@PermuteBits [MapChannels:MC, ComplexFilter:CF]
+		}
+	}
+
+	@Shader(Demodulate)
+	{
+		@Permute(BeamformerDataKind) [I16, F32]
+		{
+			@Permute(BeamformerSamplingMode) [NS200BW, BS100BW, BS50BW]
+			{
+				@PermuteBits [MapChannels:MC, ComplexFilter:CF]
+			}
+		}
+	}
+
+	@Shader(DAS)
+	{
+		@Permute(BeamformerDataKind) [F32, F32C]
+		{
+			@PermuteBits [Fast:F, Sparse:S]
+		}
+	}
+}

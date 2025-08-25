@@ -101,7 +101,7 @@ global char *g_argv0;
 #define shift(list, count) ((count)--, *(list)++)
 
 #define da_append_count(a, s, items, item_count) do { \
-	da_reserve((a), (s), (s)->count + (item_count));                                \
+	da_reserve((a), (s), (item_count));                                             \
 	mem_copy((s)->data + (s)->count, (items), sizeof(*(items)) * (uz)(item_count)); \
 	(s)->count += (item_count);                                                     \
 } while (0)
@@ -717,6 +717,16 @@ typedef struct {
 	iz  capacity;
 } s8_list;
 
+function s8
+s8_chop(s8 *in, iz count)
+{
+	count = CLAMP(count, 0, in->len);
+	s8 result = {.data = in->data, .len = count};
+	in->data += count;
+	in->len  -= count;
+	return result;
+}
+
 function void
 s8_split(s8 str, s8 *left, s8 *right, u8 byte)
 {
@@ -819,6 +829,497 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 {
 	while (m->indentation_level > 0) meta_end_scope(m, s8("end"));
 	b32 result = meta_write_and_reset(m, path);
+	return result;
+}
+
+#define META_ENTRY_KIND_LIST \
+	X(BeginScope)  \
+	X(EndScope)    \
+	X(Permute)     \
+	X(PermuteBits) \
+	X(Shader)      \
+	X(ShaderGroup)
+
+#define X(k, ...) MetaEntryKind_## k,
+typedef enum {META_ENTRY_KIND_LIST} MetaEntryKind;
+#undef X
+
+typedef struct {
+	s8  *permutations;
+	u64  max_permutation;
+} MetaEntryPermute;
+
+typedef struct {
+	MetaEntryKind kind;
+	s8            name;
+	u32 line, column;
+	union {
+		MetaEntryPermute permute;
+	};
+} MetaEntry;
+
+typedef struct {
+	MetaEntry *data;
+	iz         count;
+	iz         capacity;
+	s8         raw;
+} MetaEntryStack;
+
+#define META_PARSE_TOKEN_LIST \
+	X('@', Entry)      \
+	X('(', BeginArgs)  \
+	X(')', EndArgs)    \
+	X('[', BeginArray) \
+	X(']', EndArray)   \
+	X('{', BeginScope) \
+	X('}', EndScope)   \
+	X(',', Comma)
+
+typedef enum {
+	MetaParseToken_EOF,
+	MetaParseToken_String,
+	#define X(__1, kind, ...) MetaParseToken_## kind,
+	META_PARSE_TOKEN_LIST
+	#undef X
+	MetaParseToken_Count,
+} MetaParseToken;
+
+typedef union {
+	MetaEntryKind kind;
+	s8            string;
+} MetaParseUnion;
+
+typedef struct {
+	s8  s;
+	u32 line;
+	u32 column;
+} MetaParsePoint;
+
+typedef struct {
+	MetaParsePoint p;
+	MetaParseUnion u;
+	MetaParsePoint save_point;
+} MetaParser;
+
+#define meta_parser_save(v)    (v)->save_point = (v)->p
+#define meta_parser_restore(v) (v)->p = (v)->save_point
+
+function void
+meta_entry_print(MetaEntry *e, i32 depth)
+{
+	#define X(k, ...) #k,
+	read_only local_persist char *kinds[] = {META_ENTRY_KIND_LIST};
+	#undef X
+
+	char *kind = kinds[e->kind];
+	if (e->kind == MetaEntryKind_BeginScope) kind = "{";
+	if (e->kind == MetaEntryKind_EndScope)   kind = "}";
+
+	fprintf(stderr, "%*s%s", depth * 2, "", kind);
+	if (e->name.len) fprintf(stderr, "(%.*s)", (i32)e->name.len, e->name.data);
+	switch (e->kind) {
+	case MetaEntryKind_PermuteBits:
+	case MetaEntryKind_Permute:
+	{
+		u64 count;
+		if (e->kind == MetaEntryKind_PermuteBits) count = (u64)popcnt_u64(e->permute.max_permutation);
+		else                                      count = e->permute.max_permutation;
+		fprintf(stderr, " [");
+		for (u64 i = 0; i < count; i++) {
+			if (i != 0) fprintf(stderr, ", ");
+			fprintf(stderr, "%.*s", (i32)e->permute.permutations[i].len, e->permute.permutations[i].data);
+		}
+		fprintf(stderr, "]");
+	}break;
+	default:{}break;
+	}
+	fprintf(stderr, "\n");
+}
+
+function MetaEntryKind
+meta_entry_kind_from_string(s8 s)
+{
+	#define X(k, ...) s8(#k),
+	read_only local_persist s8 kinds[] = {META_ENTRY_KIND_LIST};
+	#undef X
+	i32 result = -1;
+	for EachElement(kinds, it) {
+		if (s8_equal(kinds[it], s)) {
+			result = (i32)it;
+			break;
+		}
+	}
+	return (MetaEntryKind)result;
+}
+
+function void
+meta_parser_trim(MetaParser *p)
+{
+	u8 *s, *end = p->p.s.data + p->p.s.len;
+	b32 done    = 0;
+	b32 comment = 0;
+	for (s = p->p.s.data; !done && s != end;) {
+		switch (*s) {
+		case '\t':
+		case ' ':
+		{
+			p->p.column++;
+		}break;
+		case '\n':{ p->p.line++; p->p.column = 0; comment = 0; }break;
+		case '/':{
+			comment = ((s + 1) != end  && s[1] == '/');
+		} /* FALLTHROUGH */
+		default:{done = !comment;}break;
+		}
+		if (!done) s++;
+	}
+	p->p.s.data = s;
+	p->p.s.len  = end - s;
+}
+
+#define meta_parser_error(v, format, ...) \
+	meta_generator_error_("%s:%u:%u: error: "format, compiler_file, (v)->p.line + 1, (v)->p.column + 1, ##__VA_ARGS__)
+#define meta_compiler_error(e, format, ...) \
+	meta_generator_error_("%s:%u:%u: error: "format, compiler_file, (e)->line + 1, (e)->column + 1, ##__VA_ARGS__)
+
+global char *compiler_file;
+global void *compiler_jmp_buf[5];
+function no_return void
+meta_generator_error_(char *format, ...)
+{
+	va_list ap;
+	va_start(ap, format);
+	vfprintf(stderr, format, ap);
+	va_end(ap);
+	longjmp(compiler_jmp_buf, 1);
+}
+
+function s8
+meta_parser_extract_string(MetaParser *p)
+{
+	s8 result = {.data = p->p.s.data};
+	for (; result.len < p->p.s.len; result.len++) {
+		b32 done = 0;
+		switch (p->p.s.data[result.len]) {
+		#define X(t, ...) case t:
+		META_PARSE_TOKEN_LIST
+		#undef X
+		case ' ': case '\n': case '\t':
+		{done = 1;}break;
+		case '/':{
+			done = (result.len + 1 < p->p.s.len) && (p->p.s.data[result.len + 1] == '/');
+		}break;
+		default:{}break;
+		}
+		if (done) break;
+	}
+	p->p.column += result.len;
+	p->p.s.data += result.len;
+	p->p.s.len  -= result.len;
+	return result;
+}
+
+function s8
+meta_parser_token_name(MetaParser *p, MetaParseToken t)
+{
+	s8 result = s8("\"invalid\"");
+	read_only local_persist s8 names[MetaParseToken_Count] = {
+		[MetaParseToken_EOF] = s8("\"EOF\""),
+		#define X(k, v, ...) [MetaParseToken_## v] = s8(#k),
+		META_PARSE_TOKEN_LIST
+		#undef X
+	};
+	if (t >= 0 && t < countof(names)) result = names[t];
+	if (t == MetaParseToken_String)   result = p->u.string;
+	return result;
+}
+
+function MetaParseToken
+meta_parser_token(MetaParser *p)
+{
+	MetaParseToken result = MetaParseToken_EOF;
+	meta_parser_save(p);
+	if (p->p.s.len > 0) {
+		b32 chop = 1;
+		switch (p->p.s.data[0]) {
+		#define X(t, kind, ...) case t:{ result = MetaParseToken_## kind; }break;
+		META_PARSE_TOKEN_LIST
+		#undef X
+		default:{ result = MetaParseToken_String; chop = 0; }break;
+		}
+		if (chop) { s8_chop(&p->p.s, 1); p->p.column++; }
+
+		meta_parser_trim(p);
+		switch (result) {
+		case MetaParseToken_String:{ p->u.string = meta_parser_extract_string(p); }break;
+
+		/* NOTE(rnp): '{' and '}' are shorthand for @BeginScope and @EndScope */
+		case MetaParseToken_BeginScope:{ p->u.kind = MetaEntryKind_BeginScope; }break;
+		case MetaParseToken_EndScope:{   p->u.kind = MetaEntryKind_EndScope;   }break;
+
+		case MetaParseToken_Entry:{
+			s8 kind = meta_parser_extract_string(p);
+			p->u.kind = meta_entry_kind_from_string(kind);
+			if (p->u.kind < 0) {
+				meta_parser_error(p, "invalid meta kind: %.*s\n", (i32)kind.len, kind.data);
+			}
+		}break;
+		default:{}break;
+		}
+		meta_parser_trim(p);
+	}
+
+	return result;
+}
+
+function MetaParseToken
+meta_parser_peek_token(MetaParser *p)
+{
+	MetaParseToken result = meta_parser_token(p);
+	meta_parser_restore(p);
+	return result;
+}
+
+function MetaParseUnion
+meta_parser_expect_token(MetaParser *p, MetaParseToken expect)
+{
+	MetaParseToken result = meta_parser_token(p);
+	if (result != expect) {
+		meta_parser_restore(p);
+		s8 result_name = meta_parser_token_name(p, result);
+		s8 expect_name = meta_parser_token_name(p, expect);
+		meta_parser_error(p, "expected %.*s but got: %.*s\n",
+		                  (i32)expect_name.len, expect_name.data,
+		                  (i32)result_name.len, result_name.data);
+	}
+	return p->u;
+}
+
+function void
+meta_parser_unexpected_token(MetaParser *p, MetaParseToken t)
+{
+	meta_parser_restore(p);
+	s8 token_name = meta_parser_token_name(p, t);
+	meta_parser_error(p, "unexpected token: %.*s\n", (i32)token_name.len, token_name.data);
+}
+
+function MetaEntryStack
+meta_entry_stack_from_file(Arena *arena, Arena scratch, char *file)
+{
+	MetaParser     parser = {.p.s = os_read_whole_file(arena, file)};
+	MetaEntryStack result = {.raw = parser.p.s};
+
+	compiler_file = file;
+
+	meta_parser_trim(&parser);
+
+	for (MetaParseToken token = meta_parser_token(&parser);
+	     token != MetaParseToken_EOF;
+	     token = meta_parser_token(&parser))
+	{
+		MetaEntry *e = da_push(arena, &result);
+		switch (token) {
+		case MetaParseToken_BeginScope:
+		case MetaParseToken_EndScope:
+		case MetaParseToken_Entry:
+		{
+			e->kind   = parser.u.kind;
+			e->line   = parser.save_point.line;
+			e->column = parser.save_point.column;
+			if (meta_parser_peek_token(&parser) == MetaParseToken_BeginArgs) {
+				/* NOTE(rnp): for now entries may only have a single name as an arg */
+				meta_parser_token(&parser);
+				e->name = meta_parser_expect_token(&parser, MetaParseToken_String).string;
+				meta_parser_expect_token(&parser, MetaParseToken_EndArgs);
+			}
+			switch (e->kind) {
+			case MetaEntryKind_PermuteBits:
+			case MetaEntryKind_Permute:
+			{
+				Arena a = scratch;
+				s8_list permutations = {0};
+				meta_parser_expect_token(&parser, MetaParseToken_BeginArray);
+				b32 bits = e->kind == MetaEntryKind_PermuteBits;
+				b32 done = 0;
+				for (;!done;) {
+					MetaParseToken t = meta_parser_token(&parser);
+					switch (t) {
+					case MetaParseToken_Comma:{}break;
+					case MetaParseToken_EndArray:{ done = 1; }break;
+					case MetaParseToken_String:{
+						*da_push(&a, &permutations) = parser.u.string;
+						if (bits) e->permute.max_permutation = (e->permute.max_permutation << 1) | 1;
+						else      e->permute.max_permutation++;
+					}break;
+					default:{ meta_parser_unexpected_token(&parser, t); }break;
+					}
+				}
+				e->permute.permutations = push_array(arena, s8, permutations.count);
+				mem_copy(e->permute.permutations, permutations.data, sizeof(s8) * (uz)permutations.count);
+			}break;
+			default:{}break;
+			}
+		}break;
+
+		default:{ meta_parser_unexpected_token(&parser, token); }break;
+		}
+	}
+
+	return result;
+}
+
+typedef struct {
+	s8  name;
+	u64 id;
+} MetaShader;
+
+typedef struct {
+	s8 name;
+
+	MetaShader *data;
+	iz count;
+	iz capacity;
+} MetaShaderGroup;
+
+typedef struct {
+	MetaEntry **data;
+	iz count;
+	iz capacity;
+} MetaEntryReferenceStack;
+
+function s8
+arena_stream_commit_and_reset(Arena *arena, Stream *s)
+{
+	s8 result = arena_stream_commit(arena, s);
+	*s = arena_stream(*arena);
+	return result;
+}
+
+function u64
+meta_emit_shaders(Arena *arena, MetaShaderGroup *sg, MetaEntry *se,
+                  MetaEntryReferenceStack *permute, u64 base_id)
+{
+	assert(se->kind == MetaEntryKind_Shader);
+	u64 result    = 0;
+	//s8  base_name = se->name;
+	u64 count = 1;
+	for (iz i = 0; i < permute->count; i++) {
+		MetaEntry *e = permute->data[i];
+		switch (e->kind) {
+		case MetaEntryKind_Permute:{     count *= e->permute.max_permutation; }break;
+		case MetaEntryKind_PermuteBits:{ count *= popcnt_u64(e->permute.max_permutation); }break;
+		InvalidDefaultCase;
+		}
+	}
+	da_reserve(arena, sg, (iz)count);
+
+	//for (iz
+	return result;
+}
+
+function b32
+metagen_beamformer_files(Arena arena)
+{
+	b32 result = 0;
+
+	if (setjmp(compiler_jmp_buf)) {
+		/* NOTE(rnp): compiler error */
+		return 0;
+	}
+
+	char *out = OUTPUT("out/metagen.c");
+	if (needs_rebuild(out, "shader.meta")) {
+		Arena scratch = sub_arena(&arena, MB(1), 16);
+		MetaEntryStack entries = meta_entry_stack_from_file(&arena, scratch, "shader.meta");
+
+		i32 stack_items[32];
+		struct { i32 *data; iz capacity; iz count; } stack = {stack_items, countof(stack_items), 0};
+		struct { MetaShaderGroup *data; iz capacity; iz count; } shader_groups = {0};
+
+		MetaEntryReferenceStack permute_stack = {0};
+
+		i32 depth     = 0;
+		b32 in_shader = 0;
+		u64 shader_id = 0;
+		//MetaEntry       *last_entry    = 0;
+		//MetaEntry       *current_entry = 0;
+		MetaShaderGroup *current_shader_group = 0;
+		for (iz i = 0; i < entries.count; i++) {
+			MetaEntry *e = entries.data + i;
+			if (e->kind == MetaEntryKind_EndScope)   depth--;
+			meta_entry_print(e, depth);
+			if (e->kind == MetaEntryKind_BeginScope) depth++;
+			continue;
+
+			switch (e->kind) {
+			case MetaEntryKind_BeginScope:{
+				*da_push(&scratch, &stack) = (i32)i;
+			}break;
+			case MetaEntryKind_EndScope:{
+				i32 index = stack.data[--stack.count];
+				if (index == 0)
+					meta_compiler_error(entries.data + index, "Invalid base level scope");
+				MetaEntry *last = entries.data + (index - 1);
+				switch (last->kind) {
+				case MetaEntryKind_Shader:{
+					shader_id += meta_emit_shaders(&arena, current_shader_group, last, &permute_stack, shader_id);
+					permute_stack.count = 0;
+					in_shader           = 0;
+				}break;
+				default:{}break;
+				}
+			}break;
+			case MetaEntryKind_ShaderGroup:{
+				MetaShaderGroup *sg = da_push(&arena, &shader_groups);
+				sg->name = e->name;
+				current_shader_group = sg;
+			}break;
+			case MetaEntryKind_Shader:{
+				if (!current_shader_group)
+					meta_compiler_error(e, "Shader() declaration outside of ShaderGroup()");
+				in_shader = 1;
+			}break;
+			case MetaEntryKind_Permute:{
+				if (!in_shader)
+					meta_compiler_error(e, "Permute() declaration outside of Shader()");
+				*da_push(&scratch, &permute_stack) = e;
+			}break;
+			default:{}break;
+			}
+		}
+
+		//for (;;/* stack frame in table */)
+		{
+			// jump to procedure for table entry kind
+			// shader:
+			//  - generate list of variations for inlcuding in shader kind enum
+			//   - for each entry
+			//     - generate an array of cases to iterate in load_shader
+			//     - generate a function that takes
+		}
+
+		#if 0
+		#define X(name, flag, ...) meta_push_line(&m, s8(#name " (" str(flag) ")"));
+		meta_begin_matlab_class(&m, "OGLBeamformerLiveFeedbackFlags", "int32");
+		meta_begin_scope(&m, s8("enumeration"));
+		BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST
+		result &= meta_end_and_write_matlab(&m, out);
+
+		meta_begin_matlab_class(&m, "OGLBeamformerDataKind", "int32");
+		meta_begin_scope(&m, s8("enumeration"));
+		BEAMFORMER_DATA_KIND_LIST
+		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerDataKind.m"));
+		#undef X
+
+		#define X(kind, ...) meta_push_matlab_enum_with_value(&m, s8(#kind), BeamformerFilterKind_## kind);
+		meta_begin_matlab_class(&m, "OGLBeamformerFilterKind", "int32");
+		meta_begin_scope(&m, s8("enumeration"));
+		BEAMFORMER_FILTER_KIND_LIST(,)
+		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerFilterKind.m"));
+		#undef X
+		#endif
+	}
+
 	return result;
 }
 
@@ -960,6 +1461,8 @@ main(i32 argc, char *argv[])
 	b32 result  = 1;
 	Arena arena = os_alloc_arena(MB(8));
 	check_rebuild_self(arena, argc, argv);
+
+	//if (!metagen_beamformer_files(arena)) return 1;
 
 	Options options = parse_options(argc, argv);
 
