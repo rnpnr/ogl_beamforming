@@ -1258,7 +1258,7 @@ ui_beamformer_frame_view_convert(BeamformerUI *ui, Arena *arena, Variable *view,
 	read_only local_persist s8 kind_labels[] = {BEAMFORMER_FRAME_VIEW_KIND_LIST};
 	#undef X
 	bv->kind_cycler = add_variable_cycler(ui, menu, arena, V_EXTRA_ACTION, ui->small_font,
-	                                      s8("Kind:"), &bv->kind, kind_labels, countof(kind_labels));
+	                                      s8("Kind:"), (u32 *)&bv->kind, kind_labels, countof(kind_labels));
 
 	switch (kind) {
 	case BeamformerFrameViewKind_3DXPlane:{
@@ -1392,7 +1392,7 @@ add_compute_stats_view(BeamformerUI *ui, Variable *parent, Arena *arena, Beamfor
 	ComputeStatsView *csv = &result->view.child->compute_stats_view;
 	csv->compute_shader_stats = ctx->compute_shader_stats;
 	csv->cycler = add_variable_cycler(ui, menu, arena, 0, ui->small_font, s8("Stats View:"),
-	                                  &csv->kind, labels, countof(labels));
+	                                  (u32 *)&csv->kind, labels, countof(labels));
 	add_global_menu_to_group(ui, arena, menu);
 	return result;
 }

@@ -87,7 +87,7 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 		GLenum gl_kind[] = {BEAMFORMER_COMPUTE_TEXTURE_LIST};
 		#undef X
 		read_only local_persist s8 tex_prefix[] = {
-			#define X(k, ...) s8(#k "["),
+			#define X(k, ...) s8_comp(#k "["),
 			BEAMFORMER_COMPUTE_TEXTURE_LIST
 			#undef X
 		};
@@ -109,7 +109,7 @@ function void
 beamformer_filter_update(BeamformerFilter *f, BeamformerFilterKind kind,
                          BeamformerFilterParameters fp, u32 block, u32 slot, Arena arena)
 {
-	#define X(k, ...) s8(#k "Filter"),
+	#define X(k, ...) s8_comp(#k "Filter"),
 	read_only local_persist s8 filter_kinds[] = {BEAMFORMER_FILTER_KIND_LIST(,)};
 	#undef X
 

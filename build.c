@@ -565,12 +565,15 @@ build_shared_library(Arena a, CommandList cc, char *name, char *output, char **l
 }
 
 function b32
-cc_single_file(Arena a, CommandList cc, b32 exe, char *src, char *dest, char **tail, iz tail_count)
+cc_single_file(Arena a, CommandList cc, char *exe, char *src, char *dest, char **tail, iz tail_count)
 {
 	char *executable[] = {src, is_msvc? "/Fe:" : "-o", dest};
 	char *object[]     = {is_msvc? "/c" : "-c", src, is_msvc? "/Fo:" : "-o", dest};
+
+
 	cmd_append_count(&a, &cc, exe? executable : object,
 	                 exe? countof(executable) : countof(object));
+	if (exe) cmd_pdb(&a, &cc, exe);
 	cmd_append_count(&a, &cc, tail, tail_count);
 	cmd_append(&a, &cc, (void *)0);
 	b32 result = run_synchronous(a, &cc);
@@ -700,8 +703,7 @@ build_tests(Arena arena, CommandList cc)
 	b32 result = 1;
 	iz cc_count = cc.count;
 	#define X(prog, ...) \
-		cmd_pdb(&arena, &cc, prog); \
-		result &= cc_single_file(arena, cc, 1, "tests/" prog ".c", \
+		result &= cc_single_file(arena, cc, prog, "tests/" prog ".c", \
 		                         OUTPUT("tests/" prog),            \
 		                         arg_list(char *, ##__VA_ARGS__)); \
 		cc.count = cc_count;
@@ -830,7 +832,7 @@ build_matlab_bindings(Arena arena)
 	Arena scratch = sub_arena(&arena, MB(1), 16);
 
 	char *out = OUTPUT("matlab/OGLBeamformerLiveFeedbackFlags.m");
-	if (needs_rebuild(out)) {
+	if (needs_rebuild(out, "beamformer_parameters.h")) {
 		/* TODO(rnp): recreate/clear directory incase these file names change */
 		MetaprogramContext m = {.stream = arena_stream(arena)};
 
@@ -882,7 +884,7 @@ build_matlab_bindings(Arena arena)
 		#undef X
 
 		os_make_directory(OUTPUT("matlab/+OGLBeamformerFilter"));
-		#define X(kind, ...) {OUTPUT("matlab/+OGLBeamformerFilter/" #kind ".m"), s8(#kind),  s8(#__VA_ARGS__)},
+		#define X(kind, ...) {OUTPUT("matlab/+OGLBeamformerFilter/" #kind ".m"), s8_comp(#kind),  s8_comp(#__VA_ARGS__)},
 		read_only local_persist struct {char *out; s8 class, args;} filter_table[] = {
 			BEAMFORMER_FILTER_KIND_LIST(,)
 		};
