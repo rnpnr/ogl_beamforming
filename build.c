@@ -423,7 +423,7 @@ cmd_base(Arena *a, Options *o)
 
 	if (is_w32 && is_clang) cmd_append(a, &result, "-fms-extensions");
 
-	if (o->debug && is_unix) cmd_append(a, &result, "-ggdb");
+	if (o->debug && is_unix) cmd_append(a, &result, "-gdwarf-4");
 
 	/* NOTE(rnp): need to avoid w32-gcc for ci */
 	b32 sanitize = o->sanitize && !is_msvc && !(is_w32 && is_gcc);
