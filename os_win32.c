@@ -275,6 +275,13 @@ os_create_shared_memory_area(Arena *arena, char *name, u32 lock_count, iz reques
 				ctx->semaphores[i] = CreateSemaphoreA(0, 1, 1, (c8 *)lb.data);
 				if (ctx->semaphores[i] == INVALID_FILE)
 					os_fatal(s8("os_create_shared_memory_area: failed to create semaphore\n"));
+
+				/* NOTE(rnp): hacky garbage because CreateSemaphore will just open an existing
+				 * semaphore without any indication. Sometimes the other side of the shared memory
+				 * will provide incorrect parameters or will otherwise fail and its faster to
+				 * restart this program than to get that application to release the semaphores */
+				/* TODO(rnp): figure out something more robust */
+				ReleaseSemaphore(ctx->semaphores[i], 1, 0);
 			}
 		}
 	}
