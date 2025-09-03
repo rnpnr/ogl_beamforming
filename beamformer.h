@@ -6,6 +6,9 @@
 #include <rlgl.h>
 
 #include "util.h"
+#include "opengl.h"
+
+#include "generated/beamformer.meta.c"
 
 ///////////////////
 // REQUIRED OS API
@@ -15,7 +18,6 @@ function OS_SHARED_MEMORY_UNLOCK_REGION_FN(os_shared_memory_region_unlock);
 function OS_WAKE_WAITERS_FN(os_wake_waiters);
 function OS_WRITE_FILE_FN(os_write_file);
 
-#include "opengl.h"
 #include "util_gl.c"
 
 enum gl_vendor_ids {
@@ -106,21 +108,13 @@ typedef struct {
 } BeamformerFilter;
 
 #define DAS_SHADER_FLAGS_LIST \
-	X(RxColumns,          (1 << 0)) \
-	X(TxColumns,          (1 << 1)) \
-	X(Interpolate,        (1 << 2)) \
-	X(CoherencyWeighting, (1 << 3))
+	X(RxColumns,          (1 << 2)) \
+	X(TxColumns,          (1 << 3)) \
+	X(Interpolate,        (1 << 4)) \
+	X(CoherencyWeighting, (1 << 5))
 
 #define X(k, v, ...) DASShaderFlags_## k = v,
 typedef enum {DAS_SHADER_FLAGS_LIST} DASShaderFlags;
-#undef X
-
-static_assert(BeamformerSamplingMode_Count < 4, "filter sample mode mask borked");
-#define FILTER_SHADER_FLAGS_LIST \
-	X(SamplingModeMask, ((1 << 0) | (1 << 1))) \
-	X(MapChannels,      (1 << 2))
-#define X(k, v, ...) FilterShaderFlags_## k = v,
-typedef enum {FILTER_SHADER_FLAGS_LIST} FilterShaderFlags;
 #undef X
 
 /* X(name, type, gltype) */
@@ -132,7 +126,6 @@ typedef enum {FILTER_SHADER_FLAGS_LIST} FilterShaderFlags;
 	X(output_sample_stride,   u32, uint)  \
 	X(output_transmit_stride, u32, uint)  \
 	X(decimation_rate,        u32, uint)  \
-	X(shader_flags,           u32, int)   \
 	X(demodulation_frequency, f32, float) \
 	X(sampling_frequency,     f32, float)
 
@@ -174,7 +167,7 @@ typedef alignas(16) struct {
 	#define X(name, type, ...) type name;
 	BEAMFORMER_FILTER_UBO_PARAM_LIST
 	#undef X
-	float _pad[2];
+	float _pad[3];
 } BeamformerFilterUBO;
 static_assert((sizeof(BeamformerFilterUBO) & 15) == 0, "UBO size must be a multiple of 16");
 
@@ -253,7 +246,8 @@ typedef struct {
 } BeamformerRFBuffer;
 
 typedef struct {
-	u32                programs[BeamformerShaderKind_ComputeCount];
+	/* TODO(rnp): slightly oversized; remove non compute shaders from match vectors count */
+	u32                programs[beamformer_match_vectors_count];
 	BeamformerRFBuffer rf_buffer;
 
 	BeamformerComputePlan *compute_plans[BeamformerMaxParameterBlockSlots];
@@ -400,14 +394,11 @@ typedef struct {
 } BeamformerCtx;
 
 struct ShaderReloadContext {
-	BeamformerCtx *beamformer_context;
-	s8   path;
-	s8   name;
-	s8   header;
-	u32 *shader;
+	BeamformerCtx       *beamformer_context;
 	ShaderReloadContext *link;
-	GLenum     gl_type;
-	BeamformerShaderKind kind;
+	s8     header;
+	GLenum gl_type;
+	i32    reloadable_info_index;
 };
 
 #define BEAMFORMER_FRAME_STEP_FN(name) void name(BeamformerCtx *ctx, BeamformerInput *input)
@@ -419,8 +410,8 @@ typedef BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute_fn);
 #define BEAMFORMER_RF_UPLOAD_FN(name) void name(BeamformerUploadThreadContext *ctx, Arena arena)
 typedef BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload_fn);
 
-#define BEAMFORMER_RELOAD_SHADER_FN(name) b32 name(OS *os, BeamformerCtx *ctx, \
-                                                   ShaderReloadContext *src, Arena arena, s8 shader_name)
+#define BEAMFORMER_RELOAD_SHADER_FN(name) b32 name(OS *os, s8 path, ShaderReloadContext *src, \
+                                                   Arena arena, s8 shader_name)
 typedef BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader_fn);
 
 #define BEAMFORMER_DEBUG_UI_DEINIT_FN(name) void name(BeamformerCtx *ctx)

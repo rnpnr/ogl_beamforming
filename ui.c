@@ -2644,10 +2644,6 @@ draw_compute_stats_bar_view(BeamformerUI *ui, Arena arena, ComputeShaderStats *s
 		}
 	}
 
-	#define X(e, s, pn, ...) [BeamformerShaderKind_##e] = s8_comp(pn ": "),
-	read_only local_persist s8 labels[BeamformerShaderKind_ComputeCount] = {COMPUTE_SHADERS_INTERNAL};
-	#undef X
-
 	v2 result = table_extent(table, arena, ts.font);
 
 	f32 remaining_width = r.size.w - result.w - table->cell_pad.w;
@@ -2678,8 +2674,8 @@ draw_compute_stats_bar_view(BeamformerUI *ui, Arena arena, ComputeShaderStats *s
 			DrawRectangleRec(rect.rl, color);
 			if (point_in_rect(mouse, rect)) {
 				text_pos   = v2_add(rect.pos, (v2){.x = table->cell_pad.w});
-				mouse_text = push_compute_time(&arena, labels[stages[i]],
-				                               stats->table.times[frame_index][stages[i]]);
+				s8 name    = push_s8_from_parts(&arena, s8(""), beamformer_shader_names[stages[i]], s8(": "));
+				mouse_text = push_compute_time(&arena, name, stats->table.times[frame_index][stages[i]]);
 			}
 			rect.pos.x += rect.size.w;
 		}
@@ -2707,7 +2703,7 @@ push_table_time_row(Table *table, Arena *arena, s8 label, f32 time)
 {
 	assert(table->columns == 3);
 	TableCell *cells = table_push_row(table, arena, TRK_CELLS)->data;
-	cells[0].text = label;
+	cells[0].text = push_s8_from_parts(arena, s8(""), label, s8(":"));
 	cells[1].text = push_compute_time(arena, s8(""), time);
 	cells[2].text = s8("[s]");
 }
@@ -2772,12 +2768,9 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 	Table *table = table_new(&arena, 2, TextAlignment_Left, TextAlignment_Left, TextAlignment_Left);
 	switch (csv->kind) {
 	case ComputeStatsViewKind_Average:{
-		#define X(e, n, pn, ...) [BeamformerShaderKind_##e] = s8_comp(pn ":"),
-		read_only local_persist s8 labels[BeamformerShaderKind_ComputeCount] = {COMPUTE_SHADERS_INTERNAL};
-		#undef X
 		da_reserve(&arena, table, stages);
 		for (u32 i = 0; i < stages; i++) {
-			push_table_time_row(table, &arena, labels[cp->pipeline.shaders[i]],
+			push_table_time_row(table, &arena, beamformer_shader_names[cp->pipeline.shaders[i]],
 			                    stats->average_times[cp->pipeline.shaders[i]]);
 		}
 	}break;

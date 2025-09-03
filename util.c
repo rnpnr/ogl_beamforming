@@ -72,10 +72,24 @@ arena_alloc(Arena *a, iz len, uz align, iz count)
 	return result;
 }
 
-enum { DA_INITIAL_CAP = 4 };
+enum { DA_INITIAL_CAP = 16 };
+
+#define DA_STRUCT(kind, name) typedef struct { \
+	kind *data;     \
+	iz    count;    \
+	iz    capacity; \
+} name ##List;
+
+#define da_index(it, s) ((it) - (s)->data)
 #define da_reserve(a, s, n) \
   (s)->data = da_reserve_((a), (s)->data, &(s)->capacity, (s)->count + n, \
                           _Alignof(typeof(*(s)->data)), sizeof(*(s)->data))
+
+#define da_append_count(a, s, items, item_count) do { \
+	da_reserve((a), (s), (item_count));                                             \
+	mem_copy((s)->data + (s)->count, (items), sizeof(*(items)) * (uz)(item_count)); \
+	(s)->count += (item_count);                                                     \
+} while (0)
 
 #define da_push(a, s) \
   ((s)->count == (s)->capacity  \
@@ -198,7 +212,7 @@ function Stream
 stream_alloc(Arena *a, i32 cap)
 {
 	Stream result = {.cap = cap};
-	result.data = push_array(a, u8, cap);
+	result.data = arena_commit(a, cap);
 	return result;
 }
 
@@ -415,6 +429,14 @@ arena_stream_commit_zero(Arena *a, Stream *s)
 	return result;
 }
 
+function s8
+arena_stream_commit_and_reset(Arena *arena, Stream *s)
+{
+	s8 result = arena_stream_commit_zero(arena, s);
+	*s = arena_stream(*arena);
+	return result;
+}
+
 /* NOTE(rnp): FNV-1a hash */
 function u64
 s8_hash(s8 v)
@@ -504,16 +526,32 @@ s8_to_s16(Arena *a, s8 in)
 	return result;
 }
 
+#define push_s8_from_parts(a, j, ...) push_s8_from_parts_((a), (j), arg_list(s8, __VA_ARGS__))
 function s8
-push_s8(Arena *a, s8 str)
+push_s8_from_parts_(Arena *arena, s8 joiner, s8 *parts, iz count)
 {
-	s8 result = s8_alloc(a, str.len);
-	mem_copy(result.data, str.data, (uz)result.len);
+	iz length = joiner.len * (count - 1);
+	for (iz i = 0; i < count; i++)
+		length += parts[i].len;
+
+	s8 result = {.len = length, .data = arena_commit(arena, length + 1)};
+
+	iz offset = 0;
+	for (iz i = 0; i < count; i++) {
+		if (i != 0) {
+			mem_copy(result.data + offset, joiner.data, (uz)joiner.len);
+			offset += joiner.len;
+		}
+		mem_copy(result.data + offset, parts[i].data, (uz)parts[i].len);
+		offset += parts[i].len;
+	}
+	result.data[result.len] = 0;
+
 	return result;
 }
 
 function s8
-push_s8_zero(Arena *a, s8 str)
+push_s8(Arena *a, s8 str)
 {
 	s8 result   = s8_alloc(a, str.len + 1);
 	result.len -= 1;

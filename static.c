@@ -74,8 +74,6 @@ debug_init(OS *os, iptr input, Arena *arena)
 
 #endif /* _DEBUG */
 
-#define static_path_join(a, b) (a OS_PATH_SEPARATOR b)
-
 struct gl_debug_ctx {
 	Stream stream;
 	iptr   os_error_handle;
@@ -172,8 +170,9 @@ dump_gl_params(GLParams *gl, Arena a, OS *os)
 
 function FILE_WATCH_CALLBACK_FN(reload_shader)
 {
-	ShaderReloadContext *ctx = (typeof(ctx))user_data;
-	return beamformer_reload_shader(os, ctx->beamformer_context, ctx, arena, ctx->name);
+	ShaderReloadContext            *ctx = (typeof(ctx))user_data;
+	BeamformerReloadableShaderInfo *rsi = beamformer_reloadable_shader_infos + ctx->reloadable_info_index;
+	return beamformer_reload_shader(os, path, ctx, arena, beamformer_shader_names[rsi->kind]);
 }
 
 function FILE_WATCH_CALLBACK_FN(reload_shader_indirect)
@@ -321,6 +320,9 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	Stream error         = stream_alloc(memory, MB(1));
 	Arena  ui_arena      = sub_arena(memory, MB(2), KB(4));
 
+	Arena scratch = {.beg = memory->end - 4096L, .end = memory->end};
+	memory->end = scratch.beg;
+
 	BeamformerCtx   *ctx   = *o_ctx   = push_struct(memory, typeof(*ctx));
 	BeamformerInput *input = *o_input = push_struct(memory, typeof(*input));
 
@@ -330,6 +332,7 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	input->executable_reloaded = 1;
 
 	os_init(&ctx->os, memory);
+	ctx->os.path_separator        = s8(OS_PATH_SEPARATOR);
 	ctx->os.compute_worker.arena  = compute_arena;
 	ctx->os.compute_worker.asleep = 1;
 	ctx->os.upload_worker.arena   = upload_arena;
@@ -428,21 +431,23 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 		#undef X
 	};
 
-	#define X(e, f, ...) do if (s8(f).len > 0) { \
-		ShaderReloadContext *src = push_struct(memory, typeof(*src)); \
-		src->beamformer_context  = ctx;                               \
-		src->header  = compute_headers[BeamformerShaderKind_##e];     \
-		src->path    = s8(static_path_join("shaders", f ".glsl"));    \
-		src->name    = src->path;                                     \
-		src->shader  = cs->programs + BeamformerShaderKind_##e;       \
-		src->gl_type = GL_COMPUTE_SHADER;                             \
-		src->kind    = BeamformerShaderKind_##e;                      \
-		src->link    = src;                                           \
-		os_add_file_watch(&ctx->os, memory, src->path, reload_shader_indirect, (iptr)src); \
-		reload_shader_indirect(&ctx->os, src->path, (iptr)src, *memory); \
-	} while (0);
-	COMPUTE_SHADERS_INTERNAL
-	#undef X
+	for EachElement(beamformer_reloadable_compute_shader_info_indices, it) {
+		i32   index = beamformer_reloadable_compute_shader_info_indices[it];
+		Arena temp  = scratch;
+
+		s8 file = push_s8_from_parts(&temp, s8(OS_PATH_SEPARATOR), s8("shaders"),
+		                             beamformer_reloadable_shader_files[index]);
+
+		BeamformerReloadableShaderInfo *rsi = beamformer_reloadable_shader_infos + index;
+		ShaderReloadContext *src = push_struct(memory, typeof(*src));
+		src->beamformer_context    = ctx;
+		src->reloadable_info_index = index;
+		src->link    = src;
+		src->header  = compute_headers[rsi->kind];
+		src->gl_type = GL_COMPUTE_SHADER;
+		os_add_file_watch(&ctx->os, memory, file, reload_shader_indirect, (iptr)src);
+		reload_shader_indirect(&ctx->os, file, (iptr)src, *memory);
+	}
 	os_wake_waiters(&worker->sync_variable);
 
 	FrameViewRenderContext *fvr = &ctx->frame_view_render_context;
@@ -457,13 +462,16 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	glNamedRenderbufferStorageMultisample(fvr->renderbuffers[1], msaa_samples, GL_DEPTH_COMPONENT24,
 	                                      FRAME_VIEW_RENDER_TARGET_SIZE);
 
+	static_assert(countof(beamformer_reloadable_render_shader_info_indices) == 1,
+	              "only a single render shader is currently handled");
+	i32 render_rsi_index = beamformer_reloadable_render_shader_info_indices[0];
+
+	s8 render_file = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), s8("shaders"),
+	                                    beamformer_reloadable_shader_files[render_rsi_index]);
 	ShaderReloadContext *render_3d = push_struct(memory, typeof(*render_3d));
-	render_3d->beamformer_context = ctx;
-	render_3d->path    = s8(static_path_join("shaders", "render_3d.frag.glsl"));
-	render_3d->name    = s8("shaders/render_3d.glsl");
+	render_3d->beamformer_context    = ctx;
+	render_3d->reloadable_info_index = render_rsi_index;
 	render_3d->gl_type = GL_FRAGMENT_SHADER;
-	render_3d->kind    = BeamformerShaderKind_Render3D;
-	render_3d->shader  = &fvr->shader;
 	render_3d->header  = s8(""
 	"layout(location = 0) in  vec3 normal;\n"
 	"layout(location = 1) in  vec3 texture_coordinate;\n\n"
@@ -480,6 +488,7 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	"layout(binding = 0) uniform sampler3D u_texture;\n");
 
 	render_3d->link = push_struct(memory, typeof(*render_3d));
+	render_3d->link->reloadable_info_index = -1;
 	render_3d->link->gl_type = GL_VERTEX_SHADER;
 	render_3d->link->link    = render_3d;
 	render_3d->link->header  = s8(""
@@ -507,8 +516,8 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	"\tf_normal    = v_normal;\n"
 	"\tgl_Position = u_projection * u_view * u_model * vec4(pos, 1);\n"
 	"}\n");
-	reload_shader(&ctx->os, render_3d->path, (iptr)render_3d, *memory);
-	os_add_file_watch(&ctx->os, memory, render_3d->path, reload_shader, (iptr)render_3d);
+	reload_shader(&ctx->os, render_file, (iptr)render_3d, *memory);
+	os_add_file_watch(&ctx->os, memory, render_file, reload_shader, (iptr)render_3d);
 
 	f32 unit_cube_vertices[] = {
 		 0.5f,  0.5f, -0.5f,
@@ -580,6 +589,8 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	cs->unit_cube_model = render_model_from_arrays(unit_cube_vertices, unit_cube_normals,
 	                                               sizeof(unit_cube_vertices),
 	                                               unit_cube_indices, countof(unit_cube_indices));
+
+	memory->end = scratch.end;
 }
 
 function void

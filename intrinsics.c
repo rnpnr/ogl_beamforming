@@ -112,6 +112,17 @@ ctz_u32(u32 a)
 	return result;
 }
 
+function force_inline u64
+ctz_u64(u64 a)
+{
+	u64 result = 64, index;
+	if (a) {
+		_BitScanForward64(&index, a);
+		result = index;
+	}
+	return result;
+}
+
 #else /* !COMPILER_MSVC */
 
 function force_inline u32
@@ -127,6 +138,14 @@ ctz_u32(u32 a)
 {
 	u32 result = 32;
 	if (a) result = (u32)__builtin_ctz(a);
+	return result;
+}
+
+function force_inline u64
+ctz_u64(u64 a)
+{
+	u64 result = 64;
+	if (a) result = (u64)__builtin_ctzll(a);
 	return result;
 }
 

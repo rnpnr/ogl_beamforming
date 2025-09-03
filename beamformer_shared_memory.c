@@ -116,6 +116,7 @@ typedef union {
 typedef struct {
 	BeamformerShaderKind       shaders[BeamformerMaxComputeShaderStages];
 	BeamformerShaderParameters parameters[BeamformerMaxComputeShaderStages];
+	u32                        program_indices[BeamformerMaxComputeShaderStages];
 	u32                        shader_count;
 	BeamformerDataKind         data_kind;
 } BeamformerComputePipeline;

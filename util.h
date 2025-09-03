@@ -56,8 +56,6 @@
   #define asan_unpoison_region(...)
 #endif
 
-#define INVALID_CODE_PATH ASSERT(0)
-#define INVALID_DEFAULT_CASE default: ASSERT(0); break
 #define InvalidCodePath assert(0)
 #define InvalidDefaultCase default: assert(0); break
 
@@ -87,8 +85,14 @@
 #define SIGN(x)          ((x) < 0? -1 : 1)
 #define swap(a, b)       do {typeof(a) __tmp = (a); (a) = (b); (b) = __tmp;} while(0)
 
+#define ISDIGIT(c)       (BETWEEN((c), '0', '9'))
+#define ISUPPER(c)       (((c) & 0x20u) == 0)
+#define TOLOWER(c)       (((c) | 0x20u))
+#define TOUPPER(c)       (((c) & ~(0x20u)))
+
 #define f32_cmp(x, y)    (ABS((x) - (y)) <= F32_EPSILON * MAX(1.0f, MAX(ABS(x), ABS(y))))
 
+#define EachBit(a, it)                 (u64 it = ctz_u64(a); it != 64; a &= ~(1u << (it)), it = ctz_u64(a))
 #define EachElement(array, it)         (u64 it = 0; it < countof(array); it += 1)
 #define EachEnumValue(type, it)        (type it = (type)0; it < type##_Count; it = (type)(it + 1))
 #define EachNonZeroEnumValue(type, it) (type it = (type)1; it < type##_Count; it = (type)(it + 1))
@@ -128,6 +132,7 @@
 #define GB(a)            ((u64)(a) << 30ULL)
 
 #define I32_MAX          (0x7FFFFFFFL)
+#define U16_MAX          (0x0000FFFFUL)
 #define U32_MAX          (0xFFFFFFFFUL)
 #define F32_INFINITY     (1e+300*1e+300)
 #define F32_EPSILON      (1e-6f)
@@ -353,6 +358,7 @@ struct OS {
 	FileWatchContext file_watch_context;
 	iptr             context;
 	iptr             error_handle;
+	s8               path_separator;
 
 	GLWorkerThreadContext compute_worker;
 	GLWorkerThreadContext upload_worker;

@@ -2,6 +2,10 @@
 /* NOTE: inspired by nob: https://github.com/tsoding/nob.h */
 
 /* TODO(rnp):
+ * [ ]: refactor: "base" shaders should only be reloadable shaders
+ *      - internally when a shader with no file is encountered it should
+ *        not get pushed as a "base" shader.
+ * [ ]: bug: column indicator for compile error is off
  * [ ]: bake shaders and font data into binary
  *      - for shaders there is a way of making a separate data section and referring
  *        to it with extern from the C source (bake both data and size)
@@ -11,10 +15,12 @@
  * [ ]: seperate dwarf debug info
  */
 #include <stdarg.h>
+#include <setjmp.h>
 #include <stdio.h>
 
 #include "util.h"
 
+#define BeamformerShaderKind_ComputeCount (1)
 #include "beamformer_parameters.h"
 
 global char *g_argv0;
@@ -105,21 +111,11 @@ global char *g_argv0;
 
 #define shift(list, count) ((count)--, *(list)++)
 
-#define da_append_count(a, s, items, item_count) do { \
-	da_reserve((a), (s), (s)->count + (item_count));                                \
-	mem_copy((s)->data + (s)->count, (items), sizeof(*(items)) * (uz)(item_count)); \
-	(s)->count += (item_count);                                                     \
-} while (0)
-
 #define cmd_append_count da_append_count
 #define cmd_append(a, s, ...) da_append_count(a, s, ((char *[]){__VA_ARGS__}), \
                                               (iz)(sizeof((char *[]){__VA_ARGS__}) / sizeof(char *)))
 
-typedef struct {
-	char **data;
-	iz     count;
-	iz     capacity;
-} CommandList;
+DA_STRUCT(char *, Command);
 
 typedef struct {
 	b32   debug;
@@ -130,10 +126,11 @@ typedef struct {
 } Options;
 
 #define BUILD_LOG_KINDS \
-	X(Error,   "\x1B[31m[ERROR]\x1B[0m   ") \
-	X(Warning, "\x1B[33m[WARNING]\x1B[0m ") \
-	X(Info,    "\x1B[32m[INFO]\x1B[0m    ") \
-	X(Command, "\x1B[36m[COMMAND]\x1B[0m ")
+	X(Error,    "\x1B[31m[ERROR]\x1B[0m    ") \
+	X(Warning,  "\x1B[33m[WARNING]\x1B[0m  ") \
+	X(Generate, "\x1B[32m[GENERATE]\x1B[0m ") \
+	X(Info,     "\x1B[33m[INFO]\x1B[0m     ") \
+	X(Command,  "\x1B[36m[COMMAND]\x1B[0m  ")
 #define X(t, ...) BuildLogKind_##t,
 typedef enum {BUILD_LOG_KINDS BuildLogKind_Count} BuildLogKind;
 #undef X
@@ -152,9 +149,10 @@ build_log_base(BuildLogKind kind, char *format, va_list args)
 
 #define build_log_failure(format, ...) build_log(BuildLogKind_Error, \
                                                  "failed to build: " format, ##__VA_ARGS__)
-#define build_log_info(...)    build_log(BuildLogKind_Info,    ##__VA_ARGS__)
-#define build_log_command(...) build_log(BuildLogKind_Command, ##__VA_ARGS__)
-#define build_log_warning(...) build_log(BuildLogKind_Warning, ##__VA_ARGS__)
+#define build_log_generate(...) build_log(BuildLogKind_Generate, ##__VA_ARGS__)
+#define build_log_info(...)     build_log(BuildLogKind_Info,     ##__VA_ARGS__)
+#define build_log_command(...)  build_log(BuildLogKind_Command,  ##__VA_ARGS__)
+#define build_log_warning(...)  build_log(BuildLogKind_Warning,  ##__VA_ARGS__)
 function void
 build_log(BuildLogKind kind, char *format, ...)
 {
@@ -271,7 +269,7 @@ os_wait_close_process(iptr handle)
 			}
 		} else {
 			/* TODO(rnp): handle multiple children */
-			INVALID_CODE_PATH;
+			InvalidCodePath;
 		}
 	}
 	return result;
@@ -661,23 +659,6 @@ build_helper_library(Arena arena, CommandList cc)
 	b32 result = build_shared_library(arena, cc, "ogl_beamformer_lib", library,
 	                                  libs, libs_count,
 	                                  arg_list(char *, "helpers/ogl_beamformer_lib.c"));
-
-	/////////////
-	// header
-	char *lib_header_out = OUTPUT("ogl_beamformer_lib.h");
-	if (needs_rebuild(lib_header_out, "helpers/ogl_beamformer_lib_base.h")) {
-		s8 parameters_header = os_read_whole_file(&arena, "beamformer_parameters.h");
-		s8 base_header       = os_read_whole_file(&arena, "helpers/ogl_beamformer_lib_base.h");
-		result = parameters_header.len != 0 && base_header.len != 0 &&
-		         parameters_header.data + parameters_header.len == base_header.data;
-		if (result) {
-			s8 output_file   = parameters_header;
-			output_file.len += base_header.len;
-			result &= os_write_new_file(lib_header_out, output_file);
-		}
-		if (!result) build_log_failure("%s", lib_header_out);
-	}
-
 	return result;
 }
 
@@ -723,6 +704,16 @@ typedef struct {
 	iz  capacity;
 } s8_list;
 
+function s8
+s8_chop(s8 *in, iz count)
+{
+	count = CLAMP(count, 0, in->len);
+	s8 result = {.data = in->data, .len = count};
+	in->data += count;
+	in->len  -= count;
+	return result;
+}
+
 function void
 s8_split(s8 str, s8 *left, s8 *right, u8 byte)
 {
@@ -759,6 +750,7 @@ s8_list_from_s8(s8_list *list, Arena *arena, s8 str)
 
 typedef struct {
 	Stream stream;
+	Arena  scratch;
 	i32    indentation_level;
 } MetaprogramContext;
 
@@ -772,13 +764,6 @@ meta_write_and_reset(MetaprogramContext *m, char *file)
 	return result;
 }
 
-function void
-meta_indent(MetaprogramContext *m)
-{
-	for (i32 count = m->indentation_level; count > 0; count--)
-		stream_append_byte(&m->stream, '\t');
-}
-
 #define meta_push(m, ...) meta_push_(m, arg_list(s8, __VA_ARGS__))
 function void
 meta_push_(MetaprogramContext *m, s8 *items, iz count)
@@ -786,11 +771,15 @@ meta_push_(MetaprogramContext *m, s8 *items, iz count)
 	stream_append_s8s_(&m->stream, items, count);
 }
 
+#define meta_pad(m, b, n)             stream_pad(&(m)->stream, (b), (n))
+#define meta_indent(m)                meta_pad((m), '\t', (m)->indentation_level)
 #define meta_begin_line(m, ...)  do { meta_indent(m); meta_push(m, __VA_ARGS__);           } while(0)
-#define meta_end_line(m, ...)    do {                 meta_push(m, __VA_ARGS__, s8("\n")); } while(0)
+#define meta_end_line(m, ...)                         meta_push(m, __VA_ARGS__, s8("\n"))
 #define meta_push_line(m, ...)   do { meta_indent(m); meta_push(m, __VA_ARGS__, s8("\n")); } while(0)
 #define meta_begin_scope(m, ...) do { meta_push_line(m, __VA_ARGS__); (m)->indentation_level++; } while(0)
 #define meta_end_scope(m, ...)   do { (m)->indentation_level--; meta_push_line(m, __VA_ARGS__); } while(0)
+#define meta_push_u64(m, n)           stream_append_u64(&(m)->stream, (n))
+#define meta_push_u64_hex(m, n)       stream_append_hex_u64(&(m)->stream, (n))
 
 #define meta_begin_matlab_class_cracker(_1, _2, FN, ...) FN
 #define meta_begin_matlab_class_1(m, name) meta_begin_scope(m, s8("classdef " name))
@@ -828,132 +817,1610 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 	return result;
 }
 
-function b32
-build_matlab_bindings(Arena arena)
-{
-	b32 result = 1;
-	os_make_directory(OUTPUT("matlab"));
+#define META_ENTRY_KIND_LIST \
+	X(BeginScope)  \
+	X(EndScope)    \
+	X(Permute)     \
+	X(PermuteBits) \
+	X(Shader)      \
+	X(ShaderGroup) \
+	X(SubShader)
 
-	Arena scratch = sub_arena(&arena, MB(1), 16);
+#define X(k, ...) MetaEntryKind_## k,
+typedef enum {META_ENTRY_KIND_LIST} MetaEntryKind;
+#undef X
 
-	char *out = OUTPUT("matlab/OGLBeamformerLiveFeedbackFlags.m");
-	if (needs_rebuild(out, "beamformer_parameters.h")) {
-		/* TODO(rnp): recreate/clear directory incase these file names change */
-		MetaprogramContext m = {.stream = arena_stream(arena)};
+#define X(k, ...) #k,
+read_only global char *meta_entry_kind_strings[] = {META_ENTRY_KIND_LIST};
+#undef X
 
-		#define X(name, flag, ...) meta_push_line(&m, s8(#name " (" str(flag) ")"));
-		meta_begin_matlab_class(&m, "OGLBeamformerLiveFeedbackFlags", "int32");
-		meta_begin_scope(&m, s8("enumeration"));
-		BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST
-		result &= meta_end_and_write_matlab(&m, out);
+typedef struct { u32 line, column; } MetaLocation;
 
-		meta_begin_matlab_class(&m, "OGLBeamformerDataKind", "int32");
-		meta_begin_scope(&m, s8("enumeration"));
-		BEAMFORMER_DATA_KIND_LIST
-		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerDataKind.m"));
-		#undef X
+#define META_ENTRY_ARGUMENT_KIND_LIST \
+	X(None)   \
+	X(String) \
+	X(Array)
 
-		#define X(kind, ...) meta_push_matlab_enum_with_value(&m, s8(#kind), BeamformerFilterKind_## kind);
-		meta_begin_matlab_class(&m, "OGLBeamformerFilterKind", "int32");
-		meta_begin_scope(&m, s8("enumeration"));
-		BEAMFORMER_FILTER_KIND_LIST(,)
-		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerFilterKind.m"));
-		#undef X
+#define X(k, ...) MetaEntryArgumentKind_## k,
+typedef enum {META_ENTRY_ARGUMENT_KIND_LIST} MetaEntryArgumentKind;
+#undef X
 
-		#define X(kind, ...) meta_push_matlab_enum_with_value(&m, s8(#kind), BeamformerShaderKind_## kind);
-		meta_begin_matlab_class(&m, "OGLBeamformerShaderStage", "int32");
-		meta_begin_scope(&m, s8("enumeration"));
-		COMPUTE_SHADERS
-		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerShaderStage.m"));
-		#undef X
-
-		#define X(kind, ...) meta_push_matlab_enum_with_value(&m, s8(#kind), BeamformerTransmitMode_## kind);
-		meta_begin_matlab_class(&m, "OGLBeamformerTransmitModes", "int32");
-		meta_begin_scope(&m, s8("enumeration"));
-		TRANSMIT_MODES_LIST
-		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerTransmitModes.m"));
-		#undef X
-
-		#define X(kind, ...) meta_push_matlab_enum_with_value(&m, s8(#kind), BeamformerReceiveMode_## kind);
-		meta_begin_matlab_class(&m, "OGLBeamformerReceiveModes", "int32");
-		meta_begin_scope(&m, s8("enumeration"));
-		RECEIVE_MODES_LIST
-		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerReceiveModes.m"));
-		#undef X
-
-		#define X(kind, v, ...) meta_push_line(&m, s8(#kind " (" #v ")"));
-		meta_begin_matlab_class(&m, "OGLBeamformerSamplingModes", "int32");
-		meta_begin_scope(&m, s8("enumeration"));
-		SAMPLING_MODES_LIST
-		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerSamplingModes.m"));
-		#undef X
-
-		os_make_directory(OUTPUT("matlab/+OGLBeamformerFilter"));
-		#define X(kind, ...) {OUTPUT("matlab/+OGLBeamformerFilter/" #kind ".m"), s8_comp(#kind),  s8_comp(#__VA_ARGS__)},
-		read_only local_persist struct {char *out; s8 class, args;} filter_table[] = {
-			BEAMFORMER_FILTER_KIND_LIST(,)
+typedef struct {
+	MetaEntryArgumentKind kind;
+	MetaLocation          location;
+	union {
+		s8 string;
+		struct {
+			s8  *strings;
+			u64  count;
 		};
-		#undef X
+	};
+} MetaEntryArgument;
 
-		s8_list members = {0};
-		for EachElement(filter_table, filter) {
-			typeof(*filter_table) *f = filter_table + filter;
-			members.count = 0;
-			s8_list_from_s8(&members, &scratch, f->args);
-			meta_begin_scope(&m, s8("classdef "), f->class, s8(" < OGLBeamformerFilter.BaseFilter"));
+typedef struct {
+	MetaEntryKind      kind;
+	u32                argument_count;
+	MetaEntryArgument *arguments;
+	s8                 name;
+	MetaLocation       location;
+} MetaEntry;
 
-			meta_begin_scope(&m, s8("properties"));
-			for (iz it = 0; it < members.count; it++)
-				meta_push_matlab_property(&m, members.data[it], 1);
-			meta_end_scope(&m, s8("end"));
+typedef struct {
+	MetaEntry *data;
+	iz         count;
+	iz         capacity;
+	s8         raw;
+} MetaEntryStack;
 
-			meta_begin_scope(&m, s8("methods"));
-			meta_begin_line(&m, s8("function obj = "), f->class, s8("("));
-			for (iz it = 0; it < members.count; it++)
-				meta_push(&m, it > 0 ? s8(", ") : s8(""), members.data[it]);
-			meta_end_line(&m, s8(")"));
+#define META_PARSE_TOKEN_LIST \
+	X('@', Entry)      \
+	X('(', BeginArgs)  \
+	X(')', EndArgs)    \
+	X('[', BeginArray) \
+	X(']', EndArray)   \
+	X('{', BeginScope) \
+	X('}', EndScope)
 
-			m.indentation_level++;
-			for (iz it = 0; it < members.count; it++)
-				meta_push_line(&m, s8("obj."), members.data[it], s8(" = "), members.data[it], s8(";"));
-			result &= meta_end_and_write_matlab(&m, f->out);
+typedef enum {
+	MetaParseToken_EOF,
+	MetaParseToken_String,
+	#define X(__1, kind, ...) MetaParseToken_## kind,
+	META_PARSE_TOKEN_LIST
+	#undef X
+	MetaParseToken_Count,
+} MetaParseToken;
+
+typedef union {
+	MetaEntryKind kind;
+	s8            string;
+} MetaParseUnion;
+
+typedef struct {
+	s8 s;
+	MetaLocation location;
+} MetaParsePoint;
+
+typedef struct {
+	MetaParsePoint p;
+	MetaParseUnion u;
+	MetaParsePoint save_point;
+} MetaParser;
+
+global char    *compiler_file;
+global jmp_buf  compiler_jmp_buf;
+
+#define meta_parser_save(v)    (v)->save_point = (v)->p
+#define meta_parser_restore(v) swap((v)->p, (v)->save_point)
+#define meta_parser_commit(v)  meta_parser_restore(v)
+
+#define meta_compiler_error_message(loc, format, ...) \
+	fprintf(stderr, "%s:%u:%u: error: "format, compiler_file, \
+	        loc.line + 1, loc.column + 1, ##__VA_ARGS__)
+
+#define meta_compiler_error(loc, format, ...) do { \
+	meta_compiler_error_message(loc, format, ##__VA_ARGS__); \
+	meta_error(); \
+} while (0)
+
+#define meta_entry_error(e, ...) meta_entry_error_column((e), (i32)(e)->location.column, __VA_ARGS__)
+#define meta_entry_error_column(e, column, ...) do { \
+	meta_compiler_error_message((e)->location, __VA_ARGS__); \
+	meta_entry_print((e), 1, (column)); \
+	meta_error(); \
+} while(0)
+
+#define meta_entry_error_location(e, loc, ...) do { \
+		meta_compiler_error_message((loc), __VA_ARGS__); \
+		meta_entry_print((e), 1, (i32)(loc).column); \
+		meta_error(); \
+} while (0)
+
+function no_return void
+meta_error(void)
+{
+	assert(0);
+	longjmp(compiler_jmp_buf, 1);
+}
+
+function void
+meta_entry_print(MetaEntry *e, i32 depth, i32 caret)
+{
+	char *kind = meta_entry_kind_strings[e->kind];
+	if (e->kind == MetaEntryKind_BeginScope) kind = "{";
+	if (e->kind == MetaEntryKind_EndScope)   kind = "}";
+
+	fprintf(stderr, "%*s@%s", depth * 2, "", kind);
+
+	if (e->argument_count) {
+		fprintf(stderr, "(");
+		for (u32 i = 0; i < e->argument_count; i++) {
+			MetaEntryArgument *a = e->arguments + i;
+			if (i != 0) fprintf(stderr, " ");
+			if (a->kind == MetaEntryArgumentKind_Array) {
+				fprintf(stderr, "[");
+				for (u64 j = 0; j < a->count; j++) {
+					if (j != 0) fprintf(stderr, " ");
+					fprintf(stderr, "%.*s", (i32)a->strings[j].len, a->strings[j].data);
+				}
+				fprintf(stderr, "]");
+			} else {
+				fprintf(stderr, "%.*s", (i32)a->string.len, a->string.data);
+			}
 		}
+		fprintf(stderr, ")");
+	}
+	if (e->name.len) fprintf(stderr, " %.*s", (i32)e->name.len, e->name.data);
 
-		meta_begin_matlab_class(&m, "BaseFilter");
-		meta_begin_scope(&m, s8("methods"));
-		meta_begin_scope(&m, s8("function out = Flatten(obj)"));
-		meta_push_line(&m, s8("fields = struct2cell(struct(obj));"));
-		meta_push_line(&m, s8("out    = zeros(1, numel(fields));"));
-		meta_begin_scope(&m, s8("for i = 1:numel(fields)"));
-		meta_push_line(&m, s8("out(i) = fields{i};"));
-		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/+OGLBeamformerFilter/BaseFilter.m"));
+	if (caret >= 0) fprintf(stderr, "\n%.*s^", depth * 2 + caret, "");
 
-		#define X(name, __t, __s, elements, ...) meta_push_line(&m, s8(#name "(1," #elements ")"));
-		meta_begin_matlab_class(&m, "OGLBeamformerParameters");
-		meta_begin_scope(&m, s8("properties"));
-		BEAMFORMER_PARAMS_HEAD
-		BEAMFORMER_UI_PARAMS
-		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerParameters.m"));
+	fprintf(stderr, "\n");
+}
 
-		meta_begin_matlab_class(&m, "OGLBeamformerParametersHead");
-		meta_begin_scope(&m, s8("properties"));
-		BEAMFORMER_PARAMS_HEAD
-		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerParametersHead.m"));
+function MetaEntryKind
+meta_entry_kind_from_string(s8 s)
+{
+	#define X(k, ...) s8_comp(#k),
+	read_only local_persist s8 kinds[] = {META_ENTRY_KIND_LIST};
+	#undef X
+	i32 result = -1;
+	for EachElement(kinds, it) {
+		if (s8_equal(kinds[it], s)) {
+			result = (i32)it;
+			break;
+		}
+	}
+	return (MetaEntryKind)result;
+}
 
-		meta_begin_matlab_class(&m, "OGLBeamformerParametersUI");
-		meta_begin_scope(&m, s8("properties"));
-		BEAMFORMER_UI_PARAMS
-		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerParametersUI.m"));
+function void
+meta_parser_trim(MetaParser *p)
+{
+	u8 *s, *end = p->p.s.data + p->p.s.len;
+	b32 done    = 0;
+	b32 comment = 0;
+	for (s = p->p.s.data; !done && s != end;) {
+		switch (*s) {
+		case '\r': case '\t': case ' ':
+		{
+			p->p.location.column++;
+		}break;
+		case '\n':{ p->p.location.line++; p->p.location.column = 0; comment = 0; }break;
+		case '/':{
+			comment = ((s + 1) != end  && s[1] == '/');
+		} /* FALLTHROUGH */
+		default:{done = !comment;}break;
+		}
+		if (!done) s++;
+	}
+	p->p.s.data = s;
+	p->p.s.len  = end - s;
+}
+
+function s8
+meta_parser_extract_string(MetaParser *p)
+{
+	s8 result = {.data = p->p.s.data};
+	for (; result.len < p->p.s.len; result.len++) {
+		b32 done = 0;
+		switch (p->p.s.data[result.len]) {
+		#define X(t, ...) case t:
+		META_PARSE_TOKEN_LIST
 		#undef X
+		case ' ': case '\n': case '\r': case '\t':
+		{done = 1;}break;
+		case '/':{
+			done = (result.len + 1 < p->p.s.len) && (p->p.s.data[result.len + 1] == '/');
+		}break;
+		default:{}break;
+		}
+		if (done) break;
+	}
+	p->p.location.column += (u32)result.len;
+	p->p.s.data          += result.len;
+	p->p.s.len           -= result.len;
+	return result;
+}
 
-		#define X(name, __t, __s, elements, ...) meta_push_matlab_property(&m, s8(#name), elements);
-		meta_begin_matlab_class(&m, "OGLBeamformerLiveImagingParameters");
-		meta_begin_scope(&m, s8("properties"));
-		BEAMFORMER_LIVE_IMAGING_PARAMETERS_LIST
-		result &= meta_end_and_write_matlab(&m, OUTPUT("matlab/OGLBeamformerLiveImagingParameters.m"));
+function s8
+meta_parser_token_name(MetaParser *p, MetaParseToken t)
+{
+	s8 result = s8("\"invalid\"");
+	read_only local_persist s8 names[MetaParseToken_Count] = {
+		[MetaParseToken_EOF] = s8_comp("\"EOF\""),
+		#define X(k, v, ...) [MetaParseToken_## v] = s8_comp(#k),
+		META_PARSE_TOKEN_LIST
 		#undef X
+	};
+	if (t >= 0 && t < countof(names)) result = names[t];
+	if (t == MetaParseToken_String)   result = p->u.string;
+	return result;
+}
+
+function MetaParseToken
+meta_parser_token(MetaParser *p)
+{
+	MetaParseToken result = MetaParseToken_EOF;
+	meta_parser_save(p);
+	if (p->p.s.len > 0) {
+		b32 chop = 1;
+		switch (p->p.s.data[0]) {
+		#define X(t, kind, ...) case t:{ result = MetaParseToken_## kind; }break;
+		META_PARSE_TOKEN_LIST
+		#undef X
+		default:{ result = MetaParseToken_String; chop = 0; }break;
+		}
+		if (chop) { s8_chop(&p->p.s, 1); p->p.location.column++; }
+
+		meta_parser_trim(p);
+		switch (result) {
+		case MetaParseToken_String:{ p->u.string = meta_parser_extract_string(p); }break;
+
+		/* NOTE(rnp): '{' and '}' are shorthand for @BeginScope and @EndScope */
+		case MetaParseToken_BeginScope:{ p->u.kind = MetaEntryKind_BeginScope; }break;
+		case MetaParseToken_EndScope:{   p->u.kind = MetaEntryKind_EndScope;   }break;
+
+		case MetaParseToken_Entry:{
+			s8 kind = meta_parser_extract_string(p);
+			p->u.kind = meta_entry_kind_from_string(kind);
+			if (p->u.kind < 0) {
+				meta_compiler_error(p->p.location, "invalid meta kind: %.*s\n", (i32)kind.len, kind.data);
+			}
+		}break;
+		default:{}break;
+		}
+		meta_parser_trim(p);
 	}
 
+	return result;
+}
+
+function MetaParseToken
+meta_parser_peek_token(MetaParser *p)
+{
+	MetaParseToken result = meta_parser_token(p);
+	meta_parser_restore(p);
+	return result;
+}
+
+function void
+meta_parser_unexpected_token(MetaParser *p, MetaParseToken t)
+{
+	meta_parser_restore(p);
+	s8 token_name = meta_parser_token_name(p, t);
+	meta_compiler_error(p->p.location, "unexpected token: %.*s\n", (i32)token_name.len, token_name.data);
+}
+
+function void
+meta_parser_arguments(MetaParser *p, MetaEntry *e, Arena *arena)
+{
+	if (meta_parser_peek_token(p) == MetaParseToken_BeginArgs) {
+		meta_parser_commit(p);
+
+		MetaEntryArgument *arg = e->arguments = push_struct(arena, MetaEntryArgument);
+		b32 array = 0;
+		for (MetaParseToken token = meta_parser_token(p);
+		     token != MetaParseToken_EndArgs;
+		     token = meta_parser_token(p))
+		{
+			if (!arg) arg = push_struct(arena, MetaEntryArgument);
+			switch (token) {
+			case MetaParseToken_String:{
+				if (array) {
+					assert((u8 *)(arg->strings + arg->count) == arena->beg);
+					*push_struct(arena, s8) = p->u.string;
+					arg->count++;
+				} else {
+					e->argument_count++;
+					arg->kind     = MetaEntryArgumentKind_String;
+					arg->string   = p->u.string;
+					arg->location = p->p.location;
+					arg           = 0;
+				}
+			}break;
+			case MetaParseToken_BeginArray:{
+				arg->kind     = MetaEntryArgumentKind_Array;
+				arg->strings  = (s8 *)arena_aligned_start(*arena, alignof(s8));
+				arg->location = p->p.location;
+				array         = 1;
+			}break;
+			case MetaParseToken_EndArray:{
+				e->argument_count++;
+				array = 0;
+				arg   = 0;
+			}break;
+			default:{ meta_parser_unexpected_token(p, token); }break;
+			}
+		}
+	}
+}
+
+function MetaEntryStack
+meta_entry_stack_from_file(Arena *arena, Arena scratch, char *file)
+{
+	MetaParser     parser = {.p.s = os_read_whole_file(arena, file)};
+	MetaEntryStack result = {.raw = parser.p.s};
+
+	compiler_file = file;
+
+	meta_parser_trim(&parser);
+
+	for (MetaParseToken token = meta_parser_token(&parser);
+	     token != MetaParseToken_EOF;
+	     token = meta_parser_token(&parser))
+	{
+		MetaEntry *e = da_push(arena, &result);
+		switch (token) {
+		case MetaParseToken_BeginScope:
+		case MetaParseToken_EndScope:
+		case MetaParseToken_Entry:
+		{
+			e->kind     = parser.u.kind;
+			e->location = parser.save_point.location;
+
+			if (token == MetaParseToken_Entry)
+				meta_parser_arguments(&parser, e, arena);
+
+			if (meta_parser_peek_token(&parser) == MetaParseToken_String) {
+				meta_parser_commit(&parser);
+				e->name = parser.u.string;
+			}
+		}break;
+
+		default:{ meta_parser_unexpected_token(&parser, token); }break;
+		}
+	}
+
+	return result;
+}
+
+#define meta_entry_argument_expected(e, ...) \
+	meta_entry_argument_expected_((e), arg_list(s8, __VA_ARGS__))
+function void
+meta_entry_argument_expected_(MetaEntry *e, s8 *args, uz count)
+{
+	if (e->argument_count != count) {
+		meta_compiler_error_message(e->location, "incorrect argument count for entry %s() got: %u expected: %u\n",
+		                            meta_entry_kind_strings[e->kind], e->argument_count, (u32)count);
+		fprintf(stderr, "  format: @%s(", meta_entry_kind_strings[e->kind]);
+		for (uz i = 0; i < count; i++) {
+			if (i != 0) fprintf(stderr, ", ");
+			fprintf(stderr, "%.*s", (i32)args[i].len, args[i].data);
+		}
+		fprintf(stderr, ")\n");
+		meta_error();
+	}
+}
+
+function MetaEntryArgument
+meta_entry_argument_expect(MetaEntry *e, u32 index, MetaEntryArgumentKind kind)
+{
+	#define X(k, ...) #k,
+	read_only local_persist char *kinds[] = {META_ENTRY_ARGUMENT_KIND_LIST};
+	#undef X
+
+	assert(e->argument_count > index);
+	MetaEntryArgument result = e->arguments[index];
+
+	if (result.kind != kind) {
+		meta_entry_error_location(e, result.location, "unexpected argument kind: expected %s but got: %s\n",
+		                          kinds[kind], kinds[result.kind]);
+	}
+
+	if (kind == MetaEntryArgumentKind_Array && result.count == 0)
+		meta_entry_error_location(e, result.location, "array arguments must have at least 1 element\n");
+
+	return result;
+}
+
+typedef struct {
+	s8_list *data;
+	iz       count;
+	iz       capacity;
+} s8_list_table;
+
+typedef struct {
+	iz kind;
+	iz variation;
+} MetaPermutation;
+
+typedef struct {
+	u32 *data;
+	iz   count;
+	iz   capacity;
+} MetaIDList;
+
+typedef struct {
+	u32 *global_flags;
+	u8  *local_flags;
+	u8   global_flags_count;
+	u8   local_flags_count;
+} MetaShaderPermutation;
+DA_STRUCT(MetaShaderPermutation, MetaShaderPermutation);
+
+typedef struct {
+	MetaShaderPermutationList permutations;
+	MetaIDList                global_flag_ids;
+	u32                       base_name_id;
+	u32                       flag_list_id;
+} MetaShader;
+DA_STRUCT(MetaShader, MetaShader);
+
+typedef struct {
+	MetaShader *shader;
+	MetaIDList  sub_shaders;
+	s8          file;
+} MetaBaseShader;
+DA_STRUCT(MetaBaseShader, MetaBaseShader);
+
+typedef struct {
+	i32 first_match_vector_index;
+	i32 one_past_last_match_vector_index;
+	i32 sub_field_count;
+	b32 has_local_flags;
+} MetaShaderDescriptor;
+
+typedef struct {
+	s8         name;
+	MetaIDList shaders;
+} MetaShaderGroup;
+DA_STRUCT(MetaShaderGroup, MetaShaderGroup);
+
+typedef struct {
+	Arena *arena, scratch;
+
+	s8_list               permutation_kinds;
+	s8_list_table         permutations_for_kind;
+
+	s8_list_table         flags_for_shader;
+
+	MetaShaderGroupList   shader_groups;
+	MetaShaderList        shaders;
+	MetaBaseShaderList    base_shaders;
+	s8_list               shader_names;
+
+	MetaShaderDescriptor *shader_descriptors;
+} MetaContext;
+
+function iz
+meta_lookup_string_slow(s8_list *sv, s8 s)
+{
+	// TODO(rnp): obviously this is slow
+	iz result = -1;
+	for (iz i = 0; i < sv->count; i++) {
+		if (s8_equal(s, sv->data[i])) {
+			result = i;
+			break;
+		}
+	}
+	return result;
+}
+
+function iz
+meta_lookup_id_slow(MetaIDList *v, u32 id)
+{
+	// TODO(rnp): obviously this is slow
+	iz result = -1;
+	for (iz i = 0; i < v->count; i++) {
+		if (id == v->data[i]) {
+			result = i;
+			break;
+		}
+	}
+	return result;
+}
+
+function iz
+meta_intern_string(MetaContext *ctx, s8_list *sv, s8 s)
+{
+	iz result = meta_lookup_string_slow(sv, s);
+	if (result < 0) {
+		*da_push(ctx->arena, sv) = s;
+		result = sv->count - 1;
+	}
+	return result;
+}
+
+function iz
+meta_intern_id(MetaContext *ctx, MetaIDList *v, u32 id)
+{
+	iz result = meta_lookup_id_slow(v, id);
+	if (result < 0) {
+		*da_push(ctx->arena, v) = id;
+		result = v->count - 1;
+	}
+	return result;
+}
+
+function MetaPermutation
+meta_commit_permutation(MetaContext *ctx, s8 kind, s8 variation)
+{
+	iz kidx = meta_intern_string(ctx, &ctx->permutation_kinds, kind);
+	if (ctx->permutation_kinds.count != ctx->permutations_for_kind.count) {
+		da_push(ctx->arena, &ctx->permutations_for_kind);
+		assert(kidx == (ctx->permutations_for_kind.count - 1));
+	}
+
+	iz vidx = meta_intern_string(ctx, ctx->permutations_for_kind.data + kidx, variation);
+	MetaPermutation result = {.kind = kidx, .variation = vidx};
+	return result;
+}
+
+function u16
+meta_pack_shader_name(MetaContext *ctx, s8 base_name, MetaLocation loc)
+{
+	iz result = meta_intern_string(ctx, &ctx->shader_names, base_name);
+	if (result > (iz)U16_MAX)
+		meta_compiler_error(loc, "maximum base shaders exceeded: limit: %lu\n", U16_MAX);
+	return (u16)result;
+}
+
+function u8
+meta_commit_shader_flag(MetaContext *ctx, u32 flag_list_id, s8 flag, MetaEntry *e)
+{
+	assert(flag_list_id < ctx->flags_for_shader.count);
+	iz index = meta_intern_string(ctx, ctx->flags_for_shader.data + flag_list_id, flag);
+	if (index > 7) meta_entry_error(e, "Shaders only support 8 local flags\n");
+	u8 result = (u8)index;
+	return result;
+}
+
+typedef struct {
+	u16 entry_id;
+	struct {u8 current; u8 target;} cursor;
+	u32 permutation_id;
+} MetaShaderPermutationStackFrame;
+
+typedef struct {
+	MetaEntry *base_entry;
+
+	MetaShaderPermutationStackFrame *data;
+	iz count;
+	iz capacity;
+} MetaShaderPermutationStack;
+
+function void
+meta_pack_shader_permutation(MetaContext *ctx, MetaShaderPermutation *sp, MetaShader *base_shader,
+                             u32 local_flags, MetaShaderPermutationStack *stack, MetaEntry *last,
+                             u32 frame_cursor)
+{
+	////////////////////////////////////
+	// NOTE: fill ids from up the stack
+	u32 local_flag_index  = 0;
+	u32 global_flag_index = 0;
+	for (iz i = 0; i < stack->count; i++) {
+		MetaShaderPermutationStackFrame *f = stack->data + i;
+		MetaEntry         *e = stack->base_entry + f->entry_id;
+		MetaEntryArgument *a = e->arguments;
+		u32 cursor = f->cursor.current;
+		switch (e->kind) {
+		case MetaEntryKind_PermuteBits:{
+			if (f->permutation_id == U32_MAX)
+				f->permutation_id = meta_commit_shader_flag(ctx, base_shader->flag_list_id, a->strings[cursor], e);
+			sp->local_flags[local_flag_index++] = (u8)(1u << f->permutation_id);
+		}break;
+		case MetaEntryKind_Permute:{
+			if (f->permutation_id == U32_MAX) {
+				MetaPermutation p = meta_commit_permutation(ctx, a[0].string, a[1].strings[cursor]);
+				f->permutation_id = ((u32)(p.kind & 0xFFFFu) << 16) | (u32)(p.variation & 0xFFFFu);
+				meta_intern_id(ctx, &base_shader->global_flag_ids, (u32)p.kind);
+			}
+			sp->global_flags[global_flag_index++] = f->permutation_id;
+		}break;
+		InvalidDefaultCase;
+		}
+	}
+
+	///////////////////////////////////
+	// NOTE: fill ids from stack frame
+	MetaEntryArgument *a = last->arguments;
+	switch (last->kind) {
+	case MetaEntryKind_PermuteBits:{
+		u32 packed = local_flags;
+		u32 test   = frame_cursor;
+		for EachBit(test, flag) {
+			u32 flag_index = meta_commit_shader_flag(ctx, base_shader->flag_list_id, a->strings[flag], last);
+			packed |= (1u << flag_index);
+		}
+		sp->local_flags[local_flag_index++] = (u8)packed;
+	}break;
+	case MetaEntryKind_Permute:{
+		MetaPermutation p = meta_commit_permutation(ctx, a[0].string, a[1].strings[frame_cursor]);
+		u32 packed = ((u32)(p.kind & 0xFFFFu) << 16) | (u32)(p.variation & 0xFFFFu);
+		sp->global_flags[global_flag_index++] = packed;
+		meta_intern_id(ctx, &base_shader->global_flag_ids, (u32)p.kind);
+	}break;
+	InvalidDefaultCase;
+	}
+}
+
+function void
+meta_pop_and_pack_shader_permutations(MetaContext *ctx, MetaShader *base_shader, u32 local_flags,
+                                      MetaShaderPermutationStack *stack)
+{
+	assert(stack->count > 0);
+
+	u32 global_flag_count = 0;
+	u32 local_flag_count  = 0;
+
+	for (iz i = 0; i < stack->count; i++) {
+		switch (stack->base_entry[stack->data[i].entry_id].kind) {
+		case MetaEntryKind_PermuteBits:{ local_flag_count++; }break;
+		case MetaEntryKind_Permute:{ global_flag_count++;    }break;
+		InvalidDefaultCase;
+		}
+	}
+
+	MetaShaderPermutationStackFrame *f = stack->data + (--stack->count);
+	MetaEntry *last = stack->base_entry + f->entry_id;
+	assert(f->cursor.current == 0);
+	for (u32 cursor = 0; cursor < f->cursor.target; cursor++) {
+		MetaShaderPermutation *sp = da_push(ctx->arena, &base_shader->permutations);
+		sp->global_flags_count = (u8)global_flag_count;
+		sp->local_flags_count  = (u8)local_flag_count;
+		sp->global_flags       = push_array(ctx->arena, typeof(*sp->global_flags), global_flag_count);
+		sp->local_flags        = push_array(ctx->arena, typeof(*sp->local_flags),  local_flag_count);
+
+		meta_pack_shader_permutation(ctx, sp, base_shader, local_flags, stack, last, cursor);
+	}
+}
+
+function void
+meta_emit_shader_permutations(MetaContext *ctx, Arena scratch, MetaShader *s, u32 local_flags,
+                              MetaEntry *entries, iz entry_count)
+{
+	assert(entry_count > 0);
+	assert(entries[0].kind == MetaEntryKind_Permute ||
+	       entries[0].kind == MetaEntryKind_PermuteBits ||
+	       entries[0].kind == MetaEntryKind_SubShader);
+
+	MetaShaderPermutationStack stack = {.base_entry = entries};
+	da_reserve(&scratch, &stack, 32);
+
+	b32 done = 0;
+	for (iz i = 0; i < entry_count && !done; i++) {
+		MetaEntry *e = entries + i;
+		switch (e->kind) {
+		case MetaEntryKind_PermuteBits:
+		case MetaEntryKind_Permute:
+		{
+			if (stack.count && stack.data[stack.count - 1].entry_id == (u16)i) {
+				MetaShaderPermutationStackFrame *f = stack.data + (stack.count - 1);
+				f->permutation_id = U32_MAX;
+				f->cursor.current++;
+				if (f->cursor.current == f->cursor.target) {
+					stack.count--;
+					done = stack.count == 0;
+				}
+			} else {
+				u8 target;
+				if (e->kind == MetaEntryKind_Permute) {
+					meta_entry_argument_expected(e, s8("kind"), s8("[id ...]"));
+					target = (u8)meta_entry_argument_expect(e, 1, MetaEntryArgumentKind_Array).count;
+				} else {
+					meta_entry_argument_expected(e, s8("[id ...]"));
+					u32 count = (u32)meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_Array).count;
+					target = (u8)(2u << (count - 1));
+				}
+				*da_push(&scratch, &stack) = (MetaShaderPermutationStackFrame){
+					.entry_id       = (u16)i,
+					.permutation_id = U32_MAX,
+					.cursor.target  = target,
+				};
+			}
+		}break;
+		case MetaEntryKind_SubShader:{}break;
+		case MetaEntryKind_BeginScope:{}break;
+		case MetaEntryKind_EndScope:{
+			meta_pop_and_pack_shader_permutations(ctx, s, local_flags, &stack);
+			if (stack.count != 0)
+				i = stack.data[stack.count - 1].entry_id - 1;
+		}break;
+		InvalidDefaultCase;
+		}
+	}
+	if (stack.count) {
+		assert(stack.count == 1);
+		meta_pop_and_pack_shader_permutations(ctx, s, local_flags, &stack);
+	}
+}
+
+function iz
+meta_pack_shader(MetaContext *ctx, MetaShaderGroup *sg, Arena scratch, MetaEntry *entries, iz entry_count)
+{
+	assert(entries[0].kind == MetaEntryKind_Shader);
+
+	MetaBaseShader *base_shader = da_push(ctx->arena, &ctx->base_shaders);
+	MetaShader     *s           = da_push(ctx->arena, &ctx->shaders);
+	*da_push(ctx->arena, &sg->shaders) = (u32)da_index(s, &ctx->shaders);
+	{
+		s8_list *flag_list = da_push(ctx->arena, &ctx->flags_for_shader);
+		s->flag_list_id    = (u32)da_index(flag_list, &ctx->flags_for_shader);
+	}
+
+	base_shader->shader = s;
+	if (entries->argument_count > 1) {
+		meta_entry_argument_expected(entries, s8("[file_name]"));
+	} else if (entries->argument_count == 1) {
+		base_shader->file = meta_entry_argument_expect(entries, 0, MetaEntryArgumentKind_String).string;
+	}
+	s->base_name_id = meta_pack_shader_name(ctx, entries->name, entries->location);
+
+	i32 stack_items[32];
+	struct { i32 *data; iz capacity; iz count; } stack = {stack_items, countof(stack_items), 0};
+
+	iz result;
+	b32 in_sub_shader = 0;
+	for (result = 0; result < entry_count; result++) {
+		MetaEntry *e = entries + result;
+		switch (e->kind) {
+		case MetaEntryKind_BeginScope:{}break;
+		case MetaEntryKind_SubShader:{
+			if (in_sub_shader) goto error;
+			in_sub_shader = 1;
+		} /* FALLTHROUGH */
+		case MetaEntryKind_PermuteBits:
+		case MetaEntryKind_Permute:
+		case MetaEntryKind_Shader:
+		{
+			*da_push(&scratch, &stack) = (i32)result;
+			if ((result + 1 < entry_count) && entries[result + 1].kind == MetaEntryKind_BeginScope)
+				break;
+		} /* FALLTHROUGH */
+		case MetaEntryKind_EndScope:{
+			i32 index = stack.data[--stack.count];
+			MetaEntry *ended = entries + index;
+			if (index == 0) {
+				assert(stack.count == 0 && ended->kind == MetaEntryKind_Shader);
+				// NOTE(rnp): emit an empty single permutation
+				if (s->permutations.count == 0)
+					da_push(ctx->arena, &s->permutations);
+			} else {
+				u32 local_flags = 0;
+				if (stack.count > 0 && entries[stack.data[stack.count - 1]].kind == MetaEntryKind_Shader) {
+					MetaShader *fill = s;
+					if (ended->kind == MetaEntryKind_SubShader) {
+						fill = da_push(ctx->arena, &ctx->shaders);
+						u32 sid = (u32)da_index(fill, &ctx->shaders);
+						*da_push(ctx->arena, &sg->shaders) = sid;
+						*da_push(ctx->arena, &base_shader->sub_shaders) = sid;
+
+						fill->flag_list_id = s->flag_list_id;
+						fill->base_name_id = meta_pack_shader_name(ctx, ended->name, ended->location);
+						local_flags = 1u << meta_commit_shader_flag(ctx, s->flag_list_id, ended->name, ended);
+						in_sub_shader = 0;
+					}
+					meta_emit_shader_permutations(ctx, scratch, fill, local_flags, ended, result - index + 1);
+				}
+			}
+		}break;
+
+		default:
+		error:
+		{
+			meta_entry_error(e, "invalid nested @%s() in @%s()\n",
+			                 meta_entry_kind_strings[e->kind],
+			                 meta_entry_kind_strings[MetaEntryKind_Shader]);
+		}break;
+		}
+		if (stack.count == 0)
+			break;
+	}
+
+	return result;
+}
+
+function MetaPermutation
+metagen_unpack_permutation(MetaContext *ctx, u32 packed)
+{
+	MetaPermutation result;
+	result.kind      = (iz)(packed >> 16u);
+	result.variation = (iz)(packed & 0xFFFFu);
+	assert(result.kind      < ctx->permutation_kinds.count);
+	assert(result.variation < ctx->permutations_for_kind.data[result.kind].count);
+	return result;
+}
+
+function s8
+metagen_permutation_kind(MetaContext *ctx, u32 packed)
+{
+	MetaPermutation p = metagen_unpack_permutation(ctx, packed);
+	s8 result = ctx->permutation_kinds.data[p.kind];
+	return result;
+}
+
+function s8
+metagen_permutation_variation(MetaContext *ctx, u32 packed)
+{
+	MetaPermutation p = metagen_unpack_permutation(ctx, packed);
+	s8 result = ctx->permutations_for_kind.data[p.kind].data[p.variation];
+	return result;
+}
+
+function void
+metagen_push_table(MetaprogramContext *m, Arena scratch, s8 row_start, s8 row_end,
+                   s8 **column_strings, uz rows, uz columns)
+{
+	u32 *column_widths = 0;
+	if (columns > 1) {
+		column_widths = push_array(&scratch, u32, (iz)columns - 1);
+		for (uz column = 0; column < columns - 1; column++) {
+			s8 *strings = column_strings[column];
+			for (uz row = 0; row < rows; row++)
+				column_widths[column] = MAX(column_widths[column], (u32)strings[row].len);
+		}
+	}
+
+	for (uz row = 0; row < rows; row++) {
+		meta_begin_line(m, row_start);
+		for (uz column = 0; column < columns; column++) {
+			s8 text = column_strings[column][row];
+			meta_push(m, text);
+			i32 pad = columns > 1 ? 1 : 0;
+			if (column_widths && column < columns - 1)
+				pad += (i32)column_widths[column] - (i32)text.len;
+			if (column < columns - 1) meta_pad(m, ' ', pad);
+		}
+		meta_end_line(m, row_end);
+	}
+}
+
+function void
+metagen_push_c_struct(MetaprogramContext *m, s8 kind, s8 *types, uz types_count, s8 *fields, uz fields_count)
+{
+	assert(fields_count == types_count);
+	meta_begin_scope(m, s8("typedef struct {"));
+	metagen_push_table(m, m->scratch, s8(""), s8(";"), (s8 *[]){types, fields}, fields_count, 2);
+	meta_end_scope(m, s8("} "), kind, s8(";\n"));
+}
+
+function void
+metagen_push_counted_enum_body(MetaprogramContext *m, s8 kind, s8 prefix, s8 mid, s8 suffix, s8 *ids, iz ids_count)
+{
+	iz max_id_length = 0;
+	for (iz id = 0; id < ids_count; id++)
+		max_id_length = MAX(max_id_length, ids[id].len);
+
+	for (iz id = 0; id < ids_count; id++) {
+		meta_begin_line(m, prefix, kind, ids[id]);
+		meta_pad(m, ' ', 1 + (i32)(max_id_length - ids[id].len));
+		meta_push(m, mid);
+		meta_push_u64(m, (u64)id);
+		meta_end_line(m, suffix);
+	}
+}
+
+function void
+metagen_push_c_enum(MetaprogramContext *m, Arena scratch, s8 kind, s8 *ids, iz ids_count)
+{
+	s8 kind_full = push_s8_from_parts(&scratch, s8(""), kind, s8("_"));
+	meta_begin_scope(m, s8("typedef enum {"));
+	metagen_push_counted_enum_body(m, kind_full, s8(""), s8("= "), s8(","), ids, ids_count);
+	meta_push_line(m, kind_full, s8("Count,"));
+	meta_end_scope(m, s8("} "), kind, s8(";\n"));
+}
+
+function void
+metagen_push_c_flag_enum(MetaprogramContext *m, Arena scratch, s8 kind, s8 *ids, iz ids_count)
+{
+	s8 kind_full = push_s8_from_parts(&scratch, s8(""), kind, s8("_"));
+	meta_begin_scope(m, s8("typedef enum {"));
+	metagen_push_counted_enum_body(m, kind_full, s8(""), s8("= (1 << "), s8("),"), ids, ids_count);
+	meta_end_scope(m, s8("} "), kind, s8(";\n"));
+}
+
+function void
+metagen_push_shader_derivative_vectors(MetaContext *ctx, MetaprogramContext *m, MetaShader *s,
+                                       i32 sub_field_count, b32 has_local_flags)
+{
+	meta_push_line(m, s8("// "), ctx->shader_names.data[s->base_name_id]);
+	for (iz perm = 0; perm < s->permutations.count; perm++) {
+		MetaShaderPermutation *p = s->permutations.data + perm;
+		if (!has_local_flags && sub_field_count == 0) {
+			meta_push_line(m, s8("0,"));
+		} else {
+			meta_begin_line(m, s8("(i32 []){"));
+			for (u8 id = 0; id < p->global_flags_count; id++) {
+				s8 kind      = metagen_permutation_kind(ctx, p->global_flags[id]);
+				s8 variation = metagen_permutation_variation(ctx, p->global_flags[id]);
+				if (id != 0) meta_push(m, s8(", "));
+				meta_push(m, s8("Beamformer"), kind, s8("_"), variation);
+			}
+
+			for (i32 id = p->global_flags_count; id < sub_field_count; id++)
+				meta_push(m, s8(", -1"));
+
+			// NOTE(rnp): local flag names
+			if (has_local_flags) {
+				u64 local_flags = 0;
+				for (u8 id = 0; id < p->local_flags_count; id++)
+					local_flags |= p->local_flags[id];
+
+				meta_push(m, s8(", 0x"));
+				meta_push_u64_hex(m, local_flags);
+			}
+			meta_end_line(m, s8("},"));
+		}
+	}
+}
+
+function void
+meta_push_shader_descriptors_table(MetaprogramContext *m, MetaContext *ctx)
+{
+	Arena scratch_start = m->scratch;
+	s8 *columns[4];
+	for EachElement(columns, it)
+		columns[it] = push_array(&m->scratch, s8, ctx->shaders.count);
+
+	Stream sb = arena_stream(m->scratch);
+	for (iz shader = 0; shader < ctx->shaders.count; shader++) {
+		MetaShaderDescriptor *sd = ctx->shader_descriptors + shader;
+
+		stream_append_u64(&sb, (u64)sd->first_match_vector_index);
+		stream_append_byte(&sb, ',');
+		columns[0][shader] = arena_stream_commit_and_reset(&m->scratch, &sb);
+
+		stream_append_u64(&sb, (u64)sd->one_past_last_match_vector_index);
+		stream_append_byte(&sb, ',');
+		columns[1][shader] = arena_stream_commit_and_reset(&m->scratch, &sb);
+
+		stream_append_u64(&sb, (u64)sd->sub_field_count);
+		stream_append_byte(&sb, ',');
+		columns[2][shader] = arena_stream_commit_and_reset(&m->scratch, &sb);
+
+		columns[3][shader] = sd->has_local_flags ? s8("1") : s8 ("0");
+	}
+
+	meta_begin_scope(m, s8("read_only global BeamformerShaderDescriptor beamformer_shader_descriptors[] = {"));
+	metagen_push_table(m, m->scratch, s8("{"), s8("},"), columns, (u32)ctx->shaders.count, countof(columns));
+	meta_end_scope(m, s8("};\n"));
+
+	m->scratch = scratch_start;
+}
+
+function void
+meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
+{
+	///////////////////////////////
+	// NOTE(rnp): reloadable infos
+	i32 max_shader_name_length = 0;
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		if (ctx->base_shaders.data[shader].file.len == 0) continue;
+		s8 name = ctx->shader_names.data[ctx->base_shaders.data[shader].shader->base_name_id];
+		max_shader_name_length = MAX((i32)name.len, max_shader_name_length);
+	}
+
+	meta_begin_scope(m, s8("read_only global BeamformerReloadableShaderInfo beamformer_reloadable_shader_infos[] = {"));
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		MetaBaseShader *bs = ctx->base_shaders.data + shader;
+		MetaShader     *s  = bs->shader;
+
+		if (bs->file.len == 0) continue;
+
+		s8 name = ctx->shader_names.data[s->base_name_id];
+		meta_begin_line(m, s8("{BeamformerShaderKind_"), name, s8(", "));
+		meta_pad(m, ' ', max_shader_name_length - (i32)name.len);
+		meta_push_u64(m, (u64)bs->sub_shaders.count);
+
+		if (bs->sub_shaders.count) {
+			meta_push(m, s8(", (i32 []){"));
+			for (iz sub_shader = 0; sub_shader < bs->sub_shaders.count; sub_shader++) {
+				if (sub_shader != 0) meta_push(m, s8(", "));
+				meta_push_u64(m, bs->sub_shaders.data[sub_shader]);
+			}
+			meta_push(m, s8("}"));
+		} else {
+			meta_push(m, s8(", 0"));
+		}
+		meta_end_line(m, s8("},"));
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global s8 beamformer_reloadable_shader_files[] = {"));
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		MetaBaseShader *bs = ctx->base_shaders.data + shader;
+		if (bs->file.len == 0) continue;
+		meta_push_line(m, s8("s8_comp(\""), bs->file, s8("\"),"));
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	{
+		u32 info_index = 0;
+		for (iz group = 0; group < ctx->shader_groups.count; group++) {
+			MetaShaderGroup *sg = ctx->shader_groups.data + group;
+			meta_begin_line(m, s8("read_only global i32 beamformer_reloadable_"));
+			for (iz i = 0; i < sg->name.len; i++)
+				stream_append_byte(&m->stream, TOLOWER(sg->name.data[i]));
+			meta_begin_scope(m, s8("_shader_info_indices[] = {"));
+
+			for (iz shader = 0; shader < sg->shaders.count; shader++) {
+				MetaShader *s = ctx->shaders.data + sg->shaders.data[shader];
+				/* TODO(rnp): store base shader list in a better format */
+				for (iz base_shader = 0; base_shader < ctx->base_shaders.count; base_shader++) {
+					MetaBaseShader *bs = ctx->base_shaders.data + base_shader;
+					if (bs->file.len && bs->shader == s) {
+						meta_indent(m);
+						meta_push_u64(m, info_index++);
+						meta_end_line(m, s8(","));
+						break;
+					}
+				}
+			}
+			meta_end_scope(m, s8("};\n"));
+		}
+	}
+
+	////////////////////////////////////
+	// NOTE(rnp): shader header strings
+	meta_begin_scope(m, s8("read_only global s8 beamformer_shader_global_header_strings[] = {"));
+	for (iz kind = 0; kind < ctx->permutation_kinds.count; kind++) {
+		s8_list *sub_list  = ctx->permutations_for_kind.data + kind;
+		s8 kind_name = push_s8_from_parts(&m->scratch, s8(""), ctx->permutation_kinds.data[kind], s8("_"));
+		meta_push_line(m, s8("s8_comp(\"\""));
+		metagen_push_counted_enum_body(m, kind_name, s8("\"#define "), s8(""), s8("\\n\""),
+		                               sub_list->data, sub_list->count);
+		meta_push_line(m, s8("\"\\n\"),"));
+		m->scratch = ctx->scratch;
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global s8 beamformer_shader_local_header_strings[] = {"));
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		if (ctx->base_shaders.data[shader].file.len == 0) continue;
+
+		MetaShader *s         = ctx->base_shaders.data[shader].shader;
+		s8_list    *flag_list = ctx->flags_for_shader.data + s->flag_list_id;
+
+		if (flag_list->count) {
+			meta_push_line(m, s8("s8_comp(\"\""));
+			metagen_push_counted_enum_body(m, s8("ShaderFlags_"), s8("\"#define "), s8("(1 << "), s8(")\\n\""),
+			                               flag_list->data, flag_list->count);
+			meta_push_line(m, s8("\"\\n\"),"));
+		} else {
+			meta_push_line(m, s8("{0},"));
+		}
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global s8 beamformer_shader_descriptor_header_strings[] = {"));
+	for (iz kind = 0; kind < ctx->permutation_kinds.count; kind++)
+		meta_push_line(m, s8("s8_comp(\""), ctx->permutation_kinds.data[kind], s8("\"),"));
+	meta_end_scope(m, s8("};\n"));
+}
+
+function void
+meta_push_shader_match_helper(MetaprogramContext *m, MetaContext *ctx, MetaShader *s, MetaShaderDescriptor *sd)
+{
+	s8 name = ctx->shader_names.data[s->base_name_id];
+	meta_push_line(m, s8("function iz"));
+	meta_begin_line(m, s8("beamformer_shader_"));
+	for (iz i = 0; i < name.len; i++)
+		stream_append_byte(&m->stream, TOLOWER(name.data[i]));
+	meta_push(m, s8("_match("));
+
+	assert(s->global_flag_ids.count < 27);
+	for (iz flag = 0; flag < s->global_flag_ids.count; flag++) {
+		if (flag != 0) meta_push(m, s8(", "));
+		u32 index = s->global_flag_ids.data[flag];
+		meta_push(m, s8("Beamformer"), ctx->permutation_kinds.data[index], s8(" "));
+		stream_append_byte(&m->stream, (u8)((iz)'a' + flag));
+	}
+	if (sd->has_local_flags) {
+		if (s->global_flag_ids.count) meta_push(m, s8(", "));
+		meta_push(m, s8("i32 flags"));
+	}
+	meta_end_line(m, s8(")"));
+
+	meta_begin_scope(m, s8("{"));
+		meta_begin_line(m, s8("iz result = beamformer_shader_match((i32 []){(i32)"));
+		for (iz flag = 0; flag < s->global_flag_ids.count; flag++) {
+			if (flag != 0) meta_push(m, s8(", (i32)"));
+			stream_append_byte(&m->stream, (u8)((iz)'a' + flag));
+		}
+		if (sd->has_local_flags) {
+			if (s->global_flag_ids.count) meta_push(m, s8(", "));
+			meta_push(m, s8("flags"));
+		}
+		meta_push(m, s8("}, "));
+		meta_push_u64(m, (u64)sd->first_match_vector_index);
+		meta_push(m, s8(", "));
+		meta_push_u64(m, (u64)sd->one_past_last_match_vector_index);
+		meta_push(m, s8(", "));
+		meta_push_u64(m, (u64)sd->sub_field_count + sd->has_local_flags);
+		meta_end_line(m, s8(");"));
+		meta_push_line(m, s8("return result;"));
+	meta_end_scope(m, s8("}\n"));
+}
+
+function b32
+metagen_emit_c_code(MetaContext *ctx, Arena arena)
+{
+	b32 result = 1;
+
+	os_make_directory("generated");
+	char *out = "generated/beamformer.meta.c";
+	if (!needs_rebuild(out, "beamformer.meta"))
+		return result;
+
+	build_log_generate("Core C Code");
+
+	MetaprogramContext meta_program = {.stream = arena_stream(arena), .scratch = ctx->scratch};
+	MetaprogramContext *m = &meta_program;
+
+	meta_push_line(m, s8("/* See LICENSE for license details. */\n"));
+	meta_push_line(m, s8("// GENERATED CODE\n"));
+
+	/////////////////////////
+	// NOTE(rnp): enumarents
+	for (iz kind = 0; kind < ctx->permutation_kinds.count; kind++) {
+		s8 enum_name = push_s8_from_parts(&m->scratch, s8(""), s8("Beamformer"), ctx->permutation_kinds.data[kind]);
+		metagen_push_c_enum(m, m->scratch, enum_name, ctx->permutations_for_kind.data[kind].data,
+		                    ctx->permutations_for_kind.data[kind].count);
+		m->scratch = ctx->scratch;
+	}
+
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		MetaShader *s = ctx->base_shaders.data[shader].shader;
+		s8_list flag_list = ctx->flags_for_shader.data[s->flag_list_id];
+		if (flag_list.count) {
+			s8 enum_name = push_s8_from_parts(&m->scratch, s8(""), s8("BeamformerShader"),
+			                                  ctx->shader_names.data[s->base_name_id], s8("Flags"));
+			metagen_push_c_flag_enum(m, m->scratch, enum_name, flag_list.data, flag_list.count);
+			m->scratch = ctx->scratch;
+		}
+	}
+
+	{
+		s8 kind      = s8("BeamformerShaderKind");
+		s8 kind_full = s8("BeamformerShaderKind_");
+		meta_begin_scope(m, s8("typedef enum {"));
+		metagen_push_counted_enum_body(m, kind_full, s8(""), s8("= "), s8(","),
+		                               ctx->shader_names.data, ctx->shader_names.count);
+		meta_push_line(m, kind_full, s8("Count,\n"));
+
+		s8 *columns[2];
+		columns[0] = push_array(&m->scratch, s8, ctx->shader_groups.count * 3);
+		columns[1] = push_array(&m->scratch, s8, ctx->shader_groups.count * 3);
+
+		for (iz group = 0; group < ctx->shader_groups.count; group++) {
+			MetaShaderGroup *sg = ctx->shader_groups.data + group;
+
+			s8 first_name = ctx->shader_names.data[ctx->shaders.data[sg->shaders.data[0]].base_name_id];
+			s8 last_name  = ctx->shader_names.data[ctx->shaders.data[sg->shaders.data[sg->shaders.count - 1]].base_name_id];
+
+			columns[0][3 * group + 0] = push_s8_from_parts(&m->scratch, s8(""), kind, s8("_"), sg->name, s8("First"));
+			columns[1][3 * group + 0] = push_s8_from_parts(&m->scratch, s8(""), s8("= "), kind, s8("_"), first_name);
+
+			columns[0][3 * group + 1] = push_s8_from_parts(&m->scratch, s8(""), kind, s8("_"), sg->name, s8("Last"));
+			columns[1][3 * group + 1] = push_s8_from_parts(&m->scratch, s8(""),s8("= "), kind, s8("_"), last_name);
+
+			columns[0][3 * group + 2] = push_s8_from_parts(&m->scratch, s8(""), kind, s8("_"), sg->name, s8("Count"));
+			Stream sb = arena_stream(m->scratch);
+			stream_append_s8(&sb, s8("= "));
+			stream_append_u64(&sb, (u64)sg->shaders.count);
+			columns[1][3 * group + 2] = arena_stream_commit(&m->scratch, &sb);
+		}
+		metagen_push_table(m, m->scratch, s8(""), s8(","), columns, (uz)ctx->shader_groups.count * 3, 2);
+
+		meta_end_scope(m, s8("} "), kind, s8(";\n"));
+		m->scratch = ctx->scratch;
+	}
+
+	//////////////////////
+	// NOTE(rnp): structs
+	{
+		s8 name    = s8_comp("BeamformerShaderDescriptor");
+		s8 types[] = {s8_comp("i32"), s8_comp("i32"), s8_comp("i32"), s8_comp("b32")};
+		s8 names[] = {
+			s8_comp("first_match_vector_index"),
+			s8_comp("one_past_last_match_vector_index"),
+			s8_comp("match_vector_length"),
+			s8_comp("has_local_flags"),
+		};
+		metagen_push_c_struct(m, name, types, countof(types), names, countof(names));
+	}
+
+	{
+		s8 name    = s8_comp("BeamformerReloadableShaderInfo");
+		s8 types[] = {s8_comp("BeamformerShaderKind"), s8_comp("i32"), s8_comp("i32 *")};
+		s8 names[] = {
+			s8_comp("kind"),
+			s8_comp("sub_shader_descriptor_index_count"),
+			s8_comp("sub_shader_descriptor_indices"),
+		};
+		metagen_push_c_struct(m, name, types, countof(types), names, countof(names));
+	}
+
+	///////////////////////////////////////
+	// NOTE(rnp): shader descriptor tables
+	i32 match_vectors_count = 0;
+	meta_begin_scope(m, s8("read_only global i32 *beamformer_shader_match_vectors[] = {"));
+	for (iz shader = 0; shader < ctx->shaders.count; shader++) {
+		MetaShader           *s  = ctx->shaders.data + shader;
+		MetaShaderDescriptor *sd = ctx->shader_descriptors + shader;
+		metagen_push_shader_derivative_vectors(ctx, m, s, sd->sub_field_count, sd->has_local_flags);
+		match_vectors_count += (i32)s->permutations.count;
+	}
+	meta_end_scope(m, s8("};"));
+	meta_begin_line(m, s8("#define beamformer_match_vectors_count ("));
+	meta_push_u64(m, (u64)match_vectors_count);
+	meta_end_line(m, s8(")\n"));
+
+	meta_push_shader_descriptors_table(m, ctx);
+
+	/////////////////////////////////
+	// NOTE(rnp): shader info tables
+	meta_begin_scope(m, s8("read_only global s8 beamformer_shader_names[] = {"));
+	metagen_push_table(m, m->scratch, s8("s8_comp(\""), s8("\"),"), &ctx->shader_names.data,
+	                   (uz)ctx->shader_names.count, 1);
+	meta_end_scope(m, s8("};\n"));
+
+	meta_push_shader_reload_info(m, ctx);
+
+	meta_begin_scope(m, s8("read_only global i32 *beamformer_shader_header_vectors[] = {"));
+	for (iz shader = 0; shader < ctx->shaders.count; shader++) {
+		MetaShader *s = ctx->shaders.data + shader;
+
+		if (s->global_flag_ids.count) {
+			meta_begin_line(m, s8("(i32 []){"));
+			for (iz id = 0; id < s->global_flag_ids.count; id++) {
+				if (id != 0) meta_push(m, s8(", "));
+				meta_push_u64(m, s->global_flag_ids.data[id]);
+			}
+			meta_end_line(m, s8("},"));
+		} else {
+			meta_push_line(m, s8("0,"));
+		}
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	//////////////////////////////////////
+	// NOTE(rnp): shader matching helpers
+	meta_push_line(m, s8("function iz"));
+	meta_push_line(m, s8("beamformer_shader_match(i32 *match_vector, i32 first_index, i32 one_past_last_index, i32 vector_length)"));
+	meta_begin_scope(m, s8("{"));
+		meta_push_line(m, s8("iz result = first_index;"));
+		meta_push_line(m, s8("i32 best_score = 0;"));
+		meta_push_line(m, s8("for (i32 index = first_index; index < one_past_last_index; index++)"));
+		meta_begin_scope(m, s8("{"));
+			meta_push_line(m, s8("i32 score = 0;"));
+			meta_push_line(m, s8("i32 *v = beamformer_shader_match_vectors[index];"));
+			meta_begin_scope(m, s8("for (i32 i = 0; i < vector_length; i++) {"));
+				meta_begin_scope(m, s8("if (match_vector[i] == v[i]) {"));
+					meta_push_line(m, s8("score++;"));
+				meta_end_scope(m, s8("}"));
+			meta_end_scope(m, s8("}"));
+			meta_begin_scope(m, s8("if (best_score < score) {"));
+				meta_push_line(m, s8("result     = index;"));
+				meta_push_line(m, s8("best_score = score;"));
+			meta_end_scope(m, s8("}"));
+		meta_end_scope(m, s8("}"));
+		meta_push_line(m, s8("return result;"));
+	meta_end_scope(m, s8("}\n"));
+
+	for (iz shader = 0; shader < ctx->shaders.count; shader++) {
+		MetaShader           *s  = ctx->shaders.data + shader;
+		MetaShaderDescriptor *sd = ctx->shader_descriptors + shader;
+		if (sd->sub_field_count || sd->has_local_flags)
+			meta_push_shader_match_helper(m, ctx, s, sd);
+	}
+
+	//fprintf(stderr, "%.*s\n", (i32)m.stream.widx, m.stream.data);
+
+	result = meta_write_and_reset(m, out);
+
+	return result;
+}
+
+function b32
+metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
+{
+	b32 result = 1;
+	if (!needs_rebuild(OUTPUT("matlab/OGLBeamformerFilterKind.m"), "beamformer_parameters.h"))
+		return result;
+
+	build_log_generate("MATLAB Bindings");
+	/* TODO(rnp): recreate/clear directory incase these file names change */
+	os_make_directory(OUTPUT("matlab"));
+
+	MetaprogramContext meta_program = {.stream = arena_stream(arena), .scratch = ctx->scratch};
+	MetaprogramContext *m = &meta_program;
+
+	#define X(name, flag, ...) meta_push_line(m, s8(#name " (" str(flag) ")"));
+	meta_begin_matlab_class(m, "OGLBeamformerLiveFeedbackFlags", "int32");
+	meta_begin_scope(m, s8("enumeration"));
+	BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST
+	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerLiveFeedbackFlags.m"));
+	#undef X
+
+	#define X(kind, ...) meta_push_matlab_enum_with_value(m, s8(#kind), BeamformerFilterKind_## kind);
+	meta_begin_matlab_class(m, "OGLBeamformerFilterKind", "int32");
+	meta_begin_scope(m, s8("enumeration"));
+	BEAMFORMER_FILTER_KIND_LIST(,)
+	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerFilterKind.m"));
+	#undef X
+
+	#define X(kind, ...) meta_push_matlab_enum_with_value(m, s8(#kind), BeamformerTransmitMode_## kind);
+	meta_begin_matlab_class(m, "OGLBeamformerTransmitModes", "int32");
+	meta_begin_scope(m, s8("enumeration"));
+	TRANSMIT_MODES_LIST
+	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerTransmitModes.m"));
+	#undef X
+
+	#define X(kind, ...) meta_push_matlab_enum_with_value(m, s8(#kind), BeamformerReceiveMode_## kind);
+	meta_begin_matlab_class(m, "OGLBeamformerReceiveModes", "int32");
+	meta_begin_scope(m, s8("enumeration"));
+	RECEIVE_MODES_LIST
+	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerReceiveModes.m"));
+	#undef X
+
+	os_make_directory(OUTPUT("matlab/+OGLBeamformerFilter"));
+	#define X(kind, ...) {OUTPUT("matlab/+OGLBeamformerFilter/" #kind ".m"), s8_comp(#kind),  s8_comp(#__VA_ARGS__)},
+	read_only local_persist struct {char *out; s8 class, args;} filter_table[] = {
+		BEAMFORMER_FILTER_KIND_LIST(,)
+	};
+	#undef X
+
+	s8_list members = {0};
+	for EachElement(filter_table, filter) {
+		typeof(*filter_table) *f = filter_table + filter;
+		members.count = 0;
+		s8_list_from_s8(&members, &m->scratch, f->args);
+		meta_begin_scope(m, s8("classdef "), f->class, s8(" < OGLBeamformerFilter.BaseFilter"));
+
+		meta_begin_scope(m, s8("properties"));
+		for (iz it = 0; it < members.count; it++)
+			meta_push_matlab_property(m, members.data[it], 1);
+		meta_end_scope(m, s8("end"));
+
+		meta_begin_scope(m, s8("methods"));
+		meta_begin_line(m, s8("function obj = "), f->class, s8("("));
+		for (iz it = 0; it < members.count; it++)
+			meta_push(m, it > 0 ? s8(", ") : s8(""), members.data[it]);
+		meta_end_line(m, s8(")"));
+
+		m->indentation_level++;
+		for (iz it = 0; it < members.count; it++)
+			meta_push_line(m, s8("obj."), members.data[it], s8(" = "), members.data[it], s8(";"));
+		result &= meta_end_and_write_matlab(m, f->out);
+	}
+	m->scratch = ctx->scratch;
+
+	meta_begin_matlab_class(m, "BaseFilter");
+	meta_begin_scope(m, s8("methods"));
+	meta_begin_scope(m, s8("function out = Flatten(obj)"));
+	meta_push_line(m, s8("fields = struct2cell(struct(obj));"));
+	meta_push_line(m, s8("out    = zeros(1, numel(fields));"));
+	meta_begin_scope(m, s8("for i = 1:numel(fields)"));
+	meta_push_line(m, s8("out(i) = fields{i};"));
+	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/+OGLBeamformerFilter/BaseFilter.m"));
+
+	#define X(name, __t, __s, elements, ...) meta_push_line(m, s8(#name "(1," #elements ")"));
+	meta_begin_matlab_class(m, "OGLBeamformerParameters");
+	meta_begin_scope(m, s8("properties"));
+	BEAMFORMER_PARAMS_HEAD
+	BEAMFORMER_UI_PARAMS
+	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerParameters.m"));
+
+	meta_begin_matlab_class(m, "OGLBeamformerParametersHead");
+	meta_begin_scope(m, s8("properties"));
+	BEAMFORMER_PARAMS_HEAD
+	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerParametersHead.m"));
+
+	meta_begin_matlab_class(m, "OGLBeamformerParametersUI");
+	meta_begin_scope(m, s8("properties"));
+	BEAMFORMER_UI_PARAMS
+	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerParametersUI.m"));
+	#undef X
+
+	#define X(name, __t, __s, elements, ...) meta_push_matlab_property(m, s8(#name), elements);
+	meta_begin_matlab_class(m, "OGLBeamformerLiveImagingParameters");
+	meta_begin_scope(m, s8("properties"));
+	BEAMFORMER_LIVE_IMAGING_PARAMETERS_LIST
+	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerLiveImagingParameters.m"));
+	#undef X
+
+	meta_begin_matlab_class(m, "OGLBeamformerDataKind", "int32");
+	meta_begin_scope(m, s8("enumeration"));
+	{
+		iz index = meta_lookup_string_slow(&ctx->permutation_kinds, s8("DataKind"));
+		if (index != -1) {
+			s8_list *kinds = ctx->permutations_for_kind.data + index;
+			metagen_push_counted_enum_body(m, s8(""), s8(""), s8("("), s8(")"), kinds->data, kinds->count);
+		} else {
+			build_log_failure("failed to find DataKind enum in meta info\n");
+		}
+		result &= index != -1;
+	}
+	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerDataKind.m"));
+	m->scratch = ctx->scratch;
+
+	meta_begin_matlab_class(m, "OGLBeamformerShaderStage", "int32");
+	meta_begin_scope(m, s8("enumeration"));
+	{
+		iz index = -1;
+		for (iz group = 0; group < ctx->shader_groups.count; group++) {
+			if (s8_equal(ctx->shader_groups.data[group].name, s8("Compute"))) {
+				index = group;
+				break;
+			}
+		}
+		if (index != -1) {
+			MetaShaderGroup *sg = ctx->shader_groups.data + index;
+			/* TODO(rnp): this assumes that the shaders are sequential */
+			s8 *names = ctx->shader_names.data + ctx->shaders.data[0].base_name_id;
+			metagen_push_counted_enum_body(m, s8(""), s8(""), s8("("), s8(")"), names, sg->shaders.count);
+		} else {
+			build_log_failure("failed to find Compute shader group in meta info\n");
+		}
+		result &= index != -1;
+	}
+	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerShaderStage.m"));
+
+	meta_begin_matlab_class(m, "OGLBeamformerSamplingModes", "int32");
+	meta_begin_scope(m, s8("enumeration"));
+	{
+		iz index = meta_lookup_string_slow(&ctx->permutation_kinds, s8("SamplingMode"));
+		if (index != -1) {
+			s8_list *kinds = ctx->permutations_for_kind.data + index;
+			metagen_push_counted_enum_body(m, s8(""), s8("m"), s8("("), s8(")"), kinds->data, kinds->count);
+		} else {
+			build_log_failure("failed to find SamplingModes enum in meta info\n");
+		}
+		result &= index != -1;
+	}
+	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerSamplingModes.m"));
+
+	return result;
+}
+
+function b32
+metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
+{
+	b32 result = 1;
+	char *out = OUTPUT("ogl_beamformer_lib.h");
+	if (!needs_rebuild(out, "helpers/ogl_beamformer_lib_base.h", "beamformer.meta"))
+		return result;
+
+	build_log_generate("Helper Library Header");
+
+	s8 parameters_header = os_read_whole_file(&arena, "beamformer_parameters.h");
+	s8 base_header       = os_read_whole_file(&arena, "helpers/ogl_beamformer_lib_base.h");
+
+	MetaprogramContext meta_program = {.stream = arena_stream(arena), .scratch = ctx->scratch};
+	MetaprogramContext *m = &meta_program;
+
+	meta_push_line(m, s8("/* See LICENSE for license details. */\n"));
+	meta_push_line(m, s8("// GENERATED CODE\n"));
+
+	{
+		iz index = meta_lookup_string_slow(&ctx->permutation_kinds, s8("DataKind"));
+		if (index != -1) {
+			s8 enum_name = push_s8_from_parts(&m->scratch, s8(""), s8("Beamformer"), ctx->permutation_kinds.data[index]);
+			metagen_push_c_enum(m, m->scratch, enum_name, ctx->permutations_for_kind.data[index].data,
+			                    ctx->permutations_for_kind.data[index].count);
+			m->scratch = ctx->scratch;
+		} else {
+			build_log_failure("failed to find DataKind in meta info\n");
+		}
+	}
+
+	{
+		iz index = -1;
+		for (iz group = 0; group < ctx->shader_groups.count; group++) {
+			if (s8_equal(ctx->shader_groups.data[group].name, s8("Compute"))) {
+				index = group;
+				break;
+			}
+		}
+		if (index != -1) {
+			MetaShaderGroup *sg = ctx->shader_groups.data + index;
+			meta_begin_line(m, s8("#define BeamformerShaderKind_ComputeCount ("));
+			meta_push_u64(m, (u64)sg->shaders.count);
+			meta_end_line(m, s8(")\n"));
+		} else {
+			build_log_failure("failed to find Compute shader group in meta info\n");
+		}
+	}
+
+	meta_push(m, parameters_header, base_header);
+	result &= meta_write_and_reset(m, out);
+
+	return result;
+}
+
+function MetaContext *
+metagen_load_context(Arena *arena)
+{
+	if (setjmp(compiler_jmp_buf)) {
+		/* NOTE(rnp): compiler error */
+		return 0;
+	}
+
+	MetaContext *ctx = push_struct(arena, MetaContext);
+	ctx->scratch     = sub_arena(arena, MB(1), 16);
+	ctx->arena       = arena;
+
+	MetaContext *result = ctx;
+
+	Arena scratch = ctx->scratch;
+	MetaEntryStack entries = meta_entry_stack_from_file(ctx->arena, scratch, "beamformer.meta");
+
+	i32 stack_items[32];
+	struct { i32 *data; iz capacity; iz count; } stack = {stack_items, countof(stack_items), 0};
+
+	MetaShaderGroup *current_shader_group = 0;
+	for (iz i = 0; i < entries.count; i++) {
+		MetaEntry *e = entries.data + i;
+		//if (e->kind == MetaEntryKind_EndScope)   depth--;
+		//meta_entry_print(e, depth, -1);
+		//if (e->kind == MetaEntryKind_BeginScope) depth++;
+		//continue;
+
+		switch (e->kind) {
+		case MetaEntryKind_BeginScope:{ *da_push(&scratch, &stack) = (i32)(i - 1); }break;
+		case MetaEntryKind_EndScope:{
+			i32 index = stack.data[--stack.count];
+			MetaEntry *ended = entries.data + index;
+			switch (ended->kind) {
+			case MetaEntryKind_ShaderGroup:{ current_shader_group = 0; }break;
+			default:{}break;
+			}
+		}break;
+		case MetaEntryKind_ShaderGroup:{
+			MetaShaderGroup *sg = da_push(ctx->arena, &ctx->shader_groups);
+			sg->name = e->name;
+			current_shader_group = sg;
+		}break;
+		case MetaEntryKind_Shader:{
+			if (!current_shader_group) goto error;
+			i += meta_pack_shader(ctx, current_shader_group, scratch, e, entries.count - i);
+		}break;
+
+		error:
+		default:
+		{
+			meta_entry_error(e, "invalid @%s() in global scope\n", meta_entry_kind_strings[e->kind]);
+		}break;
+		}
+	}
+
+	ctx->shader_descriptors = push_array(ctx->arena, MetaShaderDescriptor, ctx->shaders.count);
+	{
+		i32 match_vectors_count = 0;
+		for (iz shader = 0; shader < ctx->shaders.count; shader++) {
+			MetaShader           *s  = ctx->shaders.data + shader;
+			MetaShaderDescriptor *sd = ctx->shader_descriptors + shader;
+
+			for (iz perm = 0; perm < s->permutations.count; perm++)
+				sd->has_local_flags |= s->permutations.data[perm].local_flags_count != 0;
+			sd->sub_field_count = (i32)s->global_flag_ids.count;
+			sd->first_match_vector_index = match_vectors_count;
+			match_vectors_count += (i32)s->permutations.count;
+			sd->one_past_last_match_vector_index = match_vectors_count;
+		}
+	}
+
+	result->arena = 0;
 	return result;
 }
 
@@ -967,9 +2434,16 @@ main(i32 argc, char *argv[])
 	Arena arena = os_alloc_arena(MB(8));
 	check_rebuild_self(arena, argc, argv);
 
-	Options options = parse_options(argc, argv);
-
 	os_make_directory(OUTDIR);
+
+	MetaContext *meta = metagen_load_context(&arena);
+	if (!meta) return 1;
+
+	result &= metagen_emit_c_code(meta, arena);
+	result &= metagen_emit_helper_library_header(meta, arena);
+	result &= metagen_emit_matlab_code(meta, arena);
+
+	Options options = parse_options(argc, argv);
 
 	CommandList c = cmd_base(&arena, &options);
 	if (!check_build_raylib(arena, c, options.debug)) return 1;
@@ -980,7 +2454,6 @@ main(i32 argc, char *argv[])
 
 	/////////////////
 	// helpers/tests
-	result &= build_matlab_bindings(arena);
 	result &= build_helper_library(arena, c);
 	if (options.tests) result &= build_tests(arena, c);
 

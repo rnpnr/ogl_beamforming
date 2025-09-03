@@ -11,7 +11,7 @@ compile_shader(OS *os, Arena a, u32 type, s8 shader, s8 name)
 
 	if (res == GL_FALSE) {
 		Stream buf = arena_stream(a);
-		stream_append_s8s(&buf, name, s8(": failed to compile\n"));
+		stream_append_s8s(&buf, s8("\n"), name, s8(": failed to compile\n"));
 
 		i32 len = 0, out_len = 0;
 		glGetShaderiv(sid, GL_INFO_LOG_LENGTH, &len);
@@ -63,12 +63,7 @@ load_shader(OS *os, Arena arena, s8 *shader_texts, u32 *shader_types, i32 count,
 	if (valid) result = link_program(os, arena, ids, count);
 	for (i32 i = 0; i < count; i++) glDeleteShader(ids[i]);
 
-	if (result) {
-		Stream buf = arena_stream(arena);
-		stream_append_s8s(&buf, s8("loaded: "), name, s8("\n"));
-		os_write_file(os->error_handle, stream_to_s8(&buf));
-		LABEL_GL_OBJECT(GL_PROGRAM, result, name);
-	}
+	if (result) glObjectLabel(GL_PROGRAM, result, (i32)name.len, (c8 *)name.data);
 
 	return result;
 }

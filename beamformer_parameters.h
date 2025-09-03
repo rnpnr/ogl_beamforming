@@ -10,49 +10,10 @@
  *      be organized for simple offset access per frame).
  */
 
-/* X(enumarant, shader file name, pretty name) */
-#define COMPUTE_SHADERS \
-	X(CudaDecode,  "",        "CUDA Decode")      \
-	X(CudaHilbert, "",        "CUDA Hilbert")     \
-	X(DAS,         "das",     "DAS")              \
-	X(Decode,      "decode",  "Decode (I16)")     \
-	X(Filter,      "filter",  "Filter (F32C)")    \
-	X(Demodulate,  "",        "Demodulate (I16)") \
-	X(MinMax,      "min_max", "Min/Max")          \
-	X(Sum,         "sum",     "Sum")
-
-#define DECODE_SHADER_VARIATIONS \
-	X(DecodeInt16Complex, "", "Decode (I16C)",    " (I16)")     \
-	X(DecodeFloat,        "", "Decode (F32)",     " (F32)")     \
-	X(DecodeFloatComplex, "", "Decode (F32C)",    " (F32C)")    \
-	X(DecodeInt16ToFloat, "", "Decode (I16-F32)", " (I16-F32)")
-
-#define FILTER_SHADER_VARIATIONS \
-	X(FilterCF,          "", "Filter (F32C-CF)",    " (F32C-CF)") \
-	X(DemodulateCF,      "", "Demodulate (I16-CF)", " (I16-CF)")  \
-	X(DemodulateFloat,   "", "Demodulate (F32)",    " (F32)")     \
-	X(DemodulateFloatCF, "", "Demodulate (F32-CF)", " (F32-CF)")
-
-#define COMPUTE_SHADERS_INTERNAL \
-	COMPUTE_SHADERS              \
-	DECODE_SHADER_VARIATIONS     \
-	FILTER_SHADER_VARIATIONS     \
-	X(DASFast, "", "DAS (Fast)")
-
-typedef enum {
-	#define X(e, ...) BeamformerShaderKind_##e,
-	COMPUTE_SHADERS_INTERNAL
-	#undef X
-	BeamformerShaderKind_Render3D,
-	BeamformerShaderKind_Count,
-
-	BeamformerShaderKind_ComputeCount = BeamformerShaderKind_Render3D,
-} BeamformerShaderKind;
-
 typedef struct {
 	/* NOTE(rnp): this wants to be iterated on both dimensions. it depends entirely on which
 	 * visualization method you want to use. the coalescing function wants both directions */
-	float times[32][BeamformerShaderKind_Count];
+	float times[32][BeamformerShaderKind_ComputeCount];
 	float rf_time_deltas[32];
 } BeamformerComputeStatsTable;
 
@@ -60,11 +21,6 @@ typedef struct {
 #define DECODE_TYPES \
 	X(NONE,     0, "None")     \
 	X(HADAMARD, 1, "Hadamard")
-
-#define SAMPLING_MODES_LIST \
-	X(NS200BW, 0) \
-	X(BS100BW, 1) \
-	X(BS50BW,  2)
 
 #define TRANSMIT_MODES_LIST \
 	X(Rows)    \
@@ -80,20 +36,6 @@ typedef enum {TRANSMIT_MODES_LIST} BeamformerTransmitModes;
 
 #define X(k, ...) BeamformerReceiveMode_## k,
 typedef enum {RECEIVE_MODES_LIST} BeamformerReceiveModes;
-#undef X
-
-#define X(k, v, ...) BeamformerSamplingMode_## k = v,
-typedef enum {SAMPLING_MODES_LIST BeamformerSamplingMode_Count} BeamformerSamplingModes;
-#undef X
-
-#define BEAMFORMER_DATA_KIND_LIST \
-	X(Int16,          0) \
-	X(Int16Complex,   1) \
-	X(Float32,        2) \
-	X(Float32Complex, 3)
-
-#define X(k, id) BeamformerDataKind_##k = id,
-typedef enum {BEAMFORMER_DATA_KIND_LIST} BeamformerDataKind;
 #undef X
 
 /* TODO(rnp): this is an absolute abuse of the preprocessor, but now is
@@ -147,10 +89,6 @@ typedef enum {
 #define DAS_LOCAL_SIZE_X  16
 #define DAS_LOCAL_SIZE_Y   1
 #define DAS_LOCAL_SIZE_Z  16
-
-#define DAS_FAST_LOCAL_SIZE_X 16
-#define DAS_FAST_LOCAL_SIZE_Y  1
-#define DAS_FAST_LOCAL_SIZE_Z 16
 
 #define DAS_VOXEL_OFFSET_UNIFORM_LOC  2
 #define DAS_CYCLE_T_UNIFORM_LOC       3

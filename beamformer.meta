@@ -1,0 +1,45 @@
+@ShaderGroup Compute
+{
+	@Shader CudaDecode
+	@Shader CudaHilbert
+
+	@Shader(decode.glsl) Decode
+	{
+		@Permute(DataKind [Int16 Int16Complex Float32 Float32Complex])
+	}
+
+	@Shader(filter.glsl) Filter
+	{
+		@Permute(DataKind [Int16Complex  Float32  Float32Complex])
+		{
+			@PermuteBits([MapChannels  ComplexFilter])
+		}
+
+		@SubShader Demodulate
+		{
+			@Permute(DataKind [Int16  Float32])
+			{
+				@Permute(SamplingMode [2X 4X])
+				{
+					@PermuteBits([MapChannels  ComplexFilter])
+				}
+			}
+		}
+	}
+
+	@Shader(das.glsl) DAS
+	{
+		@Permute(DataKind [Float32  Float32Complex])
+		{
+			@PermuteBits([Fast  Sparse])
+		}
+	}
+
+	@Shader(min_max.glsl) MinMax
+	@Shader(sum.glsl) Sum
+}
+
+@ShaderGroup Render
+{
+	@Shader(render_3d.frag.glsl) Render3D
+}

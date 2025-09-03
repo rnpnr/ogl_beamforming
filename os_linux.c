@@ -223,17 +223,17 @@ os_unload_library(void *h)
 function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
 {
 	s8 directory  = path;
-	directory.len = s8_scan_backwards(path, '/');
-	ASSERT(directory.len > 0);
+	directory.len = s8_scan_backwards(path, OS_PATH_SEPARATOR_CHAR);
+	assert(directory.len > 0);
 
 	u64 hash = s8_hash(directory);
 	FileWatchContext *fwctx = &os->file_watch_context;
 	FileWatchDirectory *dir = lookup_file_watch_directory(fwctx, hash);
 	if (!dir) {
-		ASSERT(path.data[directory.len] == '/');
+		assert(path.data[directory.len] == OS_PATH_SEPARATOR_CHAR);
 		dir = da_push(a, fwctx);
 		dir->hash   = hash;
-		dir->name   = push_s8_zero(a, directory);
+		dir->name   = push_s8(a, directory);
 		u32 mask    = IN_MOVED_TO|IN_CLOSE_WRITE;
 		dir->handle = inotify_add_watch((i32)fwctx->handle, (c8 *)dir->name.data, mask);
 	}

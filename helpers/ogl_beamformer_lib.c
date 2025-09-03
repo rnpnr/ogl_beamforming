@@ -2,6 +2,7 @@
 #include "../compiler.h"
 
 #include "../util.h"
+#include "../generated/beamformer.meta.c"
 #include "../beamformer_parameters.h"
 #include "ogl_beamformer_lib_base.h"
 
@@ -225,7 +226,7 @@ validate_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data_kind)
 	                    BF_LIB_ERR_KIND_COMPUTE_STAGE_OVERFLOW))
 	{
 		for (u32 i = 0; i < shader_count; i++)
-			result &= BETWEEN(shaders[i], 0, BeamformerShaderKind_ComputeCount);
+			result &= BETWEEN(shaders[i], BeamformerShaderKind_ComputeFirst, BeamformerShaderKind_ComputeLast);
 		if (!result) {
 			g_beamformer_library_context.last_error = BF_LIB_ERR_KIND_INVALID_COMPUTE_STAGE;
 		} else if (shaders[0] != BeamformerShaderKind_Demodulate &&

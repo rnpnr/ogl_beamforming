@@ -1,5 +1,5 @@
 /* See LICENSE for license details. */
-#if   defined(INPUT_DATA_TYPE_FLOAT)
+#if DataKind == DataKind_Float32
   #define DATA_TYPE           vec2
   #define RESULT_TYPE_CAST(v) (v)
   #define SAMPLE_TYPE_CAST(v) (v)
@@ -19,13 +19,15 @@ layout(std430, binding = 2) writeonly restrict buffer buffer_2 {
 
 layout(r16i, binding = 1) readonly restrict uniform iimage1D channel_mapping;
 
-#if COMPLEX_FILTER
+#if (ShaderFlags & ShaderFlags_ComplexFilter)
 	layout(rg32f, binding = 0) readonly restrict uniform  image1D filter_coefficients;
 	#define apply_filter(iq, h) complex_mul((iq), (h).xy)
 #else
 	layout(r32f, binding = 0) readonly restrict uniform  image1D filter_coefficients;
 	#define apply_filter(iq, h) ((iq) * (h).x)
 #endif
+
+const bool map_channels = (ShaderFlags & ShaderFlags_MapChannels) != 0;
 
 vec2 complex_mul(vec2 a, vec2 b)
 {
@@ -34,12 +36,12 @@ vec2 complex_mul(vec2 a, vec2 b)
 	return result;
 }
 
+#if (ShaderFlags & ShaderFlags_Demodulate)
 vec2 rotate_iq(vec2 iq, int index)
 {
 	vec2 result;
-	/* TODO(rnp): this doesn't give us the same performance boost as hardcoding the mode */
-	switch (shader_flags & ShaderFlags_SamplingModeMask) {
-	case SamplingMode_NS200BW:{
+	switch (SamplingMode) {
+	case SamplingMode_4X:{
 		// fs = 2 * fd
 		// arg = PI * index
 		// cos -> 1 -1  1 -1
@@ -48,7 +50,7 @@ vec2 rotate_iq(vec2 iq, int index)
 		if (bool(index & 1)) result = mat2(-1, 0, 0, -1) * iq;
 		else                 result = mat2( 1, 0, 0,  1) * iq;
 	}break;
-	case SamplingMode_BS100BW:{
+	case SamplingMode_2X:{
 		// fs  = fd
 		// arg = 2 * PI * index
 		// cos -> 1 1 1 1
@@ -64,6 +66,7 @@ vec2 rotate_iq(vec2 iq, int index)
 	}
 	return result;
 }
+#endif
 
 vec2 sample_rf(uint index)
 {
@@ -78,7 +81,6 @@ void main()
 	uint channel    = gl_GlobalInvocationID.y;
 	uint transmit   = gl_GlobalInvocationID.z;
 
-	bool map_channels = bool(shader_flags & ShaderFlags_MapChannels);
 	uint in_channel = map_channels ? imageLoad(channel_mapping, int(channel)).x : channel;
 	uint in_offset  = input_channel_stride * in_channel + input_transmit_stride * transmit;
 	uint out_offset = output_channel_stride  * channel +
@@ -100,12 +102,12 @@ void main()
 		int b_length = imageSize(filter_coefficients).x;
 		int index    = int(in_sample);
 
-		const float scale = bool(COMPLEX_FILTER) ? 1 : sqrt(2);
+		const float scale = bool(ShaderFlags & ShaderFlags_ComplexFilter) ? 1 : sqrt(2);
 
 		for (int j = max(0, index - b_length); j < min(index, a_length); j++) {
 			vec2 iq  = sample_rf(in_offset + j);
 			vec4 h   = imageLoad(filter_coefficients, index - j);
-		#if defined(DEMODULATE)
+		#if (ShaderFlags & ShaderFlags_Demodulate)
 			result  += scale * apply_filter(rotate_iq(iq * vec2(1, -1), -j), h);
 		#else
 			result  += apply_filter(iq, h);

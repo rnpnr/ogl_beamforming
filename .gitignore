@@ -1,9 +1,11 @@
 *
 !.github
-!tests
 !external
+!generated
 !helpers
 !shaders
+!tests
 !*.c
 !*.glsl
 !*.h
+!*.meta
