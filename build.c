@@ -426,7 +426,7 @@ cmd_base(Arena *a, Options *o)
 	if (o->debug && is_unix) cmd_append(a, &result, "-ggdb");
 
 	/* NOTE(rnp): need to avoid w32-gcc for ci */
-	b32 sanitize = !is_msvc && (o->debug || o->sanitize) && !(is_w32 && is_gcc);
+	b32 sanitize = o->sanitize && !is_msvc && !(is_w32 && is_gcc);
 	if (sanitize) {
 		cmd_append(a, &result, "-fsanitize=address,undefined");
 		/* NOTE(rnp): impossible to autodetect on GCC versions < 14 (ci has 13) */
