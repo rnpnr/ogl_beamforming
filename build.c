@@ -23,16 +23,21 @@ global char *g_argv0;
 #define OUTPUT(s) OUTDIR "/" s
 
 #if COMPILER_MSVC
-  #define COMMON_FLAGS    "-nologo", "-std:c11", "-Fo:" OUTDIR "\\", "-Z7", "-Zo"
-  #define DEBUG_FLAGS     "-Od", "-D_DEBUG"
-  #define OPTIMIZED_FLAGS "-O2"
-  #define EXTRA_FLAGS     ""
+  #define COMMON_FLAGS     "-nologo", "-std:c11", "-Fo:" OUTDIR "\\", "-Z7", "-Zo"
+  #define DEBUG_FLAGS      "-Od", "-D_DEBUG"
+  #define OPTIMIZED_FLAGS  "-O2"
+  #define EXTRA_FLAGS      ""
 #else
-  #define COMMON_FLAGS    "-std=c11", "-pipe", "-Wall"
-  #define DEBUG_FLAGS     "-O0", "-D_DEBUG", "-Wno-unused-function"
-  #define OPTIMIZED_FLAGS "-O3"
-  #define EXTRA_FLAGS     "-Werror", "-Wextra", "-Wshadow", "-Wconversion", "-Wno-unused-parameter", \
-                          "-Wno-error=unused-function", "-funsafe-math-optimizations", "-fno-math-errno"
+  #define COMMON_FLAGS     "-std=c11", "-pipe", "-Wall"
+  #define DEBUG_FLAGS      "-O0", "-D_DEBUG", "-Wno-unused-function"
+  #define OPTIMIZED_FLAGS  "-O3"
+  #define EXTRA_FLAGS_BASE "-Werror", "-Wextra", "-Wshadow", "-Wconversion", "-Wno-unused-parameter", \
+                           "-Wno-error=unused-function", "-funsafe-math-optimizations", "-fno-math-errno"
+  #if COMPILER_GCC
+    #define EXTRA_FLAGS EXTRA_FLAGS_BASE, "-Wno-unused-variable"
+  #else
+    #define EXTRA_FLAGS EXTRA_FLAGS_BASE
+  #endif
 #endif
 
 #define is_aarch64 ARCH_ARM64

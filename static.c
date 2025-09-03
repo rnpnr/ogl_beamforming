@@ -580,9 +580,6 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	cs->unit_cube_model = render_model_from_arrays(unit_cube_vertices, unit_cube_normals,
 	                                               sizeof(unit_cube_vertices),
 	                                               unit_cube_indices, countof(unit_cube_indices));
-
-	/* stfu gcc this is used */
-	DEBUG_DECL((void)BeamformerParameterBlockRegionOffsets;)
 }
 
 function void
