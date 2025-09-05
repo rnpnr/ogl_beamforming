@@ -982,6 +982,8 @@ shader_text_with_header(ShaderReloadContext *ctx, s8 filepath, Arena *arena)
 	return result;
 }
 
+/* NOTE(rnp): currently this function is only handling rendering shaders.
+ * look at reload_compute_shader for compute shaders */
 DEBUG_EXPORT BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader)
 {
 	BeamformerCtx *ctx = src->beamformer_context;
@@ -1004,13 +1006,12 @@ DEBUG_EXPORT BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader)
 	} while (link != src);
 
 	BeamformerReloadableShaderInfo *rsi = beamformer_reloadable_shader_infos + src->reloadable_info_index;
-	u32 *shader = ctx->compute_context.programs + rsi->kind;
-	if (rsi->kind == BeamformerShaderKind_Render3D)
-		shader = &ctx->frame_view_render_context.shader;
+	assert(rsi->kind == BeamformerShaderKind_Render3D);
 
+	u32 *shader = &ctx->frame_view_render_context.shader;
 	glDeleteProgram(*shader);
 	*shader = load_shader(&ctx->os, arena, shader_texts, shader_types, shader_count, shader_name);
-	if (rsi->kind == BeamformerShaderKind_Render3D) ctx->frame_view_render_context.updated = 1;
+	ctx->frame_view_render_context.updated = 1;
 
 	return 1;
 }
