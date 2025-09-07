@@ -299,6 +299,9 @@ vec3 FORCES(vec3 world_point)
 void main()
 {
 	ivec3 out_voxel = ivec3(gl_GlobalInvocationID);
+	if (!all(lessThan(out_voxel, imageSize(u_out_data_tex))))
+		return;
+
 #if (ShaderFlags & ShaderFlags_Fast)
 	vec3 sum = vec3(imageLoad(u_out_data_tex, out_voxel).xy, 0);
 #else
