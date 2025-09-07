@@ -107,16 +107,6 @@ typedef struct {
 	u32 texture;
 } BeamformerFilter;
 
-#define DAS_SHADER_FLAGS_LIST \
-	X(RxColumns,          (1 << 2)) \
-	X(TxColumns,          (1 << 3)) \
-	X(Interpolate,        (1 << 4)) \
-	X(CoherencyWeighting, (1 << 5))
-
-#define X(k, v, ...) DASShaderFlags_## k = v,
-typedef enum {DAS_SHADER_FLAGS_LIST} DASShaderFlags;
-#undef X
-
 /* X(name, type, gltype) */
 #define BEAMFORMER_FILTER_UBO_PARAM_LIST \
 	X(input_channel_stride,   u32, uint)  \

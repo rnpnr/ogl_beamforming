@@ -429,12 +429,12 @@ das_ubo_from_beamformer_parameters(BeamformerDASUBO *du, BeamformerParameters *b
 	du->acquisition_count      = bp->acquisition_count;
 
 	du->shader_flags = 0;
-	if (bp->interpolate)         du->shader_flags |= DASShaderFlags_Interpolate;
-	if (bp->coherency_weighting) du->shader_flags |= DASShaderFlags_CoherencyWeighting;
+	if (bp->interpolate)         du->shader_flags |= BeamformerShaderDASFlags_Interpolate;
+	if (bp->coherency_weighting) du->shader_flags |= BeamformerShaderDASFlags_CoherencyWeighting;
 	if (bp->transmit_mode == BeamformerTransmitMode_Columns)
-		du->shader_flags |= DASShaderFlags_TxColumns;
+		du->shader_flags |= BeamformerShaderDASFlags_TxColumns;
 	if (bp->receive_mode == BeamformerReceiveMode_Columns)
-		du->shader_flags |= DASShaderFlags_RxColumns;
+		du->shader_flags |= BeamformerShaderDASFlags_RxColumns;
 }
 
 function void
@@ -515,7 +515,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				das_data_kind = BeamformerDataKind_Float32Complex;
 
 			i32 local_flags = 0;
-			if ((bp->shader_flags & DASShaderFlags_CoherencyWeighting) == 0)
+			if ((bp->shader_flags & BeamformerShaderDASFlags_CoherencyWeighting) == 0)
 				local_flags |= BeamformerShaderDASFlags_Fast;
 			if (bp->shader_kind == DASShaderKind_UFORCES || bp->shader_kind == DASShaderKind_UHERCULES)
 				local_flags |= BeamformerShaderDASFlags_Sparse;
@@ -935,9 +935,6 @@ stream_push_shader_header(Stream *s, ShaderReloadContext *ctx)
 		"layout(location = " str(DAS_FAST_CHANNEL_UNIFORM_LOC) ") uniform int   u_channel;\n\n"
 		));
 
-		#define X(k, id, ...) "#define ShaderFlags_" #k " " #id "\n"
-		stream_append_s8s(s, s8(DAS_SHADER_FLAGS_LIST), s8("\n"));
-		#undef X
 		#define X(k, id, ...) "#define ShaderKind_" #k " " #id "\n"
 		stream_append_s8s(s, s8(DAS_SHADER_KIND_LIST), s8("\n"));
 		#undef X

@@ -818,12 +818,13 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 }
 
 #define META_ENTRY_KIND_LIST \
-	X(BeginScope)  \
-	X(EndScope)    \
-	X(Permute)     \
-	X(PermuteBits) \
-	X(Shader)      \
-	X(ShaderGroup) \
+	X(BeginScope)   \
+	X(EndScope)     \
+	X(Flags)        \
+	X(Permute)      \
+	X(PermuteFlags) \
+	X(Shader)       \
+	X(ShaderGroup)  \
 	X(SubShader)
 
 #define X(k, ...) MetaEntryKind_## k,
@@ -1413,7 +1414,7 @@ meta_pack_shader_permutation(MetaContext *ctx, MetaShaderPermutation *sp, MetaSh
 		MetaEntryArgument *a = e->arguments;
 		u32 cursor = f->cursor.current;
 		switch (e->kind) {
-		case MetaEntryKind_PermuteBits:{
+		case MetaEntryKind_PermuteFlags:{
 			if (f->permutation_id == U32_MAX)
 				f->permutation_id = meta_commit_shader_flag(ctx, base_shader->flag_list_id, a->strings[cursor], e);
 			sp->local_flags[local_flag_index++] = (u8)(1u << f->permutation_id);
@@ -1434,7 +1435,7 @@ meta_pack_shader_permutation(MetaContext *ctx, MetaShaderPermutation *sp, MetaSh
 	// NOTE: fill ids from stack frame
 	MetaEntryArgument *a = last->arguments;
 	switch (last->kind) {
-	case MetaEntryKind_PermuteBits:{
+	case MetaEntryKind_PermuteFlags:{
 		u32 packed = local_flags;
 		u32 test   = frame_cursor;
 		for EachBit(test, flag) {
@@ -1464,7 +1465,7 @@ meta_pop_and_pack_shader_permutations(MetaContext *ctx, MetaShader *base_shader,
 
 	for (iz i = 0; i < stack->count; i++) {
 		switch (stack->base_entry[stack->data[i].entry_id].kind) {
-		case MetaEntryKind_PermuteBits:{ local_flag_count++; }break;
+		case MetaEntryKind_PermuteFlags:{ local_flag_count++; }break;
 		case MetaEntryKind_Permute:{ global_flag_count++;    }break;
 		InvalidDefaultCase;
 		}
@@ -1490,7 +1491,7 @@ meta_emit_shader_permutations(MetaContext *ctx, Arena scratch, MetaShader *s, u3
 {
 	assert(entry_count > 0);
 	assert(entries[0].kind == MetaEntryKind_Permute ||
-	       entries[0].kind == MetaEntryKind_PermuteBits ||
+	       entries[0].kind == MetaEntryKind_PermuteFlags ||
 	       entries[0].kind == MetaEntryKind_SubShader);
 
 	MetaShaderPermutationStack stack = {.base_entry = entries};
@@ -1500,7 +1501,7 @@ meta_emit_shader_permutations(MetaContext *ctx, Arena scratch, MetaShader *s, u3
 	for (iz i = 0; i < entry_count && !done; i++) {
 		MetaEntry *e = entries + i;
 		switch (e->kind) {
-		case MetaEntryKind_PermuteBits:
+		case MetaEntryKind_PermuteFlags:
 		case MetaEntryKind_Permute:
 		{
 			if (stack.count && stack.data[stack.count - 1].entry_id == (u16)i) {
@@ -1578,7 +1579,7 @@ meta_pack_shader(MetaContext *ctx, MetaShaderGroup *sg, Arena scratch, MetaEntry
 			if (in_sub_shader) goto error;
 			in_sub_shader = 1;
 		} /* FALLTHROUGH */
-		case MetaEntryKind_PermuteBits:
+		case MetaEntryKind_PermuteFlags:
 		case MetaEntryKind_Permute:
 		case MetaEntryKind_Shader:
 		{
@@ -1612,6 +1613,12 @@ meta_pack_shader(MetaContext *ctx, MetaShaderGroup *sg, Arena scratch, MetaEntry
 					meta_emit_shader_permutations(ctx, scratch, fill, local_flags, ended, result - index + 1);
 				}
 			}
+		}break;
+		case MetaEntryKind_Flags:{
+			meta_entry_argument_expected(e, s8("[flag ...]"));
+			MetaEntryArgument flags = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_Array);
+			for (u32 index = 0; index < flags.count; index++)
+				meta_commit_shader_flag(ctx, s->flag_list_id, flags.strings[index], e);
 		}break;
 
 		default:

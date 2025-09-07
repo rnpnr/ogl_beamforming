@@ -12,7 +12,7 @@
 	{
 		@Permute(DataKind [Int16Complex  Float32  Float32Complex])
 		{
-			@PermuteBits([MapChannels  ComplexFilter])
+			@PermuteFlags([MapChannels  ComplexFilter])
 		}
 
 		@SubShader Demodulate
@@ -21,7 +21,7 @@
 			{
 				@Permute(SamplingMode [2X 4X])
 				{
-					@PermuteBits([MapChannels  ComplexFilter])
+					@PermuteFlags([MapChannels  ComplexFilter])
 				}
 			}
 		}
@@ -31,8 +31,10 @@
 	{
 		@Permute(DataKind [Float32  Float32Complex])
 		{
-			@PermuteBits([Fast  Sparse])
+			@PermuteFlags([Fast  Sparse])
 		}
+
+		@Flags([Interpolate CoherencyWeighting RxColumns TxColumns])
 	}
 
 	@Shader(min_max.glsl) MinMax
