@@ -1,4 +1,5 @@
 @Enumeration(DecodeMode [None Hadamard])
+@Enumeration(RCAOrientation [Rows Columns])
 
 @ShaderGroup Compute
 {
@@ -36,6 +37,8 @@
 		{
 			@PermuteFlags([Fast  Sparse])
 		}
+
+		@Enumeration(RCAOrientation)
 
 		@Flags([Interpolate CoherencyWeighting RxColumns TxColumns])
 	}

@@ -431,9 +431,9 @@ das_ubo_from_beamformer_parameters(BeamformerDASUBO *du, BeamformerParameters *b
 	du->shader_flags = 0;
 	if (bp->interpolate)         du->shader_flags |= BeamformerShaderDASFlags_Interpolate;
 	if (bp->coherency_weighting) du->shader_flags |= BeamformerShaderDASFlags_CoherencyWeighting;
-	if (bp->transmit_mode == BeamformerTransmitMode_Columns)
+	if (bp->transmit_mode == BeamformerRCAOrientation_Columns)
 		du->shader_flags |= BeamformerShaderDASFlags_TxColumns;
-	if (bp->receive_mode == BeamformerReceiveMode_Columns)
+	if (bp->receive_mode == BeamformerRCAOrientation_Columns)
 		du->shader_flags |= BeamformerShaderDASFlags_RxColumns;
 }
 

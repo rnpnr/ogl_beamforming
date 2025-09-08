@@ -2194,20 +2194,6 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerFilterKind.m"));
 	#undef X
 
-	#define X(kind, ...) meta_push_matlab_enum_with_value(m, s8(#kind), BeamformerTransmitMode_## kind);
-	meta_begin_matlab_class(m, "OGLBeamformerTransmitModes", "int32");
-	meta_begin_scope(m, s8("enumeration"));
-	TRANSMIT_MODES_LIST
-	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerTransmitModes.m"));
-	#undef X
-
-	#define X(kind, ...) meta_push_matlab_enum_with_value(m, s8(#kind), BeamformerReceiveMode_## kind);
-	meta_begin_matlab_class(m, "OGLBeamformerReceiveModes", "int32");
-	meta_begin_scope(m, s8("enumeration"));
-	RECEIVE_MODES_LIST
-	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerReceiveModes.m"));
-	#undef X
-
 	os_make_directory(OUTPUT("matlab/+OGLBeamformerFilter"));
 	#define X(kind, ...) {OUTPUT("matlab/+OGLBeamformerFilter/" #kind ".m"), s8_comp(#kind),  s8_comp(#__VA_ARGS__)},
 	read_only local_persist struct {char *out; s8 class, args;} filter_table[] = {

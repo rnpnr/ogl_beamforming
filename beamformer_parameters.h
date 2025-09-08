@@ -17,22 +17,6 @@ typedef struct {
 	float rf_time_deltas[32];
 } BeamformerComputeStatsTable;
 
-#define TRANSMIT_MODES_LIST \
-	X(Rows)    \
-	X(Columns)
-
-#define RECEIVE_MODES_LIST \
-	X(Rows)    \
-	X(Columns)
-
-#define X(k, ...) BeamformerTransmitMode_## k,
-typedef enum {TRANSMIT_MODES_LIST} BeamformerTransmitModes;
-#undef X
-
-#define X(k, ...) BeamformerReceiveMode_## k,
-typedef enum {RECEIVE_MODES_LIST} BeamformerReceiveModes;
-#undef X
-
 /* TODO(rnp): this is an absolute abuse of the preprocessor, but now is
  * not a good time to write a full metaprogram */
 #define BEAMFORMER_FILTER_KIND_LIST(type, _) \
