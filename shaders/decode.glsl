@@ -87,15 +87,15 @@ void main()
 
 			vec4 result = vec4(0);
 			switch (decode_mode) {
-			case DECODE_MODE_NONE: {
+			case DecodeMode_None:{
 				result = RESULT_TYPE_CAST(sample_rf_data(rf_offset + transmit));
-			} break;
-			case DECODE_MODE_HADAMARD: {
+			}break;
+			case DecodeMode_Hadamard:{
 				SAMPLE_DATA_TYPE sum = SAMPLE_DATA_TYPE(0);
 				for (int i = 0; i < imageSize(hadamard).x; i++)
 					sum += imageLoad(hadamard, ivec2(i, transmit)).x * sample_rf_data(rf_offset++);
 				result = RESULT_TYPE_CAST(sum) / float(imageSize(hadamard).x);
-			} break;
+			}break;
 			}
 			out_data[out_off + 0] = result.xy;
 			#if RF_SAMPLES_PER_INDEX == 2 && !defined(OUTPUT_DATA_TYPE_FLOAT)

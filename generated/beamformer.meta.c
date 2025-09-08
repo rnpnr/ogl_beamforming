@@ -3,6 +3,12 @@
 // GENERATED CODE
 
 typedef enum {
+	BeamformerDecodeMode_None     = 0,
+	BeamformerDecodeMode_Hadamard = 1,
+	BeamformerDecodeMode_Count,
+} BeamformerDecodeMode;
+
+typedef enum {
 	BeamformerDataKind_Int16          = 0,
 	BeamformerDataKind_Int16Complex   = 1,
 	BeamformerDataKind_Float32        = 2,
@@ -54,7 +60,8 @@ typedef enum {
 typedef struct {
 	i32 first_match_vector_index;
 	i32 one_past_last_match_vector_index;
-	i32 match_vector_length;
+	i16 match_vector_length;
+	i16 header_vector_length;
 	b32 has_local_flags;
 } BeamformerShaderDescriptor;
 
@@ -131,15 +138,15 @@ read_only global i32 *beamformer_shader_match_vectors[] = {
 #define beamformer_match_vectors_count (53)
 
 read_only global BeamformerShaderDescriptor beamformer_shader_descriptors[] = {
-	{0,  1,  0, 0},
-	{1,  2,  0, 0},
-	{2,  6,  1, 0},
-	{6,  18, 1, 1},
-	{18, 42, 2, 1},
-	{42, 50, 1, 1},
-	{50, 51, 0, 0},
-	{51, 52, 0, 0},
-	{52, 53, 0, 0},
+	{0,  1,  0, 0, 0},
+	{1,  2,  0, 0, 0},
+	{2,  6,  1, 2, 0},
+	{6,  18, 1, 1, 1},
+	{18, 42, 2, 2, 1},
+	{42, 50, 1, 1, 1},
+	{50, 51, 0, 0, 0},
+	{51, 52, 0, 0, 0},
+	{52, 53, 0, 0, 0},
 };
 
 read_only global s8 beamformer_shader_names[] = {
@@ -186,6 +193,10 @@ read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
 
 read_only global s8 beamformer_shader_global_header_strings[] = {
 	s8_comp(""
+	"#define DecodeMode_None     0\n"
+	"#define DecodeMode_Hadamard 1\n"
+	"\n"),
+	s8_comp(""
 	"#define DataKind_Int16          0\n"
 	"#define DataKind_Int16Complex   1\n"
 	"#define DataKind_Float32        2\n"
@@ -218,6 +229,7 @@ read_only global s8 beamformer_shader_local_header_strings[] = {
 };
 
 read_only global s8 beamformer_shader_descriptor_header_strings[] = {
+	s8_comp("DecodeMode"),
 	s8_comp("DataKind"),
 	s8_comp("SamplingMode"),
 };
@@ -225,10 +237,10 @@ read_only global s8 beamformer_shader_descriptor_header_strings[] = {
 read_only global i32 *beamformer_shader_header_vectors[] = {
 	0,
 	0,
-	(i32 []){0},
-	(i32 []){0},
-	(i32 []){0, 1},
-	(i32 []){0},
+	(i32 []){1, 0},
+	(i32 []){1},
+	(i32 []){1, 2},
+	(i32 []){1},
 	0,
 	0,
 	0,

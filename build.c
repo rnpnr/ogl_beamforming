@@ -818,8 +818,10 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 }
 
 #define META_ENTRY_KIND_LIST \
+	X(Invalid)      \
 	X(BeginScope)   \
 	X(EndScope)     \
+	X(Enumeration)  \
 	X(Flags)        \
 	X(Permute)      \
 	X(PermuteFlags) \
@@ -827,9 +829,12 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 	X(ShaderGroup)  \
 	X(SubShader)
 
-#define X(k, ...) MetaEntryKind_## k,
-typedef enum {META_ENTRY_KIND_LIST} MetaEntryKind;
-#undef X
+typedef enum {
+	#define X(k, ...) MetaEntryKind_## k,
+	META_ENTRY_KIND_LIST
+	#undef X
+	MetaEntryKind_Count,
+} MetaEntryKind;
 
 #define X(k, ...) #k,
 read_only global char *meta_entry_kind_strings[] = {META_ENTRY_KIND_LIST};
@@ -983,14 +988,14 @@ meta_entry_kind_from_string(s8 s)
 	#define X(k, ...) s8_comp(#k),
 	read_only local_persist s8 kinds[] = {META_ENTRY_KIND_LIST};
 	#undef X
-	i32 result = -1;
-	for EachElement(kinds, it) {
-		if (s8_equal(kinds[it], s)) {
-			result = (i32)it;
+	MetaEntryKind result = MetaEntryKind_Invalid;
+	for EachNonZeroEnumValue(MetaEntryKind, kind) {
+		if (s8_equal(kinds[kind], s)) {
+			result = kind;
 			break;
 		}
 	}
-	return (MetaEntryKind)result;
+	return result;
 }
 
 function void
@@ -1083,8 +1088,8 @@ meta_parser_token(MetaParser *p)
 		case MetaParseToken_Entry:{
 			s8 kind = meta_parser_extract_string(p);
 			p->u.kind = meta_entry_kind_from_string(kind);
-			if (p->u.kind < 0) {
-				meta_compiler_error(p->p.location, "invalid meta kind: %.*s\n", (i32)kind.len, kind.data);
+			if (p->u.kind == MetaEntryKind_Invalid) {
+				meta_compiler_error(p->p.location, "invalid keyword: @%.*s\n", (i32)kind.len, kind.data);
 			}
 		}break;
 		default:{}break;
@@ -1242,7 +1247,7 @@ typedef struct {
 typedef struct {
 	iz kind;
 	iz variation;
-} MetaPermutation;
+} MetaEnumeration;
 
 typedef struct {
 	u32 *data;
@@ -1261,6 +1266,7 @@ DA_STRUCT(MetaShaderPermutation, MetaShaderPermutation);
 typedef struct {
 	MetaShaderPermutationList permutations;
 	MetaIDList                global_flag_ids;
+	MetaIDList                global_enumeration_ids;
 	u32                       base_name_id;
 	u32                       flag_list_id;
 } MetaShader;
@@ -1289,8 +1295,8 @@ DA_STRUCT(MetaShaderGroup, MetaShaderGroup);
 typedef struct {
 	Arena *arena, scratch;
 
-	s8_list               permutation_kinds;
-	s8_list_table         permutations_for_kind;
+	s8_list               enumeration_kinds;
+	s8_list_table         enumeration_members;
 
 	s8_list_table         flags_for_shader;
 
@@ -1352,17 +1358,23 @@ meta_intern_id(MetaContext *ctx, MetaIDList *v, u32 id)
 	return result;
 }
 
-function MetaPermutation
-meta_commit_permutation(MetaContext *ctx, s8 kind, s8 variation)
+function iz
+meta_enumeration_id(MetaContext *ctx, s8 kind)
 {
-	iz kidx = meta_intern_string(ctx, &ctx->permutation_kinds, kind);
-	if (ctx->permutation_kinds.count != ctx->permutations_for_kind.count) {
-		da_push(ctx->arena, &ctx->permutations_for_kind);
-		assert(kidx == (ctx->permutations_for_kind.count - 1));
+	iz result = meta_intern_string(ctx, &ctx->enumeration_kinds, kind);
+	if (ctx->enumeration_kinds.count != ctx->enumeration_members.count) {
+		da_push(ctx->arena, &ctx->enumeration_members);
+		assert(result == (ctx->enumeration_members.count - 1));
 	}
+	return result;
+}
 
-	iz vidx = meta_intern_string(ctx, ctx->permutations_for_kind.data + kidx, variation);
-	MetaPermutation result = {.kind = kidx, .variation = vidx};
+function MetaEnumeration
+meta_commit_enumeration(MetaContext *ctx, s8 kind, s8 variation)
+{
+	iz kidx = meta_enumeration_id(ctx, kind);
+	iz vidx = meta_intern_string(ctx, ctx->enumeration_members.data + kidx, variation);
+	MetaEnumeration result = {.kind = kidx, .variation = vidx};
 	return result;
 }
 
@@ -1421,7 +1433,7 @@ meta_pack_shader_permutation(MetaContext *ctx, MetaShaderPermutation *sp, MetaSh
 		}break;
 		case MetaEntryKind_Permute:{
 			if (f->permutation_id == U32_MAX) {
-				MetaPermutation p = meta_commit_permutation(ctx, a[0].string, a[1].strings[cursor]);
+				MetaEnumeration p = meta_commit_enumeration(ctx, a[0].string, a[1].strings[cursor]);
 				f->permutation_id = ((u32)(p.kind & 0xFFFFu) << 16) | (u32)(p.variation & 0xFFFFu);
 				meta_intern_id(ctx, &base_shader->global_flag_ids, (u32)p.kind);
 			}
@@ -1445,7 +1457,7 @@ meta_pack_shader_permutation(MetaContext *ctx, MetaShaderPermutation *sp, MetaSh
 		sp->local_flags[local_flag_index++] = (u8)packed;
 	}break;
 	case MetaEntryKind_Permute:{
-		MetaPermutation p = meta_commit_permutation(ctx, a[0].string, a[1].strings[frame_cursor]);
+		MetaEnumeration p = meta_commit_enumeration(ctx, a[0].string, a[1].strings[frame_cursor]);
 		u32 packed = ((u32)(p.kind & 0xFFFFu) << 16) | (u32)(p.variation & 0xFFFFu);
 		sp->global_flags[global_flag_index++] = packed;
 		meta_intern_id(ctx, &base_shader->global_flag_ids, (u32)p.kind);
@@ -1614,6 +1626,12 @@ meta_pack_shader(MetaContext *ctx, MetaShaderGroup *sg, Arena scratch, MetaEntry
 				}
 			}
 		}break;
+		case MetaEntryKind_Enumeration:{
+			meta_entry_argument_expected(e, s8("kind"));
+			s8 kind = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
+			iz kid  = meta_enumeration_id(ctx, kind);
+			meta_intern_id(ctx, &s->global_enumeration_ids, (u32)kid);
+		}break;
 		case MetaEntryKind_Flags:{
 			meta_entry_argument_expected(e, s8("[flag ...]"));
 			MetaEntryArgument flags = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_Array);
@@ -1636,30 +1654,30 @@ meta_pack_shader(MetaContext *ctx, MetaShaderGroup *sg, Arena scratch, MetaEntry
 	return result;
 }
 
-function MetaPermutation
+function MetaEnumeration
 metagen_unpack_permutation(MetaContext *ctx, u32 packed)
 {
-	MetaPermutation result;
+	MetaEnumeration result;
 	result.kind      = (iz)(packed >> 16u);
 	result.variation = (iz)(packed & 0xFFFFu);
-	assert(result.kind      < ctx->permutation_kinds.count);
-	assert(result.variation < ctx->permutations_for_kind.data[result.kind].count);
+	assert(result.kind      < ctx->enumeration_kinds.count);
+	assert(result.variation < ctx->enumeration_members.data[result.kind].count);
 	return result;
 }
 
 function s8
 metagen_permutation_kind(MetaContext *ctx, u32 packed)
 {
-	MetaPermutation p = metagen_unpack_permutation(ctx, packed);
-	s8 result = ctx->permutation_kinds.data[p.kind];
+	MetaEnumeration p = metagen_unpack_permutation(ctx, packed);
+	s8 result = ctx->enumeration_kinds.data[p.kind];
 	return result;
 }
 
 function s8
 metagen_permutation_variation(MetaContext *ctx, u32 packed)
 {
-	MetaPermutation p = metagen_unpack_permutation(ctx, packed);
-	s8 result = ctx->permutations_for_kind.data[p.kind].data[p.variation];
+	MetaEnumeration p = metagen_unpack_permutation(ctx, packed);
+	s8 result = ctx->enumeration_members.data[p.kind].data[p.variation];
 	return result;
 }
 
@@ -1774,13 +1792,14 @@ function void
 meta_push_shader_descriptors_table(MetaprogramContext *m, MetaContext *ctx)
 {
 	Arena scratch_start = m->scratch;
-	s8 *columns[4];
+	s8 *columns[5];
 	for EachElement(columns, it)
 		columns[it] = push_array(&m->scratch, s8, ctx->shaders.count);
 
 	Stream sb = arena_stream(m->scratch);
 	for (iz shader = 0; shader < ctx->shaders.count; shader++) {
 		MetaShaderDescriptor *sd = ctx->shader_descriptors + shader;
+		MetaShader           *s  = ctx->shaders.data + shader;
 
 		stream_append_u64(&sb, (u64)sd->first_match_vector_index);
 		stream_append_byte(&sb, ',');
@@ -1794,7 +1813,11 @@ meta_push_shader_descriptors_table(MetaprogramContext *m, MetaContext *ctx)
 		stream_append_byte(&sb, ',');
 		columns[2][shader] = arena_stream_commit_and_reset(&m->scratch, &sb);
 
-		columns[3][shader] = sd->has_local_flags ? s8("1") : s8 ("0");
+		stream_append_u64(&sb, (u64)sd->sub_field_count + (u64)s->global_enumeration_ids.count);
+		stream_append_byte(&sb, ',');
+		columns[3][shader] = arena_stream_commit_and_reset(&m->scratch, &sb);
+
+		columns[4][shader] = sd->has_local_flags ? s8("1") : s8 ("0");
 	}
 
 	meta_begin_scope(m, s8("read_only global BeamformerShaderDescriptor beamformer_shader_descriptors[] = {"));
@@ -1879,9 +1902,9 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 	////////////////////////////////////
 	// NOTE(rnp): shader header strings
 	meta_begin_scope(m, s8("read_only global s8 beamformer_shader_global_header_strings[] = {"));
-	for (iz kind = 0; kind < ctx->permutation_kinds.count; kind++) {
-		s8_list *sub_list  = ctx->permutations_for_kind.data + kind;
-		s8 kind_name = push_s8_from_parts(&m->scratch, s8(""), ctx->permutation_kinds.data[kind], s8("_"));
+	for (iz kind = 0; kind < ctx->enumeration_kinds.count; kind++) {
+		s8_list *sub_list  = ctx->enumeration_members.data + kind;
+		s8 kind_name = push_s8_from_parts(&m->scratch, s8(""), ctx->enumeration_kinds.data[kind], s8("_"));
 		meta_push_line(m, s8("s8_comp(\"\""));
 		metagen_push_counted_enum_body(m, kind_name, s8("\"#define "), s8(""), s8("\\n\""),
 		                               sub_list->data, sub_list->count);
@@ -1909,8 +1932,8 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 	meta_end_scope(m, s8("};\n"));
 
 	meta_begin_scope(m, s8("read_only global s8 beamformer_shader_descriptor_header_strings[] = {"));
-	for (iz kind = 0; kind < ctx->permutation_kinds.count; kind++)
-		meta_push_line(m, s8("s8_comp(\""), ctx->permutation_kinds.data[kind], s8("\"),"));
+	for (iz kind = 0; kind < ctx->enumeration_kinds.count; kind++)
+		meta_push_line(m, s8("s8_comp(\""), ctx->enumeration_kinds.data[kind], s8("\"),"));
 	meta_end_scope(m, s8("};\n"));
 }
 
@@ -1928,7 +1951,7 @@ meta_push_shader_match_helper(MetaprogramContext *m, MetaContext *ctx, MetaShade
 	for (iz flag = 0; flag < s->global_flag_ids.count; flag++) {
 		if (flag != 0) meta_push(m, s8(", "));
 		u32 index = s->global_flag_ids.data[flag];
-		meta_push(m, s8("Beamformer"), ctx->permutation_kinds.data[index], s8(" "));
+		meta_push(m, s8("Beamformer"), ctx->enumeration_kinds.data[index], s8(" "));
 		stream_append_byte(&m->stream, (u8)((iz)'a' + flag));
 	}
 	if (sd->has_local_flags) {
@@ -1978,10 +2001,10 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 
 	/////////////////////////
 	// NOTE(rnp): enumarents
-	for (iz kind = 0; kind < ctx->permutation_kinds.count; kind++) {
-		s8 enum_name = push_s8_from_parts(&m->scratch, s8(""), s8("Beamformer"), ctx->permutation_kinds.data[kind]);
-		metagen_push_c_enum(m, m->scratch, enum_name, ctx->permutations_for_kind.data[kind].data,
-		                    ctx->permutations_for_kind.data[kind].count);
+	for (iz kind = 0; kind < ctx->enumeration_kinds.count; kind++) {
+		s8 enum_name = push_s8_from_parts(&m->scratch, s8(""), s8("Beamformer"), ctx->enumeration_kinds.data[kind]);
+		metagen_push_c_enum(m, m->scratch, enum_name, ctx->enumeration_members.data[kind].data,
+		                    ctx->enumeration_members.data[kind].count);
 		m->scratch = ctx->scratch;
 	}
 
@@ -2036,11 +2059,12 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	// NOTE(rnp): structs
 	{
 		s8 name    = s8_comp("BeamformerShaderDescriptor");
-		s8 types[] = {s8_comp("i32"), s8_comp("i32"), s8_comp("i32"), s8_comp("b32")};
+		s8 types[] = {s8_comp("i32"), s8_comp("i32"), s8_comp("i16"), s8_comp("i16"), s8_comp("b32")};
 		s8 names[] = {
 			s8_comp("first_match_vector_index"),
 			s8_comp("one_past_last_match_vector_index"),
 			s8_comp("match_vector_length"),
+			s8_comp("header_vector_length"),
 			s8_comp("has_local_flags"),
 		};
 		metagen_push_c_struct(m, name, types, countof(types), names, countof(names));
@@ -2092,6 +2116,10 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 			for (iz id = 0; id < s->global_flag_ids.count; id++) {
 				if (id != 0) meta_push(m, s8(", "));
 				meta_push_u64(m, s->global_flag_ids.data[id]);
+			}
+			for (iz id = 0; id < s->global_enumeration_ids.count; id++) {
+				if (id != 0 || s->global_flag_ids.count) meta_push(m, s8(", "));
+				meta_push_u64(m, s->global_enumeration_ids.data[id]);
 			}
 			meta_end_line(m, s8("},"));
 		} else {
@@ -2246,21 +2274,6 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerLiveImagingParameters.m"));
 	#undef X
 
-	meta_begin_matlab_class(m, "OGLBeamformerDataKind", "int32");
-	meta_begin_scope(m, s8("enumeration"));
-	{
-		iz index = meta_lookup_string_slow(&ctx->permutation_kinds, s8("DataKind"));
-		if (index != -1) {
-			s8_list *kinds = ctx->permutations_for_kind.data + index;
-			metagen_push_counted_enum_body(m, s8(""), s8(""), s8("("), s8(")"), kinds->data, kinds->count);
-		} else {
-			build_log_failure("failed to find DataKind enum in meta info\n");
-		}
-		result &= index != -1;
-	}
-	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerDataKind.m"));
-	m->scratch = ctx->scratch;
-
 	meta_begin_matlab_class(m, "OGLBeamformerShaderStage", "int32");
 	meta_begin_scope(m, s8("enumeration"));
 	{
@@ -2283,19 +2296,18 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 	}
 	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerShaderStage.m"));
 
-	meta_begin_matlab_class(m, "OGLBeamformerSamplingModes", "int32");
-	meta_begin_scope(m, s8("enumeration"));
-	{
-		iz index = meta_lookup_string_slow(&ctx->permutation_kinds, s8("SamplingMode"));
-		if (index != -1) {
-			s8_list *kinds = ctx->permutations_for_kind.data + index;
-			metagen_push_counted_enum_body(m, s8(""), s8("m"), s8("("), s8(")"), kinds->data, kinds->count);
-		} else {
-			build_log_failure("failed to find SamplingModes enum in meta info\n");
-		}
-		result &= index != -1;
+	for (iz kind = 0; kind < ctx->enumeration_kinds.count; kind++) {
+		Arena scratch = ctx->scratch;
+		s8 name   = ctx->enumeration_kinds.data[kind];
+		s8 output = push_s8_from_parts(&scratch, s8(""), s8(OUTPUT("matlab/OGLBeamformer")), name, s8(".m"));
+		s8_list *kinds = ctx->enumeration_members.data + kind;
+		meta_begin_scope(m, s8("classdef OGLBeamformer"), name, s8(" < int32"));
+		meta_begin_scope(m, s8("enumeration"));
+		s8 prefix = s8("");
+		if (kinds->count > 0 && ISDIGIT(kinds->data[0].data[0])) prefix = s8("m");
+		metagen_push_counted_enum_body(m, s8(""), prefix, s8("("), s8(")"), kinds->data, kinds->count);
+		result &= meta_end_and_write_matlab(m, (c8 *)output.data);
 	}
-	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerSamplingModes.m"));
 
 	return result;
 }
@@ -2320,11 +2332,11 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 	meta_push_line(m, s8("// GENERATED CODE\n"));
 
 	{
-		iz index = meta_lookup_string_slow(&ctx->permutation_kinds, s8("DataKind"));
+		iz index = meta_lookup_string_slow(&ctx->enumeration_kinds, s8("DataKind"));
 		if (index != -1) {
-			s8 enum_name = push_s8_from_parts(&m->scratch, s8(""), s8("Beamformer"), ctx->permutation_kinds.data[index]);
-			metagen_push_c_enum(m, m->scratch, enum_name, ctx->permutations_for_kind.data[index].data,
-			                    ctx->permutations_for_kind.data[index].count);
+			s8 enum_name = push_s8_from_parts(&m->scratch, s8(""), s8("Beamformer"), ctx->enumeration_kinds.data[index]);
+			metagen_push_c_enum(m, m->scratch, enum_name, ctx->enumeration_members.data[index].data,
+			                    ctx->enumeration_members.data[index].count);
 			m->scratch = ctx->scratch;
 		} else {
 			build_log_failure("failed to find DataKind in meta info\n");
@@ -2392,6 +2404,13 @@ metagen_load_context(Arena *arena)
 			case MetaEntryKind_ShaderGroup:{ current_shader_group = 0; }break;
 			default:{}break;
 			}
+		}break;
+		case MetaEntryKind_Enumeration:{
+			meta_entry_argument_expected(e, s8("kind"), s8("[id ...]"));
+			s8 kind = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
+			MetaEntryArgument ids = meta_entry_argument_expect(e, 1, MetaEntryArgumentKind_Array);
+			for (u32 id = 0; id < ids.count; id++)
+				meta_commit_enumeration(ctx, kind, ids.strings[id]);
 		}break;
 		case MetaEntryKind_ShaderGroup:{
 			MetaShaderGroup *sg = da_push(ctx->arena, &ctx->shader_groups);

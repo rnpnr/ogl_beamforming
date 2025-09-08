@@ -940,15 +940,12 @@ stream_push_shader_header(Stream *s, ShaderReloadContext *ctx)
 		#undef X
 	}break;
 	case BeamformerShaderKind_Decode:{
-		#define X(type, id, pretty) "#define DECODE_MODE_" #type " " #id "\n"
 		stream_append_s8s(s, s8(""
 		"layout(local_size_x = " str(DECODE_LOCAL_SIZE_X) ", "
 		       "local_size_y = " str(DECODE_LOCAL_SIZE_Y) ", "
 		       "local_size_z = " str(DECODE_LOCAL_SIZE_Z) ") in;\n\n"
 		"layout(location = " str(DECODE_FIRST_PASS_UNIFORM_LOC) ") uniform bool u_first_pass;\n\n"
-		DECODE_TYPES
 		));
-		#undef X
 	}break;
 	case BeamformerShaderKind_MinMax:{
 		stream_append_s8(s, s8("layout(location = " str(MIN_MAX_MIPS_LEVEL_UNIFORM_LOC)
@@ -1045,7 +1042,7 @@ reload_compute_shader(BeamformerCtx *ctx, ShaderReloadContext *src, Arena arena)
 			sd = beamformer_shader_descriptors + rsi->sub_shader_descriptor_indices[sub_index];
 
 		i32 *hvector = beamformer_shader_header_vectors[sd - beamformer_shader_descriptors];
-		for (i32 index = 0; index < sd->match_vector_length; index++)
+		for (i32 index = 0; index < sd->header_vector_length; index++)
 			stream_append_s8s(&shader, beamformer_shader_global_header_strings[hvector[index]], s8("\n"));
 
 		i32 instance_save_point = shader.widx;
@@ -1061,7 +1058,7 @@ reload_compute_shader(BeamformerCtx *ctx, ShaderReloadContext *src, Arena arena)
 
 			i32 *match_vector = beamformer_shader_match_vectors[instance];
 			for (i32 index = 0; index < sd->match_vector_length; index++) {
-				stream_append_s8s(&shader, s8("#define "), beamformer_shader_descriptor_header_strings[index], s8(" ("));
+				stream_append_s8s(&shader, s8("#define "), beamformer_shader_descriptor_header_strings[hvector[index]], s8(" ("));
 				stream_append_i64(&shader, match_vector[index]);
 				stream_append_s8(&shader, s8(")\n"));
 			}

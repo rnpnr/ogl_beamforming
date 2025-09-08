@@ -17,11 +17,6 @@ typedef struct {
 	float rf_time_deltas[32];
 } BeamformerComputeStatsTable;
 
-/* X(type, id, pretty name) */
-#define DECODE_TYPES \
-	X(NONE,     0, "None")     \
-	X(HADAMARD, 1, "Hadamard")
-
 #define TRANSMIT_MODES_LIST \
 	X(Rows)    \
 	X(Columns)
