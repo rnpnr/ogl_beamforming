@@ -1,6 +1,5 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
- * [ ]: bug: shaders with no parameters aren't currently properly selected
  * [ ]: make decode output real values for real inputs and complex values for complex inputs
  *      - this means that das should have a RF version and an IQ version
  *      - this will also flip the current hack to support demodulate after decode to
@@ -536,7 +535,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			match = beamformer_shader_das_match(das_data_kind, local_flags);
 			commit = 1;
 		}break;
-		default:{ commit = 1; }break;
+		default:{
+			match  = beamformer_shader_descriptors[shader].first_match_vector_index;
+			commit = 1;
+		}break;
 		}
 
 		if (commit) {
