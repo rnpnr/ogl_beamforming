@@ -1,5 +1,6 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: bug: shaders with no parameters aren't currently properly selected
  * [ ]: make decode output real values for real inputs and complex values for complex inputs
  *      - this means that das should have a RF version and an IQ version
  *      - this will also flip the current hack to support demodulate after decode to
@@ -177,8 +178,15 @@ frame_next(ComputeFrameIterator *bfi)
 	return result;
 }
 
+function b32
+beamformer_frame_compatible(BeamformerFrame *f, iv3 dim, GLenum gl_kind)
+{
+	b32 result = gl_kind == f->gl_kind && iv3_equal(dim, f->dim);
+	return result;
+}
+
 function void
-alloc_beamform_frame(GLParams *gp, BeamformerFrame *out, iv3 out_dim, s8 name, Arena arena)
+alloc_beamform_frame(GLParams *gp, BeamformerFrame *out, iv3 out_dim, GLenum gl_kind, s8 name, Arena arena)
 {
 	out->dim.x = MAX(1, out_dim.x);
 	out->dim.y = MAX(1, out_dim.y);
@@ -195,6 +203,8 @@ alloc_beamform_frame(GLParams *gp, BeamformerFrame *out, iv3 out_dim, s8 name, A
 	u32 max_dim = (u32)MAX(out->dim.x, MAX(out->dim.y, out->dim.z));
 	out->mips   = (i32)ctz_u32(round_up_power_of_2(max_dim)) + 1;
 
+	out->gl_kind = gl_kind;
+
 	Stream label = arena_stream(arena);
 	stream_append_s8(&label, name);
 	stream_append_byte(&label, '[');
@@ -203,7 +213,7 @@ alloc_beamform_frame(GLParams *gp, BeamformerFrame *out, iv3 out_dim, s8 name, A
 
 	glDeleteTextures(1, &out->texture);
 	glCreateTextures(GL_TEXTURE_3D, 1, &out->texture);
-	glTextureStorage3D(out->texture, out->mips, GL_RG32F, out->dim.x, out->dim.y, out->dim.z);
+	glTextureStorage3D(out->texture, out->mips, gl_kind, out->dim.x, out->dim.y, out->dim.z);
 
 	glTextureParameteri(out->texture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTextureParameteri(out->texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -457,6 +467,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 	if (demodulate) run_cuda_hilbert = 0;
 
+	if (demodulate || run_cuda_hilbert) cp->iq_pipeline = 1;
+
 	BeamformerDataKind data_kind = pb->pipeline.data_kind;
 	cp->pipeline.shader_count = 0;
 	for (u32 i = 0; i < pb->pipeline.shader_count; i++) {
@@ -565,8 +577,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 		dp->output_transmit_stride *= decimation_rate;
 	}
 
-	if (!demodulate) bp->demodulation_frequency = 0;
-
 	cp->decode_dispatch.x = (u32)ceil_f32((f32)bp->sample_count      / DECODE_LOCAL_SIZE_X);
 	cp->decode_dispatch.y = (u32)ceil_f32((f32)bp->channel_count     / DECODE_LOCAL_SIZE_Y);
 	cp->decode_dispatch.z = (u32)ceil_f32((f32)bp->acquisition_count / DECODE_LOCAL_SIZE_Z);
@@ -620,8 +630,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	cp->demod_dispatch.y = (u32)ceil_f32((f32)bp->channel_count     / FILTER_LOCAL_SIZE_Y);
 	cp->demod_dispatch.z = (u32)ceil_f32((f32)bp->acquisition_count / FILTER_LOCAL_SIZE_Z);
 
-	/* TODO(rnp): if IQ (* 8) else (* 4) */
-	cp->rf_size = bp->sample_count * bp->channel_count * bp->acquisition_count * 8;
+	cp->rf_size = bp->sample_count * bp->channel_count * bp->acquisition_count;
+	if (demodulate || run_cuda_hilbert) cp->rf_size *= 8;
+	else                                cp->rf_size *= 4;
 
 	/* TODO(rnp): UBO per filter stage */
 	BeamformerFilterUBO *flt = &cp->filter_ubo_data;
@@ -679,9 +690,10 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			cp->output_points.E[2] = MAX(pb->parameters.output_points[2], 1);
 			cp->average_frames     = pb->parameters.output_points[3];
 
-			if (cp->average_frames > 1 && !iv3_equal(cp->output_points, ctx->averaged_frames[0].dim)) {
-				alloc_beamform_frame(&ctx->gl, ctx->averaged_frames + 0, cp->output_points, s8("Averaged Frame"), arena);
-				alloc_beamform_frame(&ctx->gl, ctx->averaged_frames + 1, cp->output_points, s8("Averaged Frame"), arena);
+			GLenum gl_kind = cp->iq_pipeline ? GL_RG32F : GL_R32F;
+			if (cp->average_frames > 1 && !beamformer_frame_compatible(ctx->averaged_frames + 0, cp->output_points, gl_kind)) {
+				alloc_beamform_frame(&ctx->gl, ctx->averaged_frames + 0, cp->output_points, gl_kind, s8("Averaged Frame"), arena);
+				alloc_beamform_frame(&ctx->gl, ctx->averaged_frames + 1, cp->output_points, gl_kind, s8("Averaged Frame"), arena);
 			}
 		}break;
 		case BeamformerParameterBlockRegion_ChannelMapping:
@@ -815,9 +827,9 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 		if (fast) {
 			glClearTexImage(frame->texture, 0, GL_RED, GL_FLOAT, 0);
 			glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
-			glBindImageTexture(0, frame->texture, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RG32F);
+			glBindImageTexture(0, frame->texture, 0, GL_TRUE, 0, GL_READ_WRITE, cp->iq_pipeline ? GL_RG32F : GL_R32F);
 		} else {
-			glBindImageTexture(0, frame->texture, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RG32F);
+			glBindImageTexture(0, frame->texture, 0, GL_TRUE, 0, GL_WRITE_ONLY, cp->iq_pipeline ? GL_RG32F : GL_R32F);
 		}
 
 		u32 sparse_texture = cp->textures[BeamformerComputeTextureKind_SparseElements];
@@ -1175,8 +1187,10 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			start_renderdoc_capture(gl_context);
 
 			BeamformerFrame *frame = work->compute_context.frame;
-			if (!iv3_equal(cp->output_points, frame->dim))
-				alloc_beamform_frame(&ctx->gl, frame, cp->output_points, s8("Beamformed_Data"), *arena);
+
+			GLenum gl_kind = cp->iq_pipeline ? GL_RG32F : GL_R32F;
+			if (!beamformer_frame_compatible(frame, cp->output_points, gl_kind))
+				alloc_beamform_frame(&ctx->gl, frame, cp->output_points, gl_kind, s8("Beamformed_Data"), *arena);
 
 			frame->min_coordinate  = cp->min_coordinate;
 			frame->max_coordinate  = cp->max_coordinate;

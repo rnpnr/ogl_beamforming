@@ -1469,7 +1469,7 @@ ui_beamformer_frame_view_copy_frame(BeamformerUI *ui, BeamformerFrameView *new, 
 	mem_copy(new->frame, old->frame, sizeof(*new->frame));
 	new->frame->texture = 0;
 	new->frame->next    = 0;
-	alloc_beamform_frame(0, new->frame, old->frame->dim, s8("Frame Copy: "), ui->arena);
+	alloc_beamform_frame(0, new->frame, old->frame->dim, old->frame->gl_kind, s8("Frame Copy: "), ui->arena);
 
 	glCopyImageSubData(old->frame->texture, GL_TEXTURE_3D, 0, 0, 0, 0,
 	                   new->frame->texture, GL_TEXTURE_3D, 0, 0, 0, 0,

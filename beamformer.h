@@ -204,6 +204,7 @@ struct BeamformerComputePlan {
 
 	u32 rf_size;
 	i32 hadamard_order;
+	b32 iq_pipeline;
 
 	v3  min_coordinate;
 	v3  max_coordinate;
@@ -319,6 +320,7 @@ struct BeamformerFrame {
 	v3  max_coordinate;
 
 	// metadata
+	GLenum                 gl_kind;
 	u32                    id;
 	u32                    compound_count;
 	DASShaderKind          das_shader_kind;
