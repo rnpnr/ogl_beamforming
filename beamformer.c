@@ -429,7 +429,6 @@ das_ubo_from_beamformer_parameters(BeamformerDASUBO *du, BeamformerParameters *b
 	du->acquisition_count      = bp->acquisition_count;
 
 	du->shader_flags = 0;
-	if (bp->interpolate)         du->shader_flags |= BeamformerShaderDASFlags_Interpolate;
 	if (bp->coherency_weighting) du->shader_flags |= BeamformerShaderDASFlags_CoherencyWeighting;
 	if (bp->transmit_mode == BeamformerRCAOrientation_Columns)
 		du->shader_flags |= BeamformerShaderDASFlags_TxColumns;
@@ -519,6 +518,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				local_flags |= BeamformerShaderDASFlags_Fast;
 			if (bp->shader_kind == DASShaderKind_UFORCES || bp->shader_kind == DASShaderKind_UHERCULES)
 				local_flags |= BeamformerShaderDASFlags_Sparse;
+			if (pb->parameters.interpolate)
+				local_flags |= BeamformerShaderDASFlags_Interpolate;
+
 			match = beamformer_shader_das_match(das_data_kind, local_flags);
 			commit = 1;
 		}break;

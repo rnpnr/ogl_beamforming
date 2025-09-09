@@ -35,12 +35,12 @@
 	{
 		@Permute(DataKind [Float32  Float32Complex])
 		{
-			@PermuteFlags([Fast  Sparse])
+			@PermuteFlags([Fast Sparse Interpolate])
 		}
 
 		@Enumeration(RCAOrientation)
 
-		@Flags([Interpolate CoherencyWeighting RxColumns TxColumns])
+		@Flags([CoherencyWeighting RxColumns TxColumns])
 	}
 
 	@Shader(min_max.glsl) MinMax

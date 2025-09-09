@@ -130,10 +130,18 @@ read_only global i32 *beamformer_shader_match_vectors[] = {
 	(i32 []){BeamformerDataKind_Float32, 0x01},
 	(i32 []){BeamformerDataKind_Float32, 0x02},
 	(i32 []){BeamformerDataKind_Float32, 0x03},
+	(i32 []){BeamformerDataKind_Float32, 0x04},
+	(i32 []){BeamformerDataKind_Float32, 0x05},
+	(i32 []){BeamformerDataKind_Float32, 0x06},
+	(i32 []){BeamformerDataKind_Float32, 0x07},
 	(i32 []){BeamformerDataKind_Float32Complex, 0x00},
 	(i32 []){BeamformerDataKind_Float32Complex, 0x01},
 	(i32 []){BeamformerDataKind_Float32Complex, 0x02},
 	(i32 []){BeamformerDataKind_Float32Complex, 0x03},
+	(i32 []){BeamformerDataKind_Float32Complex, 0x04},
+	(i32 []){BeamformerDataKind_Float32Complex, 0x05},
+	(i32 []){BeamformerDataKind_Float32Complex, 0x06},
+	(i32 []){BeamformerDataKind_Float32Complex, 0x07},
 	// MinMax
 	0,
 	// Sum
@@ -141,7 +149,7 @@ read_only global i32 *beamformer_shader_match_vectors[] = {
 	// Render3D
 	0,
 };
-#define beamformer_match_vectors_count (53)
+#define beamformer_match_vectors_count (61)
 
 read_only global BeamformerShaderDescriptor beamformer_shader_descriptors[] = {
 	{0,  1,  0, 0, 0},
@@ -149,10 +157,10 @@ read_only global BeamformerShaderDescriptor beamformer_shader_descriptors[] = {
 	{2,  6,  1, 2, 0},
 	{6,  18, 1, 1, 1},
 	{18, 42, 2, 2, 1},
-	{42, 50, 1, 2, 1},
-	{50, 51, 0, 0, 0},
-	{51, 52, 0, 0, 0},
-	{52, 53, 0, 0, 0},
+	{42, 58, 1, 2, 1},
+	{58, 59, 0, 0, 0},
+	{59, 60, 0, 0, 0},
+	{60, 61, 0, 0, 0},
 };
 
 read_only global s8 beamformer_shader_names[] = {
@@ -303,7 +311,7 @@ beamformer_shader_demodulate_match(BeamformerDataKind a, BeamformerSamplingMode 
 function iz
 beamformer_shader_das_match(BeamformerDataKind a, i32 flags)
 {
-	iz result = beamformer_shader_match((i32 []){(i32)a, flags}, 42, 50, 2);
+	iz result = beamformer_shader_match((i32 []){(i32)a, flags}, 42, 58, 2);
 	return result;
 }
 

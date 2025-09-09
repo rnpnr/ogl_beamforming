@@ -3,7 +3,8 @@ layout(std430, binding = 1) readonly restrict buffer buffer_1 {
 	vec2 rf_data[];
 };
 
-const bool sparse = (ShaderFlags & ShaderFlags_Sparse) != 0;
+const bool sparse      = bool(ShaderFlags & ShaderFlags_Sparse);
+const bool interpolate = bool(ShaderFlags & ShaderFlags_Interpolate);
 
 #if (ShaderFlags & ShaderFlags_Fast)
 layout(rg32f, binding = 0)           restrict uniform image3D  u_out_data_tex;
@@ -59,7 +60,6 @@ vec2 cubic(int base_index, float index)
 
 vec2 sample_rf(int channel, int transmit, float index)
 {
-	bool interpolate = bool(shader_flags & ShaderFlags_Interpolate);
 	vec2 result     = vec2(index >= 0.0f) * vec2((int(index) + 1 + int(interpolate)) < sample_count);
 	int  base_index = int(channel * sample_count * acquisition_count + transmit * sample_count);
 	if (interpolate) result *= cubic(base_index, index);
