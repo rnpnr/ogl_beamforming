@@ -559,21 +559,21 @@ push_s8(Arena *a, s8 str)
 	return result;
 }
 
-function u32
+function force_inline u32
 round_down_power_of_2(u32 a)
 {
 	u32 result = 0x80000000UL >> clz_u32(a);
 	return result;
 }
 
-function u32
+function force_inline u32
 round_up_power_of_2(u32 a)
 {
 	u32 result = 0x80000000UL >> (clz_u32(a - 1) - 1);
 	return result;
 }
 
-function iz
+function force_inline iz
 round_up_to(iz value, iz multiple)
 {
 	iz result = value;
