@@ -255,16 +255,18 @@ iptr glfwCreateWindow(i32, i32, char *, iptr, iptr);
 void glfwMakeContextCurrent(iptr);
 
 function void
-worker_thread_sleep(GLWorkerThreadContext *ctx)
+worker_thread_sleep(GLWorkerThreadContext *ctx, BeamformerSharedMemory *sm)
 {
 	for (;;) {
 		i32 expected = 0;
 		if (atomic_cas_u32(&ctx->sync_variable, &expected, 1))
 			break;
 
-		atomic_store_u32(&ctx->asleep, 1);
-		os_wait_on_value(&ctx->sync_variable, 1, (u32)-1);
-		atomic_store_u32(&ctx->asleep, 0);
+		if (!atomic_load_u32(&sm->live_imaging_parameters.active)) {
+			atomic_store_u32(&ctx->asleep, 1);
+			os_wait_on_value(&ctx->sync_variable, 1, (u32)-1);
+			atomic_store_u32(&ctx->asleep, 0);
+		}
 	}
 }
 
@@ -280,7 +282,7 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 	                beamformer->compute_context.shader_timer_ids);
 
 	for (;;) {
-		worker_thread_sleep(ctx);
+		worker_thread_sleep(ctx, beamformer->shared_memory.region);
 		asan_poison_region(ctx->arena.beg, ctx->arena.end - ctx->arena.beg);
 		beamformer_complete_compute(ctx->user_context, &ctx->arena, ctx->gl_context);
 	}
@@ -302,7 +304,7 @@ function OS_THREAD_ENTRY_POINT_FN(upload_worker_thread_entry_point)
 	glQueryCounter(up->rf_buffer->data_timestamp_query, GL_TIMESTAMP);
 
 	for (;;) {
-		worker_thread_sleep(ctx);
+		worker_thread_sleep(ctx, up->shared_memory->region);
 		asan_poison_region(ctx->arena.beg, ctx->arena.end - ctx->arena.beg);
 		beamformer_rf_upload(up, ctx->arena);
 	}
