@@ -398,18 +398,18 @@ das_voxel_transform_matrix(BeamformerParameters *bp)
 
 	m4 R;
 	switch (bp->das_shader_id) {
-	case DASShaderKind_FORCES:
-	case DASShaderKind_UFORCES:
-	case DASShaderKind_Flash:
+	case BeamformerDASKind_FORCES:
+	case BeamformerDASKind_UFORCES:
+	case BeamformerDASKind_Flash:
 	{
 		R = m4_identity();
 		S.c[1].E[1]  = 0;
 		T2.c[3].E[1] = 0;
 	}break;
-	case DASShaderKind_HERCULES:
-	case DASShaderKind_UHERCULES:
-	case DASShaderKind_RCA_TPW:
-	case DASShaderKind_RCA_VLS:
+	case BeamformerDASKind_HERCULES:
+	case BeamformerDASKind_UHERCULES:
+	case BeamformerDASKind_RCA_TPW:
+	case BeamformerDASKind_RCA_VLS:
 	{
 		R = m4_rotation_about_z(bp->beamform_plane ? 0.0f : 0.25f);
 		if (!(points.x > 1 && points.y > 1 && points.z > 1))
@@ -527,7 +527,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			i32 local_flags = 0;
 			if ((bp->shader_flags & BeamformerShaderDASFlags_CoherencyWeighting) == 0)
 				local_flags |= BeamformerShaderDASFlags_Fast;
-			if (bp->shader_kind == DASShaderKind_UFORCES || bp->shader_kind == DASShaderKind_UHERCULES)
+			if (bp->shader_kind == BeamformerDASKind_UFORCES || bp->shader_kind == BeamformerDASKind_UHERCULES)
 				local_flags |= BeamformerShaderDASFlags_Sparse;
 			if (pb->parameters.interpolate)
 				local_flags |= BeamformerShaderDASFlags_Interpolate;
@@ -846,8 +846,8 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 
 		if (fast) {
 			i32 loop_end;
-			if (ubo->shader_kind == DASShaderKind_RCA_VLS ||
-			    ubo->shader_kind == DASShaderKind_RCA_TPW)
+			if (ubo->shader_kind == BeamformerDASKind_RCA_VLS ||
+			    ubo->shader_kind == BeamformerDASKind_RCA_TPW)
 			{
 				/* NOTE(rnp): to avoid repeatedly sampling the whole focal vectors
 				 * texture we loop over transmits for VLS/TPW */
@@ -920,7 +920,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 		aframe->min_coordinate  = frame->min_coordinate;
 		aframe->max_coordinate  = frame->max_coordinate;
 		aframe->compound_count  = frame->compound_count;
-		aframe->das_shader_kind = frame->das_shader_kind;
+		aframe->das_kind        = frame->das_kind;
 	}break;
 	InvalidDefaultCase;
 	}
@@ -1196,7 +1196,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 
 			frame->min_coordinate  = cp->min_coordinate;
 			frame->max_coordinate  = cp->max_coordinate;
-			frame->das_shader_kind = cp->das_ubo_data.shader_kind;
+			frame->das_kind        = cp->das_ubo_data.shader_kind;
 			frame->compound_count  = cp->das_ubo_data.acquisition_count;
 
 			BeamformerComputeContext  *cc       = &ctx->compute_context;

@@ -260,13 +260,6 @@ typedef struct {
 	BeamformerRenderModel unit_cube_model;
 } BeamformerComputeContext;
 
-typedef enum {
-	#define X(type, id, ...) DASShaderKind_##type = id,
-	DAS_SHADER_KIND_LIST
-	#undef X
-	DASShaderKind_Count
-} DASShaderKind;
-
 typedef struct {
 	BeamformerComputeStatsTable table;
 	f32 average_times[BeamformerShaderKind_Count];
@@ -324,7 +317,7 @@ struct BeamformerFrame {
 	GLenum                 gl_kind;
 	u32                    id;
 	u32                    compound_count;
-	DASShaderKind          das_shader_kind;
+	BeamformerDASKind      das_kind;
 	BeamformerViewPlaneTag view_plane_tag;
 
 	BeamformerFrame *next;

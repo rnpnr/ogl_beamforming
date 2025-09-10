@@ -20,6 +20,7 @@ typedef struct {
 /* TODO(rnp): this is an absolute abuse of the preprocessor, but now is
  * not a good time to write a full metaprogram */
 #define BEAMFORMER_FILTER_KIND_LIST(type, _) \
+	X(Invalid,      type unused) \
 	X(Kaiser,       type cutoff_frequency _ type beta          _ type length) \
 	X(MatchedChirp, type duration         _ type min_frequency _ type max_frequency)
 
@@ -55,6 +56,13 @@ typedef enum {
 	X(EPIC_UHERCULES,  9, "EPIC-UHERCULES", 0) \
 	X(Flash,          10, "Flash",          0)
 
+typedef enum {
+	#define X(type, id, ...) BeamformerDASKind_##type = id,
+	DAS_SHADER_KIND_LIST
+	#undef X
+	BeamformerDASKind_Count
+} BeamformerDASKind;
+
 #define FILTER_LOCAL_SIZE_X 64
 #define FILTER_LOCAL_SIZE_Y  1
 #define FILTER_LOCAL_SIZE_Z  1
@@ -84,37 +92,47 @@ typedef enum {
 	X(MaxRawDataFramesInFlight,   3) \
 	X(MaxSavedFrames,            16)
 #define X(k, v, ...) Beamformer##k = v,
-enum {BEAMFORMER_CONSTANTS_LIST};
+typedef enum {BEAMFORMER_CONSTANTS_LIST} BeamformerConstants;
 #undef X
 
-/* X(name, type, size, elements, comment) */
+/* X(name, type, size, matlab_type, elements, comment) */
 #define BEAMFORMER_PARAMS_HEAD \
-	X(xdc_transform,          float,    [16], 16, "IMPORTANT: column major order")           \
-	X(xdc_element_pitch,      float,     [2],  2, "[m] Transducer Element Pitch {row, col}") \
-	X(raw_data_dimensions,    uint32_t,  [2],  2, "Raw Data Dimensions")                     \
-	X(sample_count,           uint32_t,     ,  1, "")                                        \
-	X(channel_count,          uint32_t,     ,  1, "")                                        \
-	X(acquisition_count,      uint32_t,     ,  1, "")                                        \
-	X(das_shader_id,          uint32_t,     ,  1, "")                                        \
-	X(time_offset,            float,        ,  1, "pulse length correction time [s]")        \
-	X(decode,                 uint8_t,      ,  1, "Decode or just reshape data")             \
-	X(transmit_mode,          uint8_t,      ,  1, "Method/Orientation of Transmit")          \
-	X(receive_mode,           uint8_t,      ,  1, "Method/Orientation of Receive")           \
-	X(sampling_mode,          uint8_t,      ,  1, "")
+	X(xdc_transform,          float,    [16], single, 16, "IMPORTANT: column major order")           \
+	X(xdc_element_pitch,      float,     [2], single,  2, "[m] Transducer Element Pitch {row, col}") \
+	X(raw_data_dimensions,    uint32_t,  [2], uint32,  2, "Raw Data Dimensions")                     \
+	X(sample_count,           uint32_t,     , uint32,  1, "")                                        \
+	X(channel_count,          uint32_t,     , uint32,  1, "")                                        \
+	X(acquisition_count,      uint32_t,     , uint32,  1, "")                                        \
+	X(das_shader_id,          uint32_t,     , uint32,  1, "")                                        \
+	X(time_offset,            float,        , single,  1, "pulse length correction time [s]")        \
+	X(decode,                 uint8_t,      , uint8,   1, "Decode or just reshape data")             \
+	X(transmit_mode,          uint8_t,      , uint8,   1, "Method/Orientation of Transmit")          \
+	X(receive_mode,           uint8_t,      , uint8,   1, "Method/Orientation of Receive")           \
+	X(sampling_mode,          uint8_t,      , uint8,   1, "")
 
 #define BEAMFORMER_UI_PARAMS \
-	X(output_min_coordinate,  float,     [3], 3, "[m] Back-Top-Left corner of output region")                     \
-	X(output_max_coordinate,  float,     [3], 3, "[m] Front-Bottom-Right corner of output region")                \
-	X(output_points,          int32_t,   [4], 4, "Width * Height * Depth * (Frame Average Count)")                \
-	X(sampling_frequency,     float,        , 1, "[Hz]")                                                          \
-	X(demodulation_frequency, float,        , 1, "[Hz]")                                                          \
-	X(speed_of_sound,         float,        , 1, "[m/s]")                                                         \
-	X(f_number,               float,        , 1, "F# (set to 0 to disable)")                                      \
-	X(off_axis_pos,           float,        , 1, "[m] Position on screen normal to beamform in TPW/VLS/HERCULES") \
-	X(interpolate,            uint32_t,     , 1, "Perform Cubic Interpolation of RF Samples")                     \
-	X(coherency_weighting,    uint32_t,     , 1, "Apply coherency weighting to output data")                      \
-	X(beamform_plane,         uint32_t,     , 1, "Plane to Beamform in TPW/VLS/HERCULES")                         \
-	X(decimation_rate,        uint32_t,     , 1, "Number of times to decimate")
+	X(output_min_coordinate,  float,     [3], single, 3, "[m] Back-Top-Left corner of output region")                     \
+	X(output_max_coordinate,  float,     [3], single, 3, "[m] Front-Bottom-Right corner of output region")                \
+	X(output_points,          int32_t,   [4], int32,  4, "Width * Height * Depth * (Frame Average Count)")                \
+	X(sampling_frequency,     float,        , single, 1, "[Hz]")                                                          \
+	X(demodulation_frequency, float,        , single, 1, "[Hz]")                                                          \
+	X(speed_of_sound,         float,        , single, 1, "[m/s]")                                                         \
+	X(f_number,               float,        , single, 1, "F# (set to 0 to disable)")                                      \
+	X(off_axis_pos,           float,        , single, 1, "[m] Position on screen normal to beamform in TPW/VLS/HERCULES") \
+	X(interpolate,            uint32_t,     , uint32, 1, "Perform Cubic Interpolation of RF Samples")                     \
+	X(coherency_weighting,    uint32_t,     , uint32, 1, "Apply coherency weighting to output data")                      \
+	X(beamform_plane,         uint32_t,     , uint32, 1, "Plane to Beamform in TPW/VLS/HERCULES")                         \
+	X(decimation_rate,        uint32_t,     , uint32, 1, "Number of times to decimate")
+
+#define BEAMFORMER_SIMPLE_PARAMS \
+	X(channel_mapping,          int16_t,  [BeamformerMaxChannelCount],        int16,  BeamformerMaxChannelCount) \
+	X(sparse_elements,          int16_t,  [BeamformerMaxChannelCount],        int16,  BeamformerMaxChannelCount) \
+	X(steering_angles,          float,    [BeamformerMaxChannelCount],        single, BeamformerMaxChannelCount) \
+	X(focal_depths,             float,    [BeamformerMaxChannelCount],        single, BeamformerMaxChannelCount) \
+	X(compute_stages,           int32_t,  [BeamformerMaxComputeShaderStages], int32,  BeamformerMaxComputeShaderStages) \
+	X(compute_stage_parameters, int16_t,  [BeamformerMaxComputeShaderStages], int16,  BeamformerMaxComputeShaderStages) \
+	X(compute_stages_count,     uint32_t, ,                                   uint32, 1) \
+	X(data_kind,                int32_t,  ,                                   int32,  1)
 
 #define X(name, type, size, ...) type name size;
 typedef struct {BEAMFORMER_PARAMS_HEAD} BeamformerParametersHead;
@@ -124,6 +142,12 @@ typedef struct {
 	BEAMFORMER_PARAMS_HEAD
 	BEAMFORMER_UI_PARAMS
 } BeamformerParameters;
+
+typedef struct {
+	BEAMFORMER_PARAMS_HEAD
+	BEAMFORMER_UI_PARAMS
+	BEAMFORMER_SIMPLE_PARAMS
+} BeamformerSimpleParameters;
 #undef X
 
 #define BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST \

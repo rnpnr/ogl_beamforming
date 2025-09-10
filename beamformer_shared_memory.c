@@ -159,7 +159,7 @@ typedef struct {
 
 	/* NOTE(rnp): not used for locking on w32 but we can use these to peek at the status of
 	 * the lock without leaving userspace. */
-	i32 locks[BeamformerSharedMemoryLockKind_Count + BeamformerMaxParameterBlockSlots];
+	i32 locks[(u32)BeamformerSharedMemoryLockKind_Count + (u32)BeamformerMaxParameterBlockSlots];
 
 	/* NOTE(rnp): total number of parameter block regions the client has requested.
 	 * used to calculate offset to scratch space and to track number of allocated

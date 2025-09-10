@@ -228,10 +228,8 @@ beamformer_reserve_parameter_blocks(uint32_t count)
 function b32
 validate_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data_kind)
 {
-	b32 result = 1;
-	if (lib_error_check(shader_count <= BeamformerMaxComputeShaderStages,
-	                    BF_LIB_ERR_KIND_COMPUTE_STAGE_OVERFLOW))
-	{
+	b32 result = lib_error_check(shader_count <= BeamformerMaxComputeShaderStages, BF_LIB_ERR_KIND_COMPUTE_STAGE_OVERFLOW);
+	if (result) {
 		for (u32 i = 0; i < shader_count; i++)
 			result &= BETWEEN(shaders[i], BeamformerShaderKind_ComputeFirst, BeamformerShaderKind_ComputeLast);
 		if (!result) {
@@ -247,6 +245,18 @@ validate_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data_kind)
 			g_beamformer_library_context.last_error = BF_LIB_ERR_KIND_INVALID_DEMOD_DATA_KIND;
 			result = 0;
 		}
+	}
+	return result;
+}
+
+function b32
+validate_simple_parameters(BeamformerSimpleParameters *bp)
+{
+	b32 result = check_shared_memory();
+	if (result) {
+		result &= bp->channel_count <= BeamformerMaxChannelCount;
+		if (!result)
+			g_beamformer_library_context.last_error = BF_LIB_ERR_KIND_INVALID_SIMPLE_PARAMETERS;
 	}
 	return result;
 }
@@ -301,7 +311,7 @@ b32
 beamformer_push_pipeline_at(i32 *shaders, u32 shader_count, BeamformerDataKind data_kind, u32 block)
 {
 	b32 result = 0;
-	if (validate_pipeline(shaders, shader_count, data_kind)) {
+	if (check_shared_memory() && validate_pipeline(shaders, shader_count, data_kind)) {
 		i32 lock = BeamformerSharedMemoryLockKind_Count + (i32)block;
 		if (valid_parameter_block(block) && lib_try_lock(lock, g_beamformer_library_context.timeout_ms)) {
 			BeamformerParameterBlock *b = beamformer_parameter_block(g_beamformer_library_context.bp, block);
@@ -489,6 +499,35 @@ beamformer_push_parameters(BeamformerParameters *bp)
 }
 
 b32
+beamformer_push_simple_parameters_at(BeamformerSimpleParameters *bp, u32 block)
+{
+	b32 result = validate_simple_parameters(bp);
+	if (result) {
+		result &= beamformer_push_parameters_at((BeamformerParameters *)bp, block);
+		result &= beamformer_push_pipeline_at(bp->compute_stages, bp->compute_stages_count, (BeamformerDataKind)bp->data_kind, block);
+		result &= beamformer_push_channel_mapping_at(bp->channel_mapping, bp->channel_count, block);
+		if (bp->das_shader_id == BeamformerDASKind_UFORCES || bp->das_shader_id == BeamformerDASKind_UHERCULES)
+			result &= beamformer_push_sparse_elements_at(bp->sparse_elements, bp->acquisition_count, block);
+
+		alignas(64) v2 focal_vectors[countof(bp->steering_angles)];
+		for (u32 i = 0; i < countof(bp->steering_angles); i++)
+			focal_vectors[i] = (v2){{bp->steering_angles[i], bp->focal_depths[i]}};
+		result &= beamformer_push_focal_vectors_at((f32 *)focal_vectors, countof(focal_vectors), block);
+
+		for (u32 stage = 0; stage < bp->compute_stages_count; stage++)
+			result &= beamformer_set_pipeline_stage_parameters_at(stage, bp->compute_stage_parameters[stage], block);
+	}
+	return result;
+}
+
+b32
+beamformer_push_simple_parameters(BeamformerSimpleParameters *bp)
+{
+	b32 result = beamformer_push_simple_parameters_at(bp, 0);
+	return result;
+}
+
+b32
 beamformer_push_parameters_ui(BeamformerUIParameters *bp)
 {
 	b32 result = parameter_block_region_upload_explicit(bp, sizeof(*bp), 0, BeamformerParameterBlockRegion_Parameters,
@@ -537,23 +576,28 @@ beamformer_read_output(void *out, iz size, i32 timeout_ms)
 }
 
 b32
-beamform_data_synchronized(void *data, u32 data_size, i32 output_points[3], f32 *out_data, i32 timeout_ms)
+beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t data_size,
+                         void *out_data, int32_t timeout_ms)
 {
-	b32 result = 0;
-	if (check_shared_memory()) {
-		output_points[0] = MAX(1, output_points[0]);
-		output_points[1] = MAX(1, output_points[1]);
-		output_points[2] = MAX(1, output_points[2]);
+	b32 result = validate_simple_parameters(bp);
+	if (result) {
+		bp->output_points[0] = MAX(1, bp->output_points[0]);
+		bp->output_points[1] = MAX(1, bp->output_points[1]);
+		bp->output_points[2] = MAX(1, bp->output_points[2]);
 
-		BeamformerParameterBlock *b = beamformer_parameter_block(g_beamformer_library_context.bp, 0);
-		b->parameters.output_points[0] = output_points[0];
-		b->parameters.output_points[1] = output_points[1];
-		b->parameters.output_points[2] = output_points[2];
+		beamformer_push_simple_parameters(bp);
 
-		iz output_size = output_points[0] * output_points[1] * output_points[2] * (i32)sizeof(f32) * 2;
+		b32 complex = 0;
+		for (u32 stage = 0; stage < bp->compute_stages_count; stage++) {
+			BeamformerShaderKind shader = (BeamformerShaderKind)bp->compute_stages[stage];
+			complex |= shader == BeamformerShaderKind_Demodulate || shader == BeamformerShaderKind_CudaHilbert;
+		}
+
+		iz output_size = bp->output_points[0] * bp->output_points[1] * bp->output_points[2] * (i32)sizeof(f32);
+		if (complex) output_size *= 2;
 
 		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
-		if (lib_error_check(output_size <= arena_capacity(&scratch, u8), BF_LIB_ERR_KIND_EXPORT_SPACE_OVERFLOW)
+		if (result && lib_error_check(output_size <= arena_capacity(&scratch, u8), BF_LIB_ERR_KIND_EXPORT_SPACE_OVERFLOW)
 		    && beamformer_push_data_with_compute(data, data_size, 0, 0))
 		{
 			BeamformerExportContext export;

@@ -25,7 +25,8 @@
 	X(SYNC_VARIABLE,               14, "failed to acquire lock within timeout period")  \
 	X(INVALID_TIMEOUT,             15, "invalid timeout value")                         \
 	X(INVALID_FILTER_KIND,         16, "invalid filter kind")                           \
-	X(INVALID_FILTER_PARAM_COUNT,  17, "invalid parameters count passed for filter")
+	X(INVALID_FILTER_PARAM_COUNT,  17, "invalid parameters count passed for filter")    \
+	X(INVALID_SIMPLE_PARAMETERS,   18, "invalid simple parameters struct")
 
 #define X(type, num, string) BF_LIB_ERR_KIND_ ##type = num,
 typedef enum {BEAMFORMER_LIB_ERRORS} BeamformerLibErrorKind;
@@ -37,6 +38,20 @@ LIB_FN BeamformerLibErrorKind beamformer_get_last_error(void);
 LIB_FN const char *beamformer_get_last_error_string(void);
 LIB_FN const char *beamformer_error_string(BeamformerLibErrorKind kind);
 
+///////////////////////////
+// NOTE: Simple API
+/* Usage:
+ *   - fill out a BeamformerSimpleParameters
+ *     - filters need to be created with beamformer_create_filter, and the slot
+ *       needs to be assigned in compute_stage_parameters
+ *   - allocate a buffer with enough space for all Float32 or Float32Complex output points
+ *   - pass the buffer along with the data and parameters to beamformer_beamform_data()
+ *   - if the function was unsuccessful you can check the error with beamformer_get_last_error()
+ *     or beamformer_get_last_error_string()
+ */
+LIB_FN uint32_t beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t data_size,
+                                         void *out_data, int32_t timeout_ms);
+
 /* NOTE: sets timeout for all functions which may timeout but don't
  * take a timeout argument. The majority of such functions will not
  * timeout in the normal case and so passing a timeout parameter around
@@ -47,10 +62,8 @@ LIB_FN const char *beamformer_error_string(BeamformerLibErrorKind kind);
  * IMPORTANT: timeout of -1 will block forever */
 LIB_FN uint32_t beamformer_set_global_timeout(int32_t timeout_ms);
 
-/* NOTE: sends data and waits for (complex) beamformed data to be returned.
- * out_data: must be allocated by the caller as 2 floats per output point. */
-LIB_FN uint32_t beamform_data_synchronized(void *data, uint32_t data_size, int32_t output_points[3],
-                                           float *out_data, int32_t timeout_ms);
+///////////////////////////
+// NOTE: Advanced API
 
 /* NOTE: downloads the last 32 frames worth of compute timings into output */
 LIB_FN uint32_t beamformer_compute_timings(BeamformerComputeStatsTable *output, int32_t timeout_ms);
@@ -58,38 +71,46 @@ LIB_FN uint32_t beamformer_compute_timings(BeamformerComputeStatsTable *output, 
 /* NOTE: tells the beamformer to start beamforming */
 LIB_FN uint32_t beamformer_start_compute(void);
 
-LIB_FN uint32_t beamformer_push_data_with_compute(void *data, uint32_t size,
-                                                  uint32_t image_plane_tag,
-                                                  uint32_t parameter_slot);
-
 /* NOTE: waits for previously queued beamform to start or for timeout_ms */
 LIB_FN uint32_t beamformer_wait_for_compute_dispatch(int32_t timeout_ms);
 
-/* NOTE: these functions only queue an upload; you must flush (start_compute) */
+/* NOTE: this function only queue an upload; you must flush (start_compute) */
 LIB_FN uint32_t beamformer_push_data(void *data, uint32_t size);
-LIB_FN uint32_t beamformer_push_channel_mapping(int16_t *mapping,  uint32_t count);
-LIB_FN uint32_t beamformer_push_sparse_elements(int16_t *elements, uint32_t count);
-LIB_FN uint32_t beamformer_push_focal_vectors(float     *vectors,  uint32_t count);
+
+/* NOTE: pushes data and tries to immediately starts a compute */
+LIB_FN uint32_t beamformer_push_data_with_compute(void *data, uint32_t size,
+                                                  uint32_t image_plane_tag,
+                                                  uint32_t parameter_slot);
 
 ///////////////////////////
 // Parameter Configuration
 LIB_FN uint32_t beamformer_reserve_parameter_blocks(uint32_t count);
 LIB_FN uint32_t beamformer_set_pipeline_stage_parameters(uint32_t stage_index, int32_t parameter);
 LIB_FN uint32_t beamformer_push_pipeline(int32_t *shaders, uint32_t shader_count, BeamformerDataKind data_kind);
-LIB_FN uint32_t beamformer_push_parameters(BeamformerParameters *);
-LIB_FN uint32_t beamformer_push_parameters_ui(BeamformerUIParameters *);
-LIB_FN uint32_t beamformer_push_parameters_head(BeamformerParametersHead *);
 
 LIB_FN uint32_t beamformer_set_pipeline_stage_parameters_at(uint32_t stage_index,
                                                             int32_t  parameter,
                                                             uint32_t parameter_slot);
 LIB_FN uint32_t beamformer_push_pipeline_at(int32_t *shaders, uint32_t shader_count,
                                             BeamformerDataKind data_kind, uint32_t parameter_slot);
+
+LIB_FN uint32_t beamformer_push_simple_parameters(BeamformerSimpleParameters *bp);
+LIB_FN uint32_t beamformer_push_simple_parameters_at(BeamformerSimpleParameters *bp, uint32_t parameter_slot);
+
+LIB_FN uint32_t beamformer_push_parameters(BeamformerParameters *);
+LIB_FN uint32_t beamformer_push_parameters_ui(BeamformerUIParameters *);
+LIB_FN uint32_t beamformer_push_parameters_head(BeamformerParametersHead *);
+
 LIB_FN uint32_t beamformer_push_parameters_at(BeamformerParameters *, uint32_t parameter_slot);
 
-LIB_FN uint32_t beamformer_push_channel_mapping_at(int16_t *mapping,  uint32_t count, uint32_t parameter_slot);
+LIB_FN uint32_t beamformer_push_channel_mapping(int16_t *mapping, uint32_t count);
+LIB_FN uint32_t beamformer_push_channel_mapping_at(int16_t *mapping, uint32_t count, uint32_t parameter_slot);
+
+LIB_FN uint32_t beamformer_push_sparse_elements(int16_t *elements, uint32_t count);
 LIB_FN uint32_t beamformer_push_sparse_elements_at(int16_t *elements, uint32_t count, uint32_t parameter_slot);
-LIB_FN uint32_t beamformer_push_focal_vectors_at(float     *vectors,  uint32_t count, uint32_t parameter_slot);
+
+LIB_FN uint32_t beamformer_push_focal_vectors(float *vectors, uint32_t count);
+LIB_FN uint32_t beamformer_push_focal_vectors_at(float *vectors, uint32_t count, uint32_t parameter_slot);
 
 ////////////////////
 // Filter Creation

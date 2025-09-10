@@ -365,7 +365,7 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 
 	/* TODO(rnp): I'm not sure if its a good idea to pre-reserve a bunch of semaphores
 	 * on w32 but thats what we are doing for now */
-	u32 lock_count = BeamformerSharedMemoryLockKind_Count + BeamformerMaxParameterBlockSlots;
+	u32 lock_count = (u32)BeamformerSharedMemoryLockKind_Count + (u32)BeamformerMaxParameterBlockSlots;
 	ctx->shared_memory = os_create_shared_memory_area(memory, OS_SHARED_MEMORY_NAME, lock_count,
 	                                                  BEAMFORMER_SHARED_MEMORY_SIZE);
 	BeamformerSharedMemory *sm = ctx->shared_memory.region;
