@@ -2782,7 +2782,7 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 	InvalidDefaultCase;
 	}
 
-	u32 rf_size = ui->beamformer_context->compute_context.rf_buffer.size;
+	u32 rf_size = ui->beamformer_context->compute_context.rf_buffer.active_rf_size;
 	push_table_time_row_with_fps(table, &arena, s8("Compute Total:"),   compute_time_sum);
 	push_table_time_row_with_fps(table, &arena, s8("RF Upload Delta:"), stats->rf_time_delta_average);
 	push_table_memory_size_row(table, &arena, s8("Input RF Size:"), rf_size);

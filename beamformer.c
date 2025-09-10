@@ -1220,7 +1220,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 					slot = (rf->compute_index - 1) % countof(rf->compute_syncs);
 				}
 
-				glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, rf->ssbo, slot * rf->size, rf->size);
+				glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, rf->ssbo, slot * rf->active_rf_size, rf->active_rf_size);
 
 				glBeginQuery(GL_TIME_ELAPSED, cc->shader_timer_ids[0]);
 				do_compute_shader(ctx, cp, frame, pipeline->shaders[0], pipeline->program_indices[0],
@@ -1353,11 +1353,11 @@ DEBUG_EXPORT BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute)
 function void
 beamformer_rf_buffer_allocate(BeamformerRFBuffer *rf, u32 rf_size, Arena arena)
 {
+	assert((rf_size % 64) == 0);
 	glUnmapNamedBuffer(rf->ssbo);
 	glDeleteBuffers(1, &rf->ssbo);
 	glCreateBuffers(1, &rf->ssbo);
 
-	rf_size = (u32)round_up_to((iz)rf_size, 64);
 	glNamedBufferStorage(rf->ssbo, countof(rf->compute_syncs) * rf_size, 0,
 	                     GL_DYNAMIC_STORAGE_BIT|GL_MAP_WRITE_BIT);
 	LABEL_GL_OBJECT(GL_BUFFER, rf->ssbo, s8("Raw_RF_SSBO"));
@@ -1374,8 +1374,9 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 	    os_shared_memory_region_lock(ctx->shared_memory, sm->locks, (i32)scratch_lock, (u32)-1))
 	{
 		BeamformerRFBuffer *rf = ctx->rf_buffer;
-		if (rf->size < sm->scratch_rf_size)
-			beamformer_rf_buffer_allocate(rf, sm->scratch_rf_size, arena);
+		rf->active_rf_size = (u32)round_up_to(sm->scratch_rf_size, 64);
+		if (rf->size < rf->active_rf_size)
+			beamformer_rf_buffer_allocate(rf, rf->active_rf_size, arena);
 
 		u32 slot = rf->insertion_index++ % countof(rf->compute_syncs);
 
@@ -1396,13 +1397,13 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		 * at least when it is a big as this one wants to be. mapping and unmapping the
 		 * desired range each time doesn't seem to introduce any performance hit */
 		u32 access = GL_MAP_WRITE_BIT|GL_MAP_FLUSH_EXPLICIT_BIT|GL_MAP_UNSYNCHRONIZED_BIT;
-		u8 *buffer = glMapNamedBufferRange(rf->ssbo, slot * rf->size, (i32)rf->size, access);
+		u8 *buffer = glMapNamedBufferRange(rf->ssbo, slot * rf->active_rf_size, (i32)rf->active_rf_size, access);
 
-		mem_copy(buffer, beamformer_shared_memory_scratch_arena(sm).beg, rf->size);
+		mem_copy(buffer, beamformer_shared_memory_scratch_arena(sm).beg, rf->active_rf_size);
 		os_shared_memory_region_unlock(ctx->shared_memory, sm->locks, (i32)scratch_lock);
 		post_sync_barrier(ctx->shared_memory, upload_lock, sm->locks);
 
-		glFlushMappedNamedBufferRange(rf->ssbo, 0, (i32)rf->size);
+		glFlushMappedNamedBufferRange(rf->ssbo, 0, (i32)rf->active_rf_size);
 		glUnmapNamedBuffer(rf->ssbo);
 
 		rf->upload_syncs[slot]  = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);

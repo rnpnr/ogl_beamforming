@@ -229,6 +229,7 @@ typedef struct {
 
 	u32 ssbo;
 	u32 size;
+	u32 active_rf_size;
 
 	u32 data_timestamp_query;
 
