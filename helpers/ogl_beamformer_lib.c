@@ -64,20 +64,27 @@ os_reserve_region_locks(iptr os_context, u32 count)
 			Stream sb = {.data = buffer, .cap = countof(buffer)};
 			stream_append_s8(&sb, s8(OS_SHARED_MEMORY_NAME "_lock_"));
 
-			for (u32 i = ctx->reserved_count; i < count; i++) {
+			u32 new_reserved_count;
+			for (new_reserved_count = ctx->reserved_count;
+			     new_reserved_count < count && result;
+			     new_reserved_count++)
+			{
 				Stream lb = sb;
-				stream_append_u64(&lb, i);
+				stream_append_u64(&lb, new_reserved_count);
 				stream_append_byte(&lb, 0);
-				semaphores[i]  = CreateSemaphoreA(0, 1, 1, (c8 *)lb.data);
-				result        &= semaphores[i] != INVALID_FILE;
+				semaphores[new_reserved_count] = CreateSemaphoreA(0, 1, 1, (c8 *)lb.data);
+				result &= semaphores[new_reserved_count] != INVALID_FILE;
 			}
 
 			if (result) {
 				ctx->semaphores     = semaphores;
 				ctx->reserved_count = count;
+			} else {
+				for (u32 j = ctx->reserved_count; j < new_reserved_count; j++)
+					CloseHandle(semaphores[j]);
 			}
 		} else if (count < ctx->reserved_count) {
-			for (u32 i = ctx->reserved_count; i >= count;)
+			for (u32 i = ctx->reserved_count; i > count;)
 				CloseHandle(semaphores[--i]);
 			ctx->reserved_count = count;
 		}
