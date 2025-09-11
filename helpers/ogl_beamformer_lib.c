@@ -53,7 +53,7 @@ os_open_shared_memory_area(char *name)
 function b32
 os_reserve_region_locks(iptr os_context, u32 count)
 {
-	local_persist iptr semaphores[BeamformerSharedMemoryLockKind_Count + BeamformerMaxParameterBlockSlots];
+	local_persist iptr semaphores[(u32)BeamformerSharedMemoryLockKind_Count + (u32)BeamformerMaxParameterBlockSlots];
 	w32_shared_memory_context *ctx = (typeof(ctx))os_context;
 
 	b32 result = count <= BeamformerMaxParameterBlockSlots;
