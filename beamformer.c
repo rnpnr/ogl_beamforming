@@ -96,11 +96,11 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 		#undef X
 
 		#define X(_k, t, ...) t,
-		GLenum gl_kind[] = {BEAMFORMER_COMPUTE_TEXTURE_LIST};
+		GLenum gl_kind[] = {BEAMFORMER_COMPUTE_TEXTURE_LIST_FULL};
 		#undef X
 		read_only local_persist s8 tex_prefix[] = {
 			#define X(k, ...) s8_comp(#k "["),
-			BEAMFORMER_COMPUTE_TEXTURE_LIST
+			BEAMFORMER_COMPUTE_TEXTURE_LIST_FULL
 			#undef X
 		};
 		glCreateTextures(GL_TEXTURE_1D, BeamformerComputeTextureKind_Count - 1, result->textures);
@@ -455,10 +455,6 @@ das_ubo_from_beamformer_parameters(BeamformerDASUBO *du, BeamformerParameters *b
 
 	du->shader_flags = 0;
 	if (bp->coherency_weighting) du->shader_flags |= BeamformerShaderDASFlags_CoherencyWeighting;
-	if (bp->transmit_mode == BeamformerRCAOrientation_Columns)
-		du->shader_flags |= BeamformerShaderDASFlags_TxColumns;
-	if (bp->receive_mode == BeamformerRCAOrientation_Columns)
-		du->shader_flags |= BeamformerShaderDASFlags_RxColumns;
 }
 
 function void
@@ -713,35 +709,28 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 				alloc_beamform_frame(&ctx->gl, ctx->averaged_frames + 1, cp->output_points, gl_kind, s8("Averaged Frame"), arena);
 			}
 		}break;
-		case BeamformerParameterBlockRegion_ChannelMapping:
+		case BeamformerParameterBlockRegion_ChannelMapping:{
+			cuda_set_channel_mapping(pb->channel_mapping);
+		} /* FALLTHROUGH */
 		case BeamformerParameterBlockRegion_FocalVectors:
 		case BeamformerParameterBlockRegion_SparseElements:
+		case BeamformerParameterBlockRegion_TransmitReceiveOrientations:
 		{
 			BeamformerComputeTextureKind texture_kind = 0;
-			u32 texture_type = 0, texture_format = 0;
-			/* TODO(rnp): this whole thing could be a table */
+			u32 pixel_type = 0, texture_format = 0;
 			switch (region) {
-			case BeamformerParameterBlockRegion_ChannelMapping:{
-				texture_kind   = BeamformerComputeTextureKind_ChannelMapping;
-				texture_type   = GL_SHORT;
-				texture_format = GL_RED_INTEGER;
-				/* TODO(rnp): cuda lib */
-				cuda_set_channel_mapping(pb->channel_mapping);
+			#define X(kind, _gl, tf, pt, ...) \
+			case BeamformerParameterBlockRegion_## kind:{            \
+				texture_kind   = BeamformerComputeTextureKind_## kind; \
+				texture_format = tf;                                   \
+				pixel_type     = pt;                                   \
 			}break;
-			case BeamformerParameterBlockRegion_FocalVectors:{
-				texture_kind   = BeamformerComputeTextureKind_FocalVectors;
-				texture_type   = GL_FLOAT;
-				texture_format = GL_RG;
-			}break;
-			case BeamformerParameterBlockRegion_SparseElements:{
-				texture_kind   = BeamformerComputeTextureKind_SparseElements;
-				texture_type   = GL_SHORT;
-				texture_format = GL_RED_INTEGER;
-			}break;
+			BEAMFORMER_COMPUTE_TEXTURE_LIST
+			#undef X
 			InvalidDefaultCase;
 			}
 			glTextureSubImage1D(cp->textures[texture_kind], 0, 0, BeamformerMaxChannelCount,
-			                    texture_format, texture_type,
+			                    texture_format, pixel_type,
 			                    (u8 *)pb + BeamformerParameterBlockRegionOffsets[region]);
 		}break;
 		}
@@ -858,6 +847,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 		glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, cc->ping_pong_ssbos[input_ssbo_idx], 0, cp->rf_size);
 		glBindImageTexture(1, sparse_texture, 0, 0, 0, GL_READ_ONLY, GL_R16I);
 		glBindImageTexture(2, cp->textures[BeamformerComputeTextureKind_FocalVectors], 0, 0, 0, GL_READ_ONLY, GL_RG32F);
+		glBindImageTexture(3, cp->textures[BeamformerComputeTextureKind_TransmitReceiveOrientations], 0, 0, 0, GL_READ_ONLY, GL_R8I);
 
 		glProgramUniform1ui(program, DAS_CYCLE_T_UNIFORM_LOC, das_cycle_t++);
 

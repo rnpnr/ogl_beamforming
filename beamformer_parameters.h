@@ -84,10 +84,8 @@ typedef enum {BEAMFORMER_CONSTANTS_LIST} BeamformerConstants;
 	X(acquisition_count,      uint32_t,     , uint32,  1, "")                                        \
 	X(das_shader_id,          uint32_t,     , uint32,  1, "")                                        \
 	X(time_offset,            float,        , single,  1, "pulse length correction time [s]")        \
-	X(decode,                 uint8_t,      , uint8,   1, "Decode or just reshape data")             \
-	X(transmit_mode,          uint8_t,      , uint8,   1, "Method/Orientation of Transmit")          \
-	X(receive_mode,           uint8_t,      , uint8,   1, "Method/Orientation of Receive")           \
-	X(sampling_mode,          uint8_t,      , uint8,   1, "")
+	X(decode,                 uint16_t,     , uint16,  1, "Decode or just reshape data")             \
+	X(sampling_mode,          uint16_t,     , uint16,  1, "")
 
 #define BEAMFORMER_UI_PARAMS \
 	X(output_min_coordinate,  float,     [3], single, 3, "[m] Back-Top-Left corner of output region")                     \
@@ -104,14 +102,15 @@ typedef enum {BEAMFORMER_CONSTANTS_LIST} BeamformerConstants;
 	X(decimation_rate,        uint32_t,     , uint32, 1, "Number of times to decimate")
 
 #define BEAMFORMER_SIMPLE_PARAMS \
-	X(channel_mapping,          int16_t,  [BeamformerMaxChannelCount],        int16,  BeamformerMaxChannelCount) \
-	X(sparse_elements,          int16_t,  [BeamformerMaxChannelCount],        int16,  BeamformerMaxChannelCount) \
-	X(steering_angles,          float,    [BeamformerMaxChannelCount],        single, BeamformerMaxChannelCount) \
-	X(focal_depths,             float,    [BeamformerMaxChannelCount],        single, BeamformerMaxChannelCount) \
-	X(compute_stages,           int32_t,  [BeamformerMaxComputeShaderStages], int32,  BeamformerMaxComputeShaderStages) \
-	X(compute_stage_parameters, int16_t,  [BeamformerMaxComputeShaderStages], int16,  BeamformerMaxComputeShaderStages) \
-	X(compute_stages_count,     uint32_t, ,                                   uint32, 1) \
-	X(data_kind,                int32_t,  ,                                   int32,  1)
+	X(channel_mapping,               int16_t,  [BeamformerMaxChannelCount],        int16,  BeamformerMaxChannelCount) \
+	X(sparse_elements,               int16_t,  [BeamformerMaxChannelCount],        int16,  BeamformerMaxChannelCount) \
+	X(transmit_receive_orientations, uint8_t,  [BeamformerMaxChannelCount],        uint8,  BeamformerMaxChannelCount) \
+	X(steering_angles,               float,    [BeamformerMaxChannelCount],        single, BeamformerMaxChannelCount) \
+	X(focal_depths,                  float,    [BeamformerMaxChannelCount],        single, BeamformerMaxChannelCount) \
+	X(compute_stages,                int32_t,  [BeamformerMaxComputeShaderStages], int32,  BeamformerMaxComputeShaderStages) \
+	X(compute_stage_parameters,      int16_t,  [BeamformerMaxComputeShaderStages], int16,  BeamformerMaxComputeShaderStages) \
+	X(compute_stages_count,          uint32_t, ,                                   uint32, 1) \
+	X(data_kind,                     int32_t,  ,                                   int32,  1)
 
 #define X(name, type, size, ...) type name size;
 typedef struct {BEAMFORMER_PARAMS_HEAD} BeamformerParametersHead;

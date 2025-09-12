@@ -205,8 +205,6 @@ beamformer_parameters_from_zemp_bp_v1(zemp_bp_v1 *zbp, BeamformerParameters *out
 	out->sample_count           = zbp->decoded_data_dim[0];
 	out->channel_count          = zbp->decoded_data_dim[1];
 	out->acquisition_count      = zbp->decoded_data_dim[2];
-	out->transmit_mode          = (u8)((zbp->transmit_mode & 2) >> 1);
-	out->receive_mode           = (u8)((zbp->transmit_mode & 1) >> 0);
 	out->decode                 = (u8)zbp->decode_mode;
 	out->das_shader_id          = zbp->beamform_mode;
 	out->time_offset            = zbp->time_offset;
@@ -354,10 +352,17 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	}
 
 	{
-		alignas(64) v2 focal_vectors[countof(zbp->focal_depths)];
-		for (u32 i = 0; i < countof(zbp->focal_depths); i++)
+		alignas(64) v2 focal_vectors[BeamformerMaxChannelCount];
+		for (u32 i = 0; i < countof(focal_vectors); i++)
 			focal_vectors[i] = (v2){{zbp->transmit_angles[i], zbp->focal_depths[i]}};
 		beamformer_push_focal_vectors((f32 *)focal_vectors, countof(focal_vectors));
+	}
+	{
+		alignas(64) u8 transmit_receive_orientations[BeamformerMaxChannelCount];
+		for (u32 i = 0; i < countof(transmit_receive_orientations); i++)
+			transmit_receive_orientations[i] = (u8)zbp->transmit_mode;
+		beamformer_push_transmit_receive_orientations(transmit_receive_orientations,
+		                                              countof(transmit_receive_orientations));
 	}
 
 	beamformer_push_channel_mapping(zbp->channel_mapping, countof(zbp->channel_mapping));

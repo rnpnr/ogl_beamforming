@@ -180,15 +180,20 @@ static_assert((sizeof(BeamformerDASUBO) & 15) == 0, "UBO size must be a multiple
 typedef enum {BEAMFORMER_COMPUTE_UBO_LIST BeamformerComputeUBOKind_Count} BeamformerComputeUBOKind;
 #undef X
 
+// X(kind, gl_kind, texture_format, pixel_type)
 #define BEAMFORMER_COMPUTE_TEXTURE_LIST \
-	X(ChannelMapping, GL_R16I)  \
-	X(FocalVectors,   GL_RG32F) \
-	X(SparseElements, GL_R16I)  \
+	X(ChannelMapping,              GL_R16I,  GL_RED_INTEGER, GL_SHORT) \
+	X(FocalVectors,                GL_RG32F, GL_RG,          GL_FLOAT) \
+	X(SparseElements,              GL_R16I,  GL_RED_INTEGER, GL_SHORT) \
+	X(TransmitReceiveOrientations, GL_R8I,   GL_RED_INTEGER, GL_BYTE)
+
+#define BEAMFORMER_COMPUTE_TEXTURE_LIST_FULL \
+	BEAMFORMER_COMPUTE_TEXTURE_LIST \
 	X(Hadamard,       GL_R8I)
 
 typedef enum {
 	#define X(k, ...) BeamformerComputeTextureKind_##k,
-	BEAMFORMER_COMPUTE_TEXTURE_LIST
+	BEAMFORMER_COMPUTE_TEXTURE_LIST_FULL
 	#undef X
 	BeamformerComputeTextureKind_Count
 } BeamformerComputeTextureKind;

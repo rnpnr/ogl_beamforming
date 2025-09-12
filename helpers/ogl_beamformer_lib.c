@@ -410,9 +410,10 @@ beamformer_wait_for_compute_dispatch(i32 timeout_ms)
 }
 
 #define BEAMFORMER_UPLOAD_FNS \
-	X(channel_mapping, i16, 1, ChannelMapping) \
-	X(sparse_elements, i16, 1, SparseElements) \
-	X(focal_vectors,   f32, 2, FocalVectors)
+	X(channel_mapping,               i16, 1, ChannelMapping) \
+	X(focal_vectors,                 f32, 2, FocalVectors)   \
+	X(sparse_elements,               i16, 1, SparseElements) \
+	X(transmit_receive_orientations, u8,  1, TransmitReceiveOrientations)
 
 #define X(name, dtype, elements, region_name) \
 b32 beamformer_push_##name ##_at(dtype *data, u32 count, u32 block) { \
@@ -493,16 +494,19 @@ beamformer_push_simple_parameters_at(BeamformerSimpleParameters *bp, u32 block)
 {
 	b32 result = validate_simple_parameters(bp);
 	if (result) {
-		result &= beamformer_push_parameters_at((BeamformerParameters *)bp, block);
-		result &= beamformer_push_pipeline_at(bp->compute_stages, bp->compute_stages_count, (BeamformerDataKind)bp->data_kind, block);
-		result &= beamformer_push_channel_mapping_at(bp->channel_mapping, bp->channel_count, block);
-		if (bp->das_shader_id == BeamformerDASKind_UFORCES || bp->das_shader_id == BeamformerDASKind_UHERCULES)
-			result &= beamformer_push_sparse_elements_at(bp->sparse_elements, bp->acquisition_count, block);
-
 		alignas(64) v2 focal_vectors[countof(bp->steering_angles)];
 		for (u32 i = 0; i < countof(bp->steering_angles); i++)
 			focal_vectors[i] = (v2){{bp->steering_angles[i], bp->focal_depths[i]}};
+
+		result &= beamformer_push_parameters_at((BeamformerParameters *)bp, block);
+		result &= beamformer_push_pipeline_at(bp->compute_stages, bp->compute_stages_count, (BeamformerDataKind)bp->data_kind, block);
+		result &= beamformer_push_channel_mapping_at(bp->channel_mapping, bp->channel_count, block);
 		result &= beamformer_push_focal_vectors_at((f32 *)focal_vectors, countof(focal_vectors), block);
+		result &= beamformer_push_transmit_receive_orientations_at(bp->transmit_receive_orientations,
+		                                                           bp->acquisition_count, block);
+
+		if (bp->das_shader_id == BeamformerDASKind_UFORCES || bp->das_shader_id == BeamformerDASKind_UHERCULES)
+			result &= beamformer_push_sparse_elements_at(bp->sparse_elements, bp->acquisition_count, block);
 
 		for (u32 stage = 0; stage < bp->compute_stages_count; stage++)
 			result &= beamformer_set_pipeline_stage_parameters_at(stage, bp->compute_stage_parameters[stage], block);
