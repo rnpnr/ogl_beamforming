@@ -45,7 +45,7 @@
 
 		@Enumeration(RCAOrientation)
 
-		@Flags([CoherencyWeighting RxColumns TxColumns])
+		@Flags([CoherencyWeighting])
 	}
 
 	@Shader(min_max.glsl) MinMax

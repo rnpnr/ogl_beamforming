@@ -43,8 +43,6 @@ typedef enum {
 	BeamformerShaderDASFlags_Sparse             = (1 << 1),
 	BeamformerShaderDASFlags_Interpolate        = (1 << 2),
 	BeamformerShaderDASFlags_CoherencyWeighting = (1 << 3),
-	BeamformerShaderDASFlags_RxColumns          = (1 << 4),
-	BeamformerShaderDASFlags_TxColumns          = (1 << 5),
 } BeamformerShaderDASFlags;
 
 typedef enum {
@@ -245,8 +243,6 @@ read_only global s8 beamformer_shader_local_header_strings[] = {
 	"#define ShaderFlags_Sparse             (1 << 1)\n"
 	"#define ShaderFlags_Interpolate        (1 << 2)\n"
 	"#define ShaderFlags_CoherencyWeighting (1 << 3)\n"
-	"#define ShaderFlags_RxColumns          (1 << 4)\n"
-	"#define ShaderFlags_TxColumns          (1 << 5)\n"
 	"\n"),
 	{0},
 	{0},

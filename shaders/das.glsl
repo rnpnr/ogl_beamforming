@@ -40,6 +40,10 @@ layout(TEXTURE_KIND, binding = 0) writeonly restrict uniform image3D  u_out_data
 
 layout(r16i,  binding = 1) readonly  restrict uniform iimage1D sparse_elements;
 layout(rg32f, binding = 2) readonly  restrict uniform image1D  focal_vectors;
+layout(r8i,   binding = 3) readonly  restrict uniform iimage1D transmit_receive_orientations;
+
+#define RX_ORIENTATION_MASK (1 << 0)
+#define TX_ORIENTATION_MASK (1 << 1)
 
 #define C_SPLINE 0.5
 
@@ -139,8 +143,8 @@ float cylindrical_wave_transmit_distance(vec3 point, float focal_depth, float tr
 #if (ShaderFlags & ShaderFlags_Fast)
 RESULT_TYPE RCA(vec3 world_point)
 {
-	bool  tx_rows         = bool((shader_flags & ShaderFlags_TxColumns) == 0);
-	bool  rx_rows         = bool((shader_flags & ShaderFlags_RxColumns) == 0);
+	bool  tx_rows         = (imageLoad(transmit_receive_orientations, u_channel).x & TX_ORIENTATION_MASK) == 0;
+	bool  rx_rows         = (imageLoad(transmit_receive_orientations, u_channel).x & RX_ORIENTATION_MASK) == 0;
 	vec2  xdc_world_point = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
 	vec2  focal_vector    = imageLoad(focal_vectors, u_channel).xy;
 	float transmit_angle  = radians(focal_vector.x);
@@ -170,15 +174,14 @@ RESULT_TYPE RCA(vec3 world_point)
 #else
 RESULT_TYPE RCA(vec3 world_point)
 {
-	bool tx_rows         = bool((shader_flags & ShaderFlags_TxColumns) == 0);
-	bool rx_rows         = bool((shader_flags & ShaderFlags_RxColumns) == 0);
-	vec2 xdc_world_point = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
-
 	RESULT_TYPE result = RESULT_TYPE(0);
 	for (int transmit = 0; transmit < acquisition_count; transmit++) {
 		vec2  focal_vector   = imageLoad(focal_vectors, transmit).xy;
 		float transmit_angle = radians(focal_vector.x);
 		float focal_depth    = focal_vector.y;
+		bool  tx_rows        = (imageLoad(transmit_receive_orientations, u_channel).x & TX_ORIENTATION_MASK) == 0;
+		bool  rx_rows        = (imageLoad(transmit_receive_orientations, u_channel).x & RX_ORIENTATION_MASK) == 0;
+		vec2 xdc_world_point = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
 
 		float transmit_distance;
 		if (isinf(focal_depth)) {
@@ -208,8 +211,8 @@ RESULT_TYPE RCA(vec3 world_point)
 RESULT_TYPE HERCULES(vec3 world_point)
 {
 	vec3  xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
-	bool  tx_rows         = bool((shader_flags & ShaderFlags_TxColumns) == 0);
-	bool  rx_cols         = bool((shader_flags & ShaderFlags_RxColumns));
+	bool  tx_rows         = (imageLoad(transmit_receive_orientations, 0).x & TX_ORIENTATION_MASK) == 0;
+	bool  rx_cols         = (imageLoad(transmit_receive_orientations, 0).x & RX_ORIENTATION_MASK) != 0;
 	vec2  focal_vector    = imageLoad(focal_vectors, 0).xy;
 	float transmit_angle  = radians(focal_vector.x);
 	float focal_depth     = focal_vector.y;
@@ -245,8 +248,8 @@ RESULT_TYPE HERCULES(vec3 world_point)
 RESULT_TYPE HERCULES(vec3 world_point)
 {
 	vec3  xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
-	bool  tx_rows         = bool((shader_flags & ShaderFlags_TxColumns) == 0);
-	bool  rx_cols         = bool((shader_flags & ShaderFlags_RxColumns));
+	bool  tx_rows         = (imageLoad(transmit_receive_orientations, 0).x & TX_ORIENTATION_MASK) == 0;
+	bool  rx_cols         = (imageLoad(transmit_receive_orientations, 0).x & RX_ORIENTATION_MASK) != 0;
 	vec2  focal_vector    = imageLoad(focal_vectors, 0).xy;
 	float transmit_angle  = radians(focal_vector.x);
 	float focal_depth     = focal_vector.y;

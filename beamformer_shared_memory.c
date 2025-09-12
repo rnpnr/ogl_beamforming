@@ -1,5 +1,5 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (14UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (15UL)
 
 typedef struct BeamformerFrame     BeamformerFrame;
 typedef struct ShaderReloadContext ShaderReloadContext;
@@ -96,11 +96,12 @@ typedef enum {BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST} BeamformerLiveImagingDirt
 #undef X
 
 #define BEAMFORMER_PARAMETER_BLOCK_REGION_LIST \
-	X(ComputePipeline, pipeline)        \
-	X(ChannelMapping,  channel_mapping) \
-	X(FocalVectors,    focal_vectors)   \
-	X(Parameters,      parameters)      \
-	X(SparseElements,  sparse_elements)
+	X(ComputePipeline,             pipeline)        \
+	X(ChannelMapping,              channel_mapping) \
+	X(FocalVectors,                focal_vectors)   \
+	X(Parameters,                  parameters)      \
+	X(SparseElements,              sparse_elements) \
+	X(TransmitReceiveOrientations, transmit_receive_orientations)
 
 typedef enum {
 	#define X(k, ...) BeamformerParameterBlockRegion_##k,
@@ -138,6 +139,7 @@ typedef struct {
 
 	alignas(16) i16 channel_mapping[BeamformerMaxChannelCount];
 	alignas(16) i16 sparse_elements[BeamformerMaxChannelCount];
+	alignas(16) u8  transmit_receive_orientations[BeamformerMaxChannelCount];
 	/* NOTE(rnp): interleaved transmit angle, focal depth pairs */
 	alignas(16) v2  focal_vectors[BeamformerMaxChannelCount];
 } BeamformerParameterBlock;
