@@ -1426,9 +1426,15 @@ meta_pack_shader_permutation(MetaContext *ctx, MetaShaderPermutation *sp, MetaSh
 		u32 cursor = f->cursor.current;
 		switch (e->kind) {
 		case MetaEntryKind_PermuteFlags:{
-			if (f->permutation_id == U32_MAX)
-				f->permutation_id = meta_commit_shader_flag(ctx, base_shader->flag_list_id, a->strings[cursor], e);
-			sp->local_flags[local_flag_index++] = (u8)(1u << f->permutation_id);
+			if (f->permutation_id == U32_MAX) {
+				u32 test = cursor, packed = 0;
+				for EachBit(test, flag) {
+					u32 flag_index = meta_commit_shader_flag(ctx, base_shader->flag_list_id, a->strings[flag], e);
+					packed |= (1u << flag_index);
+				}
+				f->permutation_id = packed;
+			}
+			sp->local_flags[local_flag_index++] = (u8)f->permutation_id;
 		}break;
 		case MetaEntryKind_Permute:{
 			if (f->permutation_id == U32_MAX) {

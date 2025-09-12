@@ -1,9 +1,5 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
- * [ ]: make decode output real values for real inputs and complex values for complex inputs
- *      - this means that das should have a RF version and an IQ version
- *      - this will also flip the current hack to support demodulate after decode to
- *        being a hack to support CudaHilbert after decode
  * [ ]: measure performance of doing channel mapping in a separate shader
  * [ ]: BeamformWorkQueue -> BeamformerWorkQueue
  * [ ]: need to keep track of gpu memory in some way
@@ -488,7 +484,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 					decode_data_kind = BeamformerDataKind_Float32Complex;
 				}
 			}
-			match = beamformer_shader_decode_match(decode_data_kind);
+			i32 local_flags = 0;
+			if (run_cuda_hilbert) local_flags |= BeamformerShaderDecodeFlags_DilateOutput;
+			match = beamformer_shader_decode_match(decode_data_kind, local_flags);
 			commit = 1;
 		}break;
 		case BeamformerShaderKind_Demodulate:{
@@ -674,10 +672,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			BEAMFORMER_COMPUTE_UBO_LIST
 			#undef X
 
-			u32 samples      = pb->parameters.sample_count;
-			u32 channels     = pb->parameters.channel_count;
-			u32 acquisitions = pb->parameters.acquisition_count;
-			u32 decoded_data_size = (u32)(2 * sizeof(f32) * samples * channels * acquisitions);
+			u32 decoded_data_size = cp->rf_size;
 			if (ctx->compute_context.ping_pong_ssbo_size < decoded_data_size)
 				alloc_shader_storage(ctx, decoded_data_size, arena);
 

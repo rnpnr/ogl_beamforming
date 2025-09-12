@@ -10,33 +10,37 @@
 
 #if   DataKind == DataKind_Float32
 	#define INPUT_DATA_TYPE      float
-	#define RF_SAMPLES_PER_INDEX 1
-	#define RESULT_TYPE_CAST(x)  vec4((x), 0, 0, 0)
 	#define SAMPLE_DATA_TYPE     float
 	#define SAMPLE_TYPE_CAST(x)  (x)
 #elif DataKind == DataKind_Float32Complex
 	#define INPUT_DATA_TYPE      vec2
-	#define RF_SAMPLES_PER_INDEX 1
-	#define RESULT_TYPE_CAST(x)  vec4((x), 0, 0)
 	#define SAMPLE_DATA_TYPE     vec2
 	#define SAMPLE_TYPE_CAST(x)  (x)
 #elif DataKind == DataKind_Int16Complex
 	#define INPUT_DATA_TYPE      int
-	#define RF_SAMPLES_PER_INDEX 1
-	#define RESULT_TYPE_CAST(x)  vec4((x), 0, 0)
 	#define SAMPLE_DATA_TYPE     vec2
 	#define SAMPLE_TYPE_CAST(x)  vec2(((x) << 16) >> 16, (x) >> 16)
-#else
+#elif DataKind == DataKind_Int16
 	#define INPUT_DATA_TYPE      int
-	#define RESULT_TYPE_CAST(x)  (x)
-	/* NOTE(rnp): for i16 rf_data we decode 2 samples at once */
 	#define RF_SAMPLES_PER_INDEX 2
-	#define SAMPLE_DATA_TYPE     vec4
-	#if defined(OUTPUT_DATA_TYPE_FLOAT)
-		#define SAMPLE_TYPE_CAST(x)  vec4(((x) << 16) >> 16, (x) >> 16, 0, 0)
+	#if (ShaderFlags & ShaderFlags_DilateOutput)
+		#define SAMPLE_DATA_TYPE    vec4
+		#define SAMPLE_TYPE_CAST(x) vec4(((x) << 16) >> 16, 0, (x) >> 16, 0)
 	#else
-		#define SAMPLE_TYPE_CAST(x)  vec4(((x) << 16) >> 16, 0, (x) >> 16, 0)
+		#define SAMPLE_DATA_TYPE    vec2
+		#define SAMPLE_TYPE_CAST(x) vec2(((x) << 16) >> 16, (x) >> 16)
+		#define OUTPUT_SAMPLES_PER_INDEX 2
 	#endif
+#else
+	#error unsupported data kind for Decode
+#endif
+
+#ifndef OUTPUT_SAMPLES_PER_INDEX
+	#define OUTPUT_SAMPLES_PER_INDEX 1
+#endif
+
+#ifndef RF_SAMPLES_PER_INDEX
+	#define RF_SAMPLES_PER_INDEX 1
 #endif
 
 layout(std430, binding = 1) readonly restrict buffer buffer_1 {
@@ -48,7 +52,7 @@ layout(std430, binding = 2) writeonly restrict buffer buffer_2 {
 };
 
 layout(std430, binding = 3) writeonly restrict buffer buffer_3 {
-	vec2 out_data[];
+	SAMPLE_DATA_TYPE out_data[];
 };
 
 layout(r8i,  binding = 0) readonly restrict uniform iimage2D hadamard;
@@ -75,32 +79,24 @@ void main()
 			out_rf_data[rf_offset + transmit] = rf_data[in_off / RF_SAMPLES_PER_INDEX];
 		}
 	} else {
-		#if defined(OUTPUT_DATA_TYPE_FLOAT)
-		/* NOTE(rnp): when outputting floats do not dilate the out time sample;
-		 * output should end up densely packed */
-		time_sample = gl_GlobalInvocationID.x;
-		#endif
 		if (time_sample < output_transmit_stride) {
 			uint out_off = output_channel_stride  * channel +
 			               output_transmit_stride * transmit +
 			               output_sample_stride   * time_sample;
 
-			vec4 result = vec4(0);
+			SAMPLE_DATA_TYPE result = SAMPLE_DATA_TYPE(0);
 			switch (decode_mode) {
 			case DecodeMode_None:{
-				result = RESULT_TYPE_CAST(sample_rf_data(rf_offset + transmit));
+				result = sample_rf_data(rf_offset + transmit);
 			}break;
 			case DecodeMode_Hadamard:{
 				SAMPLE_DATA_TYPE sum = SAMPLE_DATA_TYPE(0);
 				for (int i = 0; i < imageSize(hadamard).x; i++)
 					sum += imageLoad(hadamard, ivec2(i, transmit)).x * sample_rf_data(rf_offset++);
-				result = RESULT_TYPE_CAST(sum) / float(imageSize(hadamard).x);
+				result = sum / float(imageSize(hadamard).x);
 			}break;
 			}
-			out_data[out_off + 0] = result.xy;
-			#if RF_SAMPLES_PER_INDEX == 2 && !defined(OUTPUT_DATA_TYPE_FLOAT)
-			out_data[out_off + 1] = result.zw;
-			#endif
+			out_data[out_off / OUTPUT_SAMPLES_PER_INDEX] = result;
 		}
 	}
 }

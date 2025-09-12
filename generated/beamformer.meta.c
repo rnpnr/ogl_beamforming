@@ -3,6 +3,14 @@
 // GENERATED CODE
 
 typedef enum {
+	BeamformerDataKind_Int16          = 0,
+	BeamformerDataKind_Int16Complex   = 1,
+	BeamformerDataKind_Float32        = 2,
+	BeamformerDataKind_Float32Complex = 3,
+	BeamformerDataKind_Count,
+} BeamformerDataKind;
+
+typedef enum {
 	BeamformerDecodeMode_None     = 0,
 	BeamformerDecodeMode_Hadamard = 1,
 	BeamformerDecodeMode_Count,
@@ -15,18 +23,14 @@ typedef enum {
 } BeamformerRCAOrientation;
 
 typedef enum {
-	BeamformerDataKind_Int16          = 0,
-	BeamformerDataKind_Int16Complex   = 1,
-	BeamformerDataKind_Float32        = 2,
-	BeamformerDataKind_Float32Complex = 3,
-	BeamformerDataKind_Count,
-} BeamformerDataKind;
-
-typedef enum {
 	BeamformerSamplingMode_2X = 0,
 	BeamformerSamplingMode_4X = 1,
 	BeamformerSamplingMode_Count,
 } BeamformerSamplingMode;
+
+typedef enum {
+	BeamformerShaderDecodeFlags_DilateOutput = (1 << 0),
+} BeamformerShaderDecodeFlags;
 
 typedef enum {
 	BeamformerShaderFilterFlags_MapChannels   = (1 << 0),
@@ -83,10 +87,11 @@ read_only global i32 *beamformer_shader_match_vectors[] = {
 	// CudaHilbert
 	0,
 	// Decode
-	(i32 []){BeamformerDataKind_Int16},
-	(i32 []){BeamformerDataKind_Int16Complex},
-	(i32 []){BeamformerDataKind_Float32},
-	(i32 []){BeamformerDataKind_Float32Complex},
+	(i32 []){BeamformerDataKind_Int16, 0x00},
+	(i32 []){BeamformerDataKind_Int16, 0x01},
+	(i32 []){BeamformerDataKind_Int16Complex, 0x00},
+	(i32 []){BeamformerDataKind_Float32, 0x00},
+	(i32 []){BeamformerDataKind_Float32Complex, 0x00},
 	// Filter
 	(i32 []){BeamformerDataKind_Int16Complex, 0x00},
 	(i32 []){BeamformerDataKind_Int16Complex, 0x01},
@@ -149,18 +154,18 @@ read_only global i32 *beamformer_shader_match_vectors[] = {
 	// Render3D
 	0,
 };
-#define beamformer_match_vectors_count (61)
+#define beamformer_match_vectors_count (62)
 
 read_only global BeamformerShaderDescriptor beamformer_shader_descriptors[] = {
 	{0,  1,  0, 0, 0},
 	{1,  2,  0, 0, 0},
-	{2,  6,  1, 2, 0},
-	{6,  18, 1, 1, 1},
-	{18, 42, 2, 2, 1},
-	{42, 58, 1, 2, 1},
-	{58, 59, 0, 0, 0},
+	{2,  7,  1, 2, 1},
+	{7,  19, 1, 1, 1},
+	{19, 43, 2, 2, 1},
+	{43, 59, 1, 2, 1},
 	{59, 60, 0, 0, 0},
 	{60, 61, 0, 0, 0},
+	{61, 62, 0, 0, 0},
 };
 
 read_only global s8 beamformer_shader_names[] = {
@@ -207,6 +212,12 @@ read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
 
 read_only global s8 beamformer_shader_global_header_strings[] = {
 	s8_comp(""
+	"#define DataKind_Int16          0\n"
+	"#define DataKind_Int16Complex   1\n"
+	"#define DataKind_Float32        2\n"
+	"#define DataKind_Float32Complex 3\n"
+	"\n"),
+	s8_comp(""
 	"#define DecodeMode_None     0\n"
 	"#define DecodeMode_Hadamard 1\n"
 	"\n"),
@@ -215,19 +226,15 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"#define RCAOrientation_Columns 1\n"
 	"\n"),
 	s8_comp(""
-	"#define DataKind_Int16          0\n"
-	"#define DataKind_Int16Complex   1\n"
-	"#define DataKind_Float32        2\n"
-	"#define DataKind_Float32Complex 3\n"
-	"\n"),
-	s8_comp(""
 	"#define SamplingMode_2X 0\n"
 	"#define SamplingMode_4X 1\n"
 	"\n"),
 };
 
 read_only global s8 beamformer_shader_local_header_strings[] = {
-	{0},
+	s8_comp(""
+	"#define ShaderFlags_DilateOutput (1 << 0)\n"
+	"\n"),
 	s8_comp(""
 	"#define ShaderFlags_MapChannels   (1 << 0)\n"
 	"#define ShaderFlags_ComplexFilter (1 << 1)\n"
@@ -247,19 +254,19 @@ read_only global s8 beamformer_shader_local_header_strings[] = {
 };
 
 read_only global s8 beamformer_shader_descriptor_header_strings[] = {
+	s8_comp("DataKind"),
 	s8_comp("DecodeMode"),
 	s8_comp("RCAOrientation"),
-	s8_comp("DataKind"),
 	s8_comp("SamplingMode"),
 };
 
 read_only global i32 *beamformer_shader_header_vectors[] = {
 	0,
 	0,
-	(i32 []){2, 0},
-	(i32 []){2},
-	(i32 []){2, 3},
-	(i32 []){2, 1},
+	(i32 []){0, 1},
+	(i32 []){0},
+	(i32 []){0, 3},
+	(i32 []){0, 2},
 	0,
 	0,
 	0,
@@ -288,30 +295,30 @@ beamformer_shader_match(i32 *match_vector, i32 first_index, i32 one_past_last_in
 }
 
 function iz
-beamformer_shader_decode_match(BeamformerDataKind a)
+beamformer_shader_decode_match(BeamformerDataKind a, i32 flags)
 {
-	iz result = beamformer_shader_match((i32 []){(i32)a}, 2, 6, 1);
+	iz result = beamformer_shader_match((i32 []){(i32)a, flags}, 2, 7, 2);
 	return result;
 }
 
 function iz
 beamformer_shader_filter_match(BeamformerDataKind a, i32 flags)
 {
-	iz result = beamformer_shader_match((i32 []){(i32)a, flags}, 6, 18, 2);
+	iz result = beamformer_shader_match((i32 []){(i32)a, flags}, 7, 19, 2);
 	return result;
 }
 
 function iz
 beamformer_shader_demodulate_match(BeamformerDataKind a, BeamformerSamplingMode b, i32 flags)
 {
-	iz result = beamformer_shader_match((i32 []){(i32)a, (i32)b, flags}, 18, 42, 3);
+	iz result = beamformer_shader_match((i32 []){(i32)a, (i32)b, flags}, 19, 43, 3);
 	return result;
 }
 
 function iz
 beamformer_shader_das_match(BeamformerDataKind a, i32 flags)
 {
-	iz result = beamformer_shader_match((i32 []){(i32)a, flags}, 42, 58, 2);
+	iz result = beamformer_shader_match((i32 []){(i32)a, flags}, 43, 59, 2);
 	return result;
 }
 

@@ -1,3 +1,4 @@
+@Enumeration(DataKind [Int16 Int16Complex Float32 Float32Complex])
 @Enumeration(DecodeMode [None Hadamard])
 @Enumeration(RCAOrientation [Rows Columns])
 
@@ -9,7 +10,11 @@
 	@Shader(decode.glsl) Decode
 	{
 		@Enumeration(DecodeMode)
-		@Permute(DataKind [Int16 Int16Complex Float32 Float32Complex])
+		@PermuteFlags([DilateOutput])
+		{
+			@Permute(DataKind [Int16])
+		}
+		@Permute(DataKind [Int16Complex Float32 Float32Complex])
 	}
 
 	@Shader(filter.glsl) Filter
