@@ -1256,9 +1256,8 @@ typedef struct {
 
 typedef struct {
 	u32 *global_flags;
-	u8  *local_flags;
-	u8   global_flags_count;
-	u8   local_flags_count;
+	u16  local_flags;
+	u16  global_flags_count;
 } MetaShaderPermutation;
 DA_STRUCT(MetaShaderPermutation, MetaShaderPermutation);
 
@@ -1306,6 +1305,41 @@ typedef struct {
 
 	MetaShaderDescriptor *shader_descriptors;
 } MetaContext;
+
+
+function u32
+metagen_pack_permutation(MetaContext *ctx, MetaEnumeration e)
+{
+	u32 result = ((u32)(e.kind & 0xFFFFu) << 16u) | (u32)(e.variation & 0xFFFFu);
+	return result;
+}
+
+function MetaEnumeration
+metagen_unpack_permutation(MetaContext *ctx, u32 packed)
+{
+	MetaEnumeration result;
+	result.kind      = (iz)(packed >> 16u);
+	result.variation = (iz)(packed & 0xFFFFu);
+	assert(result.kind      < ctx->enumeration_kinds.count);
+	assert(result.variation < ctx->enumeration_members.data[result.kind].count);
+	return result;
+}
+
+function s8
+metagen_permutation_kind(MetaContext *ctx, u32 packed)
+{
+	MetaEnumeration p = metagen_unpack_permutation(ctx, packed);
+	s8 result = ctx->enumeration_kinds.data[p.kind];
+	return result;
+}
+
+function s8
+metagen_permutation_variation(MetaContext *ctx, u32 packed)
+{
+	MetaEnumeration p = metagen_unpack_permutation(ctx, packed);
+	s8 result = ctx->enumeration_members.data[p.kind].data[p.variation];
+	return result;
+}
 
 function iz
 meta_lookup_string_slow(s8_list *sv, s8 s)
@@ -1412,12 +1446,10 @@ typedef struct {
 
 function void
 meta_pack_shader_permutation(MetaContext *ctx, MetaShaderPermutation *sp, MetaShader *base_shader,
-                             u32 local_flags, MetaShaderPermutationStack *stack, MetaEntry *last,
-                             u32 frame_cursor)
+                             MetaShaderPermutationStack *stack, MetaEntry *last, u32 frame_cursor)
 {
 	////////////////////////////////////
 	// NOTE: fill ids from up the stack
-	u32 local_flag_index  = 0;
 	u32 global_flag_index = 0;
 	for (iz i = 0; i < stack->count; i++) {
 		MetaShaderPermutationStackFrame *f = stack->data + i;
@@ -1434,7 +1466,7 @@ meta_pack_shader_permutation(MetaContext *ctx, MetaShaderPermutation *sp, MetaSh
 				}
 				f->permutation_id = packed;
 			}
-			sp->local_flags[local_flag_index++] = (u8)f->permutation_id;
+			sp->local_flags |= (u8)f->permutation_id;
 		}break;
 		case MetaEntryKind_Permute:{
 			if (f->permutation_id == U32_MAX) {
@@ -1453,18 +1485,16 @@ meta_pack_shader_permutation(MetaContext *ctx, MetaShaderPermutation *sp, MetaSh
 	MetaEntryArgument *a = last->arguments;
 	switch (last->kind) {
 	case MetaEntryKind_PermuteFlags:{
-		u32 packed = local_flags;
-		u32 test   = frame_cursor;
+		u32 packed = 0, test = frame_cursor;
 		for EachBit(test, flag) {
 			u32 flag_index = meta_commit_shader_flag(ctx, base_shader->flag_list_id, a->strings[flag], last);
 			packed |= (1u << flag_index);
 		}
-		sp->local_flags[local_flag_index++] = (u8)packed;
+		sp->local_flags |= (u8)packed;
 	}break;
 	case MetaEntryKind_Permute:{
 		MetaEnumeration p = meta_commit_enumeration(ctx, a[0].string, a[1].strings[frame_cursor]);
-		u32 packed = ((u32)(p.kind & 0xFFFFu) << 16) | (u32)(p.variation & 0xFFFFu);
-		sp->global_flags[global_flag_index++] = packed;
+		sp->global_flags[global_flag_index++] = metagen_pack_permutation(ctx, p);
 		meta_intern_id(ctx, &base_shader->global_flag_ids, (u32)p.kind);
 	}break;
 	InvalidDefaultCase;
@@ -1478,12 +1508,10 @@ meta_pop_and_pack_shader_permutations(MetaContext *ctx, MetaShader *base_shader,
 	assert(stack->count > 0);
 
 	u32 global_flag_count = 0;
-	u32 local_flag_count  = 0;
-
 	for (iz i = 0; i < stack->count; i++) {
 		switch (stack->base_entry[stack->data[i].entry_id].kind) {
-		case MetaEntryKind_PermuteFlags:{ local_flag_count++; }break;
-		case MetaEntryKind_Permute:{ global_flag_count++;    }break;
+		case MetaEntryKind_PermuteFlags:{}break;
+		case MetaEntryKind_Permute:{ global_flag_count++; }break;
 		InvalidDefaultCase;
 		}
 	}
@@ -1491,14 +1519,13 @@ meta_pop_and_pack_shader_permutations(MetaContext *ctx, MetaShader *base_shader,
 	MetaShaderPermutationStackFrame *f = stack->data + (--stack->count);
 	MetaEntry *last = stack->base_entry + f->entry_id;
 	assert(f->cursor.current == 0);
-	for (u32 cursor = 0; cursor < f->cursor.target; cursor++) {
+	for (; f->cursor.current < f->cursor.target; f->cursor.current++) {
 		MetaShaderPermutation *sp = da_push(ctx->arena, &base_shader->permutations);
 		sp->global_flags_count = (u8)global_flag_count;
-		sp->local_flags_count  = (u8)local_flag_count;
 		sp->global_flags       = push_array(ctx->arena, typeof(*sp->global_flags), global_flag_count);
-		sp->local_flags        = push_array(ctx->arena, typeof(*sp->local_flags),  local_flag_count);
+		sp->local_flags        = (u16)local_flags;
 
-		meta_pack_shader_permutation(ctx, sp, base_shader, local_flags, stack, last, cursor);
+		meta_pack_shader_permutation(ctx, sp, base_shader, stack, last, f->cursor.current);
 	}
 }
 
@@ -1659,33 +1686,6 @@ meta_pack_shader(MetaContext *ctx, MetaShaderGroup *sg, Arena scratch, MetaEntry
 	return result;
 }
 
-function MetaEnumeration
-metagen_unpack_permutation(MetaContext *ctx, u32 packed)
-{
-	MetaEnumeration result;
-	result.kind      = (iz)(packed >> 16u);
-	result.variation = (iz)(packed & 0xFFFFu);
-	assert(result.kind      < ctx->enumeration_kinds.count);
-	assert(result.variation < ctx->enumeration_members.data[result.kind].count);
-	return result;
-}
-
-function s8
-metagen_permutation_kind(MetaContext *ctx, u32 packed)
-{
-	MetaEnumeration p = metagen_unpack_permutation(ctx, packed);
-	s8 result = ctx->enumeration_kinds.data[p.kind];
-	return result;
-}
-
-function s8
-metagen_permutation_variation(MetaContext *ctx, u32 packed)
-{
-	MetaEnumeration p = metagen_unpack_permutation(ctx, packed);
-	s8 result = ctx->enumeration_members.data[p.kind].data[p.variation];
-	return result;
-}
-
 function void
 metagen_push_table(MetaprogramContext *m, Arena scratch, s8 row_start, s8 row_end,
                    s8 **column_strings, uz rows, uz columns)
@@ -1779,14 +1779,9 @@ metagen_push_shader_derivative_vectors(MetaContext *ctx, MetaprogramContext *m, 
 			for (i32 id = p->global_flags_count; id < sub_field_count; id++)
 				meta_push(m, s8(", -1"));
 
-			// NOTE(rnp): local flag names
 			if (has_local_flags) {
-				u64 local_flags = 0;
-				for (u8 id = 0; id < p->local_flags_count; id++)
-					local_flags |= p->local_flags[id];
-
 				meta_push(m, s8(", 0x"));
-				meta_push_u64_hex(m, local_flags);
+				meta_push_u64_hex(m, p->local_flags);
 			}
 			meta_end_line(m, s8("},"));
 		}
@@ -2435,8 +2430,7 @@ metagen_load_context(Arena *arena)
 			MetaShader           *s  = ctx->shaders.data + shader;
 			MetaShaderDescriptor *sd = ctx->shader_descriptors + shader;
 
-			for (iz perm = 0; perm < s->permutations.count; perm++)
-				sd->has_local_flags |= s->permutations.data[perm].local_flags_count != 0;
+			sd->has_local_flags = ctx->flags_for_shader.data[s->flag_list_id].count > 0;
 			sd->sub_field_count = (i32)s->global_flag_ids.count;
 			sd->first_match_vector_index = match_vectors_count;
 			match_vectors_count += (i32)s->permutations.count;
