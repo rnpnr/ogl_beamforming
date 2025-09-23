@@ -2792,7 +2792,6 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 	result = v2_add(result, table_extent(table, arena, text_spec.font));
 
 	u32 row_index = 0;
-	u32 *programs = ui->beamformer_context->compute_context.programs;
 	TableIterator *it = table_iterator_new(table, TIK_ROWS, &arena, 0, r.pos, text_spec.font);
 	for (TableRow *row = table_iterator_next(it, &arena);
 	     row;
@@ -2805,7 +2804,7 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 			cell_rect.size.w = t->widths[column];
 			text_spec.limits.size.w = r.size.w - (cell_rect.pos.x - it->start_x);
 
-			if (column == 0 && row_index < stages && programs[cp->pipeline.shaders[row_index]] == 0 &&
+			if (column == 0 && row_index < stages && cp->programs[row_index] == 0 &&
 			    cp->pipeline.shaders[row_index] != BeamformerShaderKind_CudaHilbert &&
 			    cp->pipeline.shaders[row_index] != BeamformerShaderKind_CudaDecode)
 			{

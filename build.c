@@ -779,6 +779,7 @@ meta_push_(MetaprogramContext *m, s8 *items, iz count)
 #define meta_begin_scope(m, ...) do { meta_push_line(m, __VA_ARGS__); (m)->indentation_level++; } while(0)
 #define meta_end_scope(m, ...)   do { (m)->indentation_level--; meta_push_line(m, __VA_ARGS__); } while(0)
 #define meta_push_u64(m, n)           stream_append_u64(&(m)->stream, (n))
+#define meta_push_i64(m, n)           stream_append_i64(&(m)->stream, (n))
 #define meta_push_u64_hex(m, n)       stream_append_hex_u64(&(m)->stream, (n))
 
 #define meta_begin_matlab_class_cracker(_1, _2, FN, ...) FN
@@ -935,9 +936,9 @@ global jmp_buf  compiler_jmp_buf;
 } while(0)
 
 #define meta_entry_error_location(e, loc, ...) do { \
-		meta_compiler_error_message((loc), __VA_ARGS__); \
-		meta_entry_print((e), 1, (i32)(loc).column); \
-		meta_error(); \
+	meta_compiler_error_message((loc), __VA_ARGS__); \
+	meta_entry_print((e), 1, (i32)(loc).column); \
+	meta_error(); \
 } while (0)
 
 function no_return void
@@ -1832,14 +1833,7 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 {
 	///////////////////////////////
 	// NOTE(rnp): reloadable infos
-	i32 max_shader_name_length = 0;
-	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
-		if (ctx->base_shaders.data[shader].file.len == 0) continue;
-		s8 name = ctx->shader_names.data[ctx->base_shaders.data[shader].shader->base_name_id];
-		max_shader_name_length = MAX((i32)name.len, max_shader_name_length);
-	}
-
-	meta_begin_scope(m, s8("read_only global BeamformerReloadableShaderInfo beamformer_reloadable_shader_infos[] = {"));
+	meta_begin_scope(m, s8("read_only global BeamformerShaderKind beamformer_reloadable_shader_kinds[] = {"));
 	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
 		MetaBaseShader *bs = ctx->base_shaders.data + shader;
 		MetaShader     *s  = bs->shader;
@@ -1847,21 +1841,7 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 		if (bs->file.len == 0) continue;
 
 		s8 name = ctx->shader_names.data[s->base_name_id];
-		meta_begin_line(m, s8("{BeamformerShaderKind_"), name, s8(", "));
-		meta_pad(m, ' ', max_shader_name_length - (i32)name.len);
-		meta_push_u64(m, (u64)bs->sub_shaders.count);
-
-		if (bs->sub_shaders.count) {
-			meta_push(m, s8(", (i32 []){"));
-			for (iz sub_shader = 0; sub_shader < bs->sub_shaders.count; sub_shader++) {
-				if (sub_shader != 0) meta_push(m, s8(", "));
-				meta_push_u64(m, bs->sub_shaders.data[sub_shader]);
-			}
-			meta_push(m, s8("}"));
-		} else {
-			meta_push(m, s8(", 0"));
-		}
-		meta_end_line(m, s8("},"));
+		meta_push_line(m, s8("BeamformerShaderKind_"), name, s8(","));
 	}
 	meta_end_scope(m, s8("};\n"));
 
@@ -1872,6 +1852,21 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 		meta_push_line(m, s8("s8_comp(\""), bs->file, s8("\"),"));
 	}
 	meta_end_scope(m, s8("};\n"));
+
+	{
+		i32 rolling_index = 0;
+		meta_begin_scope(m, s8("read_only global i32 beamformer_shader_reloadable_index_by_shader[] = {"));
+		for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+			MetaBaseShader *bs = ctx->base_shaders.data + shader;
+			i32 index = bs->file.len == 0 ? -1 : rolling_index++;
+			for (i32 sub_shader = -1; sub_shader < bs->sub_shaders.count; sub_shader++) {
+				meta_indent(m);
+				meta_push_i64(m, index);
+				meta_end_line(m, s8(","));
+			}
+		}
+		meta_end_scope(m, s8("};\n"));
+	}
 
 	{
 		u32 info_index = 0;
@@ -2066,17 +2061,6 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 			s8_comp("match_vector_length"),
 			s8_comp("header_vector_length"),
 			s8_comp("has_local_flags"),
-		};
-		metagen_push_c_struct(m, name, types, countof(types), names, countof(names));
-	}
-
-	{
-		s8 name    = s8_comp("BeamformerReloadableShaderInfo");
-		s8 types[] = {s8_comp("BeamformerShaderKind"), s8_comp("i32"), s8_comp("i32 *")};
-		s8 names[] = {
-			s8_comp("kind"),
-			s8_comp("sub_shader_descriptor_index_count"),
-			s8_comp("sub_shader_descriptor_indices"),
 		};
 		metagen_push_c_struct(m, name, types, countof(types), names, countof(names));
 	}

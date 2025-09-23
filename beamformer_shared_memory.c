@@ -1,8 +1,7 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (15UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (16UL)
 
-typedef struct BeamformerFrame     BeamformerFrame;
-typedef struct ShaderReloadContext ShaderReloadContext;
+typedef struct BeamformerFrame BeamformerFrame;
 
 typedef enum {
 	BeamformerWorkKind_Compute,
@@ -74,7 +73,6 @@ typedef struct {
 		BeamformerComputeIndirectWorkContext  compute_indirect_context;
 		BeamformerCreateFilterContext         create_filter_context;
 		BeamformerExportContext               export_context;
-		ShaderReloadContext                  *shader_reload_context;
 	};
 } BeamformWork;
 
@@ -117,7 +115,6 @@ typedef union {
 typedef struct {
 	BeamformerShaderKind       shaders[BeamformerMaxComputeShaderStages];
 	BeamformerShaderParameters parameters[BeamformerMaxComputeShaderStages];
-	u32                        program_indices[BeamformerMaxComputeShaderStages];
 	u32                        shader_count;
 	BeamformerDataKind         data_kind;
 } BeamformerComputePipeline;

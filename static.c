@@ -170,19 +170,17 @@ dump_gl_params(GLParams *gl, Arena a, OS *os)
 
 function FILE_WATCH_CALLBACK_FN(reload_shader)
 {
-	ShaderReloadContext            *ctx = (typeof(ctx))user_data;
-	BeamformerReloadableShaderInfo *rsi = beamformer_reloadable_shader_infos + ctx->reloadable_info_index;
-	return beamformer_reload_shader(os, path, ctx, arena, beamformer_shader_names[rsi->kind]);
+	ShaderReloadContext  *ctx  = (typeof(ctx))user_data;
+	BeamformerShaderKind  kind = beamformer_reloadable_shader_kinds[ctx->reloadable_info_index];
+	return beamformer_reload_shader(os, path, ctx, arena, beamformer_shader_names[kind]);
 }
 
 function FILE_WATCH_CALLBACK_FN(reload_shader_indirect)
 {
-	ShaderReloadContext *src = (typeof(src))user_data;
-	BeamformerCtx *ctx = src->beamformer_context;
+	BeamformerCtx *ctx = (BeamformerCtx *)user_data;
 	BeamformWork *work = beamform_work_queue_push(ctx->beamform_work_queue);
 	if (work) {
 		work->kind = BeamformerWorkKind_ReloadShader,
-		work->shader_reload_context = src;
 		beamform_work_queue_push_commit(ctx->beamform_work_queue);
 		os_wake_waiters(&os->compute_worker.sync_variable);
 	}
@@ -415,40 +413,13 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	glEnable(GL_DEBUG_OUTPUT);
 #endif
 
-	read_only local_persist s8 compute_headers[BeamformerShaderKind_ComputeCount] = {
-		/* X(name, type, gltype) */
-		#define X(name, t, gltype) "\t" #gltype " " #name ";\n"
-		[BeamformerShaderKind_DAS] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
-			BEAMFORMER_DAS_UBO_PARAM_LIST
-			"};\n\n"
-		),
-		[BeamformerShaderKind_Decode] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
-			BEAMFORMER_DECODE_UBO_PARAM_LIST
-			"};\n\n"
-		),
-		[BeamformerShaderKind_Filter] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
-			BEAMFORMER_FILTER_UBO_PARAM_LIST
-			"};\n\n"
-		),
-		#undef X
-	};
-
 	for EachElement(beamformer_reloadable_compute_shader_info_indices, it) {
 		i32   index = beamformer_reloadable_compute_shader_info_indices[it];
 		Arena temp  = scratch;
-
 		s8 file = push_s8_from_parts(&temp, s8(OS_PATH_SEPARATOR), s8("shaders"),
 		                             beamformer_reloadable_shader_files[index]);
-
-		BeamformerReloadableShaderInfo *rsi = beamformer_reloadable_shader_infos + index;
-		ShaderReloadContext *src = push_struct(memory, typeof(*src));
-		src->beamformer_context    = ctx;
-		src->reloadable_info_index = index;
-		src->link    = src;
-		src->header  = compute_headers[rsi->kind];
-		src->gl_type = GL_COMPUTE_SHADER;
-		os_add_file_watch(&ctx->os, memory, file, reload_shader_indirect, (iptr)src);
-		reload_shader_indirect(&ctx->os, file, (iptr)src, *memory);
+		os_add_file_watch(&ctx->os, memory, file, reload_shader_indirect, (iptr)ctx);
+		reload_shader_indirect(&ctx->os, file, (iptr)ctx, *memory);
 	}
 	os_wake_waiters(&worker->sync_variable);
 

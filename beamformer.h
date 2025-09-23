@@ -204,6 +204,9 @@ typedef struct BeamformerComputePlan BeamformerComputePlan;
 struct BeamformerComputePlan {
 	BeamformerComputePipeline pipeline;
 
+	u32 programs[BeamformerMaxComputeShaderStages];
+	u32 shader_matches[BeamformerMaxComputeShaderStages];
+
 	uv3 decode_dispatch;
 	uv3 demod_dispatch;
 
@@ -243,8 +246,6 @@ typedef struct {
 } BeamformerRFBuffer;
 
 typedef struct {
-	/* TODO(rnp): slightly oversized; remove non compute shaders from match vectors count */
-	u32                programs[beamformer_match_vectors_count];
 	BeamformerRFBuffer rf_buffer;
 
 	BeamformerComputePlan *compute_plans[BeamformerMaxParameterBlockSlots];
@@ -384,6 +385,7 @@ typedef struct {
 	BeamformerFrame averaged_frames[2];
 } BeamformerCtx;
 
+typedef struct ShaderReloadContext ShaderReloadContext;
 struct ShaderReloadContext {
 	BeamformerCtx       *beamformer_context;
 	ShaderReloadContext *link;

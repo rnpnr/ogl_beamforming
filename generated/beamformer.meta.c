@@ -73,12 +73,6 @@ typedef struct {
 	b32 has_local_flags;
 } BeamformerShaderDescriptor;
 
-typedef struct {
-	BeamformerShaderKind kind;
-	i32                  sub_shader_descriptor_index_count;
-	i32 *                sub_shader_descriptor_indices;
-} BeamformerReloadableShaderInfo;
-
 read_only global i32 *beamformer_shader_match_vectors[] = {
 	// CudaDecode
 	0,
@@ -178,13 +172,13 @@ read_only global s8 beamformer_shader_names[] = {
 	s8_comp("Render3D"),
 };
 
-read_only global BeamformerReloadableShaderInfo beamformer_reloadable_shader_infos[] = {
-	{BeamformerShaderKind_Decode,   0, 0},
-	{BeamformerShaderKind_Filter,   1, (i32 []){4}},
-	{BeamformerShaderKind_DAS,      0, 0},
-	{BeamformerShaderKind_MinMax,   0, 0},
-	{BeamformerShaderKind_Sum,      0, 0},
-	{BeamformerShaderKind_Render3D, 0, 0},
+read_only global BeamformerShaderKind beamformer_reloadable_shader_kinds[] = {
+	BeamformerShaderKind_Decode,
+	BeamformerShaderKind_Filter,
+	BeamformerShaderKind_DAS,
+	BeamformerShaderKind_MinMax,
+	BeamformerShaderKind_Sum,
+	BeamformerShaderKind_Render3D,
 };
 
 read_only global s8 beamformer_reloadable_shader_files[] = {
@@ -194,6 +188,18 @@ read_only global s8 beamformer_reloadable_shader_files[] = {
 	s8_comp("min_max.glsl"),
 	s8_comp("sum.glsl"),
 	s8_comp("render_3d.frag.glsl"),
+};
+
+read_only global i32 beamformer_shader_reloadable_index_by_shader[] = {
+	-1,
+	-1,
+	0,
+	1,
+	1,
+	2,
+	3,
+	4,
+	5,
 };
 
 read_only global i32 beamformer_reloadable_compute_shader_info_indices[] = {

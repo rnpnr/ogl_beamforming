@@ -1,5 +1,13 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: do JIT compilation of shaders
+ *      - a larger subset of parameters can be made into compile time constants
+ *      - preallocated storage for shaders is minimized
+ *      - loops over TX and RX count can be unrolled
+ *      - hot reload can still be trivially supported:
+ *        - loop over shaders for the current pipeline
+ *        - check if the base shader matches the shader we are trying to reload
+ *        - load header and append constants which are stored in the pipeline parameters
  * [ ]: measure performance of doing channel mapping in a separate shader
  * [ ]: BeamformWorkQueue -> BeamformerWorkQueue
  * [ ]: need to keep track of gpu memory in some way
@@ -316,7 +324,7 @@ fill_frame_compute_work(BeamformerCtx *ctx, BeamformWork *work, BeamformerViewPl
 }
 
 function void
-do_sum_shader(BeamformerComputeContext *cc, u32 *in_textures, u32 in_texture_count, f32 in_scale,
+do_sum_shader(BeamformerComputeContext *cc, u32 *in_textures, u32 in_texture_count,
               u32 out_texture, iv3 out_data_dim)
 {
 	/* NOTE: zero output before summing */
@@ -324,7 +332,6 @@ do_sum_shader(BeamformerComputeContext *cc, u32 *in_textures, u32 in_texture_cou
 	glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
 
 	glBindImageTexture(0, out_texture, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RG32F);
-	glProgramUniform1f(cc->programs[BeamformerShaderKind_Sum], SUM_PRESCALE_UNIFORM_LOC, in_scale);
 	for (u32 i = 0; i < in_texture_count; i++) {
 		glBindImageTexture(1, in_textures[i], 0, GL_TRUE, 0, GL_READ_ONLY, GL_RG32F);
 		glDispatchCompute(ORONE((u32)out_data_dim.x / 32u),
@@ -557,9 +564,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 		if (commit) {
 			u32 index = cp->pipeline.shader_count++;
-			cp->pipeline.shaders[index]         = shader;
-			cp->pipeline.program_indices[index] = (u32)match;
-			cp->pipeline.parameters[index]      = *sp;
+			cp->pipeline.shaders[index]    = shader;
+			cp->pipeline.parameters[index] = *sp;
+			cp->shader_matches[index]      = (u32)match;
 		}
 	}
 	cp->pipeline.data_kind = data_kind;
@@ -664,6 +671,124 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 }
 
 function void
+stream_push_shader_header(Stream *s, BeamformerShaderKind shader_kind, s8 header)
+{
+	stream_append_s8s(s, s8("#version 460 core\n\n"), header);
+
+	switch (shader_kind) {
+	case BeamformerShaderKind_Filter:{
+		stream_append_s8(s, s8(""
+		"layout(local_size_x = " str(FILTER_LOCAL_SIZE_X) ", "
+		       "local_size_y = " str(FILTER_LOCAL_SIZE_Y) ", "
+		       "local_size_z = " str(FILTER_LOCAL_SIZE_Z) ") in;\n\n"
+		));
+	}break;
+	case BeamformerShaderKind_DAS:{
+		stream_append_s8(s, s8(""
+		"layout(local_size_x = " str(DAS_LOCAL_SIZE_X) ", "
+		       "local_size_y = " str(DAS_LOCAL_SIZE_Y) ", "
+		       "local_size_z = " str(DAS_LOCAL_SIZE_Z) ") in;\n\n"
+		"layout(location = " str(DAS_VOXEL_OFFSET_UNIFORM_LOC) ") uniform ivec3 u_voxel_offset;\n"
+		"layout(location = " str(DAS_CYCLE_T_UNIFORM_LOC)      ") uniform uint  u_cycle_t;\n"
+		"layout(location = " str(DAS_FAST_CHANNEL_UNIFORM_LOC) ") uniform int   u_channel;\n\n"
+		));
+
+		#define X(k, id, ...) "#define ShaderKind_" #k " " #id "\n"
+		stream_append_s8s(s, s8(DAS_SHADER_KIND_LIST), s8("\n"));
+		#undef X
+	}break;
+	case BeamformerShaderKind_Decode:{
+		stream_append_s8s(s, s8(""
+		"layout(local_size_x = " str(DECODE_LOCAL_SIZE_X) ", "
+		       "local_size_y = " str(DECODE_LOCAL_SIZE_Y) ", "
+		       "local_size_z = " str(DECODE_LOCAL_SIZE_Z) ") in;\n\n"
+		"layout(location = " str(DECODE_FIRST_PASS_UNIFORM_LOC) ") uniform bool u_first_pass;\n\n"
+		));
+	}break;
+	case BeamformerShaderKind_MinMax:{
+		stream_append_s8(s, s8("layout(location = " str(MIN_MAX_MIPS_LEVEL_UNIFORM_LOC)
+		                       ") uniform int u_mip_map;\n\n"));
+	}break;
+	case BeamformerShaderKind_Sum:{
+		stream_append_s8(s, s8("layout(location = " str(SUM_PRESCALE_UNIFORM_LOC)
+		                       ") uniform float u_sum_prescale = 1.0;\n\n"));
+	}break;
+	default:{}break;
+	}
+}
+
+function void
+load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_slot, Arena arena)
+{
+	read_only local_persist s8 compute_headers[BeamformerShaderKind_ComputeCount] = {
+		/* X(name, type, gltype) */
+		#define X(name, t, gltype) "\t" #gltype " " #name ";\n"
+		[BeamformerShaderKind_DAS] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
+			BEAMFORMER_DAS_UBO_PARAM_LIST
+			"};\n\n"
+		),
+		[BeamformerShaderKind_Decode] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
+			BEAMFORMER_DECODE_UBO_PARAM_LIST
+			"};\n\n"
+		),
+		[BeamformerShaderKind_Filter] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
+			BEAMFORMER_FILTER_UBO_PARAM_LIST
+			"};\n\n"
+		),
+		#undef X
+	};
+
+	BeamformerShaderKind        shader = cp->pipeline.shaders[shader_slot];
+	BeamformerShaderDescriptor *sd     = beamformer_shader_descriptors + shader;
+
+
+	u32 program          = 0;
+	i32 reloadable_index = beamformer_shader_reloadable_index_by_shader[shader];
+	if (reloadable_index != -1) {
+		BeamformerShaderKind base_shader = beamformer_reloadable_shader_kinds[reloadable_index];
+		s8 path = push_s8_from_parts(&arena, ctx->os.path_separator, s8("shaders"),
+		                             beamformer_reloadable_shader_files[reloadable_index]);
+
+		Stream shader_stream = arena_stream(arena);
+		stream_push_shader_header(&shader_stream, base_shader, compute_headers[base_shader]);
+
+		stream_append_s8(&shader_stream, beamformer_shader_local_header_strings[reloadable_index]);
+
+		i32 *header_indices = beamformer_shader_header_vectors[sd - beamformer_shader_descriptors];
+		for (i32 index = 0; index < sd->header_vector_length; index++)
+			stream_append_s8s(&shader_stream, beamformer_shader_global_header_strings[header_indices[index]], s8("\n"));
+
+		i32 *match_vector = beamformer_shader_match_vectors[cp->shader_matches[shader_slot]];
+		for (i32 index = 0; index < sd->match_vector_length; index++) {
+			stream_append_s8s(&shader_stream, s8("#define "), beamformer_shader_descriptor_header_strings[header_indices[index]], s8(" ("));
+			stream_append_i64(&shader_stream, match_vector[index]);
+			stream_append_s8(&shader_stream, s8(")\n"));
+		}
+
+		if (sd->has_local_flags) {
+			stream_append_s8(&shader_stream, s8("#define ShaderFlags (0x"));
+			stream_append_hex_u64(&shader_stream, (u64)match_vector[sd->match_vector_length]);
+			stream_append_s8(&shader_stream, s8(")\n"));
+		}
+
+		stream_append_s8(&shader_stream, s8("\n#line 1\n"));
+
+		s8 shader_text = arena_stream_commit(&arena, &shader_stream);
+		s8 file_text   = os_read_whole_file(&arena, (c8 *)path.data);
+
+		assert(shader_text.data + shader_text.len == file_text.data);
+		shader_text.len += file_text.len;
+
+		/* TODO(rnp): instance name */
+		s8 shader_name = beamformer_shader_names[shader];
+		program = load_shader(&ctx->os, arena, &shader_text, (u32 []){GL_COMPUTE_SHADER}, 1, shader_name);
+	}
+
+	glDeleteProgram(cp->programs[shader_slot]);
+	cp->programs[shader_slot] = program;
+}
+
+function void
 beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 block, Arena arena)
 {
 	BeamformerParameterBlock *pb = beamformer_parameter_block_lock(&ctx->shared_memory, block, -1);
@@ -682,6 +807,9 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			u32 mask = 1 << BeamformerParameterBlockRegion_ComputePipeline |
 			           1 << BeamformerParameterBlockRegion_Parameters;
 			pb->dirty_regions &= ~mask;
+
+			for (u32 shader_slot = 0; shader_slot < cp->pipeline.shader_count; shader_slot++)
+				load_compute_shader(ctx, cp, shader_slot, arena);
 
 			#define X(k, t, v) glNamedBufferSubData(cp->ubos[BeamformerComputeUBOKind_##k], \
 			                                        0, sizeof(t), &cp->v ## _ubo_data);
@@ -740,14 +868,14 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 
 function void
 do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame *frame,
-                  BeamformerShaderKind shader, u32 program_index, BeamformerShaderParameters *sp, Arena arena)
+                  BeamformerShaderKind shader, u32 shader_slot, BeamformerShaderParameters *sp, Arena arena)
 {
 	BeamformerComputeContext *cc = &ctx->compute_context;
 
-	i32 *match_vector = beamformer_shader_match_vectors[program_index];
+	i32 *match_vector = beamformer_shader_match_vectors[cp->shader_matches[shader_slot]];
 	BeamformerShaderDescriptor *shader_descriptor = beamformer_shader_descriptors + shader;
 
-	u32 program = cc->programs[program_index];
+	u32 program = cp->programs[shader_slot];
 	glUseProgram(program);
 
 	u32 output_ssbo_idx = !cc->last_output_ssbo_index;
@@ -814,7 +942,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 		for (i32 i = 1; i < frame->mips; i++) {
 			glBindImageTexture(0, frame->texture, i - 1, GL_TRUE, 0, GL_READ_ONLY,  GL_RG32F);
 			glBindImageTexture(1, frame->texture, i - 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RG32F);
-			glProgramUniform1i(cc->programs[shader], MIN_MAX_MIPS_LEVEL_UNIFORM_LOC, i);
+			glProgramUniform1i(program, MIN_MAX_MIPS_LEVEL_UNIFORM_LOC, i);
 
 			u32 width  = (u32)frame->dim.x >> i;
 			u32 height = (u32)frame->dim.y >> i;
@@ -923,7 +1051,8 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 
 		assert(to_average == frame_count);
 
-		do_sum_shader(cc, in_textures, frame_count, 1 / (f32)frame_count, aframe->texture, aframe->dim);
+		glProgramUniform1f(program, SUM_PRESCALE_UNIFORM_LOC, 1 / (f32)frame_count);
+		do_sum_shader(cc, in_textures, frame_count, aframe->texture, aframe->dim);
 		aframe->min_coordinate  = frame->min_coordinate;
 		aframe->max_coordinate  = frame->max_coordinate;
 		aframe->compound_count  = frame->compound_count;
@@ -933,60 +1062,11 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 	}
 }
 
-function void
-stream_push_shader_header(Stream *s, ShaderReloadContext *ctx)
-{
-	BeamformerReloadableShaderInfo *rsi = beamformer_reloadable_shader_infos + ctx->reloadable_info_index;
-
-	stream_append_s8s(s, s8("#version 460 core\n\n"), ctx->header);
-
-	switch (rsi->kind) {
-	case BeamformerShaderKind_Filter:{
-		stream_append_s8(s, s8(""
-		"layout(local_size_x = " str(FILTER_LOCAL_SIZE_X) ", "
-		       "local_size_y = " str(FILTER_LOCAL_SIZE_Y) ", "
-		       "local_size_z = " str(FILTER_LOCAL_SIZE_Z) ") in;\n\n"
-		));
-	}break;
-	case BeamformerShaderKind_DAS:{
-		stream_append_s8(s, s8(""
-		"layout(local_size_x = " str(DAS_LOCAL_SIZE_X) ", "
-		       "local_size_y = " str(DAS_LOCAL_SIZE_Y) ", "
-		       "local_size_z = " str(DAS_LOCAL_SIZE_Z) ") in;\n\n"
-		"layout(location = " str(DAS_VOXEL_OFFSET_UNIFORM_LOC) ") uniform ivec3 u_voxel_offset;\n"
-		"layout(location = " str(DAS_CYCLE_T_UNIFORM_LOC)      ") uniform uint  u_cycle_t;\n"
-		"layout(location = " str(DAS_FAST_CHANNEL_UNIFORM_LOC) ") uniform int   u_channel;\n\n"
-		));
-
-		#define X(k, id, ...) "#define ShaderKind_" #k " " #id "\n"
-		stream_append_s8s(s, s8(DAS_SHADER_KIND_LIST), s8("\n"));
-		#undef X
-	}break;
-	case BeamformerShaderKind_Decode:{
-		stream_append_s8s(s, s8(""
-		"layout(local_size_x = " str(DECODE_LOCAL_SIZE_X) ", "
-		       "local_size_y = " str(DECODE_LOCAL_SIZE_Y) ", "
-		       "local_size_z = " str(DECODE_LOCAL_SIZE_Z) ") in;\n\n"
-		"layout(location = " str(DECODE_FIRST_PASS_UNIFORM_LOC) ") uniform bool u_first_pass;\n\n"
-		));
-	}break;
-	case BeamformerShaderKind_MinMax:{
-		stream_append_s8(s, s8("layout(location = " str(MIN_MAX_MIPS_LEVEL_UNIFORM_LOC)
-		                       ") uniform int u_mip_map;\n\n"));
-	}break;
-	case BeamformerShaderKind_Sum:{
-		stream_append_s8(s, s8("layout(location = " str(SUM_PRESCALE_UNIFORM_LOC)
-		                       ") uniform float u_sum_prescale = 1.0;\n\n"));
-	}break;
-	default:{}break;
-	}
-}
-
 function s8
-shader_text_with_header(ShaderReloadContext *ctx, s8 filepath, Arena *arena)
+shader_text_with_header(s8 header, s8 filepath, BeamformerShaderKind shader_kind, Arena *arena)
 {
 	Stream sb = arena_stream(*arena);
-	stream_push_shader_header(&sb, ctx);
+	stream_push_shader_header(&sb, shader_kind, header);
 	stream_append_s8(&sb, s8("\n#line 1\n"));
 
 	s8 result = arena_stream_commit(arena, &sb);
@@ -1000,10 +1080,12 @@ shader_text_with_header(ShaderReloadContext *ctx, s8 filepath, Arena *arena)
 }
 
 /* NOTE(rnp): currently this function is only handling rendering shaders.
- * look at reload_compute_shader for compute shaders */
+ * look at load_compute_shader for compute shaders */
 DEBUG_EXPORT BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader)
 {
-	BeamformerCtx *ctx = src->beamformer_context;
+	BeamformerCtx        *ctx  = src->beamformer_context;
+	BeamformerShaderKind  kind = beamformer_reloadable_shader_kinds[src->reloadable_info_index];
+	assert(kind == BeamformerShaderKind_Render3D);
 
 	i32 shader_count = 1;
 	ShaderReloadContext *link = src->link;
@@ -1016,14 +1098,11 @@ DEBUG_EXPORT BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader)
 	do {
 		s8 filepath = {0};
 		if (link->reloadable_info_index >= 0) filepath = path;
-		shader_texts[index] = shader_text_with_header(link, filepath, &arena);
+		shader_texts[index] = shader_text_with_header(link->header, filepath, kind, &arena);
 		shader_types[index] = link->gl_type;
 		index++;
 		link = link->link;
 	} while (link != src);
-
-	BeamformerReloadableShaderInfo *rsi = beamformer_reloadable_shader_infos + src->reloadable_info_index;
-	assert(rsi->kind == BeamformerShaderKind_Render3D);
 
 	u32 *shader = &ctx->frame_view_render_context.shader;
 	glDeleteProgram(*shader);
@@ -1031,87 +1110,6 @@ DEBUG_EXPORT BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader)
 	ctx->frame_view_render_context.updated = 1;
 
 	return 1;
-}
-
-function void
-reload_compute_shader(BeamformerCtx *ctx, ShaderReloadContext *src, Arena arena)
-{
-	BeamformerComputeContext       *cc  = &ctx->compute_context;
-	BeamformerReloadableShaderInfo *rsi = beamformer_reloadable_shader_infos + src->reloadable_info_index;
-	BeamformerShaderDescriptor     *sd  = beamformer_shader_descriptors + rsi->kind;
-
-	Stream status = stream_alloc(&arena, 128);
-	u32 completed     = 0;
-	u32 total_shaders = (u32)(sd->one_past_last_match_vector_index - sd->first_match_vector_index);
-	for (i32 i = 0; i < rsi->sub_shader_descriptor_index_count; i++) {
-		BeamformerShaderDescriptor *ssd  = beamformer_shader_descriptors + rsi->sub_shader_descriptor_indices[i];
-		total_shaders += (u32)(ssd->one_past_last_match_vector_index - ssd->first_match_vector_index);
-	}
-
-	s8 path = push_s8_from_parts(&arena, ctx->os.path_separator, s8("shaders"),
-	                             beamformer_reloadable_shader_files[src->reloadable_info_index]);
-	s8 file_text  = os_read_whole_file(&arena, (c8 *)path.data);
-	Stream shader = arena_stream(arena);
-
-	stream_push_shader_header(&shader, src);
-
-	stream_append_s8(&shader, beamformer_shader_local_header_strings[src->reloadable_info_index]);
-
-	i32 save_point = shader.widx;
-	for (i32 sub_index = -1; sub_index < rsi->sub_shader_descriptor_index_count; sub_index++) {
-		shader.widx = save_point;
-
-		if (sub_index != -1)
-			sd = beamformer_shader_descriptors + rsi->sub_shader_descriptor_indices[sub_index];
-
-		i32 *hvector = beamformer_shader_header_vectors[sd - beamformer_shader_descriptors];
-		for (i32 index = 0; index < sd->header_vector_length; index++)
-			stream_append_s8s(&shader, beamformer_shader_global_header_strings[hvector[index]], s8("\n"));
-
-		i32 instance_save_point = shader.widx;
-		arena_commit(&arena, instance_save_point);
-		TempArena arena_save = begin_temp_arena(&arena);
-
-		for (i32 instance = sd->first_match_vector_index;
-		     instance < sd->one_past_last_match_vector_index;
-		     instance++)
-		{
-			shader.widx = instance_save_point;
-			end_temp_arena(arena_save);
-
-			i32 *match_vector = beamformer_shader_match_vectors[instance];
-			for (i32 index = 0; index < sd->match_vector_length; index++) {
-				stream_append_s8s(&shader, s8("#define "), beamformer_shader_descriptor_header_strings[hvector[index]], s8(" ("));
-				stream_append_i64(&shader, match_vector[index]);
-				stream_append_s8(&shader, s8(")\n"));
-			}
-
-			if (sd->has_local_flags) {
-				stream_append_s8(&shader, s8("#define ShaderFlags (0x"));
-				stream_append_hex_u64(&shader, (u64)match_vector[sd->match_vector_length]);
-				stream_append_s8(&shader, s8(")\n"));
-			}
-
-			stream_append_s8s(&shader, s8("\n#line 1\n"), file_text);
-
-			arena_commit(&arena, shader.widx - instance_save_point);
-
-			s8 shader_text = stream_to_s8(&shader);
-			/* TODO(rnp): instance name */
-			s8 shader_name = beamformer_shader_names[rsi->kind];
-			glDeleteProgram(cc->programs[instance]);
-			cc->programs[instance] = load_shader(&ctx->os, arena, &shader_text, &src->gl_type, 1, shader_name);
-
-			status.widx = 0;
-			stream_append_s8s(&status, s8("\r\x1b[2Kloaded shader "), shader_name, s8(": ["));
-			stream_append_u64(&status, ++completed);
-			stream_append_s8s(&status, s8("/"));
-			stream_append_u64(&status, total_shaders);
-			stream_append_s8s(&status, s8("]"));
-			os_write_file(ctx->os.error_handle, stream_to_s8(&status));
-		}
-	}
-	os_write_file(ctx->os.error_handle, s8("\n"));
 }
 
 function void
@@ -1125,7 +1123,10 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 		b32 can_commit = 1;
 		switch (work->kind) {
 		case BeamformerWorkKind_ReloadShader:{
-			reload_compute_shader(ctx, work->shader_reload_context, *arena);
+			u32 reserved_blocks = sm->reserved_parameter_blocks;
+			for (u32 i = 0; i < reserved_blocks; i++)
+				mark_parameter_block_region_dirty(sm, i, BeamformerParameterBlockRegion_ComputePipeline);
+
 			if (ctx->latest_frame && !sm->live_imaging_parameters.active) {
 				fill_frame_compute_work(ctx, work, ctx->latest_frame->view_plane_tag, 0, 0);
 				can_commit = 0;
@@ -1230,8 +1231,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 				glBindBufferRange(GL_SHADER_STORAGE_BUFFER, 1, rf->ssbo, slot * rf->active_rf_size, rf->active_rf_size);
 
 				glBeginQuery(GL_TIME_ELAPSED, cc->shader_timer_ids[0]);
-				do_compute_shader(ctx, cp, frame, pipeline->shaders[0], pipeline->program_indices[0],
-				                  pipeline->parameters + 0, *arena);
+				do_compute_shader(ctx, cp, frame, pipeline->shaders[0], 0, pipeline->parameters + 0, *arena);
 				glEndQuery(GL_TIME_ELAPSED);
 
 				if (work->kind == BeamformerWorkKind_ComputeIndirect) {
@@ -1245,8 +1245,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			for (u32 i = 1; i < pipeline->shader_count; i++) {
 				did_sum_shader |= pipeline->shaders[i] == BeamformerShaderKind_Sum;
 				glBeginQuery(GL_TIME_ELAPSED, cc->shader_timer_ids[i]);
-				do_compute_shader(ctx, cp, frame, pipeline->shaders[i], pipeline->program_indices[i],
-				                  pipeline->parameters + i, *arena);
+				do_compute_shader(ctx, cp, frame, pipeline->shaders[i], i, pipeline->parameters + i, *arena);
 				glEndQuery(GL_TIME_ELAPSED);
 			}
 
