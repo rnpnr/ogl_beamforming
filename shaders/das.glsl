@@ -4,9 +4,7 @@
   #define TEXTURE_KIND          r32f
   #define RESULT_TYPE_CAST(a)   (a).x
   #define OUTPUT_TYPE_CAST(a)   vec4((a).x, 0, 0, 0)
-  #if (ShaderFlags & ShaderFlags_Fast)
-    #define RESULT_TYPE         SAMPLE_TYPE
-  #else
+  #if (ShaderFlags & ShaderFlags_Fast) == 0
     #define RESULT_TYPE         vec2
     #define RESULT_LAST_INDEX   1
   #endif
@@ -15,9 +13,7 @@
   #define TEXTURE_KIND          rg32f
   #define RESULT_TYPE_CAST(a)   (a).xy
   #define OUTPUT_TYPE_CAST(a)   vec4((a).xy, 0, 0)
-  #if (ShaderFlags & ShaderFlags_Fast)
-    #define RESULT_TYPE         SAMPLE_TYPE
-  #else
+  #if (ShaderFlags & ShaderFlags_Fast) == 0
     #define RESULT_TYPE         vec3
     #define RESULT_LAST_INDEX   2
   #endif
@@ -29,6 +25,17 @@ layout(std430, binding = 1) readonly restrict buffer buffer_1 {
 	SAMPLE_TYPE rf_data[];
 };
 
+#ifndef RESULT_TYPE
+  #define RESULT_TYPE SAMPLE_TYPE
+#endif
+
+#if (ShaderFlags & ShaderFlags_Fast)
+  #define RESULT_STORE(a, length_a) RESULT_TYPE(a)
+#else
+  #define RESULT_STORE(a, length_a) RESULT_TYPE(a, length_a)
+#endif
+
+const bool fast        = bool(ShaderFlags & ShaderFlags_Fast);
 const bool sparse      = bool(ShaderFlags & ShaderFlags_Sparse);
 const bool interpolate = bool(ShaderFlags & ShaderFlags_Interpolate);
 
@@ -140,56 +147,30 @@ float cylindrical_wave_transmit_distance(vec3 point, float focal_depth, float tr
 	return distance(rca_plane_projection(point, tx_rows), f);
 }
 
-#if (ShaderFlags & ShaderFlags_Fast)
-RESULT_TYPE RCA(vec3 world_point)
+float rca_transmit_distance(vec3 world_point, vec2 focal_vector, int transmit_receive_orientation)
 {
-	bool  tx_rows         = (imageLoad(transmit_receive_orientations, u_channel).x & TX_ORIENTATION_MASK) == 0;
-	bool  rx_rows         = (imageLoad(transmit_receive_orientations, u_channel).x & RX_ORIENTATION_MASK) == 0;
-	vec2  xdc_world_point = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
-	vec2  focal_vector    = imageLoad(focal_vectors, u_channel).xy;
-	float transmit_angle  = radians(focal_vector.x);
-	float focal_depth     = focal_vector.y;
+	bool  tx_rows        = (transmit_receive_orientation & TX_ORIENTATION_MASK) == 0;
+	float transmit_angle = radians(focal_vector.x);
+	float focal_depth    = focal_vector.y;
 
-	float transmit_distance;
+	float result;
 	if (isinf(focal_depth)) {
-		transmit_distance = plane_wave_transmit_distance(world_point, transmit_angle, tx_rows);
+		result = plane_wave_transmit_distance(world_point, transmit_angle, tx_rows);
 	} else {
-		transmit_distance = cylindrical_wave_transmit_distance(world_point, focal_depth,
-		                                                       transmit_angle, tx_rows);
-	}
-
-	RESULT_TYPE result = RESULT_TYPE(0);
-	for (int channel = 0; channel < channel_count; channel++) {
-		vec2  receive_vector   = xdc_world_point - rca_plane_projection(vec3(channel * xdc_element_pitch, 0), rx_rows);
-		float receive_distance = length(receive_vector);
-		float apodization      = apodize(f_number * radians(180) / abs(xdc_world_point.y) * receive_vector.x);
-
-		if (apodization > 0) {
-			float sidx  = sample_index(transmit_distance + receive_distance);
-			result     += apodization * sample_rf(channel, u_channel, sidx);
-		}
+		result = cylindrical_wave_transmit_distance(world_point, focal_depth, transmit_angle, tx_rows);
 	}
 	return result;
 }
-#else
-RESULT_TYPE RCA(vec3 world_point)
+
+RESULT_TYPE RCA_acquisition_range(vec3 world_point, int acquisition_start, int acquisition_end)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
-	for (int transmit = 0; transmit < acquisition_count; transmit++) {
-		vec2  focal_vector   = imageLoad(focal_vectors, transmit).xy;
-		float transmit_angle = radians(focal_vector.x);
-		float focal_depth    = focal_vector.y;
-		bool  tx_rows        = (imageLoad(transmit_receive_orientations, u_channel).x & TX_ORIENTATION_MASK) == 0;
-		bool  rx_rows        = (imageLoad(transmit_receive_orientations, u_channel).x & RX_ORIENTATION_MASK) == 0;
-		vec2 xdc_world_point = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
-
-		float transmit_distance;
-		if (isinf(focal_depth)) {
-			transmit_distance = plane_wave_transmit_distance(world_point, transmit_angle, tx_rows);
-		} else {
-			transmit_distance = cylindrical_wave_transmit_distance(world_point, focal_depth,
-			                                                       transmit_angle, tx_rows);
-		}
+	for (int acquisition = acquisition_start; acquisition < acquisition_end; acquisition++) {
+		int   transmit_receive_orientation = imageLoad(transmit_receive_orientations, acquisition).x;
+		bool  rx_rows           = (transmit_receive_orientation & RX_ORIENTATION_MASK) == 0;
+		vec2  xdc_world_point   = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
+		float transmit_distance = rca_transmit_distance(world_point, imageLoad(focal_vectors, acquisition).xy,
+		                                                transmit_receive_orientation);
 
 		for (int rx_channel = 0; rx_channel < channel_count; rx_channel++) {
 			vec3  rx_center      = vec3(rx_channel * xdc_element_pitch, 0);
@@ -198,74 +179,32 @@ RESULT_TYPE RCA(vec3 world_point)
 
 			if (apodization > 0) {
 				float       sidx  = sample_index(transmit_distance + length(receive_vector));
-				SAMPLE_TYPE value = apodization * sample_rf(rx_channel, transmit, sidx);
-				result += RESULT_TYPE(value, length(value));
+				SAMPLE_TYPE value = apodization * sample_rf(rx_channel, acquisition, sidx);
+				result += RESULT_STORE(value, length(value));
 			}
 		}
 	}
 	return result;
 }
-#endif
 
-#if (ShaderFlags & ShaderFlags_Fast)
-RESULT_TYPE HERCULES(vec3 world_point)
+RESULT_TYPE RCA(vec3 world_point)
 {
-	vec3  xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
-	bool  tx_rows         = (imageLoad(transmit_receive_orientations, 0).x & TX_ORIENTATION_MASK) == 0;
-	bool  rx_cols         = (imageLoad(transmit_receive_orientations, 0).x & RX_ORIENTATION_MASK) != 0;
-	vec2  focal_vector    = imageLoad(focal_vectors, 0).xy;
-	float transmit_angle  = radians(focal_vector.x);
-	float focal_depth     = focal_vector.y;
-
-	float transmit_distance;
-	if (isinf(focal_depth)) {
-		transmit_distance = plane_wave_transmit_distance(world_point, transmit_angle, tx_rows);
-	} else {
-		transmit_distance = cylindrical_wave_transmit_distance(world_point, focal_depth,
-		                                                       transmit_angle, tx_rows);
-	}
-
-	RESULT_TYPE result = RESULT_TYPE(0);
-	for (int transmit = int(sparse); transmit < acquisition_count; transmit++) {
-		int tx_channel = sparse ? imageLoad(sparse_elements, transmit - int(sparse)).x : transmit;
-		vec3 element_position;
-		if (rx_cols) element_position = vec3(u_channel,  tx_channel, 0) * vec3(xdc_element_pitch, 0);
-		else         element_position = vec3(tx_channel, u_channel,  0) * vec3(xdc_element_pitch, 0);
-
-		float apodization = apodize(f_number * radians(180) / abs(xdc_world_point.z) *
-		                            distance(xdc_world_point.xy, element_position.xy));
-		if (apodization > 0) {
-			/* NOTE: tribal knowledge */
-			if (transmit == 0) apodization *= inversesqrt(acquisition_count);
-
-			float sidx  = sample_index(transmit_distance + distance(xdc_world_point, element_position));
-			result     += apodization * sample_rf(u_channel, transmit, sidx);
-		}
-	}
-	return result;
+	if (fast) return RESULT_TYPE_CAST(RCA_acquisition_range(world_point, u_channel, u_channel + 1));
+	else      return RESULT_TYPE_CAST(RCA_acquisition_range(world_point, 0,         int(acquisition_count)));
 }
-#else
-RESULT_TYPE HERCULES(vec3 world_point)
-{
-	vec3  xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
-	bool  tx_rows         = (imageLoad(transmit_receive_orientations, 0).x & TX_ORIENTATION_MASK) == 0;
-	bool  rx_cols         = (imageLoad(transmit_receive_orientations, 0).x & RX_ORIENTATION_MASK) != 0;
-	vec2  focal_vector    = imageLoad(focal_vectors, 0).xy;
-	float transmit_angle  = radians(focal_vector.x);
-	float focal_depth     = focal_vector.y;
 
-	float transmit_distance;
-	if (isinf(focal_depth)) {
-		transmit_distance = plane_wave_transmit_distance(world_point, transmit_angle, tx_rows);
-	} else {
-		transmit_distance = cylindrical_wave_transmit_distance(world_point, focal_depth,
-		                                                       transmit_angle, tx_rows);
-	}
+RESULT_TYPE HERCULES_receive_channel_range(vec3 world_point, int rx_channel_start, int rx_channel_end)
+{
+	int   transmit_receive_orientation = imageLoad(transmit_receive_orientations, 0).x;
+	vec3  xdc_world_point   = (xdc_transform * vec4(world_point, 1)).xyz;
+	bool  rx_cols           = (transmit_receive_orientation & RX_ORIENTATION_MASK) != 0;
+	float transmit_distance = rca_transmit_distance(world_point, imageLoad(focal_vectors, 0).xy,
+	                                                transmit_receive_orientation);
 
 	RESULT_TYPE result = RESULT_TYPE(0);
 	for (int transmit = int(sparse); transmit < acquisition_count; transmit++) {
 		int tx_channel = sparse ? imageLoad(sparse_elements, transmit - int(sparse)).x : transmit;
-		for (int rx_channel = 0; rx_channel < channel_count; rx_channel++) {
+		for (int rx_channel = rx_channel_start; rx_channel < rx_channel_end; rx_channel++) {
 			vec3 element_position;
 			if (rx_cols) element_position = vec3(rx_channel, tx_channel, 0) * vec3(xdc_element_pitch, 0);
 			else         element_position = vec3(tx_channel, rx_channel, 0) * vec3(xdc_element_pitch, 0);
@@ -278,41 +217,24 @@ RESULT_TYPE HERCULES(vec3 world_point)
 
 				float       sidx  = sample_index(transmit_distance + distance(xdc_world_point, element_position));
 				SAMPLE_TYPE value = apodization * sample_rf(rx_channel, transmit, sidx);
-				result += RESULT_TYPE(value, length(value));
+				result += RESULT_STORE(value, length(value));
 			}
 		}
 	}
 	return result;
 }
-#endif
 
-#if (ShaderFlags & ShaderFlags_Fast)
-RESULT_TYPE FORCES(vec3 world_point)
+RESULT_TYPE HERCULES(vec3 world_point)
 {
-	vec3  xdc_world_point  = (xdc_transform * vec4(world_point, 1)).xyz;
-	float receive_distance = distance(xdc_world_point.xz, vec2(u_channel * xdc_element_pitch.x, 0));
-	float apodization      = apodize(f_number * radians(180) / abs(xdc_world_point.z) *
-	                                 (xdc_world_point.x - u_channel * xdc_element_pitch.x));
-
-	RESULT_TYPE result = RESULT_TYPE(0);
-	if (apodization > 0) {
-		for (int transmit = int(sparse); transmit < acquisition_count; transmit++) {
-			int   tx_channel      = sparse ? imageLoad(sparse_elements, transmit - int(sparse)).x : transmit;
-			vec3  transmit_center = vec3(xdc_element_pitch * vec2(tx_channel, floor(channel_count / 2)), 0);
-
-			float sidx  = sample_index(distance(xdc_world_point, transmit_center) + receive_distance);
-			result     += apodization * sample_rf(u_channel, transmit, sidx);
-		}
-	}
-	return result;
+	if (fast) return RESULT_TYPE_CAST(HERCULES_receive_channel_range(world_point, u_channel, u_channel + 1));
+	else      return RESULT_TYPE_CAST(HERCULES_receive_channel_range(world_point, 0,         int(channel_count)));
 }
-#else
-RESULT_TYPE FORCES(vec3 world_point)
-{
-	vec3 xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
 
+RESULT_TYPE FORCES_receive_channel_range(vec3 world_point, int rx_channel_start, int rx_channel_end)
+{
 	RESULT_TYPE result = RESULT_TYPE(0);
-	for (int rx_channel = 0; rx_channel < channel_count; rx_channel++) {
+	vec3 xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
+	for (int rx_channel = rx_channel_start; rx_channel < rx_channel_end; rx_channel++) {
 		float receive_distance = distance(xdc_world_point.xz, vec2(rx_channel * xdc_element_pitch.x, 0));
 		float apodization      = apodize(f_number * radians(180) / abs(xdc_world_point.z) *
 		                                 (xdc_world_point.x - rx_channel * xdc_element_pitch.x));
@@ -323,13 +245,18 @@ RESULT_TYPE FORCES(vec3 world_point)
 
 				float       sidx  = sample_index(distance(xdc_world_point, transmit_center) + receive_distance);
 				SAMPLE_TYPE value = apodization * sample_rf(rx_channel, transmit, sidx);
-				result += RESULT_TYPE(value, length(value));
+				result += RESULT_STORE(value, length(value));
 			}
 		}
 	}
 	return result;
 }
-#endif
+
+RESULT_TYPE FORCES(vec3 world_point)
+{
+	if (fast) return RESULT_TYPE_CAST(FORCES_receive_channel_range(world_point, u_channel, u_channel + 1));
+	else      return RESULT_TYPE_CAST(FORCES_receive_channel_range(world_point, 0,         int(channel_count)));
+}
 
 void main()
 {
