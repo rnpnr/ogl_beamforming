@@ -275,14 +275,14 @@ function void
 mark_parameter_block_region_dirty(BeamformerSharedMemory *sm, u32 block, BeamformerParameterBlockRegions region)
 {
 	BeamformerParameterBlock *pb = beamformer_parameter_block(sm, block);
-	atomic_or_u32(&pb->dirty_regions, 1 << region);
+	atomic_or_u32(&pb->dirty_regions, 1u << region);
 }
 
 function void
 mark_parameter_block_region_clean(BeamformerSharedMemory *sm, u32 block, BeamformerParameterBlockRegions region)
 {
 	BeamformerParameterBlock *pb = beamformer_parameter_block(sm, block);
-	atomic_and_u32(&pb->dirty_regions, ~(1 << region));
+	atomic_and_u32(&pb->dirty_regions, ~(1u << region));
 }
 
 function void
