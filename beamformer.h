@@ -139,12 +139,7 @@ typedef struct {
 	X(demodulation_frequency, f32, float) \
 	X(speed_of_sound,         f32, float) \
 	X(time_offset,            f32, float) \
-	X(f_number,               f32, float) \
-	X(shader_flags,           u32, int)   \
-	X(shader_kind,            u32, uint)  \
-	X(sample_count,           u32, uint)  \
-	X(channel_count,          u32, uint)  \
-	X(acquisition_count,      u32, uint)
+	X(f_number,               f32, float)
 
 typedef alignas(16) struct {
 	#define X(name, type, ...) type name;
@@ -165,6 +160,7 @@ typedef alignas(16) struct {
 	#define X(name, type, ...) type name;
 	BEAMFORMER_DAS_UBO_PARAM_LIST
 	#undef X
+	float _pad[1];
 } BeamformerDASUBO;
 static_assert((sizeof(BeamformerDASUBO) & 15) == 0, "UBO size must be a multiple of 16");
 
@@ -227,6 +223,12 @@ struct BeamformerComputePlan {
 	#define X(k, type, name) type name ##_ubo_data;
 	BEAMFORMER_COMPUTE_UBO_LIST
 	#undef X
+
+	u32 das_shader_kind;
+	u32 das_sample_count;
+	u32 das_channel_count;
+	u32 das_acquisition_count;
+	i32 das_shader_flags;
 
 	BeamformerComputePlan *next;
 };

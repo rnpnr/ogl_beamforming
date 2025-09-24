@@ -1,13 +1,10 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
- * [ ]: do JIT compilation of shaders
- *      - a larger subset of parameters can be made into compile time constants
- *      - preallocated storage for shaders is minimized
- *      - loops over TX and RX count can be unrolled
- *      - hot reload can still be trivially supported:
- *        - loop over shaders for the current pipeline
- *        - check if the base shader matches the shader we are trying to reload
- *        - load header and append constants which are stored in the pipeline parameters
+ * [ ]: refactor: fancier hot reloading for JIT shaders
+ *      - loop over all active blocks
+          - loop over shader sets per block
+ *      - when match found reload it
+ * [ ]: refactor: move shader bake parameters into meta code
  * [ ]: measure performance of doing channel mapping in a separate shader
  * [ ]: BeamformWorkQueue -> BeamformerWorkQueue
  * [ ]: need to keep track of gpu memory in some way
@@ -445,7 +442,7 @@ das_voxel_transform_matrix(BeamformerParameters *bp)
 }
 
 function void
-das_ubo_from_beamformer_parameters(BeamformerDASUBO *du, BeamformerParameters *bp)
+das_ubo_from_beamformer_parameters(BeamformerComputePlan *cp, BeamformerDASUBO *du, BeamformerParameters *bp)
 {
 	du->voxel_transform = das_voxel_transform_matrix(bp);
 	mem_copy(du->xdc_transform.E,     bp->xdc_transform,     sizeof(du->xdc_transform));
@@ -455,13 +452,14 @@ das_ubo_from_beamformer_parameters(BeamformerDASUBO *du, BeamformerParameters *b
 	du->speed_of_sound         = bp->speed_of_sound;
 	du->time_offset            = bp->time_offset;
 	du->f_number               = bp->f_number;
-	du->shader_kind            = bp->das_shader_id;
-	du->sample_count           = bp->sample_count;
-	du->channel_count          = bp->channel_count;
-	du->acquisition_count      = bp->acquisition_count;
 
-	du->shader_flags = 0;
-	if (bp->coherency_weighting) du->shader_flags |= BeamformerShaderDASFlags_CoherencyWeighting;
+	cp->das_shader_kind        = bp->das_shader_id;
+	cp->das_sample_count       = bp->sample_count;
+	cp->das_channel_count      = bp->channel_count;
+	cp->das_acquisition_count  = bp->acquisition_count;
+
+	cp->das_shader_flags = 0;
+	if (bp->coherency_weighting) cp->das_shader_flags |= BeamformerShaderDASFlags_CoherencyWeighting;
 }
 
 function void
@@ -469,7 +467,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 {
 	BeamformerDASUBO *bp = &cp->das_ubo_data;
 
-	das_ubo_from_beamformer_parameters(bp, &pb->parameters);
+	das_ubo_from_beamformer_parameters(cp, bp, &pb->parameters);
 
 	b32 decode_first = pb->pipeline.shaders[0] == BeamformerShaderKind_Decode;
 	b32 run_cuda_hilbert = 0;
@@ -546,9 +544,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				das_data_kind = BeamformerDataKind_Float32Complex;
 
 			i32 local_flags = 0;
-			if ((bp->shader_flags & BeamformerShaderDASFlags_CoherencyWeighting) == 0)
+			if ((cp->das_shader_flags & BeamformerShaderDASFlags_CoherencyWeighting) == 0)
 				local_flags |= BeamformerShaderDASFlags_Fast;
-			if (bp->shader_kind == BeamformerDASKind_UFORCES || bp->shader_kind == BeamformerDASKind_UHERCULES)
+			if (cp->das_shader_kind == BeamformerDASKind_UFORCES || cp->das_shader_kind == BeamformerDASKind_UHERCULES)
 				local_flags |= BeamformerShaderDASFlags_Sparse;
 			if (pb->parameters.interpolate)
 				local_flags |= BeamformerShaderDASFlags_Interpolate;
@@ -572,8 +570,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	cp->pipeline.data_kind = data_kind;
 
 	u32 das_sample_stride   = 1;
-	u32 das_transmit_stride = bp->sample_count;
-	u32 das_channel_stride  = bp->acquisition_count * bp->sample_count;
+	u32 das_transmit_stride = cp->das_sample_count;
+	u32 das_channel_stride  = cp->das_acquisition_count * cp->das_sample_count;
 
 	u32 decimation_rate = MAX(pb->parameters.decimation_rate, 1);
 	if (demodulate) {
@@ -582,14 +580,14 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	}
 
 	u32 input_sample_stride   = 1;
-	u32 input_transmit_stride = bp->sample_count;
+	u32 input_transmit_stride = cp->das_sample_count;
 	u32 input_channel_stride  = pb->parameters.raw_data_dimensions[0];
 
 	BeamformerDecodeUBO *dp = &cp->decode_ubo_data;
 	dp->decode_mode    = pb->parameters.decode;
-	dp->transmit_count = bp->acquisition_count;
+	dp->transmit_count = cp->das_acquisition_count;
 
-	dp->input_sample_stride    = decode_first? input_sample_stride   : bp->acquisition_count;
+	dp->input_sample_stride    = decode_first? input_sample_stride   : cp->das_acquisition_count;
 	dp->input_channel_stride   = decode_first? input_channel_stride  : das_channel_stride;
 	dp->input_transmit_stride  = decode_first? input_transmit_stride : 1;
 	dp->output_sample_stride   = das_sample_stride;
@@ -600,9 +598,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 		dp->output_transmit_stride *= decimation_rate;
 	}
 
-	cp->decode_dispatch.x = (u32)ceil_f32((f32)bp->sample_count      / DECODE_LOCAL_SIZE_X);
-	cp->decode_dispatch.y = (u32)ceil_f32((f32)bp->channel_count     / DECODE_LOCAL_SIZE_Y);
-	cp->decode_dispatch.z = (u32)ceil_f32((f32)bp->acquisition_count / DECODE_LOCAL_SIZE_Z);
+	cp->decode_dispatch.x = (u32)ceil_f32((f32)cp->das_sample_count      / DECODE_LOCAL_SIZE_X);
+	cp->decode_dispatch.y = (u32)ceil_f32((f32)cp->das_channel_count     / DECODE_LOCAL_SIZE_Y);
+	cp->decode_dispatch.z = (u32)ceil_f32((f32)cp->das_acquisition_count / DECODE_LOCAL_SIZE_Z);
 
 	/* NOTE(rnp): decode 2 samples per dispatch when data is i16 */
 	if (decode_first && data_kind == BeamformerDataKind_Int16)
@@ -624,7 +622,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 		mp->decimation_rate        = decimation_rate;
 
 		bp->sampling_frequency /= 2 * (f32)mp->decimation_rate;
-		bp->sample_count       /= 2 * mp->decimation_rate;
+		cp->das_sample_count   /= 2 * mp->decimation_rate;
 
 		if (decode_first) {
 			mp->input_channel_stride  = dp->output_channel_stride;
@@ -644,16 +642,16 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			mp->output_sample_stride   = dp->input_sample_stride;
 			mp->output_transmit_stride = dp->input_transmit_stride;
 
-			cp->decode_dispatch.x = (u32)ceil_f32((f32)bp->sample_count / DECODE_LOCAL_SIZE_X);
+			cp->decode_dispatch.x = (u32)ceil_f32((f32)cp->das_sample_count / DECODE_LOCAL_SIZE_X);
 		}
 	}
 
 	/* TODO(rnp): filter may need a different dispatch layout */
-	cp->demod_dispatch.x = (u32)ceil_f32((f32)bp->sample_count      / FILTER_LOCAL_SIZE_X);
-	cp->demod_dispatch.y = (u32)ceil_f32((f32)bp->channel_count     / FILTER_LOCAL_SIZE_Y);
-	cp->demod_dispatch.z = (u32)ceil_f32((f32)bp->acquisition_count / FILTER_LOCAL_SIZE_Z);
+	cp->demod_dispatch.x = (u32)ceil_f32((f32)cp->das_sample_count      / FILTER_LOCAL_SIZE_X);
+	cp->demod_dispatch.y = (u32)ceil_f32((f32)cp->das_channel_count     / FILTER_LOCAL_SIZE_Y);
+	cp->demod_dispatch.z = (u32)ceil_f32((f32)cp->das_acquisition_count / FILTER_LOCAL_SIZE_Z);
 
-	cp->rf_size = bp->sample_count * bp->channel_count * bp->acquisition_count;
+	cp->rf_size = cp->das_sample_count * cp->das_channel_count * cp->das_acquisition_count;
 	if (demodulate || run_cuda_hilbert) cp->rf_size *= 8;
 	else                                cp->rf_size *= 4;
 
@@ -662,12 +660,12 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	flt->demodulation_frequency = bp->demodulation_frequency;
 	flt->sampling_frequency     = bp->sampling_frequency;
 	flt->decimation_rate        = 1;
-	flt->output_channel_stride  = bp->sample_count * bp->acquisition_count;
+	flt->output_channel_stride  = cp->das_sample_count * cp->das_acquisition_count;
 	flt->output_sample_stride   = 1;
-	flt->output_transmit_stride = bp->sample_count;
-	flt->input_channel_stride   = bp->sample_count * bp->acquisition_count;
+	flt->output_transmit_stride = cp->das_sample_count;
+	flt->input_channel_stride   = cp->das_sample_count * cp->das_acquisition_count;
 	flt->input_sample_stride    = 1;
-	flt->input_transmit_stride  = bp->sample_count;
+	flt->input_transmit_stride  = cp->das_sample_count;
 }
 
 function void
@@ -741,7 +739,6 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 	BeamformerShaderKind        shader = cp->pipeline.shaders[shader_slot];
 	BeamformerShaderDescriptor *sd     = beamformer_shader_descriptors + shader;
 
-
 	u32 program          = 0;
 	i32 reloadable_index = beamformer_shader_reloadable_index_by_shader[shader];
 	if (reloadable_index != -1) {
@@ -767,8 +764,26 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 
 		if (sd->has_local_flags) {
 			stream_append_s8(&shader_stream, s8("#define ShaderFlags (0x"));
-			stream_append_hex_u64(&shader_stream, (u64)match_vector[sd->match_vector_length]);
+			i32 flags = match_vector[sd->match_vector_length];
+			if (shader == BeamformerShaderKind_DAS) flags |= cp->das_shader_flags;
+			stream_append_hex_u64(&shader_stream, (u64)flags);
 			stream_append_s8(&shader_stream, s8(")\n"));
+		}
+
+		/* TODO(rnp): generate this */
+		switch (base_shader) {
+		case BeamformerShaderKind_DAS:{
+			stream_append_s8(&shader_stream, s8("#define ShaderKind "));
+			stream_append_u64(&shader_stream, cp->das_shader_kind);
+			stream_append_s8(&shader_stream, s8("\n#define SampleCount "));
+			stream_append_u64(&shader_stream, cp->das_sample_count);
+			stream_append_s8(&shader_stream, s8("\n#define ChannelCount "));
+			stream_append_u64(&shader_stream, cp->das_channel_count);
+			stream_append_s8(&shader_stream, s8("\n#define AcquisitionCount "));
+			stream_append_u64(&shader_stream, cp->das_acquisition_count);
+			stream_append_s8(&shader_stream, s8("\n"));
+		}break;
+		default:{}break;
 		}
 
 		stream_append_s8(&shader_stream, s8("\n#line 1\n"));
@@ -820,8 +835,8 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			if (ctx->compute_context.ping_pong_ssbo_size < decoded_data_size)
 				alloc_shader_storage(ctx, decoded_data_size, arena);
 
-			if (cp->hadamard_order != (i32)cp->das_ubo_data.acquisition_count)
-				update_hadamard_texture(cp, (i32)cp->das_ubo_data.acquisition_count, arena);
+			if (cp->hadamard_order != (i32)cp->das_acquisition_count)
+				update_hadamard_texture(cp, (i32)cp->das_acquisition_count, arena);
 
 			cp->min_coordinate = v3_from_f32_array(pb->parameters.output_min_coordinate);
 			cp->max_coordinate = v3_from_f32_array(pb->parameters.output_max_coordinate);
@@ -954,8 +969,6 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 	case BeamformerShaderKind_DAS:{
 		local_persist u32 das_cycle_t = 0;
 
-		BeamformerDASUBO *ubo = &cp->das_ubo_data;
-
 		i32 local_flags = match_vector[shader_descriptor->match_vector_length];
 		b32 fast        = (local_flags & BeamformerShaderDASFlags_Fast)   != 0;
 		b32 sparse      = (local_flags & BeamformerShaderDASFlags_Sparse) != 0;
@@ -981,14 +994,14 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 
 		if (fast) {
 			i32 loop_end;
-			if (ubo->shader_kind == BeamformerDASKind_RCA_VLS ||
-			    ubo->shader_kind == BeamformerDASKind_RCA_TPW)
+			if (cp->das_shader_kind == BeamformerDASKind_RCA_VLS ||
+			    cp->das_shader_kind == BeamformerDASKind_RCA_TPW)
 			{
 				/* NOTE(rnp): to avoid repeatedly sampling the whole focal vectors
 				 * texture we loop over transmits for VLS/TPW */
-				loop_end = (i32)ubo->acquisition_count;
+				loop_end = (i32)cp->das_acquisition_count;
 			} else {
-				loop_end = (i32)ubo->channel_count;
+				loop_end = (i32)cp->das_channel_count;
 			}
 			f32 percent_per_step = 1.0f / (f32)loop_end;
 			cc->processing_progress = -percent_per_step;
@@ -1204,8 +1217,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 
 			frame->min_coordinate  = cp->min_coordinate;
 			frame->max_coordinate  = cp->max_coordinate;
-			frame->das_kind        = cp->das_ubo_data.shader_kind;
-			frame->compound_count  = cp->das_ubo_data.acquisition_count;
+			frame->das_kind        = cp->das_shader_kind;
+			frame->compound_count  = cp->das_acquisition_count;
 
 			BeamformerComputeContext  *cc       = &ctx->compute_context;
 			BeamformerComputePipeline *pipeline = &cp->pipeline;
