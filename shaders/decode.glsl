@@ -55,7 +55,7 @@ layout(std430, binding = 3) writeonly restrict buffer buffer_3 {
 	SAMPLE_DATA_TYPE out_data[];
 };
 
-layout(r8i,  binding = 0) readonly restrict uniform iimage2D hadamard;
+layout(r32f, binding = 0) readonly restrict uniform image2D  hadamard;
 layout(r16i, binding = 1) readonly restrict uniform iimage1D channel_mapping;
 
 SAMPLE_DATA_TYPE sample_rf_data(uint index)

@@ -1,13 +1,13 @@
 #include "external/cephes.c"
 
 function void
-fill_kronecker_sub_matrix(i32 *out, i32 out_stride, i32 scale, i32 *b, iv2 b_dim)
+fill_kronecker_sub_matrix(f32 *out, i32 out_stride, f32 scale, f32 *b, iv2 b_dim)
 {
 	f32x4 vscale = dup_f32x4((f32)scale);
 	for (i32 i = 0; i < b_dim.y; i++) {
 		for (i32 j = 0; j < b_dim.x; j += 4, b += 4) {
-			f32x4 vb = cvt_i32x4_f32x4(load_i32x4(b));
-			store_i32x4(out + j, cvt_f32x4_i32x4(mul_f32x4(vscale, vb)));
+			f32x4 vb = load_f32x4(b);
+			store_f32x4(out + j, mul_f32x4(vscale, vb));
 		}
 		out += out_stride;
 	}
@@ -15,12 +15,12 @@ fill_kronecker_sub_matrix(i32 *out, i32 out_stride, i32 scale, i32 *b, iv2 b_dim
 
 /* NOTE: this won't check for valid space/etc and assumes row major order */
 function void
-kronecker_product(i32 *out, i32 *a, iv2 a_dim, i32 *b, iv2 b_dim)
+kronecker_product(f32 *out, f32 *a, iv2 a_dim, f32 *b, iv2 b_dim)
 {
 	iv2 out_dim = {{a_dim.x * b_dim.x, a_dim.y * b_dim.y}};
 	assert(out_dim.y % 4 == 0);
 	for (i32 i = 0; i < a_dim.y; i++) {
-		i32 *vout = out;
+		f32 *vout = out;
 		for (i32 j = 0; j < a_dim.x; j++, a++) {
 			fill_kronecker_sub_matrix(vout, out_dim.y, *a, b, b_dim);
 			vout += b_dim.y;
@@ -30,10 +30,10 @@ kronecker_product(i32 *out, i32 *a, iv2 a_dim, i32 *b, iv2 b_dim)
 }
 
 /* NOTE/TODO: to support even more hadamard sizes use the Paley construction */
-function i32 *
+function f32 *
 make_hadamard_transpose(Arena *a, i32 dim)
 {
-	read_only local_persist	i32 hadamard_12_12_transpose[] = {
+	read_only local_persist	f32 hadamard_12_12_transpose[] = {
 		1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
 		1, -1, -1,  1, -1, -1, -1,  1,  1,  1, -1,  1,
 		1,  1, -1, -1,  1, -1, -1, -1,  1,  1,  1, -1,
@@ -48,7 +48,7 @@ make_hadamard_transpose(Arena *a, i32 dim)
 		1, -1,  1, -1, -1, -1,  1,  1,  1, -1,  1, -1,
 	};
 
-	read_only local_persist i32 hadamard_20_20_transpose[] = {
+	read_only local_persist f32 hadamard_20_20_transpose[] = {
 		1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
 		1, -1, -1,  1,  1, -1, -1, -1, -1,  1, -1,  1, -1,  1,  1,  1,  1, -1, -1,  1,
 		1, -1,  1,  1, -1, -1, -1, -1,  1, -1,  1, -1,  1,  1,  1,  1, -1, -1,  1, -1,
@@ -71,7 +71,7 @@ make_hadamard_transpose(Arena *a, i32 dim)
 		1,  1, -1, -1,  1,  1, -1, -1, -1, -1,  1, -1,  1, -1,  1,  1,  1,  1, -1, -1,
 	};
 
-	i32 *result = 0;
+	f32 *result = 0;
 
 	b32 power_of_2     = ISPOWEROF2(dim);
 	b32 multiple_of_12 = dim % 12 == 0;
@@ -89,18 +89,18 @@ make_hadamard_transpose(Arena *a, i32 dim)
 		dim      /= 12;
 	}
 
-	if (ISPOWEROF2(dim) && base_dim && arena_capacity(a, i32) >= elements * (1 + (dim != base_dim))) {
-		result = push_array(a, i32, elements);
+	if (ISPOWEROF2(dim) && base_dim && arena_capacity(a, f32) >= elements * (1 + (dim != base_dim))) {
+		result = push_array(a, f32, elements);
 
 		Arena tmp = *a;
-		i32 *m = dim == base_dim ? result : push_array(&tmp, i32, elements);
+		f32 *m = dim == base_dim ? result : push_array(&tmp, f32, elements);
 
 		#define IND(i, j) ((i) * dim + (j))
 		m[0] = 1;
 		for (i32 k = 1; k < dim; k *= 2) {
 			for (i32 i = 0; i < k; i++) {
 				for (i32 j = 0; j < k; j++) {
-					i32 val = m[IND(i, j)];
+					f32 val = m[IND(i, j)];
 					m[IND(i + k, j)]     =  val;
 					m[IND(i, j + k)]     =  val;
 					m[IND(i + k, j + k)] = -val;
@@ -109,7 +109,7 @@ make_hadamard_transpose(Arena *a, i32 dim)
 		}
 		#undef IND
 
-		i32 *m2 = 0;
+		f32 *m2 = 0;
 		iv2 m2_dim;
 		switch (base_dim) {
 		case 12:{ m2 = hadamard_12_12_transpose; m2_dim = (iv2){{12, 12}}; }break;

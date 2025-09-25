@@ -245,14 +245,14 @@ alloc_beamform_frame(GLParams *gp, BeamformerFrame *out, iv3 out_dim, GLenum gl_
 function void
 update_hadamard_texture(BeamformerComputePlan *cp, i32 order, Arena arena)
 {
-	i32 *hadamard = make_hadamard_transpose(&arena, order);
+	f32 *hadamard = make_hadamard_transpose(&arena, order);
 	if (hadamard) {
 		cp->hadamard_order = order;
 		u32 *texture = cp->textures + BeamformerComputeTextureKind_Hadamard;
 		glDeleteTextures(1, texture);
 		glCreateTextures(GL_TEXTURE_2D, 1, texture);
-		glTextureStorage2D(*texture, 1, GL_R8I, order, order);
-		glTextureSubImage2D(*texture, 0, 0, 0,  order, order, GL_RED_INTEGER, GL_INT, hadamard);
+		glTextureStorage2D(*texture, 1, GL_R32F, order, order);
+		glTextureSubImage2D(*texture, 0, 0, 0, order, order, GL_RED, GL_FLOAT, hadamard);
 
 		Stream label = arena_stream(arena);
 		stream_append_s8(&label, s8("Hadamard"));
@@ -878,7 +878,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 
 	switch (shader) {
 	case BeamformerShaderKind_Decode:{
-		glBindImageTexture(0, cp->textures[BeamformerComputeTextureKind_Hadamard], 0, 0, 0, GL_READ_ONLY, GL_R8I);
+		glBindImageTexture(0, cp->textures[BeamformerComputeTextureKind_Hadamard], 0, 0, 0, GL_READ_ONLY, GL_R32F);
 
 		if (shader_slot == 0) {
 			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, cc->ping_pong_ssbos[input_ssbo_idx]);
