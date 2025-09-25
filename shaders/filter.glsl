@@ -61,7 +61,7 @@ vec2 rotate_iq(vec2 iq, int index)
 		result = iq;
 	}break;
 	default:{
-		float arg    = radians(360) * demodulation_frequency * index / sampling_frequency;
+		float arg    = radians(360) * DemodulationFrequency * index / SamplingFrequency;
 		mat2  phasor = mat2(cos(arg), -sin(arg),
 		                    sin(arg),  cos(arg));
 		result = phasor * iq;

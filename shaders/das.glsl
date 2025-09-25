@@ -58,7 +58,7 @@ layout(r8i,   binding = 3) readonly  restrict uniform iimage1D transmit_receive_
 #if DataKind == DataKind_Float32Complex
 vec2 rotate_iq(const vec2 iq, const float time)
 {
-	float arg    = radians(360) * demodulation_frequency * time;
+	float arg    = radians(360) * DemodulationFrequency * time;
 	mat2  phasor = mat2( cos(arg), sin(arg),
 	                    -sin(arg), cos(arg));
 	vec2 result = phasor * iq;
@@ -108,14 +108,14 @@ SAMPLE_TYPE sample_rf(const int channel, const int transmit, const float index)
 	int base_index = int(channel * SampleCount * AcquisitionCount + transmit * SampleCount);
 	if (interpolate) result *= cubic(base_index, index);
 	else             result *= rf_data[base_index + int(round(index))];
-	result = rotate_iq(result, index / sampling_frequency);
+	result = rotate_iq(result, index / SamplingFrequency);
 	return result;
 }
 
 float sample_index(const float distance)
 {
-	float  time = distance / speed_of_sound + time_offset;
-	return time * sampling_frequency;
+	float  time = distance / SpeedOfSound + TimeOffset;
+	return time * SamplingFrequency;
 }
 
 float apodize(const float arg)
@@ -179,7 +179,7 @@ RESULT_TYPE RCA(const vec3 world_point)
 		for (int rx_channel = 0; rx_channel < ChannelCount; rx_channel++) {
 			vec3  rx_center      = vec3(rx_channel * xdc_element_pitch, 0);
 			vec2  receive_vector = xdc_world_point - rca_plane_projection(rx_center, rx_rows);
-			float apodization    = apodize(f_number * radians(180) / abs(xdc_world_point.y) * receive_vector.x);
+			float apodization    = apodize(FNumber * radians(180) / abs(xdc_world_point.y) * receive_vector.x);
 
 			if (apodization > 0) {
 				float       sidx  = sample_index(transmit_distance + length(receive_vector));
@@ -210,7 +210,7 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 			if (rx_cols) element_position = vec3(rx_channel, tx_channel, 0) * vec3(xdc_element_pitch, 0);
 			else         element_position = vec3(tx_channel, rx_channel, 0) * vec3(xdc_element_pitch, 0);
 
-			float apodization = apodize(f_number * radians(180) / abs(xdc_world_point.z) *
+			float apodization = apodize(FNumber * radians(180) / abs(xdc_world_point.z) *
 			                            distance(xdc_world_point.xy, element_position.xy));
 			if (apodization > 0) {
 				/* NOTE: tribal knowledge */
@@ -234,7 +234,7 @@ RESULT_TYPE FORCES(const vec3 world_point)
 	vec3 xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
 	for (int rx_channel = rx_channel_start; rx_channel < rx_channel_end; rx_channel++) {
 		float receive_distance = distance(xdc_world_point.xz, vec2(rx_channel * xdc_element_pitch.x, 0));
-		float apodization      = apodize(f_number * radians(180) / abs(xdc_world_point.z) *
+		float apodization      = apodize(FNumber * radians(180) / abs(xdc_world_point.z) *
 		                                 (xdc_world_point.x - rx_channel * xdc_element_pitch.x));
 		if (apodization > 0) {
 			for (int transmit = int(sparse); transmit < AcquisitionCount; transmit++) {

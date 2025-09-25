@@ -108,42 +108,22 @@ typedef struct {
 } BeamformerFilter;
 
 /* X(name, type, gltype) */
-#define BEAMFORMER_FILTER_UBO_PARAM_LIST \
-	X(demodulation_frequency, f32, float) \
-	X(sampling_frequency,     f32, float)
-
-/* X(name, type, gltype) */
 #define BEAMFORMER_DAS_UBO_PARAM_LIST \
-	X(voxel_transform,        m4,  mat4)  \
-	X(xdc_transform,          m4,  mat4)  \
-	X(xdc_element_pitch,      v2,  vec2)  \
-	X(sampling_frequency,     f32, float) \
-	X(demodulation_frequency, f32, float) \
-	X(speed_of_sound,         f32, float) \
-	X(time_offset,            f32, float) \
-	X(f_number,               f32, float)
-
-typedef alignas(16) struct {
-	#define X(name, type, ...) type name;
-	BEAMFORMER_FILTER_UBO_PARAM_LIST
-	#undef X
-	float _pad[2];
-} BeamformerFilterUBO;
-static_assert((sizeof(BeamformerFilterUBO) & 15) == 0, "UBO size must be a multiple of 16");
+	X(voxel_transform,        m4,  mat4) \
+	X(xdc_transform,          m4,  mat4) \
+	X(xdc_element_pitch,      v2,  vec2)
 
 typedef alignas(16) struct {
 	#define X(name, type, ...) type name;
 	BEAMFORMER_DAS_UBO_PARAM_LIST
 	#undef X
-	float _pad[1];
+	float _pad[2];
 } BeamformerDASUBO;
 static_assert((sizeof(BeamformerDASUBO) & 15) == 0, "UBO size must be a multiple of 16");
 
 /* TODO(rnp): need 1 UBO per filter slot */
 #define BEAMFORMER_COMPUTE_UBO_LIST \
-	X(DAS,        BeamformerDASUBO,    das)    \
-	X(Filter,     BeamformerFilterUBO, filter) \
-	X(Demodulate, BeamformerFilterUBO, demod)
+	X(DAS,        BeamformerDASUBO,    das)
 
 #define X(k, ...) BeamformerComputeUBOKind_##k,
 typedef enum {BEAMFORMER_COMPUTE_UBO_LIST BeamformerComputeUBOKind_Count} BeamformerComputeUBOKind;

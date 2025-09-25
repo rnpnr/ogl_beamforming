@@ -1175,8 +1175,7 @@ add_beamformer_parameters_view(Variable *parent, BeamformerCtx *ctx)
 	                        &bp->sampling_frequency, (v2){0}, 1e-6f, 0, 0, ui->font);
 
 	add_beamformer_variable(ui, group, &ui->arena, s8("Demodulation Frequency:"), s8("[MHz]"),
-	                        &bp->demodulation_frequency, (v2){.y = 100e6f}, 1e-6f, 1e5f,
-	                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
+	                        &bp->demodulation_frequency, (v2){.y = 100e6f}, 1e-6f, 0, 0, ui->font);
 
 	add_beamformer_variable(ui, group, &ui->arena, s8("Speed of Sound:"), s8("[m/s]"),
 	                        &bp->speed_of_sound, (v2){.y = 1e6f}, 1.0f, 10.0f,

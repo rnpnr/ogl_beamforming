@@ -448,16 +448,15 @@ das_ubo_from_beamformer_parameters(BeamformerComputePlan *cp, BeamformerDASUBO *
 	du->voxel_transform = das_voxel_transform_matrix(bp);
 	mem_copy(du->xdc_transform.E,     bp->xdc_transform,     sizeof(du->xdc_transform));
 	mem_copy(du->xdc_element_pitch.E, bp->xdc_element_pitch, sizeof(du->xdc_element_pitch));
-	du->sampling_frequency     = bp->sampling_frequency;
-	du->demodulation_frequency = bp->demodulation_frequency;
-	du->speed_of_sound         = bp->speed_of_sound;
-	du->time_offset            = bp->time_offset;
-	du->f_number               = bp->f_number;
-
-	cp->das_bake.shader_kind       = bp->das_shader_id;
-	cp->das_bake.sample_count      = bp->sample_count;
-	cp->das_bake.channel_count     = bp->channel_count;
-	cp->das_bake.acquisition_count = bp->acquisition_count;
+	cp->das_bake.sampling_frequency     = bp->sampling_frequency;
+	cp->das_bake.demodulation_frequency = bp->demodulation_frequency;
+	cp->das_bake.speed_of_sound         = bp->speed_of_sound;
+	cp->das_bake.time_offset            = bp->time_offset;
+	cp->das_bake.f_number               = bp->f_number;
+	cp->das_bake.shader_kind            = bp->das_shader_id;
+	cp->das_bake.sample_count           = bp->sample_count;
+	cp->das_bake.channel_count          = bp->channel_count;
+	cp->das_bake.acquisition_count      = bp->acquisition_count;
 
 	cp->das_bake.shader_flags = 0;
 	if (bp->coherency_weighting) cp->das_bake.shader_flags |= BeamformerShaderDASFlags_CoherencyWeighting;
@@ -522,7 +521,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			BeamformerShaderFilterBakeParameters *b = &cp->demodulate_bake;
 			BeamformerFilter *f = cp->filters + sp->filter_slot;
 
-			bp->time_offset += f->time_delay;
+			cp->das_bake.time_offset += f->time_delay;
 
 			b->filter_length = (u32)f->length;
 			b->sampling_mode = pb->parameters.sampling_mode;
@@ -540,7 +539,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			BeamformerShaderFilterBakeParameters *b = &cp->filter_bake;
 			BeamformerFilter *f = cp->filters + sp->filter_slot;
 
-			bp->time_offset += f->time_delay;
+			cp->das_bake.time_offset += f->time_delay;
 
 			b->filter_length = (u32)f->length;
 			b->shader_flags  = 0;
@@ -617,13 +616,12 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	 */
 	if (demodulate) {
 		BeamformerShaderFilterBakeParameters *b = &cp->demodulate_bake;
-		BeamformerFilterUBO *mp    = &cp->demod_ubo_data;
-		mp->demodulation_frequency = bp->demodulation_frequency;
-		mp->sampling_frequency     = bp->sampling_frequency / 2;
-		b->decimation_rate         = decimation_rate;
+		b->demodulation_frequency = cp->das_bake.demodulation_frequency;
+		b->sampling_frequency     = cp->das_bake.sampling_frequency / 2;
+		b->decimation_rate        = decimation_rate;
 
-		bp->sampling_frequency    /= 2 * (f32)b->decimation_rate;
-		cp->das_bake.sample_count /= 2 * b->decimation_rate;
+		cp->das_bake.sampling_frequency /= 2 * (f32)b->decimation_rate;
+		cp->das_bake.sample_count       /= 2 * b->decimation_rate;
 
 		if (decode_first) {
 			b->input_channel_stride  = dp->output_channel_stride;
@@ -658,9 +656,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 	/* TODO(rnp): UBO per filter stage */
 	BeamformerShaderFilterBakeParameters *fltb = &cp->filter_bake;
-	BeamformerFilterUBO *flt = &cp->filter_ubo_data;
-	flt->demodulation_frequency  = bp->demodulation_frequency;
-	flt->sampling_frequency      = bp->sampling_frequency;
+	fltb->demodulation_frequency = cp->das_bake.demodulation_frequency;
+	fltb->sampling_frequency     = cp->das_bake.sampling_frequency;
 	fltb->decimation_rate        = 1;
 	fltb->output_channel_stride  = cp->das_bake.sample_count * cp->das_bake.acquisition_count;
 	fltb->output_sample_stride   = 1;
@@ -727,10 +724,6 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 			BEAMFORMER_DAS_UBO_PARAM_LIST
 			"};\n\n"
 		),
-		[BeamformerShaderKind_Filter] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
-			BEAMFORMER_FILTER_UBO_PARAM_LIST
-			"};\n\n"
-		),
 		#undef X
 	};
 
@@ -753,8 +746,8 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 
 		stream_append_s8(&shader_stream, beamformer_shader_local_header_strings[reloadable_index]);
 
-		if (beamformer_shader_bake_parameter_name_counts[reloadable_index]) {
-			i32 count = beamformer_shader_bake_parameter_name_counts[reloadable_index];
+		if (beamformer_shader_bake_parameter_counts[reloadable_index]) {
+			i32 count = beamformer_shader_bake_parameter_counts[reloadable_index];
 			u32 *parameters = 0;
 			/* TODO(rnp): generate this */
 			switch (shader) {
@@ -766,9 +759,11 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 			}
 
 			assert(parameters);
-			s8 *names = beamformer_shader_bake_parameter_names[reloadable_index];
+			s8 *names    = beamformer_shader_bake_parameter_names[reloadable_index];
+			u8 *is_float = beamformer_shader_bake_parameter_is_float[reloadable_index];
 			for (i32 index = 0; index < count; index++) {
-				stream_append_s8s(&shader_stream, s8("#define "), names[index], s8(" (0x"));
+				stream_append_s8s(&shader_stream, s8("#define "), names[index],
+				                  is_float[index]? s8(" uintBitsToFloat") : s8(" "), s8("(0x"));
 				stream_append_hex_u64(&shader_stream, parameters[index]);
 				stream_append_s8(&shader_stream, s8(")\n"));
 			}
@@ -920,9 +915,6 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 
 		b32 map_channels = (b->shader_flags & BeamformerShaderFilterFlags_MapChannels) != 0;
 
-		u32 index = shader == BeamformerShaderKind_Filter ? BeamformerComputeUBOKind_Filter
-		                                                  : BeamformerComputeUBOKind_Demodulate;
-		glBindBufferBase(GL_UNIFORM_BUFFER,        0, cp->ubos[index]);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, cc->ping_pong_ssbos[output_ssbo_idx]);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, cp->filters[sp->filter_slot].ssbo);
 

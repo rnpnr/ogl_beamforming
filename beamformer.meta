@@ -16,16 +16,16 @@
 
 		@Bake
 		{
-			@BakeVariable(DataKind             data_kind             )
-			@BakeVariable(DecodeMode           decode_mode           )
-			@BakeVariable(InputChannelStride   input_channel_stride  )
-			@BakeVariable(InputSampleStride    input_sample_stride   )
-			@BakeVariable(InputTransmitStride  input_transmit_stride )
-			@BakeVariable(OutputChannelStride  output_channel_stride )
-			@BakeVariable(OutputSampleStride   output_sample_stride  )
-			@BakeVariable(OutputTransmitStride output_transmit_stride)
-			@BakeVariable(ShaderFlags          shader_flags          )
-			@BakeVariable(TransmitCount        transmit_count        )
+			@BakeInt(DataKind             data_kind             )
+			@BakeInt(DecodeMode           decode_mode           )
+			@BakeInt(InputChannelStride   input_channel_stride  )
+			@BakeInt(InputSampleStride    input_sample_stride   )
+			@BakeInt(InputTransmitStride  input_transmit_stride )
+			@BakeInt(OutputChannelStride  output_channel_stride )
+			@BakeInt(OutputSampleStride   output_sample_stride  )
+			@BakeInt(OutputTransmitStride output_transmit_stride)
+			@BakeInt(ShaderFlags          shader_flags          )
+			@BakeInt(TransmitCount        transmit_count        )
 		}
 	}
 
@@ -37,17 +37,19 @@
 
 		@Bake
 		{
-			@BakeVariable(DataKind             data_kind             )
-			@BakeVariable(DecimationRate       decimation_rate       )
-			@BakeVariable(FilterLength         filter_length         )
-			@BakeVariable(InputChannelStride   input_channel_stride  )
-			@BakeVariable(InputSampleStride    input_sample_stride   )
-			@BakeVariable(InputTransmitStride  input_transmit_stride )
-			@BakeVariable(OutputChannelStride  output_channel_stride )
-			@BakeVariable(OutputSampleStride   output_sample_stride  )
-			@BakeVariable(OutputTransmitStride output_transmit_stride)
-			@BakeVariable(ShaderFlags          shader_flags          )
-			@BakeVariable(SamplingMode         sampling_mode         )
+			@BakeInt(DataKind             data_kind             )
+			@BakeInt(DecimationRate       decimation_rate       )
+			@BakeInt(FilterLength         filter_length         )
+			@BakeInt(InputChannelStride   input_channel_stride  )
+			@BakeInt(InputSampleStride    input_sample_stride   )
+			@BakeInt(InputTransmitStride  input_transmit_stride )
+			@BakeInt(OutputChannelStride  output_channel_stride )
+			@BakeInt(OutputSampleStride   output_sample_stride  )
+			@BakeInt(OutputTransmitStride output_transmit_stride)
+			@BakeInt(ShaderFlags          shader_flags          )
+			@BakeInt(SamplingMode         sampling_mode         )
+			@BakeFloat(DemodulationFrequency demodulation_frequency)
+			@BakeFloat(SamplingFrequency     sampling_frequency    )
 		}
 
 		@SubShader Demodulate
@@ -61,12 +63,17 @@
 
 		@Bake
 		{
-			@BakeVariable(AcquisitionCount acquisition_count)
-			@BakeVariable(ChannelCount     channel_count    )
-			@BakeVariable(DataKind         data_kind        )
-			@BakeVariable(SampleCount      sample_count     )
-			@BakeVariable(ShaderFlags      shader_flags     )
-			@BakeVariable(ShaderKind       shader_kind      )
+			@BakeInt(AcquisitionCount acquisition_count)
+			@BakeInt(ChannelCount     channel_count    )
+			@BakeInt(DataKind         data_kind        )
+			@BakeInt(SampleCount      sample_count     )
+			@BakeInt(ShaderFlags      shader_flags     )
+			@BakeInt(ShaderKind       shader_kind      )
+			@BakeFloat(DemodulationFrequency demodulation_frequency)
+			@BakeFloat(FNumber               f_number              )
+			@BakeFloat(SamplingFrequency     sampling_frequency    )
+			@BakeFloat(SpeedOfSound          speed_of_sound        )
+			@BakeFloat(TimeOffset            time_offset           )
 		}
 	}
 

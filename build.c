@@ -821,7 +821,8 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 #define META_ENTRY_KIND_LIST \
 	X(Invalid)      \
 	X(Bake)         \
-	X(BakeVariable) \
+	X(BakeInt)      \
+	X(BakeFloat)    \
 	X(BeginScope)   \
 	X(EndScope)     \
 	X(Enumeration)  \
@@ -1278,6 +1279,7 @@ typedef struct {
 typedef struct {
 	s8  *names_upper;
 	s8  *names_lower;
+	u8  *floating_point;
 	u32  entry_count;
 	u32  shader_id;
 } MetaShaderBakeParameters;
@@ -1399,19 +1401,21 @@ meta_pack_shader_bake_parameters(MetaContext *ctx, MetaEntry *e, iz entry_count,
 		assert(last->kind == MetaEntryKind_EndScope);
 
 		for (MetaEntry *row = e + 2; row != last; row++) {
-			if (row->kind != MetaEntryKind_BakeVariable)
+			if (row->kind != MetaEntryKind_BakeInt && row->kind != MetaEntryKind_BakeFloat)
 				meta_entry_nesting_error(row, MetaEntryKind_Bake);
 			meta_entry_argument_expected(row, s8("name"), s8("name_lower"));
 			bp->entry_count++;
 		}
 
-		bp->names_upper = push_array(ctx->arena, s8, bp->entry_count);
-		bp->names_lower = push_array(ctx->arena, s8, bp->entry_count);
+		bp->names_upper    = push_array(ctx->arena, s8, bp->entry_count);
+		bp->names_lower    = push_array(ctx->arena, s8, bp->entry_count);
+		bp->floating_point = push_array(ctx->arena, u8, bp->entry_count);
 
 		u32 row_index = 0;
 		for (MetaEntry *row = e + 2; row != last; row++, row_index++) {
-			bp->names_upper[row_index] = row->arguments[0].string;
-			bp->names_lower[row_index] = row->arguments[1].string;
+			bp->names_upper[row_index]    = row->arguments[0].string;
+			bp->names_lower[row_index]    = row->arguments[1].string;
+			bp->floating_point[row_index] = row->kind == MetaEntryKind_BakeFloat;
 		}
 	}
 
@@ -1798,8 +1802,10 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		                             ctx->shader_names.data[s->base_name_id], s8("BakeParameters"));
 		meta_begin_scope(m, s8("typedef union {"));
 			meta_begin_scope(m, s8("struct {"));
-				for (u32 entry = 0; entry < b->entry_count; entry++)
-					meta_push_line(m, s8("u32 "), b->names_lower[entry], s8(";"));
+				for (u32 entry = 0; entry < b->entry_count; entry++) {
+					s8 kind = b->floating_point[entry] ? s8("f32 ") : s8("u32 ");
+					meta_push_line(m, kind, b->names_lower[entry], s8(";"));
+				}
 			meta_end_scope(m, s8("};"));
 			meta_begin_line(m, s8("u32 E["));
 			meta_push_u64(m, b->entry_count);
@@ -1871,7 +1877,26 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	}
 	meta_end_scope(m, s8("};\n"));
 
-	meta_begin_scope(m, s8("read_only global i32 beamformer_shader_bake_parameter_name_counts[] = {"));
+	meta_begin_scope(m, s8("read_only global u8 *beamformer_shader_bake_parameter_is_float[] = {"));
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		MetaBaseShader *bs = ctx->base_shaders.data + shader;
+		MetaShader     *s  = bs->shader;
+		if (bs->file.len) {
+			if (s->bake_parameters) {
+				meta_begin_line(m, s8("(u8 []){"));
+				for (u32 index = 0; index < s->bake_parameters->entry_count; index++) {
+					if (index != 0) meta_push(m, s8(", "));
+					meta_push(m, s->bake_parameters->floating_point[index] ? s8("1") : s8("0"));
+				}
+				meta_end_line(m, s8("},"));
+			} else {
+				meta_push_line(m, s8("0,"));
+			}
+		}
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global i32 beamformer_shader_bake_parameter_counts[] = {"));
 	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
 		MetaBaseShader *bs = ctx->base_shaders.data + shader;
 		MetaShader     *s  = bs->shader;

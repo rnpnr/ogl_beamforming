@@ -94,8 +94,10 @@ typedef union {
 		u32 output_transmit_stride;
 		u32 shader_flags;
 		u32 sampling_mode;
+		f32 demodulation_frequency;
+		f32 sampling_frequency;
 	};
-	u32 E[11];
+	u32 E[13];
 } BeamformerShaderFilterBakeParameters;
 
 typedef union {
@@ -106,8 +108,13 @@ typedef union {
 		u32 sample_count;
 		u32 shader_flags;
 		u32 shader_kind;
+		f32 demodulation_frequency;
+		f32 f_number;
+		f32 sampling_frequency;
+		f32 speed_of_sound;
+		f32 time_offset;
 	};
-	u32 E[6];
+	u32 E[11];
 } BeamformerShaderDASBakeParameters;
 
 read_only global s8 beamformer_shader_names[] = {
@@ -248,6 +255,8 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("OutputTransmitStride"),
 		s8_comp("ShaderFlags"),
 		s8_comp("SamplingMode"),
+		s8_comp("DemodulationFrequency"),
+		s8_comp("SamplingFrequency"),
 	},
 	(s8 []){
 		s8_comp("AcquisitionCount"),
@@ -256,16 +265,30 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("SampleCount"),
 		s8_comp("ShaderFlags"),
 		s8_comp("ShaderKind"),
+		s8_comp("DemodulationFrequency"),
+		s8_comp("FNumber"),
+		s8_comp("SamplingFrequency"),
+		s8_comp("SpeedOfSound"),
+		s8_comp("TimeOffset"),
 	},
 	0,
 	0,
 	0,
 };
 
-read_only global i32 beamformer_shader_bake_parameter_name_counts[] = {
+read_only global u8 *beamformer_shader_bake_parameter_is_float[] = {
+	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1},
+	(u8 []){0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1},
+	0,
+	0,
+	0,
+};
+
+read_only global i32 beamformer_shader_bake_parameter_counts[] = {
 	10,
+	13,
 	11,
-	6,
 	0,
 	0,
 	0,
