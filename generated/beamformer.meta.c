@@ -76,6 +76,22 @@ typedef struct {
 typedef union {
 	struct {
 		u32 data_kind;
+		u32 decode_mode;
+		u32 input_channel_stride;
+		u32 input_sample_stride;
+		u32 input_transmit_stride;
+		u32 output_channel_stride;
+		u32 output_sample_stride;
+		u32 output_transmit_stride;
+		u32 shader_flags;
+		u32 transmit_count;
+	};
+	u32 E[10];
+} BeamformerShaderDecodeBakeParameters;
+
+typedef union {
+	struct {
+		u32 data_kind;
 		u32 decimation_rate;
 		u32 filter_length;
 		u32 input_channel_stride;
@@ -108,11 +124,7 @@ read_only global i32 *beamformer_shader_match_vectors[] = {
 	// CudaHilbert
 	0,
 	// Decode
-	(i32 []){BeamformerDataKind_Int16, 0x00},
-	(i32 []){BeamformerDataKind_Int16, 0x01},
-	(i32 []){BeamformerDataKind_Int16Complex, 0x00},
-	(i32 []){BeamformerDataKind_Float32, 0x00},
-	(i32 []){BeamformerDataKind_Float32Complex, 0x00},
+	0,
 	// Filter
 	0,
 	// Demodulate
@@ -125,18 +137,18 @@ read_only global i32 *beamformer_shader_match_vectors[] = {
 	// Render3D
 	0,
 };
-#define beamformer_match_vectors_count (12)
+#define beamformer_match_vectors_count (8)
 
 read_only global BeamformerShaderDescriptor beamformer_shader_descriptors[] = {
-	{0,  1,  0, 0, 0},
-	{1,  2,  0, 0, 0},
-	{2,  7,  1, 2, 1},
-	{7,  8,  0, 2, 0},
-	{8,  8,  0, 0, 0},
-	{8,  9,  0, 2, 0},
-	{9,  10, 0, 0, 0},
-	{10, 11, 0, 0, 0},
-	{11, 12, 0, 0, 0},
+	{0, 1, 0, 0, 0},
+	{1, 2, 0, 0, 0},
+	{2, 3, 0, 2, 0},
+	{3, 4, 0, 2, 0},
+	{4, 4, 0, 0, 0},
+	{4, 5, 0, 2, 0},
+	{5, 6, 0, 0, 0},
+	{6, 7, 0, 0, 0},
+	{7, 8, 0, 0, 0},
 };
 
 read_only global s8 beamformer_shader_names[] = {
@@ -251,7 +263,18 @@ read_only global i32 *beamformer_shader_header_vectors[] = {
 };
 
 read_only global s8 *beamformer_shader_bake_parameter_names[] = {
-	0,
+	(s8 []){
+		s8_comp("DataKind"),
+		s8_comp("DecodeMode"),
+		s8_comp("InputChannelStride"),
+		s8_comp("InputSampleStride"),
+		s8_comp("InputTransmitStride"),
+		s8_comp("OutputChannelStride"),
+		s8_comp("OutputSampleStride"),
+		s8_comp("OutputTransmitStride"),
+		s8_comp("ShaderFlags"),
+		s8_comp("TransmitCount"),
+	},
 	(s8 []){
 		s8_comp("DataKind"),
 		s8_comp("DecimationRate"),
@@ -279,7 +302,7 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 };
 
 read_only global i32 beamformer_shader_bake_parameter_name_counts[] = {
-	0,
+	10,
 	11,
 	6,
 	0,
@@ -306,13 +329,6 @@ beamformer_shader_match(i32 *match_vector, i32 first_index, i32 one_past_last_in
 			best_score = score;
 		}
 	}
-	return result;
-}
-
-function iz
-beamformer_shader_decode_match(BeamformerDataKind a, i32 flags)
-{
-	iz result = beamformer_shader_match((i32 []){(i32)a, flags}, 2, 7, 2);
 	return result;
 }
 

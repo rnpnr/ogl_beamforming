@@ -1,10 +1,13 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: refactor: split decode into reshape and decode
+ *      - the check for first pass reshaping is the last non constant check
+ *        in the shader
+ *      - this will also remove the need for the channel mapping in the decode shader
  * [ ]: refactor: fancier hot reloading for JIT shaders
  *      - loop over all active blocks
           - loop over shader sets per block
  *      - when match found reload it
- * [ ]: measure performance of doing channel mapping in a separate shader
  * [ ]: BeamformWorkQueue -> BeamformerWorkQueue
  * [ ]: need to keep track of gpu memory in some way
  *      - want to be able to store more than 16 2D frames but limit 3D frames
@@ -501,17 +504,19 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 		case BeamformerShaderKind_CudaHilbert:{ commit = run_cuda_hilbert; }break;
 		case BeamformerShaderKind_Decode:{
 			/* TODO(rnp): rework decode first and demodulate after */
-			BeamformerDataKind decode_data_kind = data_kind;
+			BeamformerShaderDecodeBakeParameters *b = &cp->decode_bake;
+			b->data_kind = data_kind;
 			if (!decode_first) {
 				if (data_kind == BeamformerDataKind_Int16) {
-					decode_data_kind = BeamformerDataKind_Int16Complex;
+					b->data_kind = BeamformerDataKind_Int16Complex;
 				} else {
-					decode_data_kind = BeamformerDataKind_Float32Complex;
+					b->data_kind = BeamformerDataKind_Float32Complex;
 				}
 			}
-			i32 local_flags = 0;
-			if (run_cuda_hilbert) local_flags |= BeamformerShaderDecodeFlags_DilateOutput;
-			match = beamformer_shader_decode_match(decode_data_kind, local_flags);
+
+			b->shader_flags = 0;
+			if (run_cuda_hilbert) b->shader_flags |= BeamformerShaderDecodeFlags_DilateOutput;
+
 			commit = 1;
 		}break;
 		case BeamformerShaderKind_Demodulate:{
@@ -583,7 +588,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	u32 input_transmit_stride = cp->das_bake.sample_count;
 	u32 input_channel_stride  = pb->parameters.raw_data_dimensions[0];
 
-	BeamformerDecodeUBO *dp = &cp->decode_ubo_data;
+	BeamformerShaderDecodeBakeParameters *dp = &cp->decode_bake;
 	dp->decode_mode    = pb->parameters.decode;
 	dp->transmit_count = cp->das_bake.acquisition_count;
 
@@ -727,10 +732,6 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 			BEAMFORMER_DAS_UBO_PARAM_LIST
 			"};\n\n"
 		),
-		[BeamformerShaderKind_Decode] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
-			BEAMFORMER_DECODE_UBO_PARAM_LIST
-			"};\n\n"
-		),
 		[BeamformerShaderKind_Filter] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
 			BEAMFORMER_FILTER_UBO_PARAM_LIST
 			"};\n\n"
@@ -776,6 +777,7 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 			u32 *parameters = 0;
 			/* TODO(rnp): generate this */
 			switch (shader) {
+			case BeamformerShaderKind_Decode:{     parameters = cp->decode_bake.E;     }break;
 			case BeamformerShaderKind_Demodulate:{ parameters = cp->demodulate_bake.E; }break;
 			case BeamformerShaderKind_Filter:{     parameters = cp->filter_bake.E;     }break;
 			case BeamformerShaderKind_DAS:{        parameters = cp->das_bake.E;        }break;
@@ -900,7 +902,6 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 
 	switch (shader) {
 	case BeamformerShaderKind_Decode:{
-		glBindBufferBase(GL_UNIFORM_BUFFER, 0, cp->ubos[BeamformerComputeUBOKind_Decode]);
 		glBindImageTexture(0, cp->textures[BeamformerComputeTextureKind_Hadamard], 0, 0, 0, GL_READ_ONLY, GL_R8I);
 
 		if (shader_slot == 0) {

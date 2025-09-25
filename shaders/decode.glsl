@@ -70,30 +70,30 @@ void main()
 	uint channel     = gl_GlobalInvocationID.y;
 	uint transmit    = gl_GlobalInvocationID.z;
 
-	uint rf_offset = (input_channel_stride * channel + transmit_count * time_sample) / RF_SAMPLES_PER_INDEX;
+	uint rf_offset = (InputChannelStride * channel + TransmitCount * time_sample) / RF_SAMPLES_PER_INDEX;
 	if (u_first_pass) {
-		if (time_sample < input_transmit_stride) {
-			uint in_off = input_channel_stride  * imageLoad(channel_mapping, int(channel)).x +
-			              input_transmit_stride * transmit +
-			              input_sample_stride   * time_sample;
+		if (time_sample < InputTransmitStride) {
+			uint in_off = InputChannelStride  * imageLoad(channel_mapping, int(channel)).x +
+			              InputTransmitStride * transmit +
+			              InputSampleStride   * time_sample;
 			out_rf_data[rf_offset + transmit] = rf_data[in_off / RF_SAMPLES_PER_INDEX];
 		}
 	} else {
-		if (time_sample < output_transmit_stride) {
-			uint out_off = output_channel_stride  * channel +
-			               output_transmit_stride * transmit +
-			               output_sample_stride   * time_sample;
+		if (time_sample < OutputTransmitStride) {
+			uint out_off = OutputChannelStride  * channel +
+			               OutputTransmitStride * transmit +
+			               OutputSampleStride   * time_sample;
 
 			SAMPLE_DATA_TYPE result = SAMPLE_DATA_TYPE(0);
-			switch (decode_mode) {
+			switch (DecodeMode) {
 			case DecodeMode_None:{
 				result = sample_rf_data(rf_offset + transmit);
 			}break;
 			case DecodeMode_Hadamard:{
 				SAMPLE_DATA_TYPE sum = SAMPLE_DATA_TYPE(0);
-				for (int i = 0; i < imageSize(hadamard).x; i++)
+				for (int i = 0; i < TransmitCount; i++)
 					sum += imageLoad(hadamard, ivec2(i, transmit)).x * sample_rf_data(rf_offset++);
-				result = sum / float(imageSize(hadamard).x);
+				result = sum / float(TransmitCount);
 			}break;
 			}
 			out_data[out_off / OUTPUT_SAMPLES_PER_INDEX] = result;

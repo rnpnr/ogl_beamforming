@@ -10,12 +10,23 @@
 
 	@Shader(decode.glsl) Decode
 	{
+		@Enumeration(DataKind)
 		@Enumeration(DecodeMode)
-		@PermuteFlags([DilateOutput])
+		@Flags([DilateOutput])
+
+		@Bake
 		{
-			@Permute(DataKind [Int16])
+			@BakeVariable(DataKind             data_kind             )
+			@BakeVariable(DecodeMode           decode_mode           )
+			@BakeVariable(InputChannelStride   input_channel_stride  )
+			@BakeVariable(InputSampleStride    input_sample_stride   )
+			@BakeVariable(InputTransmitStride  input_transmit_stride )
+			@BakeVariable(OutputChannelStride  output_channel_stride )
+			@BakeVariable(OutputSampleStride   output_sample_stride  )
+			@BakeVariable(OutputTransmitStride output_transmit_stride)
+			@BakeVariable(ShaderFlags          shader_flags          )
+			@BakeVariable(TransmitCount        transmit_count        )
 		}
-		@Permute(DataKind [Int16Complex Float32 Float32Complex])
 	}
 
 	@Shader(filter.glsl) Filter
