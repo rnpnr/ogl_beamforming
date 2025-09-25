@@ -65,14 +65,6 @@ typedef enum {
 	BeamformerShaderKind_RenderCount  = 1,
 } BeamformerShaderKind;
 
-typedef struct {
-	i32 first_match_vector_index;
-	i32 one_past_last_match_vector_index;
-	i16 match_vector_length;
-	i16 header_vector_length;
-	b32 has_local_flags;
-} BeamformerShaderDescriptor;
-
 typedef union {
 	struct {
 		u32 data_kind;
@@ -117,39 +109,6 @@ typedef union {
 	};
 	u32 E[6];
 } BeamformerShaderDASBakeParameters;
-
-read_only global i32 *beamformer_shader_match_vectors[] = {
-	// CudaDecode
-	0,
-	// CudaHilbert
-	0,
-	// Decode
-	0,
-	// Filter
-	0,
-	// Demodulate
-	// DAS
-	0,
-	// MinMax
-	0,
-	// Sum
-	0,
-	// Render3D
-	0,
-};
-#define beamformer_match_vectors_count (8)
-
-read_only global BeamformerShaderDescriptor beamformer_shader_descriptors[] = {
-	{0, 1, 0, 0, 0},
-	{1, 2, 0, 0, 0},
-	{2, 3, 0, 2, 0},
-	{3, 4, 0, 2, 0},
-	{4, 4, 0, 0, 0},
-	{4, 5, 0, 2, 0},
-	{5, 6, 0, 0, 0},
-	{6, 7, 0, 0, 0},
-	{7, 8, 0, 0, 0},
-};
 
 read_only global s8 beamformer_shader_names[] = {
 	s8_comp("CudaDecode"),
@@ -246,17 +205,19 @@ read_only global s8 beamformer_shader_local_header_strings[] = {
 	{0},
 };
 
-read_only global s8 beamformer_shader_descriptor_header_strings[] = {
-	s8_comp("DataKind"),
-	s8_comp("DecodeMode"),
-	s8_comp("RCAOrientation"),
-	s8_comp("SamplingMode"),
-};
-
 read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){0, 1},
 	(i32 []){0, 3},
 	(i32 []){0, 2},
+	0,
+	0,
+	0,
+};
+
+read_only global i32 beamformer_shader_header_vector_lengths[] = {
+	2,
+	2,
+	2,
 	0,
 	0,
 	0,
@@ -309,26 +270,4 @@ read_only global i32 beamformer_shader_bake_parameter_name_counts[] = {
 	0,
 	0,
 };
-
-function iz
-beamformer_shader_match(i32 *match_vector, i32 first_index, i32 one_past_last_index, i32 vector_length)
-{
-	iz result = first_index;
-	i32 best_score = 0;
-	for (i32 index = first_index; index < one_past_last_index; index++)
-	{
-		i32 score = 0;
-		i32 *v = beamformer_shader_match_vectors[index];
-		for (i32 i = 0; i < vector_length; i++) {
-			if (match_vector[i] == v[i]) {
-				score++;
-			}
-		}
-		if (best_score < score) {
-			result     = index;
-			best_score = score;
-		}
-	}
-	return result;
-}
 

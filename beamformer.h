@@ -174,7 +174,6 @@ struct BeamformerComputePlan {
 	BeamformerComputePipeline pipeline;
 
 	u32 programs[BeamformerMaxComputeShaderStages];
-	u32 shader_matches[BeamformerMaxComputeShaderStages];
 
 	uv3 decode_dispatch;
 	uv3 demod_dispatch;

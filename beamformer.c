@@ -499,7 +499,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 		u32 shader = pb->pipeline.shaders[i];
 		b32 commit = 0;
 
-		iz match = 0;
 		switch (shader) {
 		case BeamformerShaderKind_CudaHilbert:{ commit = run_cuda_hilbert; }break;
 		case BeamformerShaderKind_Decode:{
@@ -559,17 +558,13 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				cp->das_bake.data_kind = BeamformerDataKind_Float32Complex;
 			commit = 1;
 		}break;
-		default:{
-			match  = beamformer_shader_descriptors[shader].first_match_vector_index;
-			commit = 1;
-		}break;
+		default:{ commit = 1; }break;
 		}
 
 		if (commit) {
 			u32 index = cp->pipeline.shader_count++;
 			cp->pipeline.shaders[index]    = shader;
 			cp->pipeline.parameters[index] = *sp;
-			cp->shader_matches[index]      = (u32)match;
 		}
 	}
 	cp->pipeline.data_kind = data_kind;
@@ -745,32 +740,18 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 	i32 reloadable_index = beamformer_shader_reloadable_index_by_shader[shader];
 	if (reloadable_index != -1) {
 		BeamformerShaderKind base_shader = beamformer_reloadable_shader_kinds[reloadable_index];
-		BeamformerShaderDescriptor *sd   = beamformer_shader_descriptors + base_shader;
 		s8 path = push_s8_from_parts(&arena, ctx->os.path_separator, s8("shaders"),
 		                             beamformer_reloadable_shader_files[reloadable_index]);
 
 		Stream shader_stream = arena_stream(arena);
 		stream_push_shader_header(&shader_stream, base_shader, compute_headers[base_shader]);
 
-		i32 *header_indices = beamformer_shader_header_vectors[reloadable_index];
-		for (i32 index = 0; index < sd->header_vector_length; index++)
-			stream_append_s8(&shader_stream, beamformer_shader_global_header_strings[header_indices[index]]);
+		i32  header_vector_length = beamformer_shader_header_vector_lengths[reloadable_index];
+		i32 *header_vector        = beamformer_shader_header_vectors[reloadable_index];
+		for (i32 index = 0; index < header_vector_length; index++)
+			stream_append_s8(&shader_stream, beamformer_shader_global_header_strings[header_vector[index]]);
 
 		stream_append_s8(&shader_stream, beamformer_shader_local_header_strings[reloadable_index]);
-
-		i32 *match_vector = beamformer_shader_match_vectors[cp->shader_matches[shader_slot]];
-		for (i32 index = 0; index < sd->match_vector_length; index++) {
-			stream_append_s8s(&shader_stream, s8("#define "), beamformer_shader_descriptor_header_strings[header_indices[index]], s8(" ("));
-			stream_append_i64(&shader_stream, match_vector[index]);
-			stream_append_s8(&shader_stream, s8(")\n"));
-		}
-
-		if (sd->has_local_flags) {
-			stream_append_s8(&shader_stream, s8("#define ShaderFlags (0x"));
-			i32 flags = match_vector[sd->match_vector_length];
-			stream_append_hex_u64(&shader_stream, (u64)flags);
-			stream_append_s8(&shader_stream, s8(")\n"));
-		}
 
 		if (beamformer_shader_bake_parameter_name_counts[reloadable_index]) {
 			i32 count = beamformer_shader_bake_parameter_name_counts[reloadable_index];
