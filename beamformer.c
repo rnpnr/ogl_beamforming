@@ -67,7 +67,7 @@ beamformer_compute_plan_release(BeamformerComputeContext *cc, u32 block)
 		glDeleteBuffers(countof(cp->ubos), cp->ubos);
 		glDeleteTextures(countof(cp->textures), cp->textures);
 		for (u32 i = 0; i < countof(cp->filters); i++)
-			glDeleteTextures(1, &cp->filters[i].texture);
+			glDeleteBuffers(1, &cp->filters[i].ssbo);
 		cc->compute_plans[block] = 0;
 		SLLPushFreelist(cp, cc->compute_plan_freelist);
 	}
@@ -165,11 +165,10 @@ beamformer_filter_update(BeamformerFilter *f, BeamformerFilterKind kind,
 	f->kind       = kind;
 	f->parameters = fp;
 
-	glDeleteTextures(1, &f->texture);
-	glCreateTextures(GL_TEXTURE_1D, 1, &f->texture);
-	glTextureStorage1D(f->texture, 1, fp.complex? GL_RG32F : GL_R32F, f->length);
-	glTextureSubImage1D(f->texture, 0, 0, f->length, fp.complex? GL_RG : GL_RED, GL_FLOAT, filter);
-	glObjectLabel(GL_TEXTURE, f->texture, (i32)label.len, (c8 *)label.data);
+	glDeleteBuffers(1, &f->ssbo);
+	glCreateBuffers(1, &f->ssbo);
+	glNamedBufferStorage(f->ssbo, f->length * (i32)sizeof(f32) * (fp.complex? 2 : 1), filter, 0);
+	glObjectLabel(GL_BUFFER, f->ssbo, (i32)label.len, (c8 *)label.data);
 }
 
 function ComputeFrameIterator
@@ -516,31 +515,37 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			commit = 1;
 		}break;
 		case BeamformerShaderKind_Demodulate:{
+			BeamformerShaderFilterBakeParameters *b = &cp->demodulate_bake;
 			BeamformerFilter *f = cp->filters + sp->filter_slot;
-			i32 local_flags = BeamformerShaderFilterFlags_Demodulate;
-			if (f->parameters.complex) local_flags |= BeamformerShaderFilterFlags_ComplexFilter;
-			if (!decode_first)         local_flags |= BeamformerShaderFilterFlags_MapChannels;
-
-			BeamformerDataKind filter_data_kind = data_kind;
-			if (decode_first)
-				filter_data_kind = BeamformerDataKind_Float32;
-
-			match = beamformer_shader_demodulate_match(filter_data_kind, pb->parameters.sampling_mode, local_flags);
 
 			bp->time_offset += f->time_delay;
+
+			b->filter_length = (u32)f->length;
+			b->sampling_mode = pb->parameters.sampling_mode;
+			b->shader_flags = BeamformerShaderFilterFlags_Demodulate;
+			if (f->parameters.complex) b->shader_flags |= BeamformerShaderFilterFlags_ComplexFilter;
+			if (!decode_first)         b->shader_flags |= BeamformerShaderFilterFlags_MapChannels;
+
+			b->data_kind = data_kind;
+			if (decode_first)
+				b->data_kind = BeamformerDataKind_Float32;
+
 			commit = 1;
 		}break;
 		case BeamformerShaderKind_Filter:{
+			BeamformerShaderFilterBakeParameters *b = &cp->filter_bake;
 			BeamformerFilter *f = cp->filters + sp->filter_slot;
-			i32 local_flags = 0;
-			if (f->parameters.complex) local_flags |= BeamformerShaderFilterFlags_ComplexFilter;
 
-			BeamformerDataKind filter_data_kind = data_kind;
-			if (decode_first)
-				filter_data_kind = BeamformerDataKind_Float32;
-
-			match = beamformer_shader_filter_match(filter_data_kind, local_flags);
 			bp->time_offset += f->time_delay;
+
+			b->filter_length = (u32)f->length;
+			b->shader_flags  = 0;
+			if (f->parameters.complex) b->shader_flags |= BeamformerShaderFilterFlags_ComplexFilter;
+
+			b->data_kind = data_kind;
+			if (decode_first)
+				b->data_kind = BeamformerDataKind_Float32;
+
 			commit = 1;
 		}break;
 		case BeamformerShaderKind_DAS:{
@@ -611,31 +616,32 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	 *   IQ[n] = I[n] - j*Q[n]
 	 */
 	if (demodulate) {
+		BeamformerShaderFilterBakeParameters *b = &cp->demodulate_bake;
 		BeamformerFilterUBO *mp    = &cp->demod_ubo_data;
 		mp->demodulation_frequency = bp->demodulation_frequency;
 		mp->sampling_frequency     = bp->sampling_frequency / 2;
-		mp->decimation_rate        = decimation_rate;
+		b->decimation_rate         = decimation_rate;
 
-		bp->sampling_frequency    /= 2 * (f32)mp->decimation_rate;
-		cp->das_bake.sample_count /= 2 * mp->decimation_rate;
+		bp->sampling_frequency    /= 2 * (f32)b->decimation_rate;
+		cp->das_bake.sample_count /= 2 * b->decimation_rate;
 
 		if (decode_first) {
-			mp->input_channel_stride  = dp->output_channel_stride;
-			mp->input_sample_stride   = dp->output_sample_stride;
-			mp->input_transmit_stride = dp->output_transmit_stride;
+			b->input_channel_stride  = dp->output_channel_stride;
+			b->input_sample_stride   = dp->output_sample_stride;
+			b->input_transmit_stride = dp->output_transmit_stride;
 
-			mp->output_channel_stride  = das_channel_stride;
-			mp->output_sample_stride   = das_sample_stride;
-			mp->output_transmit_stride = das_transmit_stride;
+			b->output_channel_stride  = das_channel_stride;
+			b->output_sample_stride   = das_sample_stride;
+			b->output_transmit_stride = das_transmit_stride;
 		} else {
-			mp->input_channel_stride  = input_channel_stride  / 2;
-			mp->input_sample_stride   = input_sample_stride;
-			mp->input_transmit_stride = input_transmit_stride / 2;
+			b->input_channel_stride  = input_channel_stride  / 2;
+			b->input_sample_stride   = input_sample_stride;
+			b->input_transmit_stride = input_transmit_stride / 2;
 
 			/* NOTE(rnp): output optimized layout for decoding */
-			mp->output_channel_stride  = dp->input_channel_stride;
-			mp->output_sample_stride   = dp->input_sample_stride;
-			mp->output_transmit_stride = dp->input_transmit_stride;
+			b->output_channel_stride  = dp->input_channel_stride;
+			b->output_sample_stride   = dp->input_sample_stride;
+			b->output_transmit_stride = dp->input_transmit_stride;
 
 			cp->decode_dispatch.x = (u32)ceil_f32((f32)cp->das_bake.sample_count / DECODE_LOCAL_SIZE_X);
 		}
@@ -651,16 +657,17 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	else                                cp->rf_size *= 4;
 
 	/* TODO(rnp): UBO per filter stage */
+	BeamformerShaderFilterBakeParameters *fltb = &cp->filter_bake;
 	BeamformerFilterUBO *flt = &cp->filter_ubo_data;
-	flt->demodulation_frequency = bp->demodulation_frequency;
-	flt->sampling_frequency     = bp->sampling_frequency;
-	flt->decimation_rate        = 1;
-	flt->output_channel_stride  = cp->das_bake.sample_count * cp->das_bake.acquisition_count;
-	flt->output_sample_stride   = 1;
-	flt->output_transmit_stride = cp->das_bake.sample_count;
-	flt->input_channel_stride   = cp->das_bake.sample_count * cp->das_bake.acquisition_count;
-	flt->input_sample_stride    = 1;
-	flt->input_transmit_stride  = cp->das_bake.sample_count;
+	flt->demodulation_frequency  = bp->demodulation_frequency;
+	flt->sampling_frequency      = bp->sampling_frequency;
+	fltb->decimation_rate        = 1;
+	fltb->output_channel_stride  = cp->das_bake.sample_count * cp->das_bake.acquisition_count;
+	fltb->output_sample_stride   = 1;
+	fltb->output_transmit_stride = cp->das_bake.sample_count;
+	fltb->input_channel_stride   = cp->das_bake.sample_count * cp->das_bake.acquisition_count;
+	fltb->input_sample_stride    = 1;
+	fltb->input_transmit_stride  = cp->das_bake.sample_count;
 }
 
 function void
@@ -731,20 +738,20 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 		#undef X
 	};
 
-	BeamformerShaderKind        shader = cp->pipeline.shaders[shader_slot];
-	BeamformerShaderDescriptor *sd     = beamformer_shader_descriptors + shader;
+	BeamformerShaderKind shader = cp->pipeline.shaders[shader_slot];
 
 	u32 program          = 0;
 	i32 reloadable_index = beamformer_shader_reloadable_index_by_shader[shader];
 	if (reloadable_index != -1) {
 		BeamformerShaderKind base_shader = beamformer_reloadable_shader_kinds[reloadable_index];
+		BeamformerShaderDescriptor *sd   = beamformer_shader_descriptors + base_shader;
 		s8 path = push_s8_from_parts(&arena, ctx->os.path_separator, s8("shaders"),
 		                             beamformer_reloadable_shader_files[reloadable_index]);
 
 		Stream shader_stream = arena_stream(arena);
 		stream_push_shader_header(&shader_stream, base_shader, compute_headers[base_shader]);
 
-		i32 *header_indices = beamformer_shader_header_vectors[sd - beamformer_shader_descriptors];
+		i32 *header_indices = beamformer_shader_header_vectors[reloadable_index];
 		for (i32 index = 0; index < sd->header_vector_length; index++)
 			stream_append_s8(&shader_stream, beamformer_shader_global_header_strings[header_indices[index]]);
 
@@ -768,8 +775,10 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 			i32 count = beamformer_shader_bake_parameter_name_counts[reloadable_index];
 			u32 *parameters = 0;
 			/* TODO(rnp): generate this */
-			switch (base_shader) {
-			case BeamformerShaderKind_DAS:{ parameters = cp->das_bake.E; }break;
+			switch (shader) {
+			case BeamformerShaderKind_Demodulate:{ parameters = cp->demodulate_bake.E; }break;
+			case BeamformerShaderKind_Filter:{     parameters = cp->filter_bake.E;     }break;
+			case BeamformerShaderKind_DAS:{        parameters = cp->das_bake.E;        }break;
 			default:{}break;
 			}
 
@@ -883,9 +892,6 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 {
 	BeamformerComputeContext *cc = &ctx->compute_context;
 
-	i32 *match_vector = beamformer_shader_match_vectors[cp->shader_matches[shader_slot]];
-	BeamformerShaderDescriptor *shader_descriptor = beamformer_shader_descriptors + shader;
-
 	u32 program = cp->programs[shader_slot];
 	glUseProgram(program);
 
@@ -897,7 +903,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 		glBindBufferBase(GL_UNIFORM_BUFFER, 0, cp->ubos[BeamformerComputeUBOKind_Decode]);
 		glBindImageTexture(0, cp->textures[BeamformerComputeTextureKind_Hadamard], 0, 0, 0, GL_READ_ONLY, GL_R8I);
 
-		if (shader == cp->pipeline.shaders[0]) {
+		if (shader_slot == 0) {
 			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, cc->ping_pong_ssbos[input_ssbo_idx]);
 			glBindImageTexture(1, cp->textures[BeamformerComputeTextureKind_ChannelMapping], 0, 0, 0, GL_READ_ONLY, GL_R16I);
 			glProgramUniform1ui(program, DECODE_FIRST_PASS_UNIFORM_LOC, 1);
@@ -927,21 +933,20 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 	case BeamformerShaderKind_Filter:
 	case BeamformerShaderKind_Demodulate:
 	{
-		i32 local_flags  = match_vector[shader_descriptor->match_vector_length];
-		b32 map_channels = (local_flags & BeamformerShaderFilterFlags_MapChannels) != 0;
+		BeamformerShaderFilterBakeParameters *b = &cp->filter_bake;
+		if (shader == BeamformerShaderKind_Demodulate) b = &cp->demodulate_bake;
+
+		b32 map_channels = (b->shader_flags & BeamformerShaderFilterFlags_MapChannels) != 0;
 
 		u32 index = shader == BeamformerShaderKind_Filter ? BeamformerComputeUBOKind_Filter
 		                                                  : BeamformerComputeUBOKind_Demodulate;
 		glBindBufferBase(GL_UNIFORM_BUFFER,        0, cp->ubos[index]);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, cc->ping_pong_ssbos[output_ssbo_idx]);
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, cp->filters[sp->filter_slot].ssbo);
 
 		if (!map_channels)
 			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, cc->ping_pong_ssbos[input_ssbo_idx]);
-
-		GLenum kind = cp->filters[sp->filter_slot].parameters.complex? GL_RG32F : GL_R32F;
-		glBindImageTexture(0, cp->filters[sp->filter_slot].texture, 0, 0, 0, GL_READ_ONLY, kind);
-
-		if (map_channels)
+		else
 			glBindImageTexture(1, cp->textures[BeamformerComputeTextureKind_ChannelMapping], 0, 0, 0, GL_READ_ONLY, GL_R16I);
 
 		glDispatchCompute(cp->demod_dispatch.x, cp->demod_dispatch.y, cp->demod_dispatch.z);

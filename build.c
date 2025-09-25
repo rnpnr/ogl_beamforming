@@ -2200,22 +2200,25 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	meta_push_shader_reload_info(m, ctx);
 
 	meta_begin_scope(m, s8("read_only global i32 *beamformer_shader_header_vectors[] = {"));
-	for (iz shader = 0; shader < ctx->shaders.count; shader++) {
-		MetaShader *s = ctx->shaders.data + shader;
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		MetaBaseShader *bs = ctx->base_shaders.data + shader;
+		MetaShader     *s  = bs->shader;
 
-		if (s->global_flag_ids.count || s->global_enumeration_ids.count) {
-			meta_begin_line(m, s8("(i32 []){"));
-			for (iz id = 0; id < s->global_flag_ids.count; id++) {
-				if (id != 0) meta_push(m, s8(", "));
-				meta_push_u64(m, s->global_flag_ids.data[id]);
+		if (bs->file.len) {
+			if (s->global_flag_ids.count || s->global_enumeration_ids.count) {
+				meta_begin_line(m, s8("(i32 []){"));
+				for (iz id = 0; id < s->global_flag_ids.count; id++) {
+					if (id != 0) meta_push(m, s8(", "));
+					meta_push_u64(m, s->global_flag_ids.data[id]);
+				}
+				for (iz id = 0; id < s->global_enumeration_ids.count; id++) {
+					if (id != 0 || s->global_flag_ids.count) meta_push(m, s8(", "));
+					meta_push_u64(m, s->global_enumeration_ids.data[id]);
+				}
+				meta_end_line(m, s8("},"));
+			} else {
+				meta_push_line(m, s8("0,"));
 			}
-			for (iz id = 0; id < s->global_enumeration_ids.count; id++) {
-				if (id != 0 || s->global_flag_ids.count) meta_push(m, s8(", "));
-				meta_push_u64(m, s->global_enumeration_ids.data[id]);
-			}
-			meta_end_line(m, s8("},"));
-		} else {
-			meta_push_line(m, s8("0,"));
 		}
 	}
 	meta_end_scope(m, s8("};\n"));

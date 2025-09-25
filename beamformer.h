@@ -104,18 +104,11 @@ typedef struct {
 	BeamformerFilterParameters parameters;
 	f32 time_delay;
 	i32 length;
-	u32 texture;
+	u32 ssbo;
 } BeamformerFilter;
 
 /* X(name, type, gltype) */
 #define BEAMFORMER_FILTER_UBO_PARAM_LIST \
-	X(input_channel_stride,   u32, uint)  \
-	X(input_sample_stride,    u32, uint)  \
-	X(input_transmit_stride,  u32, uint)  \
-	X(output_channel_stride,  u32, uint)  \
-	X(output_sample_stride,   u32, uint)  \
-	X(output_transmit_stride, u32, uint)  \
-	X(decimation_rate,        u32, uint)  \
 	X(demodulation_frequency, f32, float) \
 	X(sampling_frequency,     f32, float)
 
@@ -152,7 +145,7 @@ typedef alignas(16) struct {
 	#define X(name, type, ...) type name;
 	BEAMFORMER_FILTER_UBO_PARAM_LIST
 	#undef X
-	float _pad[3];
+	float _pad[2];
 } BeamformerFilterUBO;
 static_assert((sizeof(BeamformerFilterUBO) & 15) == 0, "UBO size must be a multiple of 16");
 
@@ -224,7 +217,9 @@ struct BeamformerComputePlan {
 	BEAMFORMER_COMPUTE_UBO_LIST
 	#undef X
 
-	BeamformerShaderDASBakeParameters das_bake;
+	BeamformerShaderFilterBakeParameters demodulate_bake;
+	BeamformerShaderFilterBakeParameters filter_bake;
+	BeamformerShaderDASBakeParameters    das_bake;
 
 	BeamformerComputePlan *next;
 };

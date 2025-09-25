@@ -1,6 +1,7 @@
 @Enumeration(DataKind [Int16 Int16Complex Float32 Float32Complex])
 @Enumeration(DecodeMode [None Hadamard])
 @Enumeration(RCAOrientation [Rows Columns])
+@Enumeration(SamplingMode [2X 4X])
 
 @ShaderGroup Compute
 {
@@ -19,21 +20,26 @@
 
 	@Shader(filter.glsl) Filter
 	{
-		@Permute(DataKind [Int16Complex  Float32  Float32Complex])
+		@Enumeration(DataKind)
+		@Enumeration(SamplingMode)
+		@Flags([ComplexFilter MapChannels])
+
+		@Bake
 		{
-			@PermuteFlags([MapChannels  ComplexFilter])
+			@BakeVariable(DataKind             data_kind             )
+			@BakeVariable(DecimationRate       decimation_rate       )
+			@BakeVariable(FilterLength         filter_length         )
+			@BakeVariable(InputChannelStride   input_channel_stride  )
+			@BakeVariable(InputSampleStride    input_sample_stride   )
+			@BakeVariable(InputTransmitStride  input_transmit_stride )
+			@BakeVariable(OutputChannelStride  output_channel_stride )
+			@BakeVariable(OutputSampleStride   output_sample_stride  )
+			@BakeVariable(OutputTransmitStride output_transmit_stride)
+			@BakeVariable(ShaderFlags          shader_flags          )
+			@BakeVariable(SamplingMode         sampling_mode         )
 		}
 
 		@SubShader Demodulate
-		{
-			@Permute(DataKind [Int16  Float32])
-			{
-				@Permute(SamplingMode [2X 4X])
-				{
-					@PermuteFlags([MapChannels  ComplexFilter])
-				}
-			}
-		}
 	}
 
 	@Shader(das.glsl) DAS
