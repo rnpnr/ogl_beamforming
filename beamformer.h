@@ -224,11 +224,7 @@ struct BeamformerComputePlan {
 	BEAMFORMER_COMPUTE_UBO_LIST
 	#undef X
 
-	u32 das_shader_kind;
-	u32 das_sample_count;
-	u32 das_channel_count;
-	u32 das_acquisition_count;
-	i32 das_shader_flags;
+	BeamformerShaderDASBakeParameters das_bake;
 
 	BeamformerComputePlan *next;
 };

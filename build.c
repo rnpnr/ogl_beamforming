@@ -2,6 +2,7 @@
 /* NOTE: inspired by nob: https://github.com/tsoding/nob.h */
 
 /* TODO(rnp):
+ * [ ]: refactor: helper for appending expanded shader flags
  * [ ]: refactor: "base" shaders should only be reloadable shaders
  *      - internally when a shader with no file is encountered it should
  *        not get pushed as a "base" shader.
@@ -819,6 +820,8 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 
 #define META_ENTRY_KIND_LIST \
 	X(Invalid)      \
+	X(Bake)         \
+	X(BakeVariable) \
 	X(BeginScope)   \
 	X(EndScope)     \
 	X(Enumeration)  \
@@ -934,6 +937,13 @@ global jmp_buf  compiler_jmp_buf;
 	meta_entry_print((e), 1, (column)); \
 	meta_error(); \
 } while(0)
+
+#define meta_entry_pair_error(e, prefix, base_kind) \
+	meta_entry_error(e, prefix"@%s() in @%s()\n", \
+	                 meta_entry_kind_strings[(e)->kind], \
+	                 meta_entry_kind_strings[(base_kind)])
+
+#define meta_entry_nesting_error(e, base_kind) meta_entry_pair_error(e, "invalid nesting: ", base_kind)
 
 #define meta_entry_error_location(e, loc, ...) do { \
 	meta_compiler_error_message((loc), __VA_ARGS__); \
@@ -1160,6 +1170,29 @@ meta_parser_arguments(MetaParser *p, MetaEntry *e, Arena *arena)
 	}
 }
 
+function iz
+meta_entry_extract_scope(MetaEntry *base, iz entry_count)
+{
+	assert(base->kind != MetaEntryKind_BeginScope || base->kind != MetaEntryKind_EndScope);
+	assert(entry_count > 0);
+
+	MetaEntry *e = base + 1;
+	iz result, sub_scope = 0;
+	for (result = 1; result < entry_count; result++, e++) {
+		switch (e->kind) {
+		case MetaEntryKind_BeginScope:{ sub_scope++; }break;
+		case MetaEntryKind_EndScope:{   sub_scope--; }break;
+		default:{}break;
+		}
+		if (sub_scope == 0) break;
+	}
+
+	if (sub_scope != 0)
+		meta_entry_error(base, "unclosed scope for entry\n");
+
+	return result;
+}
+
 function MetaEntryStack
 meta_entry_stack_from_file(Arena *arena, Arena scratch, char *file)
 {
@@ -1245,6 +1278,14 @@ typedef struct {
 } s8_list_table;
 
 typedef struct {
+	s8  *names_upper;
+	s8  *names_lower;
+	u32  entry_count;
+	u32  shader_id;
+} MetaShaderBakeParameters;
+DA_STRUCT(MetaShaderBakeParameters, MetaShaderBakeParameters);
+
+typedef struct {
 	iz kind;
 	iz variation;
 } MetaEnumeration;
@@ -1266,8 +1307,11 @@ typedef struct {
 	MetaShaderPermutationList permutations;
 	MetaIDList                global_flag_ids;
 	MetaIDList                global_enumeration_ids;
+	MetaShaderBakeParameters *bake_parameters;
 	u32                       base_name_id;
 	u32                       flag_list_id;
+	/* TODO(rnp): temporary: remove when all flags are baked */
+	b32                       flags_permuted;
 } MetaShader;
 DA_STRUCT(MetaShader, MetaShader);
 
@@ -1282,7 +1326,6 @@ typedef struct {
 	i32 first_match_vector_index;
 	i32 one_past_last_match_vector_index;
 	i32 sub_field_count;
-	b32 has_local_flags;
 } MetaShaderDescriptor;
 
 typedef struct {
@@ -1299,14 +1342,14 @@ typedef struct {
 
 	s8_list_table         flags_for_shader;
 
-	MetaShaderGroupList   shader_groups;
-	MetaShaderList        shaders;
-	MetaBaseShaderList    base_shaders;
-	s8_list               shader_names;
+	MetaShaderBakeParametersList shader_bake_parameters;
+	MetaShaderGroupList          shader_groups;
+	MetaShaderList               shaders;
+	MetaBaseShaderList           base_shaders;
+	s8_list                      shader_names;
 
 	MetaShaderDescriptor *shader_descriptors;
 } MetaContext;
-
 
 function u32
 metagen_pack_permutation(MetaContext *ctx, MetaEnumeration e)
@@ -1393,6 +1436,43 @@ meta_intern_id(MetaContext *ctx, MetaIDList *v, u32 id)
 }
 
 function iz
+meta_pack_shader_bake_parameters(MetaContext *ctx, MetaEntry *e, iz entry_count, u32 shader_id, u32 *table_id)
+{
+	assert(e->kind == MetaEntryKind_Bake);
+	iz result = meta_entry_extract_scope(e, entry_count);
+
+	MetaShaderBakeParameters *bp = da_push(ctx->arena, &ctx->shader_bake_parameters);
+	bp->shader_id = shader_id;
+	if (table_id) *table_id = (u32)da_index(bp, &ctx->shader_bake_parameters);
+
+	if (e->argument_count) meta_entry_argument_expected(e);
+
+	if (result > 1) {
+		MetaEntry *last = e + result;
+		assert(e[1].kind  == MetaEntryKind_BeginScope);
+		assert(last->kind == MetaEntryKind_EndScope);
+
+		for (MetaEntry *row = e + 2; row != last; row++) {
+			if (row->kind != MetaEntryKind_BakeVariable)
+				meta_entry_nesting_error(row, MetaEntryKind_Bake);
+			meta_entry_argument_expected(row, s8("name"), s8("name_lower"));
+			bp->entry_count++;
+		}
+
+		bp->names_upper = push_array(ctx->arena, s8, bp->entry_count);
+		bp->names_lower = push_array(ctx->arena, s8, bp->entry_count);
+
+		u32 row_index = 0;
+		for (MetaEntry *row = e + 2; row != last; row++, row_index++) {
+			bp->names_upper[row_index] = row->arguments[0].string;
+			bp->names_lower[row_index] = row->arguments[1].string;
+		}
+	}
+
+	return result;
+}
+
+function iz
 meta_enumeration_id(MetaContext *ctx, s8 kind)
 {
 	iz result = meta_intern_string(ctx, &ctx->enumeration_kinds, kind);
@@ -1459,6 +1539,7 @@ meta_pack_shader_permutation(MetaContext *ctx, MetaShaderPermutation *sp, MetaSh
 		u32 cursor = f->cursor.current;
 		switch (e->kind) {
 		case MetaEntryKind_PermuteFlags:{
+			base_shader->flags_permuted |= 1;
 			if (f->permutation_id == U32_MAX) {
 				u32 test = cursor, packed = 0;
 				for EachBit(test, flag) {
@@ -1486,6 +1567,7 @@ meta_pack_shader_permutation(MetaContext *ctx, MetaShaderPermutation *sp, MetaSh
 	MetaEntryArgument *a = last->arguments;
 	switch (last->kind) {
 	case MetaEntryKind_PermuteFlags:{
+		base_shader->flags_permuted |= 1;
 		u32 packed = 0, test = frame_cursor;
 		for EachBit(test, flag) {
 			u32 flag_index = meta_commit_shader_flag(ctx, base_shader->flag_list_id, a->strings[flag], last);
@@ -1671,13 +1753,21 @@ meta_pack_shader(MetaContext *ctx, MetaShaderGroup *sg, Arena scratch, MetaEntry
 			for (u32 index = 0; index < flags.count; index++)
 				meta_commit_shader_flag(ctx, s->flag_list_id, flags.strings[index], e);
 		}break;
+		case MetaEntryKind_Bake:{
+			if (s->bake_parameters) {
+				meta_entry_error(e, "invalid @%s in @%s: only one @%s allowed per @%s\n",
+				                 meta_entry_kind_strings[e->kind], meta_entry_kind_strings[MetaEntryKind_Shader],
+				                 meta_entry_kind_strings[e->kind], meta_entry_kind_strings[MetaEntryKind_Shader]);
+			}
+			u32 table_id;
+			result += meta_pack_shader_bake_parameters(ctx, e, entry_count - result, (u32)da_index(s, &ctx->shaders), &table_id);
+			s->bake_parameters = ctx->shader_bake_parameters.data + table_id;
+		}break;
 
 		default:
 		error:
 		{
-			meta_entry_error(e, "invalid nested @%s() in @%s()\n",
-			                 meta_entry_kind_strings[e->kind],
-			                 meta_entry_kind_strings[MetaEntryKind_Shader]);
+			meta_entry_nesting_error(e, MetaEntryKind_Shader);
 		}break;
 		}
 		if (stack.count == 0)
@@ -1761,12 +1851,12 @@ metagen_push_c_flag_enum(MetaprogramContext *m, Arena scratch, s8 kind, s8 *ids,
 
 function void
 metagen_push_shader_derivative_vectors(MetaContext *ctx, MetaprogramContext *m, MetaShader *s,
-                                       i32 sub_field_count, b32 has_local_flags)
+                                       i32 sub_field_count)
 {
 	meta_push_line(m, s8("// "), ctx->shader_names.data[s->base_name_id]);
 	for (iz perm = 0; perm < s->permutations.count; perm++) {
 		MetaShaderPermutation *p = s->permutations.data + perm;
-		if (!has_local_flags && sub_field_count == 0) {
+		if (!s->flags_permuted && sub_field_count == 0) {
 			meta_push_line(m, s8("0,"));
 		} else {
 			meta_begin_line(m, s8("(i32 []){"));
@@ -1780,7 +1870,7 @@ metagen_push_shader_derivative_vectors(MetaContext *ctx, MetaprogramContext *m, 
 			for (i32 id = p->global_flags_count; id < sub_field_count; id++)
 				meta_push(m, s8(", -1"));
 
-			if (has_local_flags) {
+			if (s->flags_permuted) {
 				meta_push(m, s8(", 0x"));
 				meta_push_u64_hex(m, p->local_flags);
 			}
@@ -1818,7 +1908,7 @@ meta_push_shader_descriptors_table(MetaprogramContext *m, MetaContext *ctx)
 		stream_append_byte(&sb, ',');
 		columns[3][shader] = arena_stream_commit_and_reset(&m->scratch, &sb);
 
-		columns[4][shader] = sd->has_local_flags ? s8("1") : s8 ("0");
+		columns[4][shader] = s->flags_permuted ? s8("1") : s8 ("0");
 	}
 
 	meta_begin_scope(m, s8("read_only global BeamformerShaderDescriptor beamformer_shader_descriptors[] = {"));
@@ -1949,7 +2039,7 @@ meta_push_shader_match_helper(MetaprogramContext *m, MetaContext *ctx, MetaShade
 		meta_push(m, s8("Beamformer"), ctx->enumeration_kinds.data[index], s8(" "));
 		stream_append_byte(&m->stream, (u8)((iz)'a' + flag));
 	}
-	if (sd->has_local_flags) {
+	if (s->flags_permuted) {
 		if (s->global_flag_ids.count) meta_push(m, s8(", "));
 		meta_push(m, s8("i32 flags"));
 	}
@@ -1961,7 +2051,7 @@ meta_push_shader_match_helper(MetaprogramContext *m, MetaContext *ctx, MetaShade
 			if (flag != 0) meta_push(m, s8(", (i32)"));
 			stream_append_byte(&m->stream, (u8)((iz)'a' + flag));
 		}
-		if (sd->has_local_flags) {
+		if (s->flags_permuted) {
 			if (s->global_flag_ids.count) meta_push(m, s8(", "));
 			meta_push(m, s8("flags"));
 		}
@@ -1970,7 +2060,7 @@ meta_push_shader_match_helper(MetaprogramContext *m, MetaContext *ctx, MetaShade
 		meta_push(m, s8(", "));
 		meta_push_u64(m, (u64)sd->one_past_last_match_vector_index);
 		meta_push(m, s8(", "));
-		meta_push_u64(m, (u64)sd->sub_field_count + sd->has_local_flags);
+		meta_push_u64(m, (u64)sd->sub_field_count + s->flags_permuted);
 		meta_end_line(m, s8(");"));
 		meta_push_line(m, s8("return result;"));
 	meta_end_scope(m, s8("}\n"));
@@ -2065,6 +2155,24 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		metagen_push_c_struct(m, name, types, countof(types), names, countof(names));
 	}
 
+	for (u32 bake = 0; bake < ctx->shader_bake_parameters.count; bake++) {
+		Arena tmp = m->scratch;
+		MetaShaderBakeParameters *b = ctx->shader_bake_parameters.data + bake;
+		MetaShader *s = ctx->shaders.data + b->shader_id;
+		s8 name = push_s8_from_parts(&m->scratch, s8(""), s8("BeamformerShader"),
+		                             ctx->shader_names.data[s->base_name_id], s8("BakeParameters"));
+		meta_begin_scope(m, s8("typedef union {"));
+			meta_begin_scope(m, s8("struct {"));
+				for (u32 entry = 0; entry < b->entry_count; entry++)
+					meta_push_line(m, s8("u32 "), b->names_lower[entry], s8(";"));
+			meta_end_scope(m, s8("};"));
+			meta_begin_line(m, s8("u32 E["));
+			meta_push_u64(m, b->entry_count);
+			meta_end_line(m, s8("];"));
+		meta_end_scope(m, s8("} "), name, s8(";\n"));
+		m->scratch = tmp;
+	}
+
 	///////////////////////////////////////
 	// NOTE(rnp): shader descriptor tables
 	i32 match_vectors_count = 0;
@@ -2072,7 +2180,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	for (iz shader = 0; shader < ctx->shaders.count; shader++) {
 		MetaShader           *s  = ctx->shaders.data + shader;
 		MetaShaderDescriptor *sd = ctx->shader_descriptors + shader;
-		metagen_push_shader_derivative_vectors(ctx, m, s, sd->sub_field_count, sd->has_local_flags);
+		metagen_push_shader_derivative_vectors(ctx, m, s, sd->sub_field_count);
 		match_vectors_count += (i32)s->permutations.count;
 	}
 	meta_end_scope(m, s8("};"));
@@ -2095,7 +2203,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	for (iz shader = 0; shader < ctx->shaders.count; shader++) {
 		MetaShader *s = ctx->shaders.data + shader;
 
-		if (s->global_flag_ids.count) {
+		if (s->global_flag_ids.count || s->global_enumeration_ids.count) {
 			meta_begin_line(m, s8("(i32 []){"));
 			for (iz id = 0; id < s->global_flag_ids.count; id++) {
 				if (id != 0) meta_push(m, s8(", "));
@@ -2108,6 +2216,39 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 			meta_end_line(m, s8("},"));
 		} else {
 			meta_push_line(m, s8("0,"));
+		}
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global s8 *beamformer_shader_bake_parameter_names[] = {"));
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		MetaBaseShader *bs = ctx->base_shaders.data + shader;
+		MetaShader     *s  = bs->shader;
+		if (bs->file.len) {
+			if (s->bake_parameters) {
+				meta_begin_scope(m, s8("(s8 []){"));
+				for (u32 index = 0; index < s->bake_parameters->entry_count; index++)
+					meta_push_line(m, s8("s8_comp(\""), s->bake_parameters->names_upper[index], s8("\"),"));
+				meta_end_scope(m, s8("},"));
+			} else {
+				meta_push_line(m, s8("0,"));
+			}
+		}
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global i32 beamformer_shader_bake_parameter_name_counts[] = {"));
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		MetaBaseShader *bs = ctx->base_shaders.data + shader;
+		MetaShader     *s  = bs->shader;
+		if (bs->file.len) {
+			if (s->bake_parameters) {
+				meta_indent(m);
+				meta_push_u64(m, s->bake_parameters->entry_count);
+				meta_end_line(m, s8(","));
+			} else {
+				meta_push_line(m, s8("0,"));
+			}
 		}
 	}
 	meta_end_scope(m, s8("};\n"));
@@ -2139,7 +2280,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	for (iz shader = 0; shader < ctx->shaders.count; shader++) {
 		MetaShader           *s  = ctx->shaders.data + shader;
 		MetaShaderDescriptor *sd = ctx->shader_descriptors + shader;
-		if (sd->sub_field_count || sd->has_local_flags)
+		if (sd->sub_field_count || s->flags_permuted)
 			meta_push_shader_match_helper(m, ctx, s, sd);
 	}
 
@@ -2414,7 +2555,6 @@ metagen_load_context(Arena *arena)
 			MetaShader           *s  = ctx->shaders.data + shader;
 			MetaShaderDescriptor *sd = ctx->shader_descriptors + shader;
 
-			sd->has_local_flags = ctx->flags_for_shader.data[s->flag_list_id].count > 0;
 			sd->sub_field_count = (i32)s->global_flag_ids.count;
 			sd->first_match_vector_index = match_vectors_count;
 			match_vectors_count += (i32)s->permutations.count;

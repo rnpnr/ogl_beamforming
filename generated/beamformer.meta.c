@@ -73,6 +73,18 @@ typedef struct {
 	b32 has_local_flags;
 } BeamformerShaderDescriptor;
 
+typedef union {
+	struct {
+		u32 acquisition_count;
+		u32 channel_count;
+		u32 data_kind;
+		u32 sample_count;
+		u32 shader_flags;
+		u32 shader_kind;
+	};
+	u32 E[6];
+} BeamformerShaderDASBakeParameters;
+
 read_only global i32 *beamformer_shader_match_vectors[] = {
 	// CudaDecode
 	0,
@@ -123,22 +135,7 @@ read_only global i32 *beamformer_shader_match_vectors[] = {
 	(i32 []){BeamformerDataKind_Float32, -1, 0x06},
 	(i32 []){BeamformerDataKind_Float32, -1, 0x07},
 	// DAS
-	(i32 []){BeamformerDataKind_Float32, 0x00},
-	(i32 []){BeamformerDataKind_Float32, 0x01},
-	(i32 []){BeamformerDataKind_Float32, 0x02},
-	(i32 []){BeamformerDataKind_Float32, 0x03},
-	(i32 []){BeamformerDataKind_Float32, 0x04},
-	(i32 []){BeamformerDataKind_Float32, 0x05},
-	(i32 []){BeamformerDataKind_Float32, 0x06},
-	(i32 []){BeamformerDataKind_Float32, 0x07},
-	(i32 []){BeamformerDataKind_Float32Complex, 0x00},
-	(i32 []){BeamformerDataKind_Float32Complex, 0x01},
-	(i32 []){BeamformerDataKind_Float32Complex, 0x02},
-	(i32 []){BeamformerDataKind_Float32Complex, 0x03},
-	(i32 []){BeamformerDataKind_Float32Complex, 0x04},
-	(i32 []){BeamformerDataKind_Float32Complex, 0x05},
-	(i32 []){BeamformerDataKind_Float32Complex, 0x06},
-	(i32 []){BeamformerDataKind_Float32Complex, 0x07},
+	0,
 	// MinMax
 	0,
 	// Sum
@@ -146,7 +143,7 @@ read_only global i32 *beamformer_shader_match_vectors[] = {
 	// Render3D
 	0,
 };
-#define beamformer_match_vectors_count (62)
+#define beamformer_match_vectors_count (47)
 
 read_only global BeamformerShaderDescriptor beamformer_shader_descriptors[] = {
 	{0,  1,  0, 0, 0},
@@ -154,10 +151,10 @@ read_only global BeamformerShaderDescriptor beamformer_shader_descriptors[] = {
 	{2,  7,  1, 2, 1},
 	{7,  19, 1, 1, 1},
 	{19, 43, 2, 2, 1},
-	{43, 59, 1, 2, 1},
-	{59, 60, 0, 0, 0},
-	{60, 61, 0, 0, 0},
-	{61, 62, 0, 0, 0},
+	{43, 44, 0, 2, 0},
+	{44, 45, 0, 0, 0},
+	{45, 46, 0, 0, 0},
+	{46, 47, 0, 0, 0},
 };
 
 read_only global s8 beamformer_shader_names[] = {
@@ -274,6 +271,31 @@ read_only global i32 *beamformer_shader_header_vectors[] = {
 	0,
 };
 
+read_only global s8 *beamformer_shader_bake_parameter_names[] = {
+	0,
+	0,
+	(s8 []){
+		s8_comp("AcquisitionCount"),
+		s8_comp("ChannelCount"),
+		s8_comp("DataKind"),
+		s8_comp("SampleCount"),
+		s8_comp("ShaderFlags"),
+		s8_comp("ShaderKind"),
+	},
+	0,
+	0,
+	0,
+};
+
+read_only global i32 beamformer_shader_bake_parameter_name_counts[] = {
+	0,
+	0,
+	6,
+	0,
+	0,
+	0,
+};
+
 function iz
 beamformer_shader_match(i32 *match_vector, i32 first_index, i32 one_past_last_index, i32 vector_length)
 {
@@ -314,13 +336,6 @@ function iz
 beamformer_shader_demodulate_match(BeamformerDataKind a, BeamformerSamplingMode b, i32 flags)
 {
 	iz result = beamformer_shader_match((i32 []){(i32)a, (i32)b, flags}, 19, 43, 3);
-	return result;
-}
-
-function iz
-beamformer_shader_das_match(BeamformerDataKind a, i32 flags)
-{
-	iz result = beamformer_shader_match((i32 []){(i32)a, flags}, 43, 59, 2);
 	return result;
 }
 

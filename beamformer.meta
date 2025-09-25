@@ -38,14 +38,19 @@
 
 	@Shader(das.glsl) DAS
 	{
-		@Permute(DataKind [Float32  Float32Complex])
-		{
-			@PermuteFlags([Fast Sparse Interpolate])
-		}
-
+		@Enumeration(DataKind)
 		@Enumeration(RCAOrientation)
+		@Flags([Fast Sparse Interpolate CoherencyWeighting])
 
-		@Flags([CoherencyWeighting])
+		@Bake
+		{
+			@BakeVariable(AcquisitionCount acquisition_count)
+			@BakeVariable(ChannelCount     channel_count    )
+			@BakeVariable(DataKind         data_kind        )
+			@BakeVariable(SampleCount      sample_count     )
+			@BakeVariable(ShaderFlags      shader_flags     )
+			@BakeVariable(ShaderKind       shader_kind      )
+		}
 	}
 
 	@Shader(min_max.glsl) MinMax
