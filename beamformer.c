@@ -4,7 +4,8 @@
  *      - the check for first pass reshaping is the last non constant check
  *        in the shader
  *      - this will also remove the need for the channel mapping in the decode shader
- * [ ]: refactor: fancier hot reloading for JIT shaders
+ * [ ]: refactor: ui: reload only shader which is affected by the interaction
+ * [x]: refactor: fancier hot reloading for JIT shaders
  *      - loop over all active blocks
           - loop over shader sets per block
  *      - when match found reload it
@@ -1112,8 +1113,14 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 		switch (work->kind) {
 		case BeamformerWorkKind_ReloadShader:{
 			u32 reserved_blocks = sm->reserved_parameter_blocks;
-			for (u32 i = 0; i < reserved_blocks; i++)
-				mark_parameter_block_region_dirty(sm, i, BeamformerParameterBlockRegion_ComputePipeline);
+			for (u32 block = 0; block < reserved_blocks; block++) {
+				BeamformerComputePlan *cp = beamformer_compute_plan_for_block(cs, block, arena);
+				for (u32 slot = 0; slot < cp->pipeline.shader_count; slot++) {
+					i32 shader_index = beamformer_shader_reloadable_index_by_shader[cp->pipeline.shaders[slot]];
+					if (beamformer_reloadable_shader_kinds[shader_index] == work->reload_shader)
+						load_compute_shader(ctx, cp, slot, *arena);
+				}
+			}
 
 			if (ctx->latest_frame && !sm->live_imaging_parameters.active) {
 				fill_frame_compute_work(ctx, work, ctx->latest_frame->view_plane_tag, 0, 0);

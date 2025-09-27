@@ -175,12 +175,19 @@ function FILE_WATCH_CALLBACK_FN(reload_shader)
 	return beamformer_reload_shader(os, path, ctx, arena, beamformer_shader_names[kind]);
 }
 
+typedef struct {
+	BeamformerCtx        *beamformer;
+	BeamformerShaderKind  shader;
+} BeamformerShaderReloadIndirectContext;
+
 function FILE_WATCH_CALLBACK_FN(reload_shader_indirect)
 {
-	BeamformerCtx *ctx = (BeamformerCtx *)user_data;
+	BeamformerShaderReloadIndirectContext *rsi = (typeof(rsi))user_data;
+	BeamformerCtx *ctx = rsi->beamformer;
 	BeamformWork *work = beamform_work_queue_push(ctx->beamform_work_queue);
 	if (work) {
 		work->kind = BeamformerWorkKind_ReloadShader,
+		work->reload_shader = rsi->shader;
 		beamform_work_queue_push_commit(ctx->beamform_work_queue);
 		os_wake_waiters(&os->compute_worker.sync_variable);
 	}
@@ -418,8 +425,12 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 		Arena temp  = scratch;
 		s8 file = push_s8_from_parts(&temp, s8(OS_PATH_SEPARATOR), s8("shaders"),
 		                             beamformer_reloadable_shader_files[index]);
-		os_add_file_watch(&ctx->os, memory, file, reload_shader_indirect, (iptr)ctx);
-		reload_shader_indirect(&ctx->os, file, (iptr)ctx, *memory);
+
+		BeamformerShaderReloadIndirectContext *rsi = push_struct(memory, typeof(*rsi));
+		rsi->beamformer = ctx;
+		rsi->shader     = beamformer_reloadable_shader_kinds[index];
+		os_add_file_watch(&ctx->os, memory, file, reload_shader_indirect, (iptr)rsi);
+		reload_shader_indirect(&ctx->os, file, (iptr)rsi, *memory);
 	}
 	os_wake_waiters(&worker->sync_variable);
 

@@ -73,6 +73,7 @@ typedef struct {
 		BeamformerComputeIndirectWorkContext  compute_indirect_context;
 		BeamformerCreateFilterContext         create_filter_context;
 		BeamformerExportContext               export_context;
+		BeamformerShaderKind                  reload_shader;
 	};
 } BeamformWork;
 
