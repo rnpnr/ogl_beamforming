@@ -42,27 +42,6 @@ typedef enum {
 	BeamformerViewPlaneTag_Count,
 } BeamformerViewPlaneTag;
 
-/* X(type, id, pretty name, fixed transmits) */
-#define DAS_SHADER_KIND_LIST \
-	X(FORCES,          0, "FORCES",         1) \
-	X(UFORCES,         1, "UFORCES",        0) \
-	X(HERCULES,        2, "HERCULES",       1) \
-	X(RCA_VLS,         3, "VLS",            0) \
-	X(RCA_TPW,         4, "TPW",            0) \
-	X(UHERCULES,       5, "UHERCULES",      0) \
-	X(RACES,           6, "RACES",          1) \
-	X(EPIC_FORCES,     7, "EPIC-FORCES",    1) \
-	X(EPIC_UFORCES,    8, "EPIC-UFORCES",   0) \
-	X(EPIC_UHERCULES,  9, "EPIC-UHERCULES", 0) \
-	X(Flash,          10, "Flash",          0)
-
-typedef enum {
-	#define X(type, id, ...) BeamformerDASKind_##type = id,
-	DAS_SHADER_KIND_LIST
-	#undef X
-	BeamformerDASKind_Count
-} BeamformerDASKind;
-
 #define BEAMFORMER_CONSTANTS_LIST \
 	X(FilterSlots,                4) \
 	X(MaxChannelCount,          256) \

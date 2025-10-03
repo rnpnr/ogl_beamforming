@@ -3,6 +3,40 @@
 @Enumeration(RCAOrientation [Rows Columns])
 @Enumeration(SamplingMode [2X 4X])
 
+@Table([name pretty_name fixed_transmits]) AcquisitionKind
+{
+	[FORCES         FORCES         1]
+	[UFORCES        UFORCES        0]
+	[HERCULES       HERCULES       1]
+	[RCA_VLS        VLS            0]
+	[RCA_TPW        TPW            0]
+	[UHERCULES      UHERCULES      0]
+	[RACES          RACES          1]
+	[EPIC_FORCES    EPIC-FORCES    1]
+	[EPIC_UFORCES   EPIC-UFORCES   0]
+	[EPIC_UHERCULES EPIC-UHERCULES 0]
+	[Flash          Flash          0]
+}
+
+@Expand(AcquisitionKind)
+{
+	@Enumeration(AcquisitionKind `$(name)`)
+}
+
+@Emit
+{
+	`read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {`
+	@Expand(AcquisitionKind) `	$(fixed_transmits),`
+	`};`
+}
+
+@Emit
+{
+	`read_only global s8 beamformer_acquisition_kind_strings[] = {`
+	@Expand(AcquisitionKind) `	s8_comp("$(pretty_name)"),`
+	`};`
+}
+
 @ShaderGroup Compute
 {
 	@Shader CudaDecode
@@ -57,6 +91,7 @@
 
 	@Shader(das.glsl) DAS
 	{
+		@Enumeration(AcquisitionKind)
 		@Enumeration(DataKind)
 		@Enumeration(RCAOrientation)
 		@Flags([Fast Sparse Interpolate CoherencyWeighting])
@@ -68,7 +103,7 @@
 			@BakeInt(DataKind         data_kind        )
 			@BakeInt(SampleCount      sample_count     )
 			@BakeInt(ShaderFlags      shader_flags     )
-			@BakeInt(ShaderKind       shader_kind      )
+			@BakeInt(AcquisitionKind  acquisition_kind )
 			@BakeFloat(DemodulationFrequency demodulation_frequency)
 			@BakeFloat(FNumber               f_number              )
 			@BakeFloat(SamplingFrequency     sampling_frequency    )

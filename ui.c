@@ -657,20 +657,17 @@ stream_append_variable_group(Stream *s, Variable *var)
 }
 
 function s8
-push_das_shader_kind(Stream *s, BeamformerDASKind shader, u32 transmit_count)
+push_acquisition_kind(Stream *s, BeamformerAcquisitionKind kind, u32 transmit_count)
 {
-	#define X(__1, __2, pretty, ...) s8_comp(pretty),
-	read_only local_persist s8 pretty_names[BeamformerDASKind_Count + 1] = {
-		DAS_SHADER_KIND_LIST
-		s8_comp("Invalid")
-	};
-	#undef X
-	#define X(__1, __2, __3, fixed_tx) fixed_tx,
-	read_only local_persist u8 fixed_transmits[BeamformerDASKind_Count + 1] = {DAS_SHADER_KIND_LIST};
-	#undef X
+	s8 name             = beamformer_acquisition_kind_strings[kind];
+	b32 fixed_transmits = beamformer_acquisition_kind_has_fixed_transmits[kind];
+	if (kind >= BeamformerAcquisitionKind_Count || kind < 0) {
+		fixed_transmits = 0;
+		name            = s8("Invalid");
+	}
 
-	stream_append_s8(s, pretty_names[MIN(shader, BeamformerDASKind_Count)]);
-	if (!fixed_transmits[MIN(shader, BeamformerDASKind_Count)]) {
+	stream_append_s8(s, name);
+	if (!fixed_transmits) {
 		stream_append_byte(s, '-');
 		stream_append_u64(s, transmit_count);
 	}
@@ -2570,7 +2567,7 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 
 	{
 		Stream buf = arena_stream(a);
-		s8 shader  = push_das_shader_kind(&buf, frame->das_kind, frame->compound_count);
+		s8 shader  = push_acquisition_kind(&buf, frame->acquisition_kind, frame->compound_count);
 		text_spec.font = &ui->font;
 		text_spec.limits.size.w -= 16;
 		v2 txt_s  = measure_text(*text_spec.font, shader);

@@ -273,11 +273,11 @@ struct BeamformerFrame {
 	v3  max_coordinate;
 
 	// metadata
-	GLenum                 gl_kind;
-	u32                    id;
-	u32                    compound_count;
-	BeamformerDASKind      das_kind;
-	BeamformerViewPlaneTag view_plane_tag;
+	GLenum                    gl_kind;
+	u32                       id;
+	u32                       compound_count;
+	BeamformerAcquisitionKind acquisition_kind;
+	BeamformerViewPlaneTag    view_plane_tag;
 
 	BeamformerFrame *next;
 };

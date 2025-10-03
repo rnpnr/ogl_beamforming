@@ -420,18 +420,18 @@ das_voxel_transform_matrix(BeamformerParameters *bp)
 
 	m4 R;
 	switch (bp->das_shader_id) {
-	case BeamformerDASKind_FORCES:
-	case BeamformerDASKind_UFORCES:
-	case BeamformerDASKind_Flash:
+	case BeamformerAcquisitionKind_FORCES:
+	case BeamformerAcquisitionKind_UFORCES:
+	case BeamformerAcquisitionKind_Flash:
 	{
 		R = m4_identity();
 		S.c[1].E[1]  = 0;
 		T2.c[3].E[1] = 0;
 	}break;
-	case BeamformerDASKind_HERCULES:
-	case BeamformerDASKind_UHERCULES:
-	case BeamformerDASKind_RCA_TPW:
-	case BeamformerDASKind_RCA_VLS:
+	case BeamformerAcquisitionKind_HERCULES:
+	case BeamformerAcquisitionKind_UHERCULES:
+	case BeamformerAcquisitionKind_RCA_TPW:
+	case BeamformerAcquisitionKind_RCA_VLS:
 	{
 		R = m4_rotation_about_z(bp->beamform_plane ? 0.0f : 0.25f);
 		if (!(points.x > 1 && points.y > 1 && points.z > 1))
@@ -454,7 +454,7 @@ das_ubo_from_beamformer_parameters(BeamformerComputePlan *cp, BeamformerDASUBO *
 	cp->das_bake.speed_of_sound         = bp->speed_of_sound;
 	cp->das_bake.time_offset            = bp->time_offset;
 	cp->das_bake.f_number               = bp->f_number;
-	cp->das_bake.shader_kind            = bp->das_shader_id;
+	cp->das_bake.acquisition_kind       = bp->das_shader_id;
 	cp->das_bake.sample_count           = bp->sample_count;
 	cp->das_bake.channel_count          = bp->channel_count;
 	cp->das_bake.acquisition_count      = bp->acquisition_count;
@@ -463,7 +463,7 @@ das_ubo_from_beamformer_parameters(BeamformerComputePlan *cp, BeamformerDASUBO *
 	if (bp->coherency_weighting) cp->das_bake.shader_flags |= BeamformerShaderDASFlags_CoherencyWeighting;
 	else                         cp->das_bake.shader_flags |= BeamformerShaderDASFlags_Fast;
 
-	if (bp->das_shader_id == BeamformerDASKind_UFORCES || bp->das_shader_id == BeamformerDASKind_UHERCULES)
+	if (bp->das_shader_id == BeamformerAcquisitionKind_UFORCES || bp->das_shader_id == BeamformerAcquisitionKind_UHERCULES)
 		cp->das_bake.shader_flags |= BeamformerShaderDASFlags_Sparse;
 	if (bp->interpolate)
 		cp->das_bake.shader_flags |= BeamformerShaderDASFlags_Interpolate;
@@ -690,10 +690,6 @@ stream_push_shader_header(Stream *s, BeamformerShaderKind shader_kind, s8 header
 		"layout(location = " str(DAS_CYCLE_T_UNIFORM_LOC)      ") uniform uint  u_cycle_t;\n"
 		"layout(location = " str(DAS_FAST_CHANNEL_UNIFORM_LOC) ") uniform int   u_channel;\n\n"
 		));
-
-		#define X(k, id, ...) "#define ShaderKind_" #k " " #id "\n"
-		stream_append_s8s(s, s8(DAS_SHADER_KIND_LIST), s8("\n"));
-		#undef X
 	}break;
 	case BeamformerShaderKind_Decode:{
 		stream_append_s8s(s, s8(""
@@ -970,8 +966,8 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 
 		if (fast) {
 			i32 loop_end;
-			if (cp->das_bake.shader_kind == BeamformerDASKind_RCA_VLS ||
-			    cp->das_bake.shader_kind == BeamformerDASKind_RCA_TPW)
+			if (cp->das_bake.acquisition_kind == BeamformerAcquisitionKind_RCA_VLS ||
+			    cp->das_bake.acquisition_kind == BeamformerAcquisitionKind_RCA_TPW)
 			{
 				/* NOTE(rnp): to avoid repeatedly sampling the whole focal vectors
 				 * texture we loop over transmits for VLS/TPW */
@@ -1042,10 +1038,10 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 
 		glProgramUniform1f(program, SUM_PRESCALE_UNIFORM_LOC, 1 / (f32)frame_count);
 		do_sum_shader(cc, in_textures, frame_count, aframe->texture, aframe->dim);
-		aframe->min_coordinate  = frame->min_coordinate;
-		aframe->max_coordinate  = frame->max_coordinate;
-		aframe->compound_count  = frame->compound_count;
-		aframe->das_kind        = frame->das_kind;
+		aframe->min_coordinate   = frame->min_coordinate;
+		aframe->max_coordinate   = frame->max_coordinate;
+		aframe->compound_count   = frame->compound_count;
+		aframe->acquisition_kind = frame->acquisition_kind;
 	}break;
 	InvalidDefaultCase;
 	}
@@ -1197,10 +1193,10 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			if (!beamformer_frame_compatible(frame, cp->output_points, gl_kind))
 				alloc_beamform_frame(&ctx->gl, frame, cp->output_points, gl_kind, s8("Beamformed_Data"), *arena);
 
-			frame->min_coordinate  = cp->min_coordinate;
-			frame->max_coordinate  = cp->max_coordinate;
-			frame->das_kind        = cp->das_bake.shader_kind;
-			frame->compound_count  = cp->das_bake.acquisition_count;
+			frame->min_coordinate   = cp->min_coordinate;
+			frame->max_coordinate   = cp->max_coordinate;
+			frame->acquisition_kind = cp->das_bake.acquisition_kind;
+			frame->compound_count   = cp->das_bake.acquisition_count;
 
 			BeamformerComputeContext  *cc       = &ctx->compute_context;
 			BeamformerComputePipeline *pipeline = &cp->pipeline;

@@ -2,6 +2,8 @@
 /* NOTE: inspired by nob: https://github.com/tsoding/nob.h */
 
 /* TODO(rnp):
+ * [ ]: refactor: merge pack_table and bake_parameters
+ * [ ]: refactor: allow @Expand to come before the table definition
  * [ ]: refactor: helper for appending expanded shader flags
  * [ ]: refactor: "base" shaders should only be reloadable shaders
  *      - internally when a shader with no file is encountered it should
@@ -775,8 +777,8 @@ meta_push_(MetaprogramContext *m, s8 *items, iz count)
 #define meta_pad(m, b, n)             stream_pad(&(m)->stream, (b), (n))
 #define meta_indent(m)                meta_pad((m), '\t', (m)->indentation_level)
 #define meta_begin_line(m, ...)  do { meta_indent(m); meta_push(m, __VA_ARGS__);           } while(0)
-#define meta_end_line(m, ...)                         meta_push(m, __VA_ARGS__, s8("\n"))
-#define meta_push_line(m, ...)   do { meta_indent(m); meta_push(m, __VA_ARGS__, s8("\n")); } while(0)
+#define meta_end_line(m, ...)                         meta_push(m, ##__VA_ARGS__, s8("\n"))
+#define meta_push_line(m, ...)   do { meta_indent(m); meta_push(m, ##__VA_ARGS__, s8("\n")); } while(0)
 #define meta_begin_scope(m, ...) do { meta_push_line(m, __VA_ARGS__); (m)->indentation_level++; } while(0)
 #define meta_end_scope(m, ...)   do { (m)->indentation_level--; meta_push_line(m, __VA_ARGS__); } while(0)
 #define meta_push_u64(m, n)           stream_append_u64(&(m)->stream, (n))
@@ -820,16 +822,21 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 
 #define META_ENTRY_KIND_LIST \
 	X(Invalid)      \
+	X(Array)        \
 	X(Bake)         \
 	X(BakeInt)      \
 	X(BakeFloat)    \
 	X(BeginScope)   \
+	X(Emit)         \
 	X(EndScope)     \
 	X(Enumeration)  \
+	X(Expand)       \
 	X(Flags)        \
+	X(String)       \
 	X(Shader)       \
 	X(ShaderGroup)  \
-	X(SubShader)
+	X(SubShader)    \
+	X(Table)
 
 typedef enum {
 	#define X(k, ...) MetaEntryKind_## k,
@@ -882,6 +889,7 @@ typedef struct {
 
 #define META_PARSE_TOKEN_LIST \
 	X('@', Entry)      \
+	X('`', RawString)  \
 	X('(', BeginArgs)  \
 	X(')', EndArgs)    \
 	X('[', BeginArray) \
@@ -1032,6 +1040,25 @@ meta_parser_trim(MetaParser *p)
 }
 
 function s8
+meta_parser_extract_raw_string(MetaParser *p)
+{
+	s8 result = {.data = p->p.s.data};
+	for (; result.len < p->p.s.len; result.len++) {
+		u8 byte = p->p.s.data[result.len];
+		p->p.location.column++;
+		if (byte == '`') {
+			break;
+		} else if (byte == '\n') {
+			p->p.location.column = 0;
+			p->p.location.line++;
+		}
+	}
+	p->p.s.data += (result.len + 1);
+	p->p.s.len  -= (result.len + 1);
+	return result;
+}
+
+function s8
 meta_parser_extract_string(MetaParser *p)
 {
 	s8 result = {.data = p->p.s.data};
@@ -1066,8 +1093,9 @@ meta_parser_token_name(MetaParser *p, MetaParseToken t)
 		META_PARSE_TOKEN_LIST
 		#undef X
 	};
-	if (t >= 0 && t < countof(names)) result = names[t];
-	if (t == MetaParseToken_String)   result = p->u.string;
+	if (t >= 0 && t < countof(names))  result = names[t];
+	if (t == MetaParseToken_String)    result = p->u.string;
+	if (t == MetaParseToken_RawString) result = (s8){.data = p->u.string.data - 1, .len = p->u.string.len + 1};
 	return result;
 }
 
@@ -1086,13 +1114,17 @@ meta_parser_token(MetaParser *p)
 		}
 		if (chop) { s8_chop(&p->p.s, 1); p->p.location.column++; }
 
-		meta_parser_trim(p);
+		if (result != MetaParseToken_RawString) meta_parser_trim(p);
 		switch (result) {
-		case MetaParseToken_String:{ p->u.string = meta_parser_extract_string(p); }break;
+		case MetaParseToken_RawString:{ p->u.string = meta_parser_extract_raw_string(p); }break;
+		case MetaParseToken_String:{    p->u.string = meta_parser_extract_string(p);     }break;
 
 		/* NOTE(rnp): '{' and '}' are shorthand for @BeginScope and @EndScope */
 		case MetaParseToken_BeginScope:{ p->u.kind = MetaEntryKind_BeginScope; }break;
 		case MetaParseToken_EndScope:{   p->u.kind = MetaEntryKind_EndScope;   }break;
+
+		/* NOTE(rnp): loose '[' implies implicit @Array() */
+		case MetaParseToken_BeginArray:{ p->u.kind = MetaEntryKind_Array; }break;
 
 		case MetaParseToken_Entry:{
 			s8 kind = meta_parser_extract_string(p);
@@ -1126,42 +1158,51 @@ meta_parser_unexpected_token(MetaParser *p, MetaParseToken t)
 }
 
 function void
+meta_parser_fill_argument_array(MetaParser *p, MetaEntryArgument *array, Arena *arena)
+{
+	array->kind     = MetaEntryArgumentKind_Array;
+	array->strings  = arena_aligned_start(*arena, alignof(s8));
+	array->location = p->p.location;
+	for (MetaParseToken token = meta_parser_token(p);
+	     token != MetaParseToken_EndArray;
+	     token = meta_parser_token(p))
+	{
+		switch (token) {
+		case MetaParseToken_RawString:
+		case MetaParseToken_String:
+		{
+			assert((u8 *)(array->strings + array->count) == arena->beg);
+			*push_struct(arena, s8) = p->u.string;
+			array->count++;
+		}break;
+		default:{ meta_parser_unexpected_token(p, token); }break;
+		}
+	}
+}
+
+function void
 meta_parser_arguments(MetaParser *p, MetaEntry *e, Arena *arena)
 {
 	if (meta_parser_peek_token(p) == MetaParseToken_BeginArgs) {
 		meta_parser_commit(p);
 
-		MetaEntryArgument *arg = e->arguments = push_struct(arena, MetaEntryArgument);
-		b32 array = 0;
+		e->arguments = arena_aligned_start(*arena, alignof(MetaEntryArgument));
 		for (MetaParseToken token = meta_parser_token(p);
 		     token != MetaParseToken_EndArgs;
 		     token = meta_parser_token(p))
 		{
-			if (!arg) arg = push_struct(arena, MetaEntryArgument);
+			e->argument_count++;
+			MetaEntryArgument *arg = push_struct(arena, MetaEntryArgument);
 			switch (token) {
-			case MetaParseToken_String:{
-				if (array) {
-					assert((u8 *)(arg->strings + arg->count) == arena->beg);
-					*push_struct(arena, s8) = p->u.string;
-					arg->count++;
-				} else {
-					e->argument_count++;
-					arg->kind     = MetaEntryArgumentKind_String;
-					arg->string   = p->u.string;
-					arg->location = p->p.location;
-					arg           = 0;
-				}
+			case MetaParseToken_RawString:
+			case MetaParseToken_String:
+			{
+				arg->kind     = MetaEntryArgumentKind_String;
+				arg->string   = p->u.string;
+				arg->location = p->p.location;
 			}break;
 			case MetaParseToken_BeginArray:{
-				arg->kind     = MetaEntryArgumentKind_Array;
-				arg->strings  = (s8 *)arena_aligned_start(*arena, alignof(s8));
-				arg->location = p->p.location;
-				array         = 1;
-			}break;
-			case MetaParseToken_EndArray:{
-				e->argument_count++;
-				array = 0;
-				arg   = 0;
+				meta_parser_fill_argument_array(p, arg, arena);
 			}break;
 			default:{ meta_parser_unexpected_token(p, token); }break;
 			}
@@ -1169,15 +1210,21 @@ meta_parser_arguments(MetaParser *p, MetaEntry *e, Arena *arena)
 	}
 }
 
-function iz
+typedef struct {
+	MetaEntry *start;
+	MetaEntry *one_past_last;
+	iz consumed;
+} MetaEntryScope;
+
+function MetaEntryScope
 meta_entry_extract_scope(MetaEntry *base, iz entry_count)
 {
 	assert(base->kind != MetaEntryKind_BeginScope || base->kind != MetaEntryKind_EndScope);
 	assert(entry_count > 0);
 
-	MetaEntry *e = base + 1;
-	iz result, sub_scope = 0;
-	for (result = 1; result < entry_count; result++, e++) {
+	MetaEntryScope result = {.start = base + 1, .consumed = 1};
+	iz sub_scope = 0;
+	for (MetaEntry *e = result.start; result.consumed < entry_count; result.consumed++, e++) {
 		switch (e->kind) {
 		case MetaEntryKind_BeginScope:{ sub_scope++; }break;
 		case MetaEntryKind_EndScope:{   sub_scope--; }break;
@@ -1188,6 +1235,10 @@ meta_entry_extract_scope(MetaEntry *base, iz entry_count)
 
 	if (sub_scope != 0)
 		meta_entry_error(base, "unclosed scope for entry\n");
+
+	result.one_past_last = base + result.consumed;
+	if (result.start->kind == MetaEntryKind_BeginScope) result.start++;
+	if (result.one_past_last == result.start) result.one_past_last++;
 
 	return result;
 }
@@ -1208,6 +1259,12 @@ meta_entry_stack_from_file(Arena *arena, Arena scratch, char *file)
 	{
 		MetaEntry *e = da_push(arena, &result);
 		switch (token) {
+		case MetaParseToken_RawString:{
+			e->kind     = MetaEntryKind_String;
+			e->location = parser.save_point.location;
+			e->name     = parser.u.string;
+		}break;
+		case MetaParseToken_BeginArray:
 		case MetaParseToken_BeginScope:
 		case MetaParseToken_EndScope:
 		case MetaParseToken_Entry:
@@ -1217,6 +1274,12 @@ meta_entry_stack_from_file(Arena *arena, Arena scratch, char *file)
 
 			if (token == MetaParseToken_Entry)
 				meta_parser_arguments(&parser, e, arena);
+
+			if (token == MetaParseToken_BeginArray) {
+				MetaEntryArgument *a = e->arguments = push_struct(arena, MetaEntryArgument);
+				e->argument_count = 1;
+				meta_parser_fill_argument_array(&parser, a, arena);
+			}
 
 			if (meta_parser_peek_token(&parser) == MetaParseToken_String) {
 				meta_parser_commit(&parser);
@@ -1319,12 +1382,63 @@ typedef struct {
 DA_STRUCT(MetaShaderGroup, MetaShaderGroup);
 
 typedef struct {
+	s8  *fields;
+	s8 **entries;
+	u32 field_count;
+	u32 entry_count;
+	u32 table_name_id;
+} MetaTable;
+DA_STRUCT(MetaTable, MetaTable);
+
+typedef enum {
+	MetaExpansionPartKind_Reference,
+	MetaExpansionPartKind_String,
+} MetaExpansionPartKind;
+
+typedef struct {
+	s8 *strings;
+	MetaExpansionPartKind kind;
+} MetaExpansionPart;
+DA_STRUCT(MetaExpansionPart, MetaExpansionPart);
+
+typedef enum {
+	MetaEmitOperationKind_String,
+	MetaEmitOperationKind_Expand,
+} MetaEmitOperationKind;
+
+typedef struct {
+	MetaExpansionPart *parts;
+	u32 part_count;
+	u32 table_id;
+} MetaEmitOperationExpansion;
+
+typedef struct {
+	union {
+		s8 string;
+		MetaEmitOperationExpansion expansion_operation;
+	};
+	MetaEmitOperationKind kind;
+} MetaEmitOperation;
+DA_STRUCT(MetaEmitOperation, MetaEmitOperation);
+
+typedef struct {
+	MetaEmitOperationList *data;
+	iz count;
+	iz capacity;
+} MetaEmitOperationListSet;
+
+typedef struct {
 	Arena *arena, scratch;
 
-	s8_list               enumeration_kinds;
-	s8_list_table         enumeration_members;
+	s8_list                      enumeration_kinds;
+	s8_list_table                enumeration_members;
 
-	s8_list_table         flags_for_shader;
+	s8_list_table                flags_for_shader;
+
+	s8_list                      table_names;
+	MetaTableList                tables;
+
+	MetaEmitOperationListSet     emit_sets;
 
 	MetaShaderBakeParametersList shader_bake_parameters;
 	MetaShaderGroupList          shader_groups;
@@ -1387,7 +1501,6 @@ function iz
 meta_pack_shader_bake_parameters(MetaContext *ctx, MetaEntry *e, iz entry_count, u32 shader_id, u32 *table_id)
 {
 	assert(e->kind == MetaEntryKind_Bake);
-	iz result = meta_entry_extract_scope(e, entry_count);
 
 	MetaShaderBakeParameters *bp = da_push(ctx->arena, &ctx->shader_bake_parameters);
 	bp->shader_id = shader_id;
@@ -1395,12 +1508,9 @@ meta_pack_shader_bake_parameters(MetaContext *ctx, MetaEntry *e, iz entry_count,
 
 	if (e->argument_count) meta_entry_argument_expected(e);
 
-	if (result > 1) {
-		MetaEntry *last = e + result;
-		assert(e[1].kind  == MetaEntryKind_BeginScope);
-		assert(last->kind == MetaEntryKind_EndScope);
-
-		for (MetaEntry *row = e + 2; row != last; row++) {
+	MetaEntryScope scope = meta_entry_extract_scope(e, entry_count);
+	if (scope.consumed > 1) {
+		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++) {
 			if (row->kind != MetaEntryKind_BakeInt && row->kind != MetaEntryKind_BakeFloat)
 				meta_entry_nesting_error(row, MetaEntryKind_Bake);
 			meta_entry_argument_expected(row, s8("name"), s8("name_lower"));
@@ -1412,14 +1522,14 @@ meta_pack_shader_bake_parameters(MetaContext *ctx, MetaEntry *e, iz entry_count,
 		bp->floating_point = push_array(ctx->arena, u8, bp->entry_count);
 
 		u32 row_index = 0;
-		for (MetaEntry *row = e + 2; row != last; row++, row_index++) {
+		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++, row_index++) {
 			bp->names_upper[row_index]    = row->arguments[0].string;
 			bp->names_lower[row_index]    = row->arguments[1].string;
 			bp->floating_point[row_index] = row->kind == MetaEntryKind_BakeFloat;
 		}
 	}
 
-	return result;
+	return scope.consumed;
 }
 
 function iz
@@ -1431,6 +1541,16 @@ meta_enumeration_id(MetaContext *ctx, s8 kind)
 		assert(result == (ctx->enumeration_members.count - 1));
 	}
 	return result;
+}
+
+function void
+meta_extend_enumeration(MetaContext *ctx, s8 kind, s8 *variations, uz count)
+{
+	iz kidx = meta_enumeration_id(ctx, kind);
+	/* NOTE(rnp): may overcommit if duplicates exist in variations */
+	da_reserve(ctx->arena, ctx->enumeration_members.data + kidx, (iz)count);
+	for (uz i = 0; i < count; i++)
+		meta_intern_string(ctx, ctx->enumeration_members.data + kidx, variations[i]);
 }
 
 function MetaEnumeration
@@ -1554,6 +1674,225 @@ meta_pack_shader(MetaContext *ctx, MetaShaderGroup *sg, Arena scratch, MetaEntry
 	}
 
 	return result;
+}
+
+function void
+meta_expansion_string_split(s8 string, s8 *left, s8 *inner, s8 *remainder, MetaLocation loc)
+{
+	b32 found = 0;
+	for (u8 *s = string.data, *e = s + string.len; (s + 1) != e; s++) {
+		u32 val  = (u32)'$'  << 8u | (u32)'(';
+		u32 test = (u32)s[0] << 8u | s[1];
+		if (test == val) {
+			if (left) {
+				left->data = string.data;
+				left->len  = s - string.data;
+			}
+
+			u8 *start = s + 2;
+			while (s != e && *s != ')') s++;
+			if (s == e) {
+				meta_compiler_error_message(loc, "unterminated expansion in raw string:\n  %.*s\n",
+				                            (i32)string.len, string.data);
+				fprintf(stderr, "  %.*s^\n", (i32)(start - string.data), "");
+				meta_error();
+			}
+
+			if (inner) {
+				inner->data = start;
+				inner->len  = s - start;
+			}
+
+			if (remainder) {
+				remainder->data = s + 1;
+				remainder->len  = string.len - (remainder->data - string.data);
+			}
+			found = 1;
+			break;
+		}
+	}
+	if (!found) {
+		if (left)      *left      = string;
+		if (inner)     *inner     = (s8){0};
+		if (remainder) *remainder = (s8){0};
+	}
+}
+
+function MetaExpansionPart *
+meta_push_expansion_part(MetaContext *ctx, Arena *arena, MetaExpansionPartList *parts,
+                         MetaExpansionPartKind kind, s8 string, MetaTable *t, MetaLocation loc)
+{
+	MetaExpansionPart *result = da_push(arena, parts);
+	result->kind = kind;
+	if (kind == MetaExpansionPartKind_String) {
+		result->strings    = push_struct(arena, s8);
+		result->strings[0] = string;
+	} else {
+		iz index = -1;
+		for (u32 field = 0; field < t->field_count; field++) {
+			if (s8_equal(string, t->fields[field])) {
+				index = (iz)field;
+				break;
+			}
+		}
+		result->strings = t->entries[index];
+		if (index < 0) {
+			/* TODO(rnp): fix this location to point directly at the field in the string */
+			s8 table_name = ctx->table_names.data[t->table_name_id];
+			meta_compiler_error(loc, "table \"%.*s\" does not contain member: %.*s\n",
+			                    (i32)table_name.len, table_name.data, (i32)string.len, string.data);
+		}
+	}
+	return result;
+}
+
+function MetaExpansionPartList
+meta_generate_expansion_set(MetaContext *ctx, Arena *arena, s8 expansion_string, MetaTable *t, MetaLocation loc)
+{
+	MetaExpansionPartList result = {0};
+	s8 left = {0}, inner, remainder = expansion_string;
+	do {
+		meta_expansion_string_split(remainder, &left, &inner, &remainder, loc);
+		if (left.len)  meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_String,    left,  t, loc);
+		if (inner.len) meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_Reference, inner, t, loc);
+	} while (remainder.len);
+	return result;
+}
+
+function iz
+meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count, MetaEmitOperationList *ops)
+{
+	assert(e->kind == MetaEntryKind_Expand);
+
+	/* TODO(rnp): for now this requires that the @Table came first */
+	meta_entry_argument_expected(e, s8("table_name"));
+	s8 table_name = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
+
+	MetaTable *t = ctx->tables.data + meta_lookup_string_slow(&ctx->table_names, table_name);
+	if (t < ctx->tables.data)
+		meta_entry_error(e, "undefined table %.*s\n", (i32)table_name.len, table_name.data);
+
+	MetaEntryScope scope = meta_entry_extract_scope(e, entry_count);
+	for (MetaEntry *row = scope.start; row != scope.one_past_last; row++) {
+		switch (row->kind) {
+		case MetaEntryKind_String:{
+			if (!ops) goto error;
+
+			MetaExpansionPartList parts = meta_generate_expansion_set(ctx, ctx->arena, row->name, t, row->location);
+
+			MetaEmitOperation *op = da_push(ctx->arena, ops);
+			op->kind = MetaEmitOperationKind_Expand;
+			op->expansion_operation.parts      = parts.data;
+			op->expansion_operation.part_count = (u32)parts.count;
+			op->expansion_operation.table_id   = (u32)da_index(t,	&ctx->tables);
+		}break;
+		case MetaEntryKind_Enumeration:{
+			if (ops) meta_entry_nesting_error(row, MetaEntryKind_Emit);
+
+			meta_entry_argument_expected(row, s8("kind"), s8("`raw_string`"));
+			s8 kind   = meta_entry_argument_expect(row, 0, MetaEntryArgumentKind_String).string;
+			s8 expand = meta_entry_argument_expect(row, 1, MetaEntryArgumentKind_String).string;
+
+			MetaExpansionPartList parts = meta_generate_expansion_set(ctx, &scratch, expand, t, row->location);
+			s8 *variations = push_array(&scratch, s8, t->entry_count);
+			for (u32 expansion = 0; expansion < t->entry_count; expansion++) {
+				Stream sb = arena_stream(*ctx->arena);
+				for (iz part = 0; part < parts.count; part++) {
+					MetaExpansionPart *p = parts.data + part;
+					u32 index = 0;
+					if (p->kind == MetaExpansionPartKind_Reference) index = expansion;
+					stream_append_s8(&sb, p->strings[index]);
+				}
+				variations[expansion] = arena_stream_commit(ctx->arena, &sb);
+			}
+			meta_extend_enumeration(ctx, kind, variations, t->entry_count);
+		}break;
+		error:
+		default:
+		{
+			meta_entry_nesting_error(row, MetaEntryKind_Expand);
+		}break;
+		}
+	}
+	return scope.consumed;
+}
+
+function iz
+meta_pack_emit(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count)
+{
+	assert(e->kind == MetaEntryKind_Emit);
+
+	MetaEmitOperationList *ops = da_push(ctx->arena, &ctx->emit_sets);
+	MetaEntryScope scope = meta_entry_extract_scope(e, entry_count);
+	for (MetaEntry *row = scope.start; row != scope.one_past_last; row++) {
+		switch (row->kind) {
+		case MetaEntryKind_String:{
+			MetaEmitOperation *op = da_push(ctx->arena, ops);
+			op->kind   = MetaEmitOperationKind_String;
+			op->string = row->name;
+		}break;
+		case MetaEntryKind_Expand:{
+			row += meta_expand(ctx, scratch, row, entry_count - (row - e), ops);
+		}break;
+		default:{ meta_entry_nesting_error(row, MetaEntryKind_Emit); }break;
+		}
+	}
+	return scope.consumed;
+}
+
+function iz
+meta_pack_table(MetaContext *ctx, MetaEntry *e, iz entry_count)
+{
+	assert(e->kind == MetaEntryKind_Table);
+
+	MetaTable *t = da_push(ctx->arena, &ctx->tables);
+	iz table_name_id = meta_lookup_string_slow(&ctx->table_names, e->name);
+	if (table_name_id >= 0) meta_entry_error(e, "table redifined\n");
+
+	s8 *t_name = da_push(ctx->arena, &ctx->table_names);
+	t->table_name_id = (u32)da_index(t_name, &ctx->table_names);
+	*t_name = e->name;
+
+	meta_entry_argument_expected(e, s8("[field ...]"));
+	MetaEntryArgument fields = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_Array);
+	t->fields      = fields.strings;
+	t->field_count = (u32)fields.count;
+
+	MetaEntryScope scope = meta_entry_extract_scope(e, entry_count);
+	if (scope.consumed > 1) {
+		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++) {
+			if (row->kind != MetaEntryKind_Array)
+				meta_entry_nesting_error(row, MetaEntryKind_Table);
+
+			MetaEntryArgument entries = meta_entry_argument_expect(row, 0, MetaEntryArgumentKind_Array);
+			if (entries.count != t->field_count) {
+				meta_compiler_error_message(row->location, "incorrect field count for @%s entry got: %lu expected: %u\n",
+				                            meta_entry_kind_strings[MetaEntryKind_Table],
+				                            entries.count, t->field_count);
+				fprintf(stderr, "  fields: [");
+				for (uz i = 0; i < t->field_count; i++) {
+					if (i != 0) fprintf(stderr, ", ");
+					fprintf(stderr, "%.*s", (i32)t->fields[i].len, t->fields[i].data);
+				}
+				fprintf(stderr, "]\n");
+				meta_error();
+			}
+			t->entry_count++;
+		}
+
+		t->entries = push_array(ctx->arena, s8 *, t->field_count);
+		for (u32 field = 0; field < t->field_count; field++)
+			t->entries[field] = push_array(ctx->arena, s8, t->entry_count);
+
+		u32 row_index = 0;
+		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++, row_index++) {
+			s8 *fs = row->arguments->strings;
+			for (u32 field = 0; field < t->field_count; field++)
+				t->entries[field][row_index] = fs[field];
+		}
+	}
+
+	return scope.consumed;
 }
 
 function void
@@ -1912,6 +2251,33 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	}
 	meta_end_scope(m, s8("};\n"));
 
+	///////////////////////////////
+	// NOTE(rnp): @Emit directives
+	for (iz set = 0; set < ctx->emit_sets.count; set++) {
+		MetaEmitOperationList *ops = ctx->emit_sets.data + set;
+		for (iz opcode = 0; opcode < ops->count; opcode++) {
+			MetaEmitOperation *op = ops->data + opcode;
+			switch (op->kind) {
+			case MetaEmitOperationKind_String:{ meta_push_line(m, op->string); }break;
+			case MetaEmitOperationKind_Expand:{
+				MetaEmitOperationExpansion *eop = &op->expansion_operation;
+				MetaTable *t = ctx->tables.data + eop->table_id;
+				for (u32 entry = 0; entry < t->entry_count; entry++) {
+					meta_indent(m);
+					for (u32 part = 0; part < eop->part_count; part++) {
+						MetaExpansionPart *p = eop->parts + part;
+						u32 index = p->kind == MetaExpansionPartKind_Reference ? entry : 0;
+						meta_push(m, p->strings[index]);
+					}
+					meta_end_line(m);
+				}
+			}break;
+			InvalidDefaultCase;
+			}
+		}
+		meta_end_line(m);
+	}
+
 	//fprintf(stderr, "%.*s\n", (i32)m.stream.widx, m.stream.data);
 
 	result = meta_write_and_reset(m, out);
@@ -2151,12 +2517,18 @@ metagen_load_context(Arena *arena)
 			default:{}break;
 			}
 		}break;
+		case MetaEntryKind_Emit:{
+			i += meta_pack_emit(ctx, scratch, e, entries.count - i);
+		}break;
 		case MetaEntryKind_Enumeration:{
 			meta_entry_argument_expected(e, s8("kind"), s8("[id ...]"));
 			s8 kind = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
 			MetaEntryArgument ids = meta_entry_argument_expect(e, 1, MetaEntryArgumentKind_Array);
 			for (u32 id = 0; id < ids.count; id++)
 				meta_commit_enumeration(ctx, kind, ids.strings[id]);
+		}break;
+		case MetaEntryKind_Expand:{
+			i += meta_expand(ctx, scratch, e, entries.count - i, 0);
 		}break;
 		case MetaEntryKind_ShaderGroup:{
 			MetaShaderGroup *sg = da_push(ctx->arena, &ctx->shader_groups);
@@ -2166,6 +2538,9 @@ metagen_load_context(Arena *arena)
 		case MetaEntryKind_Shader:{
 			if (!current_shader_group) goto error;
 			i += meta_pack_shader(ctx, current_shader_group, scratch, e, entries.count - i);
+		}break;
+		case MetaEntryKind_Table:{
+			i += meta_pack_table(ctx, e, entries.count - i);
 		}break;
 
 		error:

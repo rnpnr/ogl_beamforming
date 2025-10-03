@@ -29,6 +29,21 @@ typedef enum {
 } BeamformerSamplingMode;
 
 typedef enum {
+	BeamformerAcquisitionKind_FORCES         = 0,
+	BeamformerAcquisitionKind_UFORCES        = 1,
+	BeamformerAcquisitionKind_HERCULES       = 2,
+	BeamformerAcquisitionKind_RCA_VLS        = 3,
+	BeamformerAcquisitionKind_RCA_TPW        = 4,
+	BeamformerAcquisitionKind_UHERCULES      = 5,
+	BeamformerAcquisitionKind_RACES          = 6,
+	BeamformerAcquisitionKind_EPIC_FORCES    = 7,
+	BeamformerAcquisitionKind_EPIC_UFORCES   = 8,
+	BeamformerAcquisitionKind_EPIC_UHERCULES = 9,
+	BeamformerAcquisitionKind_Flash          = 10,
+	BeamformerAcquisitionKind_Count,
+} BeamformerAcquisitionKind;
+
+typedef enum {
 	BeamformerShaderDecodeFlags_DilateOutput = (1 << 0),
 } BeamformerShaderDecodeFlags;
 
@@ -107,7 +122,7 @@ typedef union {
 		u32 data_kind;
 		u32 sample_count;
 		u32 shader_flags;
-		u32 shader_kind;
+		u32 acquisition_kind;
 		f32 demodulation_frequency;
 		f32 f_number;
 		f32 sampling_frequency;
@@ -190,6 +205,19 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"#define SamplingMode_2X 0\n"
 	"#define SamplingMode_4X 1\n"
 	"\n"),
+	s8_comp(""
+	"#define AcquisitionKind_FORCES         0\n"
+	"#define AcquisitionKind_UFORCES        1\n"
+	"#define AcquisitionKind_HERCULES       2\n"
+	"#define AcquisitionKind_RCA_VLS        3\n"
+	"#define AcquisitionKind_RCA_TPW        4\n"
+	"#define AcquisitionKind_UHERCULES      5\n"
+	"#define AcquisitionKind_RACES          6\n"
+	"#define AcquisitionKind_EPIC_FORCES    7\n"
+	"#define AcquisitionKind_EPIC_UFORCES   8\n"
+	"#define AcquisitionKind_EPIC_UHERCULES 9\n"
+	"#define AcquisitionKind_Flash          10\n"
+	"\n"),
 };
 
 read_only global s8 beamformer_shader_local_header_strings[] = {
@@ -215,7 +243,7 @@ read_only global s8 beamformer_shader_local_header_strings[] = {
 read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){0, 1},
 	(i32 []){0, 3},
-	(i32 []){0, 2},
+	(i32 []){4, 0, 2},
 	0,
 	0,
 	0,
@@ -224,7 +252,7 @@ read_only global i32 *beamformer_shader_header_vectors[] = {
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	2,
 	2,
-	2,
+	3,
 	0,
 	0,
 	0,
@@ -264,7 +292,7 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("DataKind"),
 		s8_comp("SampleCount"),
 		s8_comp("ShaderFlags"),
-		s8_comp("ShaderKind"),
+		s8_comp("AcquisitionKind"),
 		s8_comp("DemodulationFrequency"),
 		s8_comp("FNumber"),
 		s8_comp("SamplingFrequency"),
@@ -292,5 +320,33 @@ read_only global i32 beamformer_shader_bake_parameter_counts[] = {
 	0,
 	0,
 	0,
+};
+
+read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
+	1,
+	0,
+	1,
+	0,
+	0,
+	0,
+	1,
+	1,
+	0,
+	0,
+	0,
+};
+
+read_only global s8 beamformer_acquisition_kind_strings[] = {
+	s8_comp("FORCES"),
+	s8_comp("UFORCES"),
+	s8_comp("HERCULES"),
+	s8_comp("VLS"),
+	s8_comp("TPW"),
+	s8_comp("UHERCULES"),
+	s8_comp("RACES"),
+	s8_comp("EPIC-FORCES"),
+	s8_comp("EPIC-UFORCES"),
+	s8_comp("EPIC-UHERCULES"),
+	s8_comp("Flash"),
 };
 

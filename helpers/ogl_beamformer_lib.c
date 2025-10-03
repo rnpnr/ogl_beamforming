@@ -505,7 +505,7 @@ beamformer_push_simple_parameters_at(BeamformerSimpleParameters *bp, u32 block)
 		result &= beamformer_push_transmit_receive_orientations_at(bp->transmit_receive_orientations,
 		                                                           bp->acquisition_count, block);
 
-		if (bp->das_shader_id == BeamformerDASKind_UFORCES || bp->das_shader_id == BeamformerDASKind_UHERCULES)
+		if (bp->das_shader_id == BeamformerAcquisitionKind_UFORCES || bp->das_shader_id == BeamformerAcquisitionKind_UHERCULES)
 			result &= beamformer_push_sparse_elements_at(bp->sparse_elements, bp->acquisition_count, block);
 
 		for (u32 stage = 0; stage < bp->compute_stages_count; stage++)

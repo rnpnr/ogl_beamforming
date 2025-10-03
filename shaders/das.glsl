@@ -265,20 +265,20 @@ void main()
 
 	vec3 world_point = (voxel_transform * vec4(out_voxel, 1)).xyz;
 
-	switch (ShaderKind) {
-	case ShaderKind_FORCES:
-	case ShaderKind_UFORCES:
+	switch (AcquisitionKind) {
+	case AcquisitionKind_FORCES:
+	case AcquisitionKind_UFORCES:
 	{
 		sum += FORCES(world_point);
 	}break;
-	case ShaderKind_HERCULES:
-	case ShaderKind_UHERCULES:
+	case AcquisitionKind_HERCULES:
+	case AcquisitionKind_UHERCULES:
 	{
 		sum += HERCULES(world_point);
 	}break;
-	case ShaderKind_Flash:
-	case ShaderKind_RCA_TPW:
-	case ShaderKind_RCA_VLS:
+	case AcquisitionKind_Flash:
+	case AcquisitionKind_RCA_TPW:
+	case AcquisitionKind_RCA_VLS:
 	{
 		sum += RCA(world_point);
 	}break;

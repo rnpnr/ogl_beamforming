@@ -22,7 +22,7 @@ mem_move(u8 *dest, u8 *src, uz n)
 	else            while (n) { n--; dest[n] = src[n]; }
 }
 
-function u8 *
+function void *
 arena_aligned_start(Arena a, uz alignment)
 {
 	uz padding = -(uintptr_t)a.beg & (alignment - 1);
@@ -34,7 +34,7 @@ arena_aligned_start(Arena a, uz alignment)
 function iz
 arena_capacity_(Arena *a, iz size, uz alignment)
 {
-	iz available = a->end - arena_aligned_start(*a, alignment);
+	iz available = a->end - (u8 *)arena_aligned_start(*a, alignment);
 	iz result    = available / size;
 	return result;
 }
