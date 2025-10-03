@@ -1576,7 +1576,7 @@ meta_commit_shader_flag(MetaContext *ctx, u32 flag_list_id, s8 flag, MetaEntry *
 {
 	assert(flag_list_id < ctx->flags_for_shader.count);
 	iz index = meta_intern_string(ctx, ctx->flags_for_shader.data + flag_list_id, flag);
-	if (index > 7) meta_entry_error(e, "Shaders only support 8 local flags\n");
+	if (index > 31) meta_entry_error(e, "maximum shader local flags exceeded: limit: 32\n");
 	u8 result = (u8)index;
 	return result;
 }
