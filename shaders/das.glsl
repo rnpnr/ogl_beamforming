@@ -39,6 +39,7 @@ const bool fast                = bool(ShaderFlags & ShaderFlags_Fast);
 const bool sparse              = bool(ShaderFlags & ShaderFlags_Sparse);
 const bool interpolate         = bool(ShaderFlags & ShaderFlags_Interpolate);
 const bool coherency_weighting = bool(ShaderFlags & ShaderFlags_CoherencyWeighting);
+const bool receive_only        = bool(ShaderFlags & ShaderFlags_ReceiveOnly);
 
 #if (ShaderFlags & ShaderFlags_Fast)
 layout(TEXTURE_KIND, binding = 0)           restrict uniform image3D  u_out_data_tex;
@@ -151,15 +152,17 @@ float cylindrical_wave_transmit_distance(const vec3 point, const float focal_dep
 
 float rca_transmit_distance(const vec3 world_point, const vec2 focal_vector, const int transmit_receive_orientation)
 {
-	bool  tx_rows        = (transmit_receive_orientation & TX_ORIENTATION_MASK) == 0;
-	float transmit_angle = radians(focal_vector.x);
-	float focal_depth    = focal_vector.y;
+	float result = 0;
+	if (!receive_only) {
+		bool  tx_rows        = (transmit_receive_orientation & TX_ORIENTATION_MASK) == 0;
+		float transmit_angle = radians(focal_vector.x);
+		float focal_depth    = focal_vector.y;
 
-	float result;
-	if (isinf(focal_depth)) {
-		result = plane_wave_transmit_distance(world_point, transmit_angle, tx_rows);
-	} else {
-		result = cylindrical_wave_transmit_distance(world_point, focal_depth, transmit_angle, tx_rows);
+		if (isinf(focal_depth)) {
+			result = plane_wave_transmit_distance(world_point, transmit_angle, tx_rows);
+		} else {
+			result = cylindrical_wave_transmit_distance(world_point, focal_depth, transmit_angle, tx_rows);
+		}
 	}
 	return result;
 }
@@ -273,6 +276,7 @@ void main()
 	}break;
 	case AcquisitionKind_HERCULES:
 	case AcquisitionKind_UHERCULES:
+	case AcquisitionKind_HERO_PA:
 	{
 		sum += HERCULES(world_point);
 	}break;

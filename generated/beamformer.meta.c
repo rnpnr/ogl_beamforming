@@ -40,6 +40,7 @@ typedef enum {
 	BeamformerAcquisitionKind_EPIC_UFORCES   = 8,
 	BeamformerAcquisitionKind_EPIC_UHERCULES = 9,
 	BeamformerAcquisitionKind_Flash          = 10,
+	BeamformerAcquisitionKind_HERO_PA        = 11,
 	BeamformerAcquisitionKind_Count,
 } BeamformerAcquisitionKind;
 
@@ -58,6 +59,7 @@ typedef enum {
 	BeamformerShaderDASFlags_Sparse             = (1 << 1),
 	BeamformerShaderDASFlags_Interpolate        = (1 << 2),
 	BeamformerShaderDASFlags_CoherencyWeighting = (1 << 3),
+	BeamformerShaderDASFlags_ReceiveOnly        = (1 << 4),
 } BeamformerShaderDASFlags;
 
 typedef enum {
@@ -217,6 +219,7 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"#define AcquisitionKind_EPIC_UFORCES   8\n"
 	"#define AcquisitionKind_EPIC_UHERCULES 9\n"
 	"#define AcquisitionKind_Flash          10\n"
+	"#define AcquisitionKind_HERO_PA        11\n"
 	"\n"),
 };
 
@@ -234,6 +237,7 @@ read_only global s8 beamformer_shader_local_header_strings[] = {
 	"#define ShaderFlags_Sparse             (1 << 1)\n"
 	"#define ShaderFlags_Interpolate        (1 << 2)\n"
 	"#define ShaderFlags_CoherencyWeighting (1 << 3)\n"
+	"#define ShaderFlags_ReceiveOnly        (1 << 4)\n"
 	"\n"),
 	{0},
 	{0},
@@ -334,6 +338,7 @@ read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
 	0,
 	0,
 	0,
+	0,
 };
 
 read_only global s8 beamformer_acquisition_kind_strings[] = {
@@ -348,5 +353,6 @@ read_only global s8 beamformer_acquisition_kind_strings[] = {
 	s8_comp("EPIC-UFORCES"),
 	s8_comp("EPIC-UHERCULES"),
 	s8_comp("Flash"),
+	s8_comp("HERO-PA"),
 };
 

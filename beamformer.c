@@ -465,6 +465,10 @@ das_ubo_from_beamformer_parameters(BeamformerComputePlan *cp, BeamformerDASUBO *
 
 	if (bp->das_shader_id == BeamformerAcquisitionKind_UFORCES || bp->das_shader_id == BeamformerAcquisitionKind_UHERCULES)
 		cp->das_bake.shader_flags |= BeamformerShaderDASFlags_Sparse;
+
+	if (bp->das_shader_id == BeamformerAcquisitionKind_HERO_PA)
+		cp->das_bake.shader_flags |= BeamformerShaderDASFlags_ReceiveOnly;
+
 	if (bp->interpolate)
 		cp->das_bake.shader_flags |= BeamformerShaderDASFlags_Interpolate;
 }

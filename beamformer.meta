@@ -16,6 +16,7 @@
 	[EPIC_UFORCES   EPIC-UFORCES   0]
 	[EPIC_UHERCULES EPIC-UHERCULES 0]
 	[Flash          Flash          0]
+	[HERO_PA        HERO-PA        0]
 }
 
 @Expand(AcquisitionKind)
@@ -94,7 +95,7 @@
 		@Enumeration(AcquisitionKind)
 		@Enumeration(DataKind)
 		@Enumeration(RCAOrientation)
-		@Flags([Fast Sparse Interpolate CoherencyWeighting])
+		@Flags([Fast Sparse Interpolate CoherencyWeighting ReceiveOnly])
 
 		@Bake
 		{
