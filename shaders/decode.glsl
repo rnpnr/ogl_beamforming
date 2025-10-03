@@ -23,7 +23,7 @@
 #elif DataKind == DataKind_Int16
 	#define INPUT_DATA_TYPE      int
 	#define RF_SAMPLES_PER_INDEX 2
-	#if (ShaderFlags & ShaderFlags_DilateOutput)
+	#if DilateOutput
 		#define SAMPLE_DATA_TYPE    vec4
 		#define SAMPLE_TYPE_CAST(x) vec4(((x) << 16) >> 16, 0, (x) >> 16, 0)
 	#else

@@ -9,7 +9,7 @@
   #define SAMPLE_TYPE_CAST(v) unpackSnorm2x16(v)
 #endif
 
-#if (ShaderFlags & ShaderFlags_ComplexFilter)
+#if ComplexFilter
 	#define FILTER_TYPE         vec2
 	#define apply_filter(iq, h) complex_mul((iq), (h))
 #else
@@ -31,8 +31,6 @@ layout(std430, binding = 3) readonly restrict buffer buffer_3 {
 
 layout(r16i, binding = 1) readonly restrict uniform iimage1D channel_mapping;
 
-const bool map_channels = (ShaderFlags & ShaderFlags_MapChannels) != 0;
-
 vec2 complex_mul(vec2 a, vec2 b)
 {
 	mat2 m = mat2(b.x, b.y, -b.y, b.x);
@@ -40,7 +38,7 @@ vec2 complex_mul(vec2 a, vec2 b)
 	return result;
 }
 
-#if (ShaderFlags & ShaderFlags_Demodulate)
+#if Demodulate
 vec2 rotate_iq(vec2 iq, int index)
 {
 	vec2 result;
@@ -84,14 +82,14 @@ void main()
 	uint channel    = gl_GlobalInvocationID.y;
 	uint transmit   = gl_GlobalInvocationID.z;
 
-	uint in_channel = map_channels ? imageLoad(channel_mapping, int(channel)).x : channel;
+	uint in_channel = bool(MapChannels) ? imageLoad(channel_mapping, int(channel)).x : channel;
 	uint in_offset  = InputChannelStride * in_channel + InputTransmitStride * transmit;
 	uint out_offset = OutputChannelStride  * channel +
 	                  OutputTransmitStride * transmit +
 	                  OutputSampleStride   * out_sample;
 
 	int target;
-	if (map_channels) {
+	if (bool(MapChannels)) {
 		target = OutputChannelStride / OutputSampleStride;
 	} else {
 		target = OutputTransmitStride;
@@ -104,12 +102,12 @@ void main()
 		int a_length = target;
 		int index    = int(in_sample);
 
-		const float scale = bool(ShaderFlags & ShaderFlags_ComplexFilter) ? 1 : sqrt(2);
+		const float scale = bool(ComplexFilter) ? 1 : sqrt(2);
 
 		for (int j = max(0, index - FilterLength); j < min(index, a_length); j++) {
 			vec2        iq = sample_rf(in_offset + j);
 			FILTER_TYPE h  = filter_coefficients[index - j];
-		#if (ShaderFlags & ShaderFlags_Demodulate)
+		#if Demodulate
 			result  += scale * apply_filter(rotate_iq(iq * vec2(1, -1), -j), h);
 		#else
 			result  += apply_filter(iq, h);

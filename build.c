@@ -4,7 +4,7 @@
 /* TODO(rnp):
  * [ ]: refactor: merge pack_table and bake_parameters
  * [ ]: refactor: allow @Expand to come before the table definition
- * [ ]: refactor: helper for appending expanded shader flags
+ * [x]: refactor: helper for appending expanded shader flags
  * [ ]: refactor: "base" shaders should only be reloadable shaders
  *      - internally when a shader with no file is encountered it should
  *        not get pushed as a "base" shader.
@@ -2038,7 +2038,7 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 	}
 	meta_end_scope(m, s8("};\n"));
 
-	meta_begin_scope(m, s8("read_only global s8 beamformer_shader_local_header_strings[] = {"));
+	meta_begin_scope(m, s8("read_only global s8 *beamformer_shader_flag_strings[] = {"));
 	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
 		if (ctx->base_shaders.data[shader].file.len == 0) continue;
 
@@ -2046,13 +2046,26 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 		s8_list    *flag_list = ctx->flags_for_shader.data + s->flag_list_id;
 
 		if (flag_list->count) {
-			meta_push_line(m, s8("s8_comp(\"\""));
-			metagen_push_counted_enum_body(m, s8("ShaderFlags_"), s8("\"#define "), s8("(1 << "), s8(")\\n\""),
-			                               flag_list->data, flag_list->count);
-			meta_push_line(m, s8("\"\\n\"),"));
+			meta_begin_scope(m, s8("(s8 []){"));
+			for (iz flag = 0; flag < flag_list->count; flag++)
+				meta_push_line(m, s8("s8_comp(\""), flag_list->data[flag], s8("\"),"));
+			meta_end_scope(m, s8("},"));
 		} else {
-			meta_push_line(m, s8("{0},"));
+			meta_push_line(m, s8("0,"));
 		}
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global u8 beamformer_shader_flag_strings_count[] = {"));
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		if (ctx->base_shaders.data[shader].file.len == 0) continue;
+
+		MetaShader *s         = ctx->base_shaders.data[shader].shader;
+		s8_list    *flag_list = ctx->flags_for_shader.data + s->flag_list_id;
+
+		meta_indent(m);
+		meta_push_u64(m, (u64)flag_list->count);
+		meta_end_line(m, s8(","));
 	}
 	meta_end_scope(m, s8("};\n"));
 }

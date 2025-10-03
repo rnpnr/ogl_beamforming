@@ -443,7 +443,7 @@ das_voxel_transform_matrix(BeamformerParameters *bp)
 	return result;
 }
 
-function void
+function u32
 das_ubo_from_beamformer_parameters(BeamformerComputePlan *cp, BeamformerDASUBO *du, BeamformerParameters *bp)
 {
 	du->voxel_transform = das_voxel_transform_matrix(bp);
@@ -459,18 +459,20 @@ das_ubo_from_beamformer_parameters(BeamformerComputePlan *cp, BeamformerDASUBO *
 	cp->das_bake.channel_count          = bp->channel_count;
 	cp->das_bake.acquisition_count      = bp->acquisition_count;
 
-	cp->das_bake.shader_flags = 0;
-	if (bp->coherency_weighting) cp->das_bake.shader_flags |= BeamformerShaderDASFlags_CoherencyWeighting;
-	else                         cp->das_bake.shader_flags |= BeamformerShaderDASFlags_Fast;
+	u32 result = 0;
+	if (bp->coherency_weighting) result |= BeamformerShaderDASFlags_CoherencyWeighting;
+	else                         result |= BeamformerShaderDASFlags_Fast;
 
 	if (bp->das_shader_id == BeamformerAcquisitionKind_UFORCES || bp->das_shader_id == BeamformerAcquisitionKind_UHERCULES)
-		cp->das_bake.shader_flags |= BeamformerShaderDASFlags_Sparse;
+		result |= BeamformerShaderDASFlags_Sparse;
 
 	if (bp->das_shader_id == BeamformerAcquisitionKind_HERO_PA)
-		cp->das_bake.shader_flags |= BeamformerShaderDASFlags_ReceiveOnly;
+		result |= BeamformerShaderDASFlags_ReceiveOnly;
 
 	if (bp->interpolate)
-		cp->das_bake.shader_flags |= BeamformerShaderDASFlags_Interpolate;
+		result |= BeamformerShaderDASFlags_Interpolate;
+
+	return result;
 }
 
 function void
@@ -478,7 +480,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 {
 	BeamformerDASUBO *bp = &cp->das_ubo_data;
 
-	das_ubo_from_beamformer_parameters(cp, bp, &pb->parameters);
+	u32 das_flags = das_ubo_from_beamformer_parameters(cp, bp, &pb->parameters);
 
 	b32 decode_first = pb->pipeline.shaders[0] == BeamformerShaderKind_Decode;
 	b32 run_cuda_hilbert = 0;
@@ -517,8 +519,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				}
 			}
 
-			b->shader_flags = 0;
-			if (run_cuda_hilbert) b->shader_flags |= BeamformerShaderDecodeFlags_DilateOutput;
+			u32 *flags = cp->shader_flags + cp->pipeline.shader_count;
+			*flags     = 0;
+			if (run_cuda_hilbert) *flags |= BeamformerShaderDecodeFlags_DilateOutput;
 
 			commit = 1;
 		}break;
@@ -530,9 +533,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 			b->filter_length = (u32)f->length;
 			b->sampling_mode = pb->parameters.sampling_mode;
-			b->shader_flags = BeamformerShaderFilterFlags_Demodulate;
-			if (f->parameters.complex) b->shader_flags |= BeamformerShaderFilterFlags_ComplexFilter;
-			if (!decode_first)         b->shader_flags |= BeamformerShaderFilterFlags_MapChannels;
+			u32 *flags = cp->shader_flags + cp->pipeline.shader_count;
+			*flags     = BeamformerShaderFilterFlags_Demodulate;
+			if (f->parameters.complex) *flags |= BeamformerShaderFilterFlags_ComplexFilter;
+			if (!decode_first)         *flags |= BeamformerShaderFilterFlags_MapChannels;
 
 			b->data_kind = data_kind;
 			if (decode_first)
@@ -547,8 +551,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			cp->das_bake.time_offset += f->time_delay;
 
 			b->filter_length = (u32)f->length;
-			b->shader_flags  = 0;
-			if (f->parameters.complex) b->shader_flags |= BeamformerShaderFilterFlags_ComplexFilter;
+			u32 *flags = cp->shader_flags + cp->pipeline.shader_count;
+			*flags     = 0;
+			if (f->parameters.complex) *flags |= BeamformerShaderFilterFlags_ComplexFilter;
 
 			b->data_kind = data_kind;
 			if (decode_first)
@@ -560,6 +565,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			cp->das_bake.data_kind = BeamformerDataKind_Float32;
 			if (demodulate || run_cuda_hilbert)
 				cp->das_bake.data_kind = BeamformerDataKind_Float32Complex;
+			cp->shader_flags[cp->pipeline.shader_count] = das_flags;
 			commit = 1;
 		}break;
 		default:{ commit = 1; }break;
@@ -745,8 +751,6 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 		for (i32 index = 0; index < header_vector_length; index++)
 			stream_append_s8(&shader_stream, beamformer_shader_global_header_strings[header_vector[index]]);
 
-		stream_append_s8(&shader_stream, beamformer_shader_local_header_strings[reloadable_index]);
-
 		if (beamformer_shader_bake_parameter_counts[reloadable_index]) {
 			i32 count = beamformer_shader_bake_parameter_counts[reloadable_index];
 			u32 *parameters = 0;
@@ -767,6 +771,16 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 				                  is_float[index]? s8(" uintBitsToFloat") : s8(" "), s8("(0x"));
 				stream_append_hex_u64(&shader_stream, parameters[index]);
 				stream_append_s8(&shader_stream, s8(")\n"));
+			}
+
+			stream_append_byte(&shader_stream, '\n');
+
+			s8  *flag_names = beamformer_shader_flag_strings[reloadable_index];
+			u32  flag_count = beamformer_shader_flag_strings_count[reloadable_index];
+			u32  flags      = cp->shader_flags[shader_slot];
+			for (u32 bit = 0; bit < flag_count; bit++) {
+				stream_append_s8s(&shader_stream, s8("#define "), flag_names[bit],
+				                  (flags & (1 << bit))? s8(" 1") : s8(" 0"), s8("\n"));
 			}
 		}
 
@@ -911,10 +925,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 	case BeamformerShaderKind_Filter:
 	case BeamformerShaderKind_Demodulate:
 	{
-		BeamformerShaderFilterBakeParameters *b = &cp->filter_bake;
-		if (shader == BeamformerShaderKind_Demodulate) b = &cp->demodulate_bake;
-
-		b32 map_channels = (b->shader_flags & BeamformerShaderFilterFlags_MapChannels) != 0;
+		b32 map_channels = (cp->shader_flags[shader_slot] & BeamformerShaderFilterFlags_MapChannels) != 0;
 
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, cc->ping_pong_ssbos[output_ssbo_idx]);
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, cp->filters[sp->filter_slot].ssbo);
@@ -945,7 +956,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 	case BeamformerShaderKind_DAS:{
 		local_persist u32 das_cycle_t = 0;
 
-		u32 local_flags = cp->das_bake.shader_flags;
+		u32 local_flags = cp->shader_flags[shader_slot];
 		b32 fast        = (local_flags & BeamformerShaderDASFlags_Fast)   != 0;
 		b32 sparse      = (local_flags & BeamformerShaderDASFlags_Sparse) != 0;
 

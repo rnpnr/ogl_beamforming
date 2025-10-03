@@ -181,6 +181,8 @@ struct BeamformerComputePlan {
 	BeamformerShaderFilterBakeParameters filter_bake;
 	BeamformerShaderDASBakeParameters    das_bake;
 
+	u32 shader_flags[BeamformerMaxComputeShaderStages];
+
 	BeamformerComputePlan *next;
 };
 

@@ -92,10 +92,9 @@ typedef union {
 		u32 output_channel_stride;
 		u32 output_sample_stride;
 		u32 output_transmit_stride;
-		u32 shader_flags;
 		u32 transmit_count;
 	};
-	u32 E[10];
+	u32 E[9];
 } BeamformerShaderDecodeBakeParameters;
 
 typedef union {
@@ -109,12 +108,11 @@ typedef union {
 		u32 output_channel_stride;
 		u32 output_sample_stride;
 		u32 output_transmit_stride;
-		u32 shader_flags;
 		u32 sampling_mode;
 		f32 demodulation_frequency;
 		f32 sampling_frequency;
 	};
-	u32 E[13];
+	u32 E[12];
 } BeamformerShaderFilterBakeParameters;
 
 typedef union {
@@ -123,7 +121,6 @@ typedef union {
 		u32 channel_count;
 		u32 data_kind;
 		u32 sample_count;
-		u32 shader_flags;
 		u32 acquisition_kind;
 		f32 demodulation_frequency;
 		f32 f_number;
@@ -131,7 +128,7 @@ typedef union {
 		f32 speed_of_sound;
 		f32 time_offset;
 	};
-	u32 E[11];
+	u32 E[10];
 } BeamformerShaderDASBakeParameters;
 
 read_only global s8 beamformer_shader_names[] = {
@@ -223,25 +220,34 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 };
 
-read_only global s8 beamformer_shader_local_header_strings[] = {
-	s8_comp(""
-	"#define ShaderFlags_DilateOutput (1 << 0)\n"
-	"\n"),
-	s8_comp(""
-	"#define ShaderFlags_ComplexFilter (1 << 0)\n"
-	"#define ShaderFlags_MapChannels   (1 << 1)\n"
-	"#define ShaderFlags_Demodulate    (1 << 2)\n"
-	"\n"),
-	s8_comp(""
-	"#define ShaderFlags_Fast               (1 << 0)\n"
-	"#define ShaderFlags_Sparse             (1 << 1)\n"
-	"#define ShaderFlags_Interpolate        (1 << 2)\n"
-	"#define ShaderFlags_CoherencyWeighting (1 << 3)\n"
-	"#define ShaderFlags_ReceiveOnly        (1 << 4)\n"
-	"\n"),
-	{0},
-	{0},
-	{0},
+read_only global s8 *beamformer_shader_flag_strings[] = {
+	(s8 []){
+		s8_comp("DilateOutput"),
+	},
+	(s8 []){
+		s8_comp("ComplexFilter"),
+		s8_comp("MapChannels"),
+		s8_comp("Demodulate"),
+	},
+	(s8 []){
+		s8_comp("Fast"),
+		s8_comp("Sparse"),
+		s8_comp("Interpolate"),
+		s8_comp("CoherencyWeighting"),
+		s8_comp("ReceiveOnly"),
+	},
+	0,
+	0,
+	0,
+};
+
+read_only global u8 beamformer_shader_flag_strings_count[] = {
+	1,
+	3,
+	5,
+	0,
+	0,
+	0,
 };
 
 read_only global i32 *beamformer_shader_header_vectors[] = {
@@ -272,7 +278,6 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("OutputChannelStride"),
 		s8_comp("OutputSampleStride"),
 		s8_comp("OutputTransmitStride"),
-		s8_comp("ShaderFlags"),
 		s8_comp("TransmitCount"),
 	},
 	(s8 []){
@@ -285,7 +290,6 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("OutputChannelStride"),
 		s8_comp("OutputSampleStride"),
 		s8_comp("OutputTransmitStride"),
-		s8_comp("ShaderFlags"),
 		s8_comp("SamplingMode"),
 		s8_comp("DemodulationFrequency"),
 		s8_comp("SamplingFrequency"),
@@ -295,7 +299,6 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("ChannelCount"),
 		s8_comp("DataKind"),
 		s8_comp("SampleCount"),
-		s8_comp("ShaderFlags"),
 		s8_comp("AcquisitionKind"),
 		s8_comp("DemodulationFrequency"),
 		s8_comp("FNumber"),
@@ -309,18 +312,18 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 };
 
 read_only global u8 *beamformer_shader_bake_parameter_is_float[] = {
-	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1},
-	(u8 []){0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1},
+	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0},
+	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1},
+	(u8 []){0, 0, 0, 0, 0, 1, 1, 1, 1, 1},
 	0,
 	0,
 	0,
 };
 
 read_only global i32 beamformer_shader_bake_parameter_counts[] = {
+	9,
+	12,
 	10,
-	13,
-	11,
 	0,
 	0,
 	0,

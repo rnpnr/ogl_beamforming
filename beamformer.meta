@@ -59,7 +59,6 @@
 			@BakeInt(OutputChannelStride  output_channel_stride )
 			@BakeInt(OutputSampleStride   output_sample_stride  )
 			@BakeInt(OutputTransmitStride output_transmit_stride)
-			@BakeInt(ShaderFlags          shader_flags          )
 			@BakeInt(TransmitCount        transmit_count        )
 		}
 	}
@@ -81,7 +80,6 @@
 			@BakeInt(OutputChannelStride  output_channel_stride )
 			@BakeInt(OutputSampleStride   output_sample_stride  )
 			@BakeInt(OutputTransmitStride output_transmit_stride)
-			@BakeInt(ShaderFlags          shader_flags          )
 			@BakeInt(SamplingMode         sampling_mode         )
 			@BakeFloat(DemodulationFrequency demodulation_frequency)
 			@BakeFloat(SamplingFrequency     sampling_frequency    )
@@ -103,7 +101,6 @@
 			@BakeInt(ChannelCount     channel_count    )
 			@BakeInt(DataKind         data_kind        )
 			@BakeInt(SampleCount      sample_count     )
-			@BakeInt(ShaderFlags      shader_flags     )
 			@BakeInt(AcquisitionKind  acquisition_kind )
 			@BakeFloat(DemodulationFrequency demodulation_frequency)
 			@BakeFloat(FNumber               f_number              )
