@@ -8,7 +8,7 @@
  * [x]: refactor: "base" shaders should only be reloadable shaders
  *      - internally when a shader with no file is encountered it should
  *        not get pushed as a "base" shader.
- * [ ]: bug: column indicator for compile error is off
+ * [x]: bug: column indicator for compile error is off
  * [ ]: bake shaders and font data into binary
  *      - for shaders there is a way of making a separate data section and referring
  *        to it with extern from the C source (bake both data and size)
@@ -941,7 +941,7 @@ global jmp_buf  compiler_jmp_buf;
 #define meta_entry_error(e, ...) meta_entry_error_column((e), (i32)(e)->location.column, __VA_ARGS__)
 #define meta_entry_error_column(e, column, ...) do { \
 	meta_compiler_error_message((e)->location, __VA_ARGS__); \
-	meta_entry_print((e), 1, (column)); \
+	meta_entry_print((e), 2 * (column), 0); \
 	meta_error(); \
 } while(0)
 
@@ -966,13 +966,13 @@ meta_error(void)
 }
 
 function void
-meta_entry_print(MetaEntry *e, i32 depth, i32 caret)
+meta_entry_print(MetaEntry *e, i32 indent, i32 caret)
 {
 	char *kind = meta_entry_kind_strings[e->kind];
 	if (e->kind == MetaEntryKind_BeginScope) kind = "{";
 	if (e->kind == MetaEntryKind_EndScope)   kind = "}";
 
-	fprintf(stderr, "%*s@%s", depth * 2, "", kind);
+	fprintf(stderr, "%*s@%s", indent, "", kind);
 
 	if (e->argument_count) {
 		fprintf(stderr, "(");
@@ -994,7 +994,7 @@ meta_entry_print(MetaEntry *e, i32 depth, i32 caret)
 	}
 	if (e->name.len) fprintf(stderr, " %.*s", (i32)e->name.len, e->name.data);
 
-	if (caret >= 0) fprintf(stderr, "\n%.*s^", depth * 2 + caret, "");
+	if (caret >= 0) fprintf(stderr, "\n%*s^", indent + caret, "");
 
 	fprintf(stderr, "\n");
 }
