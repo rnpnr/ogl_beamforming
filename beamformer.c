@@ -5,10 +5,6 @@
  *        in the shader
  *      - this will also remove the need for the channel mapping in the decode shader
  * [ ]: refactor: ui: reload only shader which is affected by the interaction
- * [x]: refactor: fancier hot reloading for JIT shaders
- *      - loop over all active blocks
-          - loop over shader sets per block
- *      - when match found reload it
  * [ ]: BeamformWorkQueue -> BeamformerWorkQueue
  * [ ]: need to keep track of gpu memory in some way
  *      - want to be able to store more than 16 2D frames but limit 3D frames
@@ -306,9 +302,8 @@ function b32
 fill_frame_compute_work(BeamformerCtx *ctx, BeamformWork *work, BeamformerViewPlaneTag plane,
                         u32 parameter_block, b32 indirect)
 {
-	b32 result = 0;
-	if (work) {
-		result = 1;
+	b32 result = work != 0;
+	if (result) {
 		u32 frame_id    = atomic_add_u32(&ctx->next_render_frame_index, 1);
 		u32 frame_index = frame_id % countof(ctx->beamform_frames);
 		work->kind      = indirect? BeamformerWorkKind_ComputeIndirect : BeamformerWorkKind_Compute;
@@ -805,11 +800,7 @@ function void
 beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 block, Arena arena)
 {
 	BeamformerParameterBlock *pb = beamformer_parameter_block_lock(&ctx->shared_memory, block, -1);
-	for (u32 region = ctz_u32(pb->dirty_regions);
-	     region != 32;
-	     region = ctz_u32(pb->dirty_regions))
-	{
-		mark_parameter_block_region_clean(ctx->shared_memory.region, block, region);
+	for EachBit(pb->dirty_regions, region) {
 		switch (region) {
 		case BeamformerParameterBlockRegion_ComputePipeline:
 		case BeamformerParameterBlockRegion_Parameters:
@@ -822,7 +813,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			pb->dirty_regions &= ~mask;
 
 			for (u32 shader_slot = 0; shader_slot < cp->pipeline.shader_count; shader_slot++)
-				load_compute_shader(ctx, cp, shader_slot, arena);
+				cp->dirty_programs |= 1 << shader_slot;
 
 			#define X(k, t, v) glNamedBufferSubData(cp->ubos[BeamformerComputeUBOKind_##k], \
 			                                        0, sizeof(t), &cp->v ## _ubo_data);
@@ -1129,12 +1120,13 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 				for (u32 slot = 0; slot < cp->pipeline.shader_count; slot++) {
 					i32 shader_index = beamformer_shader_reloadable_index_by_shader[cp->pipeline.shaders[slot]];
 					if (beamformer_reloadable_shader_kinds[shader_index] == work->reload_shader)
-						load_compute_shader(ctx, cp, slot, *arena);
+						cp->dirty_programs |= 1 << slot;
 				}
 			}
 
 			if (ctx->latest_frame && !sm->live_imaging_parameters.active) {
-				fill_frame_compute_work(ctx, work, ctx->latest_frame->view_plane_tag, 0, 0);
+				fill_frame_compute_work(ctx, work, ctx->latest_frame->view_plane_tag,
+				                        ctx->latest_frame->parameter_block, 0);
 				can_commit = 0;
 			}
 		}break;
@@ -1198,6 +1190,13 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			}
 
 			post_sync_barrier(&ctx->shared_memory, work->lock, sm->locks);
+
+			u32 dirty_programs = atomic_swap_u32(&cp->dirty_programs, 0);
+			static_assert(ISPOWEROF2(BeamformerMaxComputeShaderStages),
+			              "max compute shader stages must be power of 2");
+			assert((dirty_programs & ~((u32)BeamformerMaxComputeShaderStages - 1)) == 0);
+			for EachBit(dirty_programs, slot)
+				load_compute_shader(ctx, cp, (u32)slot, *arena);
 
 			atomic_store_u32(&cs->processing_compute, 1);
 			start_renderdoc_capture(gl_context);

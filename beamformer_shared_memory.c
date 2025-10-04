@@ -279,13 +279,6 @@ mark_parameter_block_region_dirty(BeamformerSharedMemory *sm, u32 block, Beamfor
 }
 
 function void
-mark_parameter_block_region_clean(BeamformerSharedMemory *sm, u32 block, BeamformerParameterBlockRegions region)
-{
-	BeamformerParameterBlock *pb = beamformer_parameter_block(sm, block);
-	atomic_and_u32(&pb->dirty_regions, ~(1u << region));
-}
-
-function void
 post_sync_barrier(SharedMemoryRegion *sm, BeamformerSharedMemoryLockKind lock, i32 *locks)
 {
 	/* NOTE(rnp): debug: here it is not a bug to release the lock if it

@@ -158,6 +158,8 @@ struct BeamformerComputePlan {
 	uv3 decode_dispatch;
 	uv3 demod_dispatch;
 
+	u32 dirty_programs;
+
 	u32 rf_size;
 	i32 hadamard_order;
 	b32 iq_pipeline;
@@ -278,6 +280,7 @@ struct BeamformerFrame {
 	GLenum                    gl_kind;
 	u32                       id;
 	u32                       compound_count;
+	u32                       parameter_block;
 	BeamformerAcquisitionKind acquisition_kind;
 	BeamformerViewPlaneTag    view_plane_tag;
 
