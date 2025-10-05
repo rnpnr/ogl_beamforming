@@ -262,8 +262,8 @@ validate_simple_parameters(BeamformerSimpleParameters *bp)
 }
 
 function b32
-parameter_block_region_upload_explicit(void *data, u32 size, u32 block, BeamformerParameterBlockRegions region_id,
-                                       u32 block_offset, i32 timeout_ms)
+parameter_block_region_upload(void *data, u32 size, u32 block, BeamformerParameterBlockRegions region_id,
+                              u32 block_offset, i32 timeout_ms)
 {
 	i32 lock   = BeamformerSharedMemoryLockKind_Count + (i32)block;
 	b32 result = valid_parameter_block(block) && lib_try_lock(lock, timeout_ms);
@@ -276,27 +276,15 @@ parameter_block_region_upload_explicit(void *data, u32 size, u32 block, Beamform
 	return result;
 }
 
-
-function b32
-parameter_block_region_upload(void *data, u32 size, u32 block,
-                              BeamformerParameterBlockRegions region_id, i32 timeout_ms)
-{
-	assert(region_id < BeamformerParameterBlockRegion_Count);
-	b32 result = parameter_block_region_upload_explicit(data, size, block, region_id,
-	                                                    BeamformerParameterBlockRegionOffsets[region_id],
-	                                                    timeout_ms);
-	return result;
-}
-
 b32
 beamformer_set_pipeline_stage_parameters_at(u32 stage_index, i32 parameter, u32 block)
 {
 	u32 offset  = BeamformerParameterBlockRegionOffsets[BeamformerParameterBlockRegion_ComputePipeline];
 	offset     += offsetof(BeamformerComputePipeline, parameters);
 	offset     += (stage_index % BeamformerMaxComputeShaderStages) * sizeof(BeamformerShaderParameters);
-	b32 result  = parameter_block_region_upload_explicit(&parameter, sizeof(BeamformerShaderParameters), block,
-	                                                     BeamformerParameterBlockRegion_ComputePipeline, offset,
-	                                                     g_beamformer_library_context.timeout_ms);
+	b32 result  = parameter_block_region_upload(&parameter, sizeof(BeamformerShaderParameters), block,
+	                                            BeamformerParameterBlockRegion_ComputePipeline, offset,
+	                                            g_beamformer_library_context.timeout_ms);
 	return result;
 }
 
@@ -432,6 +420,7 @@ b32 beamformer_push_##name ##_at(dtype *data, u32 count, u32 block) { \
 	if (lib_error_check(count <= countof(((BeamformerParameterBlock *)0)->name), BF_LIB_ERR_KIND_BUFFER_OVERFLOW)) { \
 		result = parameter_block_region_upload(data, count * elements * sizeof(dtype), block, \
 		                                       BeamformerParameterBlockRegion_##region_name,  \
+		                                       offsetof(BeamformerParameterBlock, name),      \
 		                                       g_beamformer_library_context.timeout_ms);      \
 	} \
 	return result; \
@@ -487,6 +476,7 @@ beamformer_push_parameters_at(BeamformerParameters *bp, u32 block)
 {
 	b32 result = parameter_block_region_upload(bp, sizeof(*bp), block,
 	                                           BeamformerParameterBlockRegion_Parameters,
+	                                           offsetof(BeamformerParameterBlock, parameters),
 	                                           g_beamformer_library_context.timeout_ms);
 	return result;
 }
@@ -530,18 +520,18 @@ beamformer_push_simple_parameters(BeamformerSimpleParameters *bp)
 b32
 beamformer_push_parameters_ui(BeamformerUIParameters *bp)
 {
-	b32 result = parameter_block_region_upload_explicit(bp, sizeof(*bp), 0, BeamformerParameterBlockRegion_Parameters,
-	                                                    offsetof(BeamformerParameterBlock, parameters_ui),
-	                                                    g_beamformer_library_context.timeout_ms);
+	b32 result = parameter_block_region_upload(bp, sizeof(*bp), 0, BeamformerParameterBlockRegion_Parameters,
+	                                           offsetof(BeamformerParameterBlock, parameters_ui),
+	                                           g_beamformer_library_context.timeout_ms);
 	return result;
 }
 
 b32
 beamformer_push_parameters_head(BeamformerParametersHead *bp)
 {
-	b32 result = parameter_block_region_upload_explicit(bp, sizeof(*bp), 0, BeamformerParameterBlockRegion_Parameters,
-	                                                    offsetof(BeamformerParameterBlock, parameters_head),
-	                                                    g_beamformer_library_context.timeout_ms);
+	b32 result = parameter_block_region_upload(bp, sizeof(*bp), 0, BeamformerParameterBlockRegion_Parameters,
+	                                           offsetof(BeamformerParameterBlock, parameters_head),
+	                                           g_beamformer_library_context.timeout_ms);
 	return result;
 }
 
