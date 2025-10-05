@@ -63,27 +63,6 @@ typedef enum {
 	BeamformerDASKind_Count
 } BeamformerDASKind;
 
-#define FILTER_LOCAL_SIZE_X 64
-#define FILTER_LOCAL_SIZE_Y  1
-#define FILTER_LOCAL_SIZE_Z  1
-
-#define DECODE_LOCAL_SIZE_X  4
-#define DECODE_LOCAL_SIZE_Y  1
-#define DECODE_LOCAL_SIZE_Z 16
-
-#define DECODE_FIRST_PASS_UNIFORM_LOC 1
-
-#define DAS_LOCAL_SIZE_X  16
-#define DAS_LOCAL_SIZE_Y   1
-#define DAS_LOCAL_SIZE_Z  16
-
-#define DAS_VOXEL_OFFSET_UNIFORM_LOC  2
-#define DAS_CYCLE_T_UNIFORM_LOC       3
-#define DAS_FAST_CHANNEL_UNIFORM_LOC  4
-
-#define MIN_MAX_MIPS_LEVEL_UNIFORM_LOC 1
-#define SUM_PRESCALE_UNIFORM_LOC       1
-
 #define BEAMFORMER_CONSTANTS_LIST \
 	X(FilterSlots,                4) \
 	X(MaxChannelCount,          256) \

@@ -14,7 +14,27 @@
 #include "beamformer.h"
 
 global f32 dt_for_frame;
-global u32 cycle_t;
+
+#define FILTER_LOCAL_SIZE_X 64
+#define FILTER_LOCAL_SIZE_Y  1
+#define FILTER_LOCAL_SIZE_Z  1
+
+#define DECODE_LOCAL_SIZE_X  4
+#define DECODE_LOCAL_SIZE_Y  1
+#define DECODE_LOCAL_SIZE_Z 16
+
+#define DECODE_FIRST_PASS_UNIFORM_LOC 1
+
+#define DAS_LOCAL_SIZE_X  16
+#define DAS_LOCAL_SIZE_Y   1
+#define DAS_LOCAL_SIZE_Z  16
+
+#define DAS_VOXEL_OFFSET_UNIFORM_LOC  2
+#define DAS_CYCLE_T_UNIFORM_LOC       3
+#define DAS_FAST_CHANNEL_UNIFORM_LOC  4
+
+#define MIN_MAX_MIPS_LEVEL_UNIFORM_LOC 1
+#define SUM_PRESCALE_UNIFORM_LOC       1
 
 #ifndef _DEBUG
 #define start_renderdoc_capture(...)
@@ -815,6 +835,8 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 		}
 	}break;
 	case BeamformerShaderKind_DAS:{
+		local_persist u32 das_cycle_t = 0;
+
 		BeamformerDASUBO *ubo = &cp->das_ubo_data;
 
 		i32 local_flags = match_vector[shader_descriptor->match_vector_length];
@@ -837,7 +859,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 		glBindImageTexture(1, sparse_texture, 0, 0, 0, GL_READ_ONLY, GL_R16I);
 		glBindImageTexture(2, cp->textures[BeamformerComputeTextureKind_FocalVectors], 0, 0, 0, GL_READ_ONLY, GL_RG32F);
 
-		glProgramUniform1ui(program, DAS_CYCLE_T_UNIFORM_LOC, cycle_t++);
+		glProgramUniform1ui(program, DAS_CYCLE_T_UNIFORM_LOC, das_cycle_t++);
 
 		if (fast) {
 			i32 loop_end;
@@ -1250,10 +1272,9 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 
 			frame->ready_to_present = 1;
 			if (did_sum_shader) {
-				u32 aframe_index = (ctx->averaged_frame_index % countof(ctx->averaged_frames));
+				u32 aframe_index = ((ctx->averaged_frame_index++) % countof(ctx->averaged_frames));
 				ctx->averaged_frames[aframe_index].view_plane_tag  = frame->view_plane_tag;
 				ctx->averaged_frames[aframe_index].ready_to_present = 1;
-				atomic_add_u32(&ctx->averaged_frame_index, 1);
 				atomic_store_u64((u64 *)&ctx->latest_frame, (u64)(ctx->averaged_frames + aframe_index));
 			} else {
 				atomic_store_u64((u64 *)&ctx->latest_frame, (u64)frame);
