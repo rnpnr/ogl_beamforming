@@ -50,6 +50,7 @@ global char *g_argv0;
 
 #if OS_LINUX
 
+  #include <dirent.h>
   #include <errno.h>
   #include <string.h>
   #include <sys/select.h>
@@ -65,6 +66,8 @@ global char *g_argv0;
   #define OS_MAIN "main_linux.c"
 
 #elif OS_WINDOWS
+
+  #include <string.h>
 
   #include "os_win32.c"
 
@@ -170,6 +173,15 @@ build_fatal_(char *format, ...)
 }
 
 function b32
+s8_equal(s8 a, s8 b)
+{
+	b32 result = a.len == b.len;
+	for (iz i = 0; result && i < a.len; i++)
+		result = a.data[i] == b.data[i];
+	return result;
+}
+
+function b32
 s8_contains(s8 s, u8 byte)
 {
 	b32 result = 0;
@@ -195,6 +207,17 @@ stream_push_command(Stream *s, CommandList *c)
 	}
 }
 
+function char *
+temp_sprintf(char *format, ...)
+{
+	local_persist char buffer[4096];
+	va_list ap;
+	va_start(ap, format);
+	vsnprintf(buffer, countof(buffer), format, ap);
+	va_end(ap);
+	return buffer;
+}
+
 #if OS_LINUX
 
 function b32
@@ -215,6 +238,44 @@ function void
 os_make_directory(char *name)
 {
 	mkdir(name, 0770);
+}
+
+#define os_remove_directory(f) os_remove_directory_(AT_FDCWD, (f))
+function b32
+os_remove_directory_(i32 base_fd, char *name)
+{
+	/* POSix sucks */
+	#ifndef DT_DIR
+	enum {DT_DIR = 4, DT_REG = 8, DT_LNK = 10};
+	#endif
+
+	i32 dir_fd = openat(base_fd, name, O_DIRECTORY);
+	b32 result = dir_fd != -1 || errno == ENOTDIR || errno == ENOENT;
+	DIR *dir;
+	if (dir_fd != -1 && (dir = fdopendir(dir_fd))) {
+		struct dirent *dp;
+		while ((dp = readdir(dir))) {
+			switch (dp->d_type) {
+			case DT_LNK:
+			case DT_REG:
+			{
+				unlinkat(dir_fd, dp->d_name, 0);
+			}break;
+			case DT_DIR:{
+				s8 dir_name = c_str_to_s8(dp->d_name);
+				if (!s8_equal(s8("."), dir_name) && !s8_equal(s8(".."), dir_name))
+					os_remove_directory_(dir_fd, dp->d_name);
+			}break;
+			default:{
+				build_log_warning("\"%s\": unknown directory entry kind: %d", dp->d_name, dp->d_type);
+			}break;
+			}
+		}
+
+		closedir(dir);
+		result = unlinkat(base_fd, name, AT_REMOVEDIR) == 0;
+	}
+	return result;
 }
 
 function u64
@@ -275,18 +336,73 @@ os_wait_close_process(iptr handle)
 
 enum {
 	MOVEFILE_REPLACE_EXISTING = 0x01,
+
+	FILE_ATTRIBUTE_DIRECTORY  = 0x10,
+
+	ERROR_FILE_NOT_FOUND = 0x02,
+	ERROR_PATH_NOT_FOUND = 0x03,
 };
 
-W32(b32) CreateDirectoryA(c8 *, void *);
-W32(b32) CreateProcessA(u8 *, u8 *, iptr, iptr, b32, u32, iptr, u8 *, iptr, iptr);
-W32(b32) GetExitCodeProcess(iptr handle, u32 *);
-W32(b32) GetFileTime(iptr, iptr, iptr, iptr);
-W32(b32) MoveFileExA(c8 *, c8 *, u32);
+#pragma pack(push, 1)
+typedef struct {
+  u32 file_attributes;
+  u64 creation_time;
+  u64 last_access_time;
+  u64 last_write_time;
+  u64 file_size;
+  u64 reserved;
+  c8  file_name[260];
+  c8  alternate_file_name[14];
+  u32 file_type;
+  u32 creator_type;
+  u16 finder_flag;
+} w32_find_data;
+#pragma pack(pop)
+
+W32(b32)  CreateDirectoryA(c8 *, void *);
+W32(b32)  CreateProcessA(u8 *, u8 *, iptr, iptr, b32, u32, iptr, u8 *, iptr, iptr);
+W32(b32)  FindClose(iptr);
+W32(iptr) FindFirstFileA(c8 *, w32_find_data *);
+W32(b32)  FindNextFileA(iptr, w32_find_data *);
+W32(b32)  GetExitCodeProcess(iptr, u32 *);
+W32(b32)  GetFileTime(iptr, iptr, iptr, iptr);
+W32(b32)  MoveFileExA(c8 *, c8 *, u32);
+W32(b32)  RemoveDirectoryA(c8 *);
 
 function void
 os_make_directory(char *name)
 {
 	CreateDirectoryA(name, 0);
+}
+
+function b32
+os_remove_directory(char *name)
+{
+	w32_find_data find_data[1];
+	char *search = temp_sprintf(".\\%s\\*", name);
+	iptr  handle = FindFirstFileA(search, find_data);
+	b32   result = 1;
+	if (handle != INVALID_FILE) {
+		do {
+			s8 file_name = c_str_to_s8(find_data->file_name);
+			if (!s8_equal(s8("."), file_name) && !s8_equal(s8(".."), file_name)) {
+				char *full_path = temp_sprintf("%s" OS_PATH_SEPARATOR "%s", name, find_data->file_name);
+				if (find_data->file_attributes & FILE_ATTRIBUTE_DIRECTORY) {
+					char *wow_w32_is_even_worse_than_POSix = strdup(full_path);
+					os_remove_directory(wow_w32_is_even_worse_than_POSix);
+					free(wow_w32_is_even_worse_than_POSix);
+				} else {
+					DeleteFileA(full_path);
+				}
+			}
+		} while (FindNextFileA(handle, find_data));
+		FindClose(handle);
+	} else {
+		i32 error = GetLastError();
+		result = error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+	}
+	RemoveDirectoryA(name);
+	return result;
 }
 
 function b32
@@ -467,15 +583,6 @@ check_rebuild_self(Arena arena, i32 argc, char *argv[])
 
 		os_exit(0);
 	}
-}
-
-function b32
-s8_equal(s8 a, s8 b)
-{
-	b32 result = a.len == b.len;
-	for (iz i = 0; result && i < a.len; i++)
-		result = a.data[i] == b.data[i];
-	return result;
 }
 
 function void
@@ -2437,12 +2544,14 @@ function b32
 metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 {
 	b32 result = 1;
-	if (!needs_rebuild(OUTPUT("matlab/OGLBeamformerFilterKind.m"), "beamformer_parameters.h"))
+	if (!needs_rebuild(OUTPUT("matlab/OGLBeamformerFilterKind.m"), "beamformer_parameters.h", "beamformer.meta"))
 		return result;
 
 	build_log_generate("MATLAB Bindings");
-	/* TODO(rnp): recreate/clear directory incase these file names change */
-	os_make_directory(OUTPUT("matlab"));
+	char *base_directory = OUTPUT("matlab");
+	if (!os_remove_directory(base_directory))
+		build_fatal("failed to remove directory: %s", base_directory);
+	os_make_directory(base_directory);
 
 	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
 
