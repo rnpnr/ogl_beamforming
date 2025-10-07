@@ -48,8 +48,8 @@ vec2 rotate_iq(vec2 iq, int index)
 		// arg = PI * index
 		// cos -> 1 -1  1 -1
 		// sin -> 0  0  0  0
-		const float scale = bool(index & 1) ? -1 : 1;
-		result = scale * iq;
+		const float scales[2] = {1, -1};
+		result = scales[index & 1] * iq;
 	}break;
 	case SamplingMode_2X:{
 		// fs  = fd
