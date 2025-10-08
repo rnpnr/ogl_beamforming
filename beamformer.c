@@ -453,10 +453,16 @@ das_ubo_from_beamformer_parameters(BeamformerComputePlan *cp, BeamformerDASUBO *
 	cp->das_bake.sample_count           = bp->sample_count;
 	cp->das_bake.channel_count          = bp->channel_count;
 	cp->das_bake.acquisition_count      = bp->acquisition_count;
+	cp->das_bake.transmit_angle         = bp->focal_vector[0];
+	cp->das_bake.focus_depth            = bp->focal_vector[1];
+	cp->das_bake.transmit_receive_orientation = bp->transmit_receive_orientation;
 
 	u32 result = 0;
 	if (bp->coherency_weighting) result |= BeamformerShaderDASFlags_CoherencyWeighting;
 	else                         result |= BeamformerShaderDASFlags_Fast;
+
+	if (bp->single_focus)       result |= BeamformerShaderDASFlags_SingleFocus;
+	if (bp->single_orientation) result |= BeamformerShaderDASFlags_SingleOrientation;
 
 	if (bp->das_shader_id == BeamformerAcquisitionKind_UFORCES || bp->das_shader_id == BeamformerAcquisitionKind_UHERCULES)
 		result |= BeamformerShaderDASFlags_Sparse;
@@ -589,7 +595,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	u32 input_channel_stride  = pb->parameters.raw_data_dimensions[0];
 
 	BeamformerShaderDecodeBakeParameters *dp = &cp->decode_bake;
-	dp->decode_mode    = pb->parameters.decode;
+	dp->decode_mode    = pb->parameters.decode_mode;
 	dp->transmit_count = cp->das_bake.acquisition_count;
 
 	dp->input_sample_stride    = decode_first? input_sample_stride   : cp->das_bake.acquisition_count;

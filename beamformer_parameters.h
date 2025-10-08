@@ -55,16 +55,20 @@ typedef enum {BEAMFORMER_CONSTANTS_LIST} BeamformerConstants;
 
 /* X(name, type, size, matlab_type, elements, comment) */
 #define BEAMFORMER_PARAMS_HEAD \
-	X(xdc_transform,          float,    [16], single, 16, "IMPORTANT: column major order")           \
-	X(xdc_element_pitch,      float,     [2], single,  2, "[m] Transducer Element Pitch {row, col}") \
-	X(raw_data_dimensions,    uint32_t,  [2], uint32,  2, "Raw Data Dimensions")                     \
-	X(sample_count,           uint32_t,     , uint32,  1, "")                                        \
-	X(channel_count,          uint32_t,     , uint32,  1, "")                                        \
-	X(acquisition_count,      uint32_t,     , uint32,  1, "")                                        \
-	X(das_shader_id,          uint32_t,     , uint32,  1, "")                                        \
-	X(time_offset,            float,        , single,  1, "pulse length correction time [s]")        \
-	X(decode,                 uint16_t,     , uint16,  1, "Decode or just reshape data")             \
-	X(sampling_mode,          uint16_t,     , uint16,  1, "")
+	X(xdc_transform,                float,    [16], single, 16, "IMPORTANT: column major order")           \
+	X(xdc_element_pitch,            float,     [2], single,  2, "[m] Transducer Element Pitch {row, col}") \
+	X(raw_data_dimensions,          uint32_t,  [2], uint32,  2, "Raw Data Dimensions")                     \
+	X(focal_vector,                 float,     [2], single,  2, "[degree, m] focal point {angle, depth}")  \
+	X(transmit_receive_orientation, uint32_t,     , uint32,  1, "")                                        \
+	X(sample_count,                 uint32_t,     , uint32,  1, "")                                        \
+	X(channel_count,                uint32_t,     , uint32,  1, "")                                        \
+	X(acquisition_count,            uint32_t,     , uint32,  1, "")                                        \
+	X(das_shader_id,                uint32_t,     , uint32,  1, "")                                        \
+	X(time_offset,                  float,        , single,  1, "pulse length correction time [s]")        \
+	X(single_focus,                 uint8_t,      , uint8,   1, "")                                        \
+	X(single_orientation,           uint8_t,      , uint8,   1, "")                                        \
+	X(decode_mode,                  uint8_t,      , uint8,   1, "")                                        \
+	X(sampling_mode,                uint8_t,      , uint8,   1, "")
 
 #define BEAMFORMER_UI_PARAMS \
 	X(output_min_coordinate,  float,     [3], single, 3, "[m] Back-Top-Left corner of output region")                     \

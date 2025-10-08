@@ -60,6 +60,8 @@ typedef enum {
 	BeamformerShaderDASFlags_Interpolate        = (1 << 2),
 	BeamformerShaderDASFlags_CoherencyWeighting = (1 << 3),
 	BeamformerShaderDASFlags_ReceiveOnly        = (1 << 4),
+	BeamformerShaderDASFlags_SingleFocus        = (1 << 5),
+	BeamformerShaderDASFlags_SingleOrientation  = (1 << 6),
 } BeamformerShaderDASFlags;
 
 typedef enum {
@@ -118,17 +120,20 @@ typedef union {
 typedef union {
 	struct {
 		u32 acquisition_count;
+		u32 acquisition_kind;
 		u32 channel_count;
 		u32 data_kind;
 		u32 sample_count;
-		u32 acquisition_kind;
+		u32 transmit_receive_orientation;
 		f32 demodulation_frequency;
 		f32 f_number;
+		f32 focus_depth;
 		f32 sampling_frequency;
 		f32 speed_of_sound;
 		f32 time_offset;
+		f32 transmit_angle;
 	};
-	u32 E[10];
+	u32 E[13];
 } BeamformerShaderDASBakeParameters;
 
 read_only global s8 beamformer_shader_names[] = {
@@ -235,6 +240,8 @@ read_only global s8 *beamformer_shader_flag_strings[] = {
 		s8_comp("Interpolate"),
 		s8_comp("CoherencyWeighting"),
 		s8_comp("ReceiveOnly"),
+		s8_comp("SingleFocus"),
+		s8_comp("SingleOrientation"),
 	},
 	0,
 	0,
@@ -244,7 +251,7 @@ read_only global s8 *beamformer_shader_flag_strings[] = {
 read_only global u8 beamformer_shader_flag_strings_count[] = {
 	1,
 	3,
-	5,
+	7,
 	0,
 	0,
 	0,
@@ -296,15 +303,18 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 	},
 	(s8 []){
 		s8_comp("AcquisitionCount"),
+		s8_comp("AcquisitionKind"),
 		s8_comp("ChannelCount"),
 		s8_comp("DataKind"),
 		s8_comp("SampleCount"),
-		s8_comp("AcquisitionKind"),
+		s8_comp("TransmitReceiveOrientation"),
 		s8_comp("DemodulationFrequency"),
 		s8_comp("FNumber"),
+		s8_comp("FocusDepth"),
 		s8_comp("SamplingFrequency"),
 		s8_comp("SpeedOfSound"),
 		s8_comp("TimeOffset"),
+		s8_comp("TransmitAngle"),
 	},
 	0,
 	0,
@@ -314,7 +324,7 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 read_only global u8 *beamformer_shader_bake_parameter_is_float[] = {
 	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0},
 	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1},
-	(u8 []){0, 0, 0, 0, 0, 1, 1, 1, 1, 1},
+	(u8 []){0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1},
 	0,
 	0,
 	0,
@@ -323,7 +333,7 @@ read_only global u8 *beamformer_shader_bake_parameter_is_float[] = {
 read_only global i32 beamformer_shader_bake_parameter_counts[] = {
 	9,
 	12,
-	10,
+	13,
 	0,
 	0,
 	0,

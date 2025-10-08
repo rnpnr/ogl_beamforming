@@ -93,20 +93,24 @@
 		@Enumeration(AcquisitionKind)
 		@Enumeration(DataKind)
 		@Enumeration(RCAOrientation)
-		@Flags([Fast Sparse Interpolate CoherencyWeighting ReceiveOnly])
+		@Flags([Fast Sparse Interpolate CoherencyWeighting ReceiveOnly SingleFocus SingleOrientation])
 
 		@Bake
 		{
-			@BakeInt(AcquisitionCount acquisition_count)
-			@BakeInt(ChannelCount     channel_count    )
-			@BakeInt(DataKind         data_kind        )
-			@BakeInt(SampleCount      sample_count     )
-			@BakeInt(AcquisitionKind  acquisition_kind )
+			@BakeInt(AcquisitionCount           acquisition_count           )
+			@BakeInt(AcquisitionKind            acquisition_kind            )
+			@BakeInt(ChannelCount               channel_count               )
+			@BakeInt(DataKind                   data_kind                   )
+			@BakeInt(SampleCount                sample_count                )
+			@BakeInt(TransmitReceiveOrientation transmit_receive_orientation)
+
 			@BakeFloat(DemodulationFrequency demodulation_frequency)
 			@BakeFloat(FNumber               f_number              )
+			@BakeFloat(FocusDepth            focus_depth           )
 			@BakeFloat(SamplingFrequency     sampling_frequency    )
 			@BakeFloat(SpeedOfSound          speed_of_sound        )
 			@BakeFloat(TimeOffset            time_offset           )
+			@BakeFloat(TransmitAngle         transmit_angle        )
 		}
 	}
 

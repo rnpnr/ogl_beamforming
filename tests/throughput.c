@@ -47,7 +47,7 @@ typedef struct {
 	f32 center_frequency;
 	f32 sampling_frequency;
 	f32 time_offset;
-	i32 transmit_mode;
+	u32 transmit_mode;
 } zemp_bp_v1;
 
 global b32 g_should_exit;
@@ -205,7 +205,7 @@ beamformer_parameters_from_zemp_bp_v1(zemp_bp_v1 *zbp, BeamformerParameters *out
 	out->sample_count           = zbp->decoded_data_dim[0];
 	out->channel_count          = zbp->decoded_data_dim[1];
 	out->acquisition_count      = zbp->decoded_data_dim[2];
-	out->decode                 = (u8)zbp->decode_mode;
+	out->decode_mode            = (u8)zbp->decode_mode;
 	out->das_shader_id          = zbp->beamform_mode;
 	out->time_offset            = zbp->time_offset;
 	out->sampling_frequency     = zbp->sampling_frequency;
@@ -335,22 +335,41 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	bp.decimation_rate = 1;
 	bp.demodulation_frequency = bp.sampling_frequency / 4;
 
+	/* NOTE(rnp): v1 files didn't specify sampling mode. it was almost always 4X */
+	bp.sampling_mode = BeamformerSamplingMode_4X;
+
+	#if 0
 	BeamformerFilterParameters kaiser = {0};
 	kaiser.Kaiser.beta             = 5.65f;
 	kaiser.Kaiser.cutoff_frequency = 2.0e6f;
 	kaiser.Kaiser.length           = 36;
 
-	f32 kaiser_parameters[sizeof(kaiser.Kaiser) / sizeof(f32)];
-	mem_copy(kaiser_parameters, &kaiser.Kaiser, sizeof(kaiser.Kaiser));
-	beamformer_create_filter(BeamformerFilterKind_Kaiser, kaiser_parameters,
-	                         countof(kaiser_parameters), bp.sampling_frequency / 2, 0, 0, 0);
+	beamformer_create_filter(BeamformerFilterKind_Kaiser, (f32 *)&kaiser.Kaiser,
+	                         sizeof(kaiser.Kaiser) / sizeof(f32), bp.sampling_frequency / 2, 0, 0, 0);
 	beamformer_set_pipeline_stage_parameters(0, 0);
+	#endif
+
+	#if 1
+	BeamformerFilterParameters matched = {0};
+	typeof(matched.MatchedChirp) *mp = &matched.MatchedChirp;
+	mp->duration      = 18e-6f;
+	mp->min_frequency = 2.9e6f - bp.demodulation_frequency;
+	mp->max_frequency = 6.0e6f - bp.demodulation_frequency;
+
+	bp.time_offset += mp->duration / 2;
+
+	beamformer_create_filter(BeamformerFilterKind_MatchedChirp, (f32 *)&matched.MatchedChirp,
+	                         sizeof(matched.MatchedChirp) / sizeof(f32), bp.sampling_frequency / 2,
+	                         1, 0, 0);
+	beamformer_set_pipeline_stage_parameters(0, 0);
+	#endif
 
 	if (zbp->sparse_elements[0] == -1) {
 		for (i16 i = 0; i < countof(zbp->sparse_elements); i++)
 			zbp->sparse_elements[i] = i;
 	}
 
+	#if 1
 	{
 		alignas(64) v2 focal_vectors[BeamformerMaxChannelCount];
 		for (u32 i = 0; i < countof(focal_vectors); i++)
@@ -364,6 +383,13 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 		beamformer_push_transmit_receive_orientations(transmit_receive_orientations,
 		                                              countof(transmit_receive_orientations));
 	}
+	#else
+	bp.single_focus       = 1;
+	bp.single_orientation = 1;
+	bp.transmit_receive_orientation = zbp->transmit_mode;
+	bp.focal_vector[0] = zbp->transmit_angles[0];
+	bp.focal_vector[1] = zbp->focal_depths[0];
+	#endif
 
 	beamformer_push_channel_mapping(zbp->channel_mapping, countof(zbp->channel_mapping));
 	beamformer_push_sparse_elements(zbp->sparse_elements, countof(zbp->sparse_elements));
