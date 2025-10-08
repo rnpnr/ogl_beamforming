@@ -3644,6 +3644,15 @@ ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll)
 	}
 }
 
+function u32
+ui_cycler_delta_for_frame(void)
+{
+	u32 result = (u32)GetMouseWheelMoveV().y;
+	if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))  result += 1;
+	if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) result -= 1;
+	return result;
+}
+
 function void
 ui_extra_actions(BeamformerUI *ui, Variable *var)
 {
@@ -3654,9 +3663,10 @@ ui_extra_actions(BeamformerUI *ui, Variable *var)
 		UIView   *view     = &view_var->view;
 		switch (view->child->type) {
 		case VT_BEAMFORMER_FRAME_VIEW:{
+			u32 delta = ui_cycler_delta_for_frame();
 			BeamformerFrameView *old = view->child->generic;
 			BeamformerFrameView *new = view->child->generic = ui_beamformer_frame_view_new(ui, &ui->arena);
-			BeamformerFrameViewKind last_kind = (old->kind - 1) % BeamformerFrameViewKind_Count;
+			BeamformerFrameViewKind last_kind = (old->kind - delta) % BeamformerFrameViewKind_Count;
 
 			/* NOTE(rnp): log_scale gets released below before its needed */
 			b32 log_scale = old->log_scale->bool32;
@@ -3722,9 +3732,7 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 		case VT_GROUP:{ it->var->group.expanded = !it->var->group.expanded; }break;
 		case VT_SCALE_BAR:{ scale_bar_interaction(ui, &it->var->scale_bar, mouse); }break;
 		case VT_CYCLER:{
-			b32 right = IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
-			if (right) *it->var->cycler.state -= 1;
-			else       *it->var->cycler.state += 1;
+			*it->var->cycler.state += ui_cycler_delta_for_frame();
 			*it->var->cycler.state %= it->var->cycler.cycle_length;
 		}break;
 		InvalidDefaultCase;
