@@ -95,6 +95,14 @@ void main()
 					sum += imageLoad(hadamard, ivec2(i, transmit)).x * sample_rf_data(rf_offset++);
 				result = sum / float(TransmitCount);
 			}break;
+			case DecodeMode_Walsh:{
+				uint walshIndex = bitfieldReverse(transmit) >> (32 - 1 - uint(log2(imageSize(hadamard).x)));
+				walshIndex = walshIndex ^ (walshIndex >> 1);
+				SAMPLE_DATA_TYPE sum = SAMPLE_DATA_TYPE(0);
+				for (int i = 0; i < imageSize(hadamard).x; i++)
+					sum += imageLoad(hadamard, ivec2(i, walshIndex)).x * sample_rf_data(rf_offset++);
+				result = sum / float(imageSize(hadamard).x);
+			}break;
 			}
 			out_data[out_off / OUTPUT_SAMPLES_PER_INDEX] = result;
 		}
