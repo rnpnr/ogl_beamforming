@@ -79,7 +79,7 @@ typedef enum {BEAMFORMER_CONSTANTS_LIST} BeamformerConstants;
 	X(speed_of_sound,         float,        , single, 1, "[m/s]")                                                         \
 	X(f_number,               float,        , single, 1, "F# (set to 0 to disable)")                                      \
 	X(off_axis_pos,           float,        , single, 1, "[m] Position on screen normal to beamform in TPW/VLS/HERCULES") \
-	X(interpolate,            uint32_t,     , uint32, 1, "Perform Cubic Interpolation of RF Samples")                     \
+	X(interpolation_mode,     uint32_t,     , uint32, 1, "Nearest, Linear, or Cubic Interpolation of RF Samples")         \
 	X(coherency_weighting,    uint32_t,     , uint32, 1, "Apply coherency weighting to output data")                      \
 	X(beamform_plane,         uint32_t,     , uint32, 1, "Plane to Beamform in TPW/VLS/HERCULES")                         \
 	X(decimation_rate,        uint32_t,     , uint32, 1, "Number of times to decimate")

@@ -95,10 +95,25 @@ SAMPLE_TYPE cubic(const int base_index, const float index)
 
 SAMPLE_TYPE sample_rf(const int channel, const int transmit, const float index)
 {
-	SAMPLE_TYPE result = SAMPLE_TYPE(index >= 0.0f) * SAMPLE_TYPE((int(index) + 1 + Interpolate) < SampleCount);
+	SAMPLE_TYPE result = SAMPLE_TYPE(0);
 	int base_index = int(channel * SampleCount * AcquisitionCount + transmit * SampleCount);
-	if (bool(Interpolate)) result *= cubic(base_index, index);
-	else                   result *= rf_data[base_index + int(round(index))];
+	switch (InterpolationMode) {
+	case InterpolationMode_Nearest:{
+		if (index >= 0 && int(round(index)) < SampleCount)
+			result = rf_data[base_index + int(round(index))];
+	}break;
+	case InterpolationMode_Linear:{
+		if (index >= 0 && round(index) < SampleCount) {
+			float tk, t = modf(index, tk);
+			int n = base_index + int(tk);
+			result = (1 - t) * rf_data[n] + t * rf_data[n + 1];
+		}
+	}break;
+	case InterpolationMode_Cubic:{
+		if (index >= 0 && (int(index) + 2) < SampleCount)
+			result = cubic(base_index, index);
+	}break;
+	}
 	result = rotate_iq(result, index / SamplingFrequency);
 	return result;
 }

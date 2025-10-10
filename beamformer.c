@@ -453,6 +453,7 @@ das_ubo_from_beamformer_parameters(BeamformerComputePlan *cp, BeamformerDASUBO *
 	cp->das_bake.sample_count           = bp->sample_count;
 	cp->das_bake.channel_count          = bp->channel_count;
 	cp->das_bake.acquisition_count      = bp->acquisition_count;
+	cp->das_bake.interpolation_mode     = bp->interpolation_mode;
 	cp->das_bake.transmit_angle         = bp->focal_vector[0];
 	cp->das_bake.focus_depth            = bp->focal_vector[1];
 	cp->das_bake.transmit_receive_orientation = bp->transmit_receive_orientation;
@@ -469,9 +470,6 @@ das_ubo_from_beamformer_parameters(BeamformerComputePlan *cp, BeamformerDASUBO *
 
 	if (bp->das_shader_id == BeamformerAcquisitionKind_HERO_PA)
 		result |= BeamformerShaderDASFlags_ReceiveOnly;
-
-	if (bp->interpolate)
-		result |= BeamformerShaderDASFlags_Interpolate;
 
 	return result;
 }

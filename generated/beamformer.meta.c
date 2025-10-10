@@ -45,6 +45,13 @@ typedef enum {
 } BeamformerAcquisitionKind;
 
 typedef enum {
+	BeamformerInterpolationMode_Nearest = 0,
+	BeamformerInterpolationMode_Linear  = 1,
+	BeamformerInterpolationMode_Cubic   = 2,
+	BeamformerInterpolationMode_Count,
+} BeamformerInterpolationMode;
+
+typedef enum {
 	BeamformerShaderDecodeFlags_DilateOutput = (1 << 0),
 } BeamformerShaderDecodeFlags;
 
@@ -57,11 +64,10 @@ typedef enum {
 typedef enum {
 	BeamformerShaderDASFlags_Fast               = (1 << 0),
 	BeamformerShaderDASFlags_Sparse             = (1 << 1),
-	BeamformerShaderDASFlags_Interpolate        = (1 << 2),
-	BeamformerShaderDASFlags_CoherencyWeighting = (1 << 3),
-	BeamformerShaderDASFlags_ReceiveOnly        = (1 << 4),
-	BeamformerShaderDASFlags_SingleFocus        = (1 << 5),
-	BeamformerShaderDASFlags_SingleOrientation  = (1 << 6),
+	BeamformerShaderDASFlags_CoherencyWeighting = (1 << 2),
+	BeamformerShaderDASFlags_ReceiveOnly        = (1 << 3),
+	BeamformerShaderDASFlags_SingleFocus        = (1 << 4),
+	BeamformerShaderDASFlags_SingleOrientation  = (1 << 5),
 } BeamformerShaderDASFlags;
 
 typedef enum {
@@ -123,6 +129,7 @@ typedef union {
 		u32 acquisition_kind;
 		u32 channel_count;
 		u32 data_kind;
+		u32 interpolation_mode;
 		u32 sample_count;
 		u32 transmit_receive_orientation;
 		f32 demodulation_frequency;
@@ -133,7 +140,7 @@ typedef union {
 		f32 time_offset;
 		f32 transmit_angle;
 	};
-	u32 E[13];
+	u32 E[14];
 } BeamformerShaderDASBakeParameters;
 
 read_only global s8 beamformer_shader_names[] = {
@@ -223,6 +230,11 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"#define AcquisitionKind_Flash          10\n"
 	"#define AcquisitionKind_HERO_PA        11\n"
 	"\n"),
+	s8_comp(""
+	"#define InterpolationMode_Nearest 0\n"
+	"#define InterpolationMode_Linear  1\n"
+	"#define InterpolationMode_Cubic   2\n"
+	"\n"),
 };
 
 read_only global s8 *beamformer_shader_flag_strings[] = {
@@ -237,7 +249,6 @@ read_only global s8 *beamformer_shader_flag_strings[] = {
 	(s8 []){
 		s8_comp("Fast"),
 		s8_comp("Sparse"),
-		s8_comp("Interpolate"),
 		s8_comp("CoherencyWeighting"),
 		s8_comp("ReceiveOnly"),
 		s8_comp("SingleFocus"),
@@ -251,7 +262,7 @@ read_only global s8 *beamformer_shader_flag_strings[] = {
 read_only global u8 beamformer_shader_flag_strings_count[] = {
 	1,
 	3,
-	7,
+	6,
 	0,
 	0,
 	0,
@@ -260,7 +271,7 @@ read_only global u8 beamformer_shader_flag_strings_count[] = {
 read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){0, 1},
 	(i32 []){0, 3},
-	(i32 []){4, 0, 2},
+	(i32 []){4, 0, 5, 2},
 	0,
 	0,
 	0,
@@ -269,7 +280,7 @@ read_only global i32 *beamformer_shader_header_vectors[] = {
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	2,
 	2,
-	3,
+	4,
 	0,
 	0,
 	0,
@@ -306,6 +317,7 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("AcquisitionKind"),
 		s8_comp("ChannelCount"),
 		s8_comp("DataKind"),
+		s8_comp("InterpolationMode"),
 		s8_comp("SampleCount"),
 		s8_comp("TransmitReceiveOrientation"),
 		s8_comp("DemodulationFrequency"),
@@ -324,7 +336,7 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 read_only global u8 *beamformer_shader_bake_parameter_is_float[] = {
 	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0},
 	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1},
-	(u8 []){0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1},
+	(u8 []){0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1},
 	0,
 	0,
 	0,
@@ -333,7 +345,7 @@ read_only global u8 *beamformer_shader_bake_parameter_is_float[] = {
 read_only global i32 beamformer_shader_bake_parameter_counts[] = {
 	9,
 	12,
-	13,
+	14,
 	0,
 	0,
 	0,
@@ -367,5 +379,11 @@ read_only global s8 beamformer_acquisition_kind_strings[] = {
 	s8_comp("EPIC-UHERCULES"),
 	s8_comp("Flash"),
 	s8_comp("HERO-PA"),
+};
+
+read_only global s8 beamformer_interpolation_mode_strings[] = {
+	s8_comp("Nearest"),
+	s8_comp("Linear"),
+	s8_comp("Cubic"),
 };
 

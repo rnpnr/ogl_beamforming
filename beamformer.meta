@@ -19,10 +19,15 @@
 	[HERO_PA        HERO-PA        0]
 }
 
-@Expand(AcquisitionKind)
+@Table([name]) InterpolationMode
 {
-	@Enumeration(AcquisitionKind `$(name)`)
+	[Nearest]
+	[Linear]
+	[Cubic]
 }
+
+@Expand(AcquisitionKind)   @Enumeration(AcquisitionKind `$(name)`)
+@Expand(InterpolationMode) @Enumeration(InterpolationMode `$(name)`)
 
 @Emit
 {
@@ -35,6 +40,13 @@
 {
 	`read_only global s8 beamformer_acquisition_kind_strings[] = {`
 	@Expand(AcquisitionKind) `	s8_comp("$(pretty_name)"),`
+	`};`
+}
+
+@Emit
+{
+	`read_only global s8 beamformer_interpolation_mode_strings[] = {`
+	@Expand(InterpolationMode) `	s8_comp("$(name)"),`
 	`};`
 }
 
@@ -92,8 +104,9 @@
 	{
 		@Enumeration(AcquisitionKind)
 		@Enumeration(DataKind)
+		@Enumeration(InterpolationMode)
 		@Enumeration(RCAOrientation)
-		@Flags([Fast Sparse Interpolate CoherencyWeighting ReceiveOnly SingleFocus SingleOrientation])
+		@Flags([Fast Sparse CoherencyWeighting ReceiveOnly SingleFocus SingleOrientation])
 
 		@Bake
 		{
@@ -101,6 +114,7 @@
 			@BakeInt(AcquisitionKind            acquisition_kind            )
 			@BakeInt(ChannelCount               channel_count               )
 			@BakeInt(DataKind                   data_kind                   )
+			@BakeInt(InterpolationMode          interpolation_mode          )
 			@BakeInt(SampleCount                sample_count                )
 			@BakeInt(TransmitReceiveOrientation transmit_receive_orientation)
 

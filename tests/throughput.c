@@ -328,9 +328,9 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	bp.output_max_coordinate[1] = 0;
 	bp.output_max_coordinate[2] = g_axial_extent.y;
 
-	bp.f_number       = g_f_number;
-	bp.beamform_plane = 0;
-	bp.interpolate    = 1;
+	bp.f_number           = g_f_number;
+	bp.beamform_plane     = 0;
+	bp.interpolation_mode = BeamformerInterpolationMode_Cubic;
 
 	bp.decimation_rate = 1;
 	bp.demodulation_frequency = bp.sampling_frequency / 4;
