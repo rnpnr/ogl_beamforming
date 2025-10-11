@@ -100,7 +100,7 @@ SAMPLE_TYPE sample_rf(const int channel, const int transmit, const float index)
 	switch (InterpolationMode) {
 	case InterpolationMode_Nearest:{
 		if (index >= 0 && int(round(index)) < SampleCount)
-			result = rf_data[base_index + int(round(index))];
+			result = rotate_iq(rf_data[base_index + int(round(index))], index / SamplingFrequency);
 	}break;
 	case InterpolationMode_Linear:{
 		if (index >= 0 && round(index) < SampleCount) {
@@ -108,13 +108,13 @@ SAMPLE_TYPE sample_rf(const int channel, const int transmit, const float index)
 			int n = base_index + int(tk);
 			result = (1 - t) * rf_data[n] + t * rf_data[n + 1];
 		}
+		result = rotate_iq(result, index / SamplingFrequency);
 	}break;
 	case InterpolationMode_Cubic:{
 		if (index >= 0 && (int(index) + 2) < SampleCount)
-			result = cubic(base_index, index);
+			result = rotate_iq(cubic(base_index, index), index / SamplingFrequency);
 	}break;
 	}
-	result = rotate_iq(result, index / SamplingFrequency);
 	return result;
 }
 
