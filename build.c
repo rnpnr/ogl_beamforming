@@ -2147,19 +2147,39 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		MetaShader *s = ctx->shaders.data + b->shader_id;
 		s8 name = push_s8_from_parts(&m->scratch, s8(""), s8("BeamformerShader"),
 		                             ctx->shader_names.data[s->name_id], s8("BakeParameters"));
-		meta_begin_scope(m, s8("typedef union {"));
-			meta_begin_scope(m, s8("struct {"));
-				for (u32 entry = 0; entry < b->entry_count; entry++) {
-					s8 kind = b->floating_point[entry] ? s8("f32 ") : s8("u32 ");
-					meta_push_line(m, kind, b->names_lower[entry], s8(";"));
-				}
-			meta_end_scope(m, s8("};"));
-			meta_begin_line(m, s8("u32 E["));
-			meta_push_u64(m, b->entry_count);
-			meta_end_line(m, s8("];"));
+		meta_begin_scope(m, s8("typedef struct {"));
+			for (u32 entry = 0; entry < b->entry_count; entry++) {
+				s8 kind = b->floating_point[entry] ? s8("f32 ") : s8("u32 ");
+				meta_push_line(m, kind, b->names_lower[entry], s8(";"));
+			}
 		meta_end_scope(m, s8("} "), name, s8(";\n"));
 		m->scratch = tmp;
 	}
+
+	// shader bake parameter struct
+	meta_begin_scope(m, s8("typedef struct {"));
+	{
+		meta_begin_scope(m, s8("union {"));
+		{
+			Arena tmp = m->scratch;
+			s8 *columns[2];
+			columns[0] = push_array(&m->scratch, s8, ctx->shader_bake_parameters.count);
+			columns[1] = push_array(&m->scratch, s8, ctx->shader_bake_parameters.count);
+			for (u32 bake = 0; bake < ctx->shader_bake_parameters.count; bake++) {
+				MetaShaderBakeParameters *b = ctx->shader_bake_parameters.data + bake;
+				MetaShader *s = ctx->shaders.data + b->shader_id;
+				columns[0][bake] = push_s8_from_parts(&m->scratch, s8(""), s8("BeamformerShader"),
+				                                      ctx->shader_names.data[s->name_id], s8("BakeParameters"));
+				columns[1][bake] = ctx->shader_names.data[s->name_id];
+			}
+			metagen_push_table(m, m->scratch, s8(""), s8(";"), columns,
+			                   (uz)ctx->shader_bake_parameters.count, 2);
+			m->scratch = tmp;
+		} meta_end_scope(m, s8("};"));
+		s8 names[] = {s8("data_kind"), s8("flags")};
+		s8 types[] = {s8("u32"),       s8("u32")};
+		metagen_push_table(m, m->scratch, s8(""), s8(";"), (s8 *[]){types, names}, countof(names), 2);
+	} meta_end_scope(m, s8("} BeamformerShaderBakeParameters;\n"));
 
 	/////////////////////////////////
 	// NOTE(rnp): shader info tables

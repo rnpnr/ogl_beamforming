@@ -63,7 +63,6 @@
 
 		@Bake
 		{
-			@BakeInt(DataKind             data_kind             )
 			@BakeInt(DecodeMode           decode_mode           )
 			@BakeInt(InputChannelStride   input_channel_stride  )
 			@BakeInt(InputSampleStride    input_sample_stride   )
@@ -83,7 +82,6 @@
 
 		@Bake
 		{
-			@BakeInt(DataKind             data_kind             )
 			@BakeInt(DecimationRate       decimation_rate       )
 			@BakeInt(FilterLength         filter_length         )
 			@BakeInt(InputChannelStride   input_channel_stride  )
@@ -113,7 +111,6 @@
 			@BakeInt(AcquisitionCount           acquisition_count           )
 			@BakeInt(AcquisitionKind            acquisition_kind            )
 			@BakeInt(ChannelCount               channel_count               )
-			@BakeInt(DataKind                   data_kind                   )
 			@BakeInt(InterpolationMode          interpolation_mode          )
 			@BakeInt(SampleCount                sample_count                )
 			@BakeInt(TransmitReceiveOrientation transmit_receive_orientation)

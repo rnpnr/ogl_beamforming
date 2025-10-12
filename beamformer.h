@@ -155,10 +155,10 @@ struct BeamformerComputePlan {
 
 	u32 programs[BeamformerMaxComputeShaderStages];
 
-	uv3 decode_dispatch;
-	uv3 demod_dispatch;
-
 	u32 dirty_programs;
+
+	BeamformerAcquisitionKind acquisition_kind;
+	u32                       acquisition_count;
 
 	u32 rf_size;
 	i32 hadamard_order;
@@ -178,12 +178,8 @@ struct BeamformerComputePlan {
 	BEAMFORMER_COMPUTE_UBO_LIST
 	#undef X
 
-	BeamformerShaderDecodeBakeParameters decode_bake;
-	BeamformerShaderFilterBakeParameters demodulate_bake;
-	BeamformerShaderFilterBakeParameters filter_bake;
-	BeamformerShaderDASBakeParameters    das_bake;
-
-	u32 shader_flags[BeamformerMaxComputeShaderStages];
+	BeamformerShaderBakeParameters shader_bake_parameters[BeamformerMaxComputeShaderStages];
+	uv3 shader_dispatch[BeamformerMaxComputeShaderStages];
 
 	BeamformerComputePlan *next;
 };

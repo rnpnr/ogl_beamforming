@@ -90,58 +90,56 @@ typedef enum {
 	BeamformerShaderKind_RenderCount  = 1,
 } BeamformerShaderKind;
 
-typedef union {
-	struct {
-		u32 data_kind;
-		u32 decode_mode;
-		u32 input_channel_stride;
-		u32 input_sample_stride;
-		u32 input_transmit_stride;
-		u32 output_channel_stride;
-		u32 output_sample_stride;
-		u32 output_transmit_stride;
-		u32 transmit_count;
-	};
-	u32 E[9];
+typedef struct {
+	u32 decode_mode;
+	u32 input_channel_stride;
+	u32 input_sample_stride;
+	u32 input_transmit_stride;
+	u32 output_channel_stride;
+	u32 output_sample_stride;
+	u32 output_transmit_stride;
+	u32 transmit_count;
 } BeamformerShaderDecodeBakeParameters;
 
-typedef union {
-	struct {
-		u32 data_kind;
-		u32 decimation_rate;
-		u32 filter_length;
-		u32 input_channel_stride;
-		u32 input_sample_stride;
-		u32 input_transmit_stride;
-		u32 output_channel_stride;
-		u32 output_sample_stride;
-		u32 output_transmit_stride;
-		u32 sampling_mode;
-		f32 demodulation_frequency;
-		f32 sampling_frequency;
-	};
-	u32 E[12];
+typedef struct {
+	u32 decimation_rate;
+	u32 filter_length;
+	u32 input_channel_stride;
+	u32 input_sample_stride;
+	u32 input_transmit_stride;
+	u32 output_channel_stride;
+	u32 output_sample_stride;
+	u32 output_transmit_stride;
+	u32 sampling_mode;
+	f32 demodulation_frequency;
+	f32 sampling_frequency;
 } BeamformerShaderFilterBakeParameters;
 
-typedef union {
-	struct {
-		u32 acquisition_count;
-		u32 acquisition_kind;
-		u32 channel_count;
-		u32 data_kind;
-		u32 interpolation_mode;
-		u32 sample_count;
-		u32 transmit_receive_orientation;
-		f32 demodulation_frequency;
-		f32 f_number;
-		f32 focus_depth;
-		f32 sampling_frequency;
-		f32 speed_of_sound;
-		f32 time_offset;
-		f32 transmit_angle;
-	};
-	u32 E[14];
+typedef struct {
+	u32 acquisition_count;
+	u32 acquisition_kind;
+	u32 channel_count;
+	u32 interpolation_mode;
+	u32 sample_count;
+	u32 transmit_receive_orientation;
+	f32 demodulation_frequency;
+	f32 f_number;
+	f32 focus_depth;
+	f32 sampling_frequency;
+	f32 speed_of_sound;
+	f32 time_offset;
+	f32 transmit_angle;
 } BeamformerShaderDASBakeParameters;
+
+typedef struct {
+	union {
+		BeamformerShaderDecodeBakeParameters Decode;
+		BeamformerShaderFilterBakeParameters Filter;
+		BeamformerShaderDASBakeParameters    DAS;
+	};
+	u32 data_kind;
+	u32 flags;
+} BeamformerShaderBakeParameters;
 
 read_only global s8 beamformer_shader_names[] = {
 	s8_comp("CudaDecode"),
@@ -288,7 +286,6 @@ read_only global i32 beamformer_shader_header_vector_lengths[] = {
 
 read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 	(s8 []){
-		s8_comp("DataKind"),
 		s8_comp("DecodeMode"),
 		s8_comp("InputChannelStride"),
 		s8_comp("InputSampleStride"),
@@ -299,7 +296,6 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("TransmitCount"),
 	},
 	(s8 []){
-		s8_comp("DataKind"),
 		s8_comp("DecimationRate"),
 		s8_comp("FilterLength"),
 		s8_comp("InputChannelStride"),
@@ -316,7 +312,6 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("AcquisitionCount"),
 		s8_comp("AcquisitionKind"),
 		s8_comp("ChannelCount"),
-		s8_comp("DataKind"),
 		s8_comp("InterpolationMode"),
 		s8_comp("SampleCount"),
 		s8_comp("TransmitReceiveOrientation"),
@@ -334,18 +329,18 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 };
 
 read_only global u8 *beamformer_shader_bake_parameter_is_float[] = {
-	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0},
-	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1},
-	(u8 []){0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1},
+	(u8 []){0, 0, 0, 0, 0, 0, 0, 0},
+	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1},
+	(u8 []){0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1},
 	0,
 	0,
 	0,
 };
 
 read_only global i32 beamformer_shader_bake_parameter_counts[] = {
-	9,
-	12,
-	14,
+	8,
+	11,
+	13,
 	0,
 	0,
 	0,
