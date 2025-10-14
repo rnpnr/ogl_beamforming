@@ -369,27 +369,35 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 			zbp->sparse_elements[i] = i;
 	}
 
-	#if 1
+	b32 tx_rows = (zbp->transmit_mode & (1 << 1)) == 0;
+	b32 rx_rows = (zbp->transmit_mode & (1 << 0)) == 0;
+	u8 packed_tx_rx = 0;
+	if (tx_rows) packed_tx_rx |= BeamformerRCAOrientation_Rows    << 4;
+	else         packed_tx_rx |= BeamformerRCAOrientation_Columns << 4;
+	if (rx_rows) packed_tx_rx |= BeamformerRCAOrientation_Rows    << 0;
+	else         packed_tx_rx |= BeamformerRCAOrientation_Columns << 0;
+
+	if (bp.das_shader_id == BeamformerAcquisitionKind_HERCULES ||
+	    bp.das_shader_id == BeamformerAcquisitionKind_UHERCULES)
 	{
+		bp.single_focus       = 1;
+		bp.single_orientation = 1;
+
+		bp.transmit_receive_orientation = packed_tx_rx;
+		bp.focal_vector[0] = zbp->transmit_angles[0];
+		bp.focal_vector[1] = zbp->focal_depths[0];
+	} else {
 		alignas(64) v2 focal_vectors[BeamformerMaxChannelCount];
 		for (u32 i = 0; i < countof(focal_vectors); i++)
 			focal_vectors[i] = (v2){{zbp->transmit_angles[i], zbp->focal_depths[i]}};
 		beamformer_push_focal_vectors((f32 *)focal_vectors, countof(focal_vectors));
-	}
-	{
+
 		alignas(64) u8 transmit_receive_orientations[BeamformerMaxChannelCount];
 		for (u32 i = 0; i < countof(transmit_receive_orientations); i++)
-			transmit_receive_orientations[i] = (u8)zbp->transmit_mode;
+			transmit_receive_orientations[i] = packed_tx_rx;
 		beamformer_push_transmit_receive_orientations(transmit_receive_orientations,
 		                                              countof(transmit_receive_orientations));
 	}
-	#else
-	bp.single_focus       = 1;
-	bp.single_orientation = 1;
-	bp.transmit_receive_orientation = zbp->transmit_mode;
-	bp.focal_vector[0] = zbp->transmit_angles[0];
-	bp.focal_vector[1] = zbp->focal_depths[0];
-	#endif
 
 	beamformer_push_channel_mapping(zbp->channel_mapping, countof(zbp->channel_mapping));
 	beamformer_push_sparse_elements(zbp->sparse_elements, countof(zbp->sparse_elements));

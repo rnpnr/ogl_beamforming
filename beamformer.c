@@ -634,9 +634,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			if (id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES)
 				bp->flags |= BeamformerShaderDASFlags_Sparse;
 
-			if (id == BeamformerAcquisitionKind_HERO_PA)
-				bp->flags |= BeamformerShaderDASFlags_ReceiveOnly;
-
 			commit = 1;
 		}break;
 		default:{ commit = 1; }break;

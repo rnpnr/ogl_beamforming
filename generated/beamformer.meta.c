@@ -17,8 +17,9 @@ typedef enum {
 } BeamformerDecodeMode;
 
 typedef enum {
-	BeamformerRCAOrientation_Rows    = 0,
-	BeamformerRCAOrientation_Columns = 1,
+	BeamformerRCAOrientation_None    = 0,
+	BeamformerRCAOrientation_Rows    = 1,
+	BeamformerRCAOrientation_Columns = 2,
 	BeamformerRCAOrientation_Count,
 } BeamformerRCAOrientation;
 
@@ -65,9 +66,8 @@ typedef enum {
 	BeamformerShaderDASFlags_Fast               = (1 << 0),
 	BeamformerShaderDASFlags_Sparse             = (1 << 1),
 	BeamformerShaderDASFlags_CoherencyWeighting = (1 << 2),
-	BeamformerShaderDASFlags_ReceiveOnly        = (1 << 3),
-	BeamformerShaderDASFlags_SingleFocus        = (1 << 4),
-	BeamformerShaderDASFlags_SingleOrientation  = (1 << 5),
+	BeamformerShaderDASFlags_SingleFocus        = (1 << 3),
+	BeamformerShaderDASFlags_SingleOrientation  = (1 << 4),
 } BeamformerShaderDASFlags;
 
 typedef enum {
@@ -207,8 +207,9 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"#define DecodeMode_Hadamard 1\n"
 	"\n"),
 	s8_comp(""
-	"#define RCAOrientation_Rows    0\n"
-	"#define RCAOrientation_Columns 1\n"
+	"#define RCAOrientation_None    0\n"
+	"#define RCAOrientation_Rows    1\n"
+	"#define RCAOrientation_Columns 2\n"
 	"\n"),
 	s8_comp(""
 	"#define SamplingMode_2X 0\n"
@@ -248,7 +249,6 @@ read_only global s8 *beamformer_shader_flag_strings[] = {
 		s8_comp("Fast"),
 		s8_comp("Sparse"),
 		s8_comp("CoherencyWeighting"),
-		s8_comp("ReceiveOnly"),
 		s8_comp("SingleFocus"),
 		s8_comp("SingleOrientation"),
 	},
@@ -260,7 +260,7 @@ read_only global s8 *beamformer_shader_flag_strings[] = {
 read_only global u8 beamformer_shader_flag_strings_count[] = {
 	1,
 	3,
-	6,
+	5,
 	0,
 	0,
 	0,

@@ -41,8 +41,8 @@ layout(r16i,  binding = 1) readonly  restrict uniform iimage1D sparse_elements;
 layout(rg32f, binding = 2) readonly  restrict uniform image1D  focal_vectors;
 layout(r8i,   binding = 3) readonly  restrict uniform iimage1D transmit_receive_orientations;
 
-#define RX_ORIENTATION_MASK (1 << 0)
-#define TX_ORIENTATION_MASK (1 << 1)
+#define RX_ORIENTATION(tx_rx) (((tx_rx) >> 0) & 0x0F)
+#define TX_ORIENTATION(tx_rx) (((tx_rx) >> 4) & 0x0F)
 
 #define C_SPLINE 0.5
 
@@ -173,8 +173,8 @@ vec2 focal_vector_for_acquisition(const int acquisition)
 float rca_transmit_distance(const vec3 world_point, const vec2 focal_vector, const int transmit_receive_orientation)
 {
 	float result = 0;
-	#if !ReceiveOnly
-		bool  tx_rows        = (transmit_receive_orientation & TX_ORIENTATION_MASK) == 0;
+	if (TX_ORIENTATION(transmit_receive_orientation) != RCAOrientation_None) {
+		bool  tx_rows        = TX_ORIENTATION(transmit_receive_orientation) == RCAOrientation_Rows;
 		float transmit_angle = radians(focal_vector.x);
 		float focal_depth    = focal_vector.y;
 
@@ -183,7 +183,7 @@ float rca_transmit_distance(const vec3 world_point, const vec2 focal_vector, con
 		} else {
 			result = cylindrical_wave_transmit_distance(world_point, focal_depth, transmit_angle, tx_rows);
 		}
-	#endif
+	}
 	return result;
 }
 
@@ -194,7 +194,7 @@ RESULT_TYPE RCA(const vec3 world_point)
 	RESULT_TYPE result = RESULT_TYPE(0);
 	for (int acquisition = acquisition_start; acquisition < acquisition_end; acquisition++) {
 		const int  tx_rx_orientation = tx_rx_orientation_for_acquisition(acquisition);
-		const bool rx_rows           = (tx_rx_orientation & RX_ORIENTATION_MASK) == 0;
+		const bool rx_rows           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows;
 		const vec2 focal_vector      = focal_vector_for_acquisition(acquisition);
 		vec2  xdc_world_point   = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
 		float transmit_distance = rca_transmit_distance(world_point, focal_vector, tx_rx_orientation);
@@ -220,7 +220,7 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 	const int rx_channel_end   = bool(Fast)? u_channel + 1 : ChannelCount;
 
 	const int   tx_rx_orientation = tx_rx_orientation_for_acquisition(0);
-	const bool  rx_cols           = (tx_rx_orientation & RX_ORIENTATION_MASK) != 0;
+	const bool  rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
 	const vec2  focal_vector      = focal_vector_for_acquisition(0);
 	const float transmit_distance = rca_transmit_distance(world_point, focal_vector, tx_rx_orientation);
 	const vec3  xdc_world_point   = (xdc_transform * vec4(world_point, 1)).xyz;

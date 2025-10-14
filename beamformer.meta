@@ -1,6 +1,6 @@
 @Enumeration(DataKind [Int16 Int16Complex Float32 Float32Complex])
 @Enumeration(DecodeMode [None Hadamard])
-@Enumeration(RCAOrientation [Rows Columns])
+@Enumeration(RCAOrientation [None Rows Columns])
 @Enumeration(SamplingMode [2X 4X])
 
 @Table([name pretty_name fixed_transmits]) AcquisitionKind
@@ -104,7 +104,7 @@
 		@Enumeration(DataKind)
 		@Enumeration(InterpolationMode)
 		@Enumeration(RCAOrientation)
-		@Flags([Fast Sparse CoherencyWeighting ReceiveOnly SingleFocus SingleOrientation])
+		@Flags([Fast Sparse CoherencyWeighting SingleFocus SingleOrientation])
 
 		@Bake
 		{
