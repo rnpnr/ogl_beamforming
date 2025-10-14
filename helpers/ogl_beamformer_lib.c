@@ -550,17 +550,24 @@ beamformer_export_buffer(BeamformerExportContext export_context)
 }
 
 function b32
-beamformer_read_output(void *out, iz size, i32 timeout_ms)
+beamformer_export(BeamformerExportContext export, void *out, i32 timeout_ms)
 {
 	b32 result = 0;
-	if (lib_try_lock(BeamformerSharedMemoryLockKind_ExportSync, timeout_ms)) {
-		if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
-			Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
-			mem_copy(out, scratch.beg, (uz)size);
-			lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
-			result = 1;
+	if (beamformer_export_buffer(export)) {
+		/* NOTE(rnp): if this fails it just means that the work from push_data hasn't
+		 * started yet. This is here to catch the other case where the work started
+		 * and finished before we finished queuing the export work item */
+		beamformer_flush_commands(0);
+
+		if (lib_try_lock(BeamformerSharedMemoryLockKind_ExportSync, timeout_ms)) {
+			if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
+				Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
+				mem_copy(out, scratch.beg, export.size);
+				lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
+				result = 1;
+			}
+			lib_release_lock(BeamformerSharedMemoryLockKind_ExportSync);
 		}
-		lib_release_lock(BeamformerSharedMemoryLockKind_ExportSync);
 	}
 	return result;
 }
@@ -593,14 +600,7 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 			BeamformerExportContext export;
 			export.kind = BeamformerExportKind_BeamformedData;
 			export.size = (u32)output_size;
-			if (beamformer_export_buffer(export)) {
-				/* NOTE(rnp): if this fails it just means that the work from push_data hasn't
-				 * started yet. This is here to catch the other case where the work started
-				 * and finished before we finished queuing the export work item */
-				beamformer_flush_commands(0);
-
-				result = beamformer_read_output(out_data, output_size, timeout_ms);
-			}
+			result = beamformer_export(export, out_data, timeout_ms);
 		}
 	}
 	return result;
@@ -615,12 +615,11 @@ beamformer_compute_timings(BeamformerComputeStatsTable *output, i32 timeout_ms)
 	b32 result = 0;
 	if (check_shared_memory()) {
 		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
-		if (lib_error_check(arena_capacity(&scratch, u8) <= (iz)sizeof(*output), BF_LIB_ERR_KIND_EXPORT_SPACE_OVERFLOW)) {
+		if (lib_error_check((iz)sizeof(*output) <= arena_capacity(&scratch, u8), BF_LIB_ERR_KIND_EXPORT_SPACE_OVERFLOW)) {
 			BeamformerExportContext export;
 			export.kind = BeamformerExportKind_Stats;
 			export.size = sizeof(*output);
-			if (beamformer_export_buffer(export) && beamformer_flush_commands(0))
-				result = beamformer_read_output(output, sizeof(*output), timeout_ms);
+			result = beamformer_export(export, output, timeout_ms);
 		}
 	}
 	return result;
