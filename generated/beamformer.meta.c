@@ -13,6 +13,7 @@ typedef enum {
 typedef enum {
 	BeamformerDecodeMode_None     = 0,
 	BeamformerDecodeMode_Hadamard = 1,
+	BeamformerDecodeMode_Walsh    = 2,
 	BeamformerDecodeMode_Count,
 } BeamformerDecodeMode;
 
@@ -205,6 +206,7 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	s8_comp(""
 	"#define DecodeMode_None     0\n"
 	"#define DecodeMode_Hadamard 1\n"
+	"#define DecodeMode_Walsh    2\n"
 	"\n"),
 	s8_comp(""
 	"#define RCAOrientation_None    0\n"

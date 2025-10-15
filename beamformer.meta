@@ -1,5 +1,5 @@
 @Enumeration(DataKind [Int16 Int16Complex Float32 Float32Complex])
-@Enumeration(DecodeMode [None Hadamard])
+@Enumeration(DecodeMode [None Hadamard Walsh])
 @Enumeration(RCAOrientation [None Rows Columns])
 @Enumeration(SamplingMode [2X 4X])
 
