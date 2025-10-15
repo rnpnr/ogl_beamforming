@@ -159,6 +159,14 @@ typedef size_t    uptr;
 
 #include "intrinsics.c"
 
+typedef union {
+	u8    U8[16];
+	u16   U16[8];
+	u32   U32[4];
+	u64   U64[2];
+	u32x4 U32x4;
+} u128;
+
 typedef struct { u8 *beg, *end; } Arena;
 typedef struct { Arena *arena; u8 *old_beg; } TempArena;
 

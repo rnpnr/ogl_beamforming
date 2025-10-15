@@ -122,6 +122,13 @@ make_hadamard_transpose(Arena *a, i32 dim)
 }
 
 function b32
+u128_equal(u128 a, u128 b)
+{
+	b32 result = a.U64[0] == b.U64[0] && a.U64[1] == b.U64[1];
+	return result;
+}
+
+function b32
 iv2_equal(iv2 a, iv2 b)
 {
 	b32 result = a.x == b.x && a.y == b.y;

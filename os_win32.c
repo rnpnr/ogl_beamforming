@@ -341,7 +341,7 @@ function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
 	directory.len = s8_scan_backwards(path, OS_PATH_SEPARATOR_CHAR);
 	assert(directory.len > 0);
 
-	u64 hash = s8_hash(directory);
+	u64 hash = u64_hash_from_s8(directory);
 	FileWatchContext *fwctx = &os->file_watch_context;
 	FileWatchDirectory *dir = lookup_file_watch_directory(fwctx, hash);
 	if (!dir) {
@@ -371,7 +371,7 @@ function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
 	FileWatch *fw = da_push(a, dir);
 	fw->user_data = user_data;
 	fw->callback  = callback;
-	fw->hash      = s8_hash(s8_cut_head(path, dir->name.len + 1));
+	fw->hash      = u64_hash_from_s8(s8_cut_head(path, dir->name.len + 1));
 }
 
 function iptr

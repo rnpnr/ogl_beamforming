@@ -178,8 +178,9 @@ struct BeamformerComputePlan {
 	BEAMFORMER_COMPUTE_UBO_LIST
 	#undef X
 
+	u128 shader_hashes[BeamformerMaxComputeShaderStages];
+	uv3  shader_dispatch[BeamformerMaxComputeShaderStages];
 	BeamformerShaderBakeParameters shader_bake_parameters[BeamformerMaxComputeShaderStages];
-	uv3 shader_dispatch[BeamformerMaxComputeShaderStages];
 
 	BeamformerComputePlan *next;
 };

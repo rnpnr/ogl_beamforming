@@ -4,7 +4,7 @@
  *      - the check for first pass reshaping is the last non constant check
  *        in the shader
  *      - this will also remove the need for the channel mapping in the decode shader
- * [ ]: refactor: ui: reload only shader which is affected by the interaction
+ * [X]: refactor: ui: reload only shader which is affected by the interaction
  * [ ]: BeamformWorkQueue -> BeamformerWorkQueue
  * [ ]: need to keep track of gpu memory in some way
  *      - want to be able to store more than 16 2D frames but limit 3D frames
@@ -781,8 +781,12 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			           1 << BeamformerParameterBlockRegion_Parameters;
 			pb->dirty_regions &= ~mask;
 
-			for (u32 shader_slot = 0; shader_slot < cp->pipeline.shader_count; shader_slot++)
-				cp->dirty_programs |= 1 << shader_slot;
+			for (u32 shader_slot = 0; shader_slot < cp->pipeline.shader_count; shader_slot++) {
+				u128 hash = u128_hash_from_data(cp->shader_bake_parameters + shader_slot, sizeof(BeamformerShaderBakeParameters));
+				if (!u128_equal(hash, cp->shader_hashes[shader_slot]))
+					cp->dirty_programs |= 1 << shader_slot;
+				cp->shader_hashes[shader_slot] = hash;
+			}
 
 			#define X(k, t, v) glNamedBufferSubData(cp->ubos[BeamformerComputeUBOKind_##k], \
 			                                        0, sizeof(t), &cp->v ## _ubo_data);

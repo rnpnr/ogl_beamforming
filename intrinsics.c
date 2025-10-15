@@ -165,6 +165,7 @@ ctz_u64(u64 a)
 #include <arm_neon.h>
 typedef float32x4_t f32x4;
 typedef int32x4_t   i32x4;
+typedef uint32x4_t  u32x4;
 
 #define add_f32x4(a, b)       vaddq_f32(a, b)
 #define cvt_i32x4_f32x4(a)    vcvtq_f32_s32(a)
@@ -187,6 +188,7 @@ typedef int32x4_t   i32x4;
 #include <immintrin.h>
 typedef __m128  f32x4;
 typedef __m128i i32x4;
+typedef __m128i u32x4;
 
 #define add_f32x4(a, b)       _mm_add_ps(a, b)
 #define cvt_i32x4_f32x4(a)    _mm_cvtepi32_ps(a)

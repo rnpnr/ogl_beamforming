@@ -437,16 +437,27 @@ arena_stream_commit_and_reset(Arena *arena, Stream *s)
 	return result;
 }
 
-/* NOTE(rnp): FNV-1a hash */
-function u64
-s8_hash(s8 v)
+#if !defined(XXH_IMPLEMENTATION)
+# define XXH_INLINE_ALL
+# define XXH_IMPLEMENTATION
+# define XXH_STATIC_LINKING_ONLY
+# include "external/xxhash.h"
+#endif
+
+function u128
+u128_hash_from_data(void *data, uz size)
 {
-	u64 h = 0x3243f6a8885a308d; /* digits of pi */
-	for (; v.len; v.len--) {
-		h ^= v.data[v.len - 1] & 0xFF;
-		h *= 1111111111111111111; /* random prime */
-	}
-	return h;
+	u128 result = {0};
+	XXH128_hash_t hash = XXH3_128bits_withSeed(data, size, 4969);
+	mem_copy(&result, &hash, sizeof(result));
+	return result;
+}
+
+function u64
+u64_hash_from_s8(s8 v)
+{
+	u64 result = XXH3_64bits_withSeed(v.data, (uz)v.len, 4969);
+	return result;
 }
 
 function s8

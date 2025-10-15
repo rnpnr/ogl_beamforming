@@ -52,7 +52,7 @@ dispatch_file_watch_events(OS *os, Arena arena)
 					continue;
 
 				s8  file = c_str_to_s8(event->name);
-				u64 hash = s8_hash(file);
+				u64 hash = u64_hash_from_s8(file);
 				for (u32 j = 0; j < dir->count; j++) {
 					FileWatch *fw = dir->data + j;
 					if (fw->hash == hash) {
