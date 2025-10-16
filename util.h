@@ -159,7 +159,7 @@ typedef size_t    uptr;
 
 #include "intrinsics.c"
 
-typedef union {
+typedef alignas(16) union {
 	u8    U8[16];
 	u16   U16[8];
 	u32   U32[4];
