@@ -203,13 +203,20 @@ beamformer_frame_compatible(BeamformerFrame *f, iv3 dim, GLenum gl_kind)
 	return result;
 }
 
+function iv3
+make_valid_output_points(i32 points[3])
+{
+	iv3 result;
+	result.E[0] = MAX(1, points[0]);
+	result.E[1] = MAX(1, points[1]);
+	result.E[2] = MAX(1, points[2]);
+	return result;
+}
+
 function void
 alloc_beamform_frame(GLParams *gp, BeamformerFrame *out, iv3 out_dim, GLenum gl_kind, s8 name, Arena arena)
 {
-	out->dim.x = MAX(1, out_dim.x);
-	out->dim.y = MAX(1, out_dim.y);
-	out->dim.z = MAX(1, out_dim.z);
-
+	out->dim = make_valid_output_points(out_dim.E);
 	if (gp) {
 		out->dim.x = MIN(out->dim.x, gp->max_3d_texture_dim);
 		out->dim.y = MIN(out->dim.y, gp->max_3d_texture_dim);
@@ -407,7 +414,7 @@ das_voxel_transform_matrix(BeamformerParameters *bp)
 	v3 min = v3_from_f32_array(bp->output_min_coordinate);
 	v3 max = v3_from_f32_array(bp->output_max_coordinate);
 	v3 extent = v3_abs(v3_sub(max, min));
-	v3 points = {{(f32)bp->output_points[0], (f32)bp->output_points[1], (f32)bp->output_points[2]}};
+	v3 points = v3_from_iv3(make_valid_output_points(bp->output_points));
 
 	m4 T1 = m4_translation(v3_scale(v3_sub(points, (v3){{1.0f, 1.0f, 1.0f}}), -0.5f));
 	m4 T2 = m4_translation(v3_add(min, v3_scale(extent, 0.5f)));
@@ -423,6 +430,7 @@ das_voxel_transform_matrix(BeamformerParameters *bp)
 		S.c[1].E[1]  = 0;
 		T2.c[3].E[1] = 0;
 	}break;
+	case BeamformerAcquisitionKind_HERO_PA:
 	case BeamformerAcquisitionKind_HERCULES:
 	case BeamformerAcquisitionKind_UHERCULES:
 	case BeamformerAcquisitionKind_RCA_TPW:
@@ -806,10 +814,8 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			cp->min_coordinate = v3_from_f32_array(pb->parameters.output_min_coordinate);
 			cp->max_coordinate = v3_from_f32_array(pb->parameters.output_max_coordinate);
 
-			cp->output_points.E[0] = MAX(pb->parameters.output_points[0], 1);
-			cp->output_points.E[1] = MAX(pb->parameters.output_points[1], 1);
-			cp->output_points.E[2] = MAX(pb->parameters.output_points[2], 1);
-			cp->average_frames     = pb->parameters.output_points[3];
+			cp->output_points  = make_valid_output_points(pb->parameters.output_points);
+			cp->average_frames = pb->parameters.output_points[3];
 
 			GLenum gl_kind = cp->iq_pipeline ? GL_RG32F : GL_R32F;
 			if (cp->average_frames > 1 && !beamformer_frame_compatible(ctx->averaged_frames + 0, cp->output_points, gl_kind)) {

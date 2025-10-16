@@ -228,6 +228,16 @@ cross(v3 a, v3 b)
 }
 
 function v3
+v3_from_iv3(iv3 v)
+{
+	v3 result;
+	result.E[0] = (f32)v.E[0];
+	result.E[1] = (f32)v.E[1];
+	result.E[2] = (f32)v.E[2];
+	return result;
+}
+
+function v3
 v3_from_f32_array(f32 v[3])
 {
 	v3 result;
