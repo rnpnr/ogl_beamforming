@@ -29,7 +29,7 @@
 global char *g_argv0;
 
 #define OUTDIR    "out"
-#define OUTPUT(s) OUTDIR "/" s
+#define OUTPUT(s) OUTDIR OS_PATH_SEPARATOR s
 
 #if COMPILER_MSVC
   #define COMMON_FLAGS     "-nologo", "-std:c11", "-Fo:" OUTDIR "\\", "-Z7", "-Zo"
@@ -1878,7 +1878,7 @@ meta_pack_table(MetaContext *ctx, MetaEntry *e, iz entry_count)
 
 			MetaEntryArgument entries = meta_entry_argument_expect(row, 0, MetaEntryArgumentKind_Array);
 			if (entries.count != t->field_count) {
-				meta_compiler_error_message(row->location, "incorrect field count for @%s entry got: %lu expected: %u\n",
+				meta_compiler_error_message(row->location, "incorrect field count for @%s entry got: %zu expected: %u\n",
 				                            meta_entry_kind_strings[MetaEntryKind_Table],
 				                            entries.count, t->field_count);
 				fprintf(stderr, "  fields: [");
