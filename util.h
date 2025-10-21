@@ -97,7 +97,7 @@
 #define EachEnumValue(type, it)        (type it = (type)0; it < type##_Count; it = (type)(it + 1))
 #define EachNonZeroEnumValue(type, it) (type it = (type)1; it < type##_Count; it = (type)(it + 1))
 
-#define spin_wait(c) while ((c))
+#define spin_wait(c) while ((c)) cpu_yield()
 
 /* NOTE(rnp): no guarantees about actually getting an element */
 #define SLLPop(list) list; list = list ? list->next : 0

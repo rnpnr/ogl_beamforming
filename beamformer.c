@@ -1,5 +1,7 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: utilize umonitor/umwait (intel), monitorx/mwaitx (amd), and wfe/sev (aarch64)
+ *      for power efficient low latency waiting
  * [ ]: refactor: split decode into reshape and decode
  *      - the check for first pass reshaping is the last non constant check
  *        in the shader

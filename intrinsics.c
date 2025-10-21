@@ -184,6 +184,8 @@ typedef uint32x4_t  u32x4;
 #define store_i32x4(o, a)     vst1q_s32(o, a)
 #define sub_f32x4(a, b)       vsubq_f32(a, b)
 
+#define cpu_yield()           asm volatile ("yield")
+
 #elif ARCH_X64
 #include <immintrin.h>
 typedef __m128  f32x4;
@@ -206,5 +208,7 @@ typedef __m128i u32x4;
 #define store_f32x4(o, a)     _mm_storeu_ps(o, a)
 #define store_i32x4(o, a)     _mm_storeu_si128((i32x4 *)o, a)
 #define sub_f32x4(a, b)       _mm_sub_ps(a, b)
+
+#define cpu_yield()           _mm_pause()
 
 #endif
