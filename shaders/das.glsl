@@ -216,9 +216,6 @@ RESULT_TYPE RCA(const vec3 world_point)
 
 RESULT_TYPE HERCULES(const vec3 world_point)
 {
-	const int rx_channel_start = bool(Fast)? u_channel     : 0;
-	const int rx_channel_end   = bool(Fast)? u_channel + 1 : ChannelCount;
-
 	const int   tx_rx_orientation = tx_rx_orientation_for_acquisition(0);
 	const bool  rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
 	const vec2  focal_vector      = focal_vector_for_acquisition(0);
@@ -228,7 +225,12 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 	RESULT_TYPE result = RESULT_TYPE(0);
 	for (int transmit = Sparse; transmit < AcquisitionCount; transmit++) {
 		int tx_channel = bool(Sparse) ? imageLoad(sparse_elements, transmit - Sparse).x : transmit;
-		for (int rx_channel = rx_channel_start; rx_channel < rx_channel_end; rx_channel++) {
+		#if Fast
+		const int rx_channel = u_channel;
+		#else
+		for (int rx_channel = 0; rx_channel < ChannelCount; rx_channel++)
+		#endif
+		{
 			vec3 element_position;
 			if (rx_cols) element_position = vec3(rx_channel, tx_channel, 0) * vec3(xdc_element_pitch, 0);
 			else         element_position = vec3(tx_channel, rx_channel, 0) * vec3(xdc_element_pitch, 0);
