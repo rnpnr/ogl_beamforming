@@ -68,15 +68,6 @@ LIB_FN uint32_t beamformer_set_global_timeout(int32_t timeout_ms);
 /* NOTE: downloads the last 32 frames worth of compute timings into output */
 LIB_FN uint32_t beamformer_compute_timings(BeamformerComputeStatsTable *output, int32_t timeout_ms);
 
-/* NOTE: tells the beamformer to start beamforming */
-LIB_FN uint32_t beamformer_start_compute(void);
-
-/* NOTE: waits for previously queued beamform to start or for timeout_ms */
-LIB_FN uint32_t beamformer_wait_for_compute_dispatch(int32_t timeout_ms);
-
-/* NOTE: this function only queue an upload; you must flush (start_compute) */
-LIB_FN uint32_t beamformer_push_data(void *data, uint32_t size);
-
 /* NOTE: pushes data and tries to immediately starts a compute */
 LIB_FN uint32_t beamformer_push_data_with_compute(void *data, uint32_t size,
                                                   uint32_t image_plane_tag,

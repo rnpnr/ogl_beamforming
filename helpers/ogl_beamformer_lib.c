@@ -392,23 +392,6 @@ beamformer_compute_indirect(BeamformerViewPlaneTag tag, u32 block)
 	return result;
 }
 
-b32
-beamformer_start_compute(void)
-{
-	b32 result = beamformer_compute_indirect(0, 0);
-	return result;
-}
-
-b32
-beamformer_wait_for_compute_dispatch(i32 timeout_ms)
-{
-	b32 result = beamformer_flush_commands(timeout_ms);
-	/* NOTE(rnp): if you are calling this function you are probably about
-	 * to start some other work and it might be better to not do this... */
-	if (result) lib_release_lock(BeamformerSharedMemoryLockKind_DispatchCompute);
-	return result;
-}
-
 #define BEAMFORMER_UPLOAD_FNS \
 	X(channel_mapping,               i16, 1, ChannelMapping) \
 	X(focal_vectors,                 f32, 2, FocalVectors)   \
@@ -456,12 +439,6 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms)
 		}
 	}
 	return result;
-}
-
-b32
-beamformer_push_data(void *data, u32 data_size)
-{
-	return beamformer_push_data_base(data, data_size, g_beamformer_library_context.timeout_ms);
 }
 
 b32
