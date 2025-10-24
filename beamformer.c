@@ -1,5 +1,7 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: refactor: replace UploadRF with just the scratch_rf_size variable,
+ *      use below to spin wait in library
  * [ ]: utilize umonitor/umwait (intel), monitorx/mwaitx (amd), and wfe/sev (aarch64)
  *      for power efficient low latency waiting
  * [ ]: refactor: split decode into reshape and decode
@@ -1137,7 +1139,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			case BeamformerExportKind_Stats:{
 				ComputeTimingTable *table = ctx->compute_timing_table;
 				/* NOTE(rnp): do a little spin to let this finish updating */
-				while (table->write_index != atomic_load_u32(&table->read_index));
+				spin_wait(table->write_index != atomic_load_u32(&table->read_index));
 				ComputeShaderStats *stats = ctx->compute_shader_stats;
 				if (sizeof(stats->table) <= ec->size)
 					mem_copy(beamformer_shared_memory_scratch_arena(sm).beg, &stats->table, sizeof(stats->table));
