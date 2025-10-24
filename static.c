@@ -264,14 +264,15 @@ worker_thread_sleep(GLWorkerThreadContext *ctx, BeamformerSharedMemory *sm)
 {
 	for (;;) {
 		i32 expected = 0;
-		if (atomic_cas_u32(&ctx->sync_variable, &expected, 1))
+		if (atomic_cas_u32(&ctx->sync_variable, &expected, 1) ||
+		    atomic_load_u32(&sm->live_imaging_parameters.active))
+		{
 			break;
-
-		if (!atomic_load_u32(&sm->live_imaging_parameters.active)) {
-			atomic_store_u32(&ctx->asleep, 1);
-			os_wait_on_value(&ctx->sync_variable, 1, (u32)-1);
-			atomic_store_u32(&ctx->asleep, 0);
 		}
+
+		atomic_store_u32(&ctx->asleep, 1);
+		os_wait_on_value(&ctx->sync_variable, 1, (u32)-1);
+		atomic_store_u32(&ctx->asleep, 0);
 	}
 }
 

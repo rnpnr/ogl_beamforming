@@ -278,11 +278,9 @@ function OS_SHARED_MEMORY_LOCK_REGION_FN(os_shared_memory_region_lock)
 	b32 result = 0;
 	for (;;) {
 		i32 current = 0;
-		if (atomic_cas_u32(locks + lock_index, &current, 1)) {
+		if (atomic_cas_u32(locks + lock_index, &current, 1))
 			result = 1;
-			break;
-		}
-		if (!timeout_ms || !os_wait_on_value(locks + lock_index, current, timeout_ms))
+		if (result || !timeout_ms || !os_wait_on_value(locks + lock_index, current, timeout_ms))
 			break;
 	}
 	return result;

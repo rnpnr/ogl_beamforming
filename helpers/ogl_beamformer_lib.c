@@ -430,9 +430,9 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms)
 			if (lib_try_lock(BeamformerSharedMemoryLockKind_UploadRF, timeout_ms)) {
 				if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
 					mem_copy(scratch.beg, data, data_size);
-					/* TODO(rnp): need a better way to communicate this */
-					g_beamformer_library_context.bp->scratch_rf_size = data_size;
 					lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
+					/* TODO(rnp): need a better way to communicate this */
+					atomic_store_u32(&g_beamformer_library_context.bp->scratch_rf_size, data_size);
 					result = 1;
 				}
 			}

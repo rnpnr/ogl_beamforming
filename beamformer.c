@@ -1205,15 +1205,15 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 				BeamformerRFBuffer *rf = &cs->rf_buffer;
 				u32 slot = rf->compute_index % countof(rf->compute_syncs);
 
-				/* NOTE(rnp): compute indirect is used when uploading data. in this case the thread
-				 * must wait on an upload fence. if the fence doesn't yet exist the thread must wait */
-				if (work->kind == BeamformerWorkKind_ComputeIndirect)
+				if (work->kind == BeamformerWorkKind_ComputeIndirect) {
+					/* NOTE(rnp): compute indirect is used when uploading data. if compute thread
+					 * preempts upload it must wait for the fence to exist. then it must tell the
+					 * GPU to wait for upload to complete before it can start compute */
 					spin_wait(!atomic_load_u64(rf->upload_syncs + slot));
 
-				if (rf->upload_syncs[slot]) {
-					rf->compute_index++;
 					glWaitSync(rf->upload_syncs[slot], 0, GL_TIMEOUT_IGNORED);
 					glDeleteSync(rf->upload_syncs[slot]);
+					rf->compute_index++;
 				} else {
 					slot = (rf->compute_index - 1) % countof(rf->compute_syncs);
 				}
@@ -1225,9 +1225,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 				glEndQuery(GL_TIME_ELAPSED);
 
 				if (work->kind == BeamformerWorkKind_ComputeIndirect) {
-					rf->compute_syncs[slot] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-					rf->upload_syncs[slot]  = 0;
-					memory_write_barrier();
+					atomic_store_u64(rf->compute_syncs + slot, glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
+					atomic_store_u64(rf->upload_syncs + slot,  0);
 				}
 			}
 
@@ -1365,11 +1364,13 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 
 	BeamformerSharedMemoryLockKind scratch_lock = BeamformerSharedMemoryLockKind_ScratchSpace;
 	BeamformerSharedMemoryLockKind upload_lock  = BeamformerSharedMemoryLockKind_UploadRF;
-	if (sm->locks[upload_lock] &&
+	u32 scratch_rf_size;
+	if (atomic_load_u32(sm->locks + upload_lock) &&
+	    (scratch_rf_size = atomic_swap_u32(&sm->scratch_rf_size, 0)) &&
 	    os_shared_memory_region_lock(ctx->shared_memory, sm->locks, (i32)scratch_lock, (u32)-1))
 	{
 		BeamformerRFBuffer *rf = ctx->rf_buffer;
-		rf->active_rf_size = (u32)round_up_to(sm->scratch_rf_size, 64);
+		rf->active_rf_size = (u32)round_up_to(scratch_rf_size, 64);
 		if (rf->size < rf->active_rf_size)
 			beamformer_rf_buffer_allocate(rf, rf->active_rf_size, arena);
 
@@ -1380,7 +1381,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		 * through this path. therefore it is safe to spin until it gets processed */
 		spin_wait(atomic_load_u64(rf->upload_syncs + slot));
 
-		if (rf->compute_syncs[slot]) {
+		if (atomic_load_u64(rf->compute_syncs + slot)) {
 			GLenum sync_result = glClientWaitSync(rf->compute_syncs[slot], 0, 1000000000);
 			if (sync_result == GL_TIMEOUT_EXPIRED || sync_result == GL_WAIT_FAILED) {
 				// TODO(rnp): what do?
@@ -1401,9 +1402,8 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		glFlushMappedNamedBufferRange(rf->ssbo, 0, (i32)rf->active_rf_size);
 		glUnmapNamedBuffer(rf->ssbo);
 
-		rf->upload_syncs[slot]  = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-		rf->compute_syncs[slot] = 0;
-		memory_write_barrier();
+		atomic_store_u64(rf->upload_syncs + slot,  glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
+		atomic_store_u64(rf->compute_syncs + slot, 0);
 
 		os_wake_waiters(ctx->compute_worker_sync);
 
@@ -1434,7 +1434,7 @@ DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 	}
 
 	BeamformerSharedMemory *sm = ctx->shared_memory.region;
-	if (sm->locks[BeamformerSharedMemoryLockKind_UploadRF] != 0)
+	if (atomic_load_u32(sm->locks + BeamformerSharedMemoryLockKind_UploadRF))
 		os_wake_waiters(&ctx->os.upload_worker.sync_variable);
 
 	BeamformerFrame        *frame = ctx->latest_frame;

@@ -67,13 +67,13 @@
 
   #define memory_write_barrier()        asm volatile ("" ::: "memory")
 
-  #define atomic_add_u64(ptr, n)        __atomic_fetch_add(ptr,  n, __ATOMIC_ACQ_REL)
-  #define atomic_and_u64(ptr, n)        __atomic_and_fetch(ptr,  n, __ATOMIC_RELEASE)
+  #define atomic_add_u64(ptr, n)        __atomic_fetch_add(ptr,  n, __ATOMIC_SEQ_CST)
+  #define atomic_and_u64(ptr, n)        __atomic_and_fetch(ptr,  n, __ATOMIC_SEQ_CST)
   #define atomic_cas_u64(ptr, cptr, n)  __atomic_compare_exchange_n(ptr, cptr, n, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)
-  #define atomic_load_u64(ptr)          __atomic_load_n(ptr,        __ATOMIC_ACQUIRE)
-  #define atomic_or_u32(ptr, n)         __atomic_or_fetch(ptr,   n, __ATOMIC_RELEASE)
-  #define atomic_store_u64(ptr, n)      __atomic_store_n(ptr,    n, __ATOMIC_RELEASE)
-  #define atomic_swap_u64(ptr, n)       __atomic_exchange_n(ptr, n, __ATOMIC_RELEASE)
+  #define atomic_load_u64(ptr)          __atomic_load_n(ptr,        __ATOMIC_SEQ_CST)
+  #define atomic_or_u32(ptr, n)         __atomic_or_fetch(ptr,   n, __ATOMIC_SEQ_CST)
+  #define atomic_store_u64(ptr, n)      __atomic_store_n(ptr,    n, __ATOMIC_SEQ_CST)
+  #define atomic_swap_u64(ptr, n)       __atomic_exchange_n(ptr, n, __ATOMIC_SEQ_CST)
   #define atomic_add_u32                atomic_add_u64
   #define atomic_and_u32                atomic_and_u64
   #define atomic_cas_u32                atomic_cas_u64
