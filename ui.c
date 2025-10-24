@@ -50,6 +50,8 @@
  * [ ]: refactor: better method of grouping variables for views such as FrameView/ComputeStatsView
  */
 
+#include "assets/generated/assets.c"
+
 #define BG_COLOUR              (v4){{0.15f, 0.12f, 0.13f, 1.0f}}
 #define FG_COLOUR              (v4){{0.92f, 0.88f, 0.78f, 1.0f}}
 #define FOCUSED_COLOUR         (v4){{0.86f, 0.28f, 0.21f, 1.0f}}
@@ -3923,10 +3925,9 @@ ui_init(BeamformerCtx *ctx, Arena store)
 		ui->shared_memory   = ctx->shared_memory;
 		ui->beamformer_context = ctx;
 
-		/* TODO(rnp): build these into the binary */
 		/* TODO(rnp): better font, this one is jank at small sizes */
-		ui->font       = LoadFontEx("assets/IBMPlexSans-Bold.ttf", 28, 0, 0);
-		ui->small_font = LoadFontEx("assets/IBMPlexSans-Bold.ttf", 20, 0, 0);
+		ui->font       = LoadFontFromMemory(".ttf", beamformer_base_font, sizeof(beamformer_base_font), 28, 0, 0);
+		ui->small_font = LoadFontFromMemory(".ttf", beamformer_base_font, sizeof(beamformer_base_font), 20, 0, 0);
 
 		ui->floating_widget_sentinal.parent = &ui->floating_widget_sentinal;
 		ui->floating_widget_sentinal.next   = &ui->floating_widget_sentinal;

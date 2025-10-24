@@ -144,6 +144,7 @@ build_log_base(BuildLogKind kind, char *format, va_list args)
 
 #define build_log_failure(format, ...) build_log(BuildLogKind_Error, \
                                                  "failed to build: " format, ##__VA_ARGS__)
+#define build_log_error(...)    build_log(BuildLogKind_Error,    ##__VA_ARGS__)
 #define build_log_generate(...) build_log(BuildLogKind_Generate, ##__VA_ARGS__)
 #define build_log_info(...)     build_log(BuildLogKind_Info,     ##__VA_ARGS__)
 #define build_log_command(...)  build_log(BuildLogKind_Command,  ##__VA_ARGS__)
@@ -822,6 +823,7 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 	X(BakeFloat)    \
 	X(BeginScope)   \
 	X(Emit)         \
+	X(Embed)        \
 	X(EndScope)     \
 	X(Enumeration)  \
 	X(Expand)       \
@@ -1397,8 +1399,9 @@ typedef struct {
 DA_STRUCT(MetaExpansionPart, MetaExpansionPart);
 
 typedef enum {
-	MetaEmitOperationKind_String,
 	MetaEmitOperationKind_Expand,
+	MetaEmitOperationKind_FileBytes,
+	MetaEmitOperationKind_String,
 } MetaEmitOperationKind;
 
 typedef struct {
@@ -1424,6 +1427,9 @@ typedef struct {
 
 typedef struct {
 	Arena *arena, scratch;
+
+	s8 filename;
+	s8 directory;
 
 	s8_list                      enumeration_kinds;
 	s8_list_table                enumeration_members;
@@ -1823,6 +1829,31 @@ meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count, MetaE
 	return scope.consumed;
 }
 
+function void
+meta_embed(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count)
+{
+	assert(e->kind == MetaEntryKind_Embed);
+
+	meta_entry_argument_expected(e, s8("filename"));
+	s8 filename = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
+
+	MetaEmitOperationList *ops = da_push(ctx->arena, &ctx->emit_sets);
+	if (e->name.len == 0) meta_entry_error(e, "name must be provided for output array");
+
+	MetaEmitOperation *op;
+	op = da_push(ctx->arena, ops);
+	op->kind   = MetaEmitOperationKind_String;
+	op->string = push_s8_from_parts(ctx->arena, s8(""), s8("read_only global u8 "), e->name, s8("[] = {"));
+
+	op = da_push(ctx->arena, ops);
+	op->kind   = MetaEmitOperationKind_FileBytes;
+	op->string = filename;
+
+	op = da_push(ctx->arena, ops);
+	op->kind   = MetaEmitOperationKind_String;
+	op->string = s8("};");
+}
+
 function iz
 meta_pack_emit(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count)
 {
@@ -1899,6 +1930,77 @@ meta_pack_table(MetaContext *ctx, MetaEntry *e, iz entry_count)
 	}
 
 	return scope.consumed;
+}
+
+function CommandList
+meta_extract_emit_file_dependencies(MetaContext *ctx, Arena *arena)
+{
+	CommandList result = {0};
+	for (iz set = 0; set < ctx->emit_sets.count; set++) {
+		MetaEmitOperationList *ops = ctx->emit_sets.data + set;
+		for (iz opcode = 0; opcode < ops->count; opcode++) {
+			MetaEmitOperation *op = ops->data + opcode;
+			switch (op->kind) {
+			case MetaEmitOperationKind_FileBytes:{
+				s8 filename = push_s8_from_parts(arena, s8(OS_PATH_SEPARATOR), ctx->directory, op->string);
+				*da_push(arena, &result) = (c8 *)filename.data;
+			}break;
+			default:{}break;
+			}
+		}
+	}
+	return result;
+}
+
+function void
+metagen_push_byte_array(MetaprogramContext *m, s8 bytes)
+{
+	for (iz i = 0; i < bytes.len; i++) {
+		b32 end_line = (i != 0) && (i % 16) == 0;
+		if (i != 0) meta_push(m, end_line ? s8(",") : s8(", "));
+		if (end_line) meta_end_line(m);
+		if ((i % 16) == 0) meta_indent(m);
+		meta_push(m, s8("0x"));
+		meta_push_u64_hex(m, bytes.data[i]);
+	}
+	meta_end_line(m);
+}
+
+function void
+metagen_run_emit(MetaprogramContext *m, MetaContext *ctx)
+{
+	for (iz set = 0; set < ctx->emit_sets.count; set++) {
+		MetaEmitOperationList *ops = ctx->emit_sets.data + set;
+		for (iz opcode = 0; opcode < ops->count; opcode++) {
+			MetaEmitOperation *op = ops->data + opcode;
+			switch (op->kind) {
+			case MetaEmitOperationKind_String:{ meta_push_line(m, op->string); }break;
+			case MetaEmitOperationKind_FileBytes:{
+				Arena scratch = m->scratch;
+				s8 filename = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), ctx->directory, op->string);
+				s8 file     = os_read_whole_file(&scratch, (c8 *)filename.data);
+				m->indentation_level++;
+				metagen_push_byte_array(m, file);
+				m->indentation_level--;
+			}break;
+			case MetaEmitOperationKind_Expand:{
+				MetaEmitOperationExpansion *eop = &op->expansion_operation;
+				MetaTable *t = ctx->tables.data + eop->table_id;
+				for (u32 entry = 0; entry < t->entry_count; entry++) {
+					meta_indent(m);
+					for (u32 part = 0; part < eop->part_count; part++) {
+						MetaExpansionPart *p = eop->parts + part;
+						u32 index = p->kind == MetaExpansionPartKind_Reference ? entry : 0;
+						meta_push(m, p->strings[index]);
+					}
+					meta_end_line(m);
+				}
+			}break;
+			InvalidDefaultCase;
+			}
+		}
+		meta_end_line(m);
+	}
 }
 
 function void
@@ -2073,16 +2175,7 @@ meta_push_shader_bake(MetaprogramContext *m, MetaContext *ctx)
 			s8 filename = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), s8("shaders"),
 			                                 ctx->base_shaders.data[shader].file);
 			s8 file = os_read_whole_file(&scratch, (c8 *)filename.data);
-
-			for (iz i = 0; i < file.len; i++) {
-				b32 end_line = (i != 0) && (i % 16) == 0;
-				if (i != 0) meta_push(m, end_line ? s8(",") : s8(", "));
-				if (end_line) meta_end_line(m);
-				if ((i % 16) == 0) meta_indent(m);
-				meta_push(m, s8("0x"));
-				meta_push_u64_hex(m, file.data[i]);
-			}
-			meta_end_line(m);
+			metagen_push_byte_array(m, file);
 		} meta_end_scope(m, s8("};\n"));
 	}
 
@@ -2112,6 +2205,11 @@ meta_push_shader_bake(MetaprogramContext *m, MetaContext *ctx)
 	} meta_end_scope(m, s8("};\n"));
 }
 
+read_only global s8 c_file_header = s8(""
+	"/* See LICENSE for license details. */\n\n"
+	"// GENERATED CODE\n\n"
+);
+
 function b32
 metagen_emit_c_code(MetaContext *ctx, Arena arena)
 {
@@ -2121,11 +2219,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	char *out_meta    = "generated" OS_PATH_SEPARATOR "beamformer.meta.c";
 	char *out_shaders = "generated" OS_PATH_SEPARATOR "beamformer_shaders.c";
 
-	s8 header = s8("/* See LICENSE for license details. */\n\n"
-	               "// GENERATED CODE\n\n");
-
-	MetaprogramContext meta_program = {.stream = arena_stream(arena), .scratch = ctx->scratch};
-	MetaprogramContext *m = &meta_program;
+	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
 
 	////////////////////////////
 	// NOTE(rnp): shader baking
@@ -2137,7 +2231,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		}
 		if (needs_rebuild_(out_shaders, deps, ctx->base_shaders.count)) {
 			build_log_generate("Bake Shaders");
-			meta_push(m, header);
+			meta_push(m, c_file_header);
 			meta_push_shader_bake(m, ctx);
 			result &= meta_write_and_reset(m, out_shaders);
 		}
@@ -2149,7 +2243,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 
 	build_log_generate("Core C Code");
 
-	meta_push(m, header);
+	meta_push(m, c_file_header);
 
 	/////////////////////////
 	// NOTE(rnp): enumarents
@@ -2330,32 +2424,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	}
 	meta_end_scope(m, s8("};\n"));
 
-	///////////////////////////////
-	// NOTE(rnp): @Emit directives
-	for (iz set = 0; set < ctx->emit_sets.count; set++) {
-		MetaEmitOperationList *ops = ctx->emit_sets.data + set;
-		for (iz opcode = 0; opcode < ops->count; opcode++) {
-			MetaEmitOperation *op = ops->data + opcode;
-			switch (op->kind) {
-			case MetaEmitOperationKind_String:{ meta_push_line(m, op->string); }break;
-			case MetaEmitOperationKind_Expand:{
-				MetaEmitOperationExpansion *eop = &op->expansion_operation;
-				MetaTable *t = ctx->tables.data + eop->table_id;
-				for (u32 entry = 0; entry < t->entry_count; entry++) {
-					meta_indent(m);
-					for (u32 part = 0; part < eop->part_count; part++) {
-						MetaExpansionPart *p = eop->parts + part;
-						u32 index = p->kind == MetaExpansionPartKind_Reference ? entry : 0;
-						meta_push(m, p->strings[index]);
-					}
-					meta_end_line(m);
-				}
-			}break;
-			InvalidDefaultCase;
-			}
-		}
-		meta_end_line(m);
-	}
+	metagen_run_emit(m, ctx);
 
 	//fprintf(stderr, "%.*s\n", (i32)m.stream.widx, m.stream.data);
 
@@ -2375,8 +2444,7 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 	/* TODO(rnp): recreate/clear directory incase these file names change */
 	os_make_directory(OUTPUT("matlab"));
 
-	MetaprogramContext meta_program = {.stream = arena_stream(arena), .scratch = ctx->scratch};
-	MetaprogramContext *m = &meta_program;
+	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
 
 	#define X(name, flag, ...) meta_push_line(m, s8(#name " (" str(flag) ")"));
 	meta_begin_matlab_class(m, "OGLBeamformerLiveFeedbackFlags", "int32");
@@ -2516,8 +2584,7 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 	s8 parameters_header = os_read_whole_file(&arena, "beamformer_parameters.h");
 	s8 base_header       = os_read_whole_file(&arena, "helpers/ogl_beamformer_lib_base.h");
 
-	MetaprogramContext meta_program = {.stream = arena_stream(arena), .scratch = ctx->scratch};
-	MetaprogramContext *m = &meta_program;
+	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
 
 	meta_push_line(m, s8("/* See LICENSE for license details. */\n"));
 	meta_push_line(m, s8("// GENERATED CODE\n"));
@@ -2559,7 +2626,7 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 }
 
 function MetaContext *
-metagen_load_context(Arena *arena)
+metagen_load_context(Arena *arena, char *filename)
 {
 	if (setjmp(compiler_jmp_buf)) {
 		/* NOTE(rnp): compiler error */
@@ -2572,8 +2639,13 @@ metagen_load_context(Arena *arena)
 
 	MetaContext *result = ctx;
 
+	ctx->filename  = c_str_to_s8(filename);
+	ctx->directory = s8_chop(&ctx->filename, s8_scan_backwards(ctx->filename, OS_PATH_SEPARATOR_CHAR));
+	s8_chop(&ctx->filename, 1);
+	if (ctx->directory.len <= 0) ctx->directory = s8(".");
+
 	Arena scratch = ctx->scratch;
-	MetaEntryStack entries = meta_entry_stack_from_file(ctx->arena, scratch, "beamformer.meta");
+	MetaEntryStack entries = meta_entry_stack_from_file(ctx->arena, scratch, filename);
 
 	i32 stack_items[32];
 	struct { i32 *data; iz capacity; iz count; } stack = {stack_items, countof(stack_items), 0};
@@ -2606,6 +2678,9 @@ metagen_load_context(Arena *arena)
 			for (u32 id = 0; id < ids.count; id++)
 				meta_commit_enumeration(ctx, kind, ids.strings[id]);
 		}break;
+		case MetaEntryKind_Embed:{
+			meta_embed(ctx, scratch, e, entries.count - i);
+		}break;
 		case MetaEntryKind_Expand:{
 			i += meta_expand(ctx, scratch, e, entries.count - i, 0);
 		}break;
@@ -2634,6 +2709,46 @@ metagen_load_context(Arena *arena)
 	return result;
 }
 
+function b32
+metagen_file_direct(Arena arena, char *filename)
+{
+	MetaContext *ctx = metagen_load_context(&arena, filename);
+	if (!ctx) return 0;
+	if (ctx->shaders.count || ctx->base_shaders.count || ctx->shader_groups.count) {
+		build_log_error("shaders not supported in file: %s\n", filename);
+		return 0;
+	}
+
+	b32 result = 1;
+	char *out;
+	{
+		s8 basename;
+		s8_split(ctx->filename, &basename, 0, '.');
+
+		Stream sb = arena_stream(arena);
+		stream_append_s8s(&sb, ctx->directory, s8(OS_PATH_SEPARATOR), s8("generated"));
+		stream_append_byte(&sb, 0);
+		os_make_directory((c8 *)sb.data);
+		stream_reset(&sb, sb.widx - 1);
+
+		stream_append_s8s(&sb, s8(OS_PATH_SEPARATOR), basename, s8(".c"));
+		stream_append_byte(&sb, 0);
+
+		out = (c8 *)arena_stream_commit(&arena, &sb).data;
+	}
+
+	CommandList deps = meta_extract_emit_file_dependencies(ctx, &arena);
+	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
+	if (needs_rebuild_(out, deps.data, deps.count)) {
+		build_log_generate(out);
+		meta_push(m, c_file_header);
+		metagen_run_emit(m, ctx);
+		result &= meta_write_and_reset(m, out);
+	}
+
+	return result;
+}
+
 i32
 main(i32 argc, char *argv[])
 {
@@ -2646,7 +2761,9 @@ main(i32 argc, char *argv[])
 
 	os_make_directory(OUTDIR);
 
-	MetaContext *meta = metagen_load_context(&arena);
+	result &= metagen_file_direct(arena, "assets" OS_PATH_SEPARATOR "assets.meta");
+
+	MetaContext *meta = metagen_load_context(&arena, "beamformer.meta");
 	if (!meta) return 1;
 
 	result &= metagen_emit_c_code(meta, arena);
