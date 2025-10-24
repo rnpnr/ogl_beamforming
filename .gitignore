@@ -1,5 +1,6 @@
 *
 !.github
+!assets
 !external
 !generated
 !helpers
@@ -9,3 +10,4 @@
 !*.glsl
 !*.h
 !*.meta
+assets/generated
