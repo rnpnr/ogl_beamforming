@@ -9,6 +9,7 @@
 #include "opengl.h"
 
 #include "generated/beamformer.meta.c"
+#include "generated/beamformer_shaders.c"
 
 ///////////////////
 // REQUIRED OS API

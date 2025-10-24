@@ -722,8 +722,10 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 	i32 reloadable_index = beamformer_shader_reloadable_index_by_shader[shader];
 	if (reloadable_index != -1) {
 		BeamformerShaderKind base_shader = beamformer_reloadable_shader_kinds[reloadable_index];
-		s8 path = push_s8_from_parts(&arena, ctx->os.path_separator, s8("shaders"),
-		                             beamformer_reloadable_shader_files[reloadable_index]);
+		s8 path;
+		if (!BakeShaders)
+			path = push_s8_from_parts(&arena, ctx->os.path_separator, s8("shaders"),
+		                            beamformer_reloadable_shader_files[reloadable_index]);
 
 		Stream shader_stream = arena_stream(arena);
 		stream_push_shader_header(&shader_stream, base_shader, compute_headers[base_shader]);
@@ -762,11 +764,17 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 
 		stream_append_s8(&shader_stream, s8("\n#line 1\n"));
 
-		s8 shader_text = arena_stream_commit(&arena, &shader_stream);
-		s8 file_text   = os_read_whole_file(&arena, (c8 *)path.data);
+		s8 shader_text;
+		if (BakeShaders) {
+			stream_append_s8(&shader_stream, beamformer_shader_data[reloadable_index]);
+			shader_text = arena_stream_commit(&arena, &shader_stream);
+		} else {
+			shader_text  = arena_stream_commit(&arena, &shader_stream);
+			s8 file_text = os_read_whole_file(&arena, (c8 *)path.data);
 
-		assert(shader_text.data + shader_text.len == file_text.data);
-		shader_text.len += file_text.len;
+			assert(shader_text.data + shader_text.len == file_text.data);
+			shader_text.len += file_text.len;
+		}
 
 		/* TODO(rnp): instance name */
 		s8 shader_name = beamformer_shader_names[shader];
@@ -1041,17 +1049,27 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 }
 
 function s8
-shader_text_with_header(s8 header, s8 filepath, BeamformerShaderKind shader_kind, Arena *arena)
+shader_text_with_header(s8 header, s8 filepath, b32 has_file, BeamformerShaderKind shader_kind, Arena *arena)
 {
 	Stream sb = arena_stream(*arena);
 	stream_push_shader_header(&sb, shader_kind, header);
 	stream_append_s8(&sb, s8("\n#line 1\n"));
 
-	s8 result = arena_stream_commit(arena, &sb);
-	if (filepath.len > 0) {
-		s8 file = os_read_whole_file(arena, (c8 *)filepath.data);
-		assert(file.data == result.data + result.len);
-		result.len += file.len;
+	s8 result;
+	if (BakeShaders) {
+		/* TODO(rnp): better handling of shaders with no backing file */
+		if (has_file) {
+			i32 reloadable_index = beamformer_shader_reloadable_index_by_shader[shader_kind];
+			stream_append_s8(&sb, beamformer_shader_data[reloadable_index]);
+		}
+		result = arena_stream_commit(arena, &sb);
+	} else {
+		result = arena_stream_commit(arena, &sb);
+		if (has_file) {
+			s8 file = os_read_whole_file(arena, (c8 *)filepath.data);
+			assert(file.data == result.data + result.len);
+			result.len += file.len;
+		}
 	}
 
 	return result;
@@ -1074,9 +1092,8 @@ DEBUG_EXPORT BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader)
 
 	i32 index = 0;
 	do {
-		s8 filepath = {0};
-		if (link->reloadable_info_index >= 0) filepath = path;
-		shader_texts[index] = shader_text_with_header(link->header, filepath, kind, &arena);
+		b32 has_file = link->reloadable_info_index >= 0;
+		shader_texts[index] = shader_text_with_header(link->header, path, has_file, kind, &arena);
 		shader_types[index] = link->gl_type;
 		index++;
 		link = link->link;

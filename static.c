@@ -421,19 +421,22 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	glEnable(GL_DEBUG_OUTPUT);
 #endif
 
-	for EachElement(beamformer_reloadable_compute_shader_info_indices, it) {
-		i32   index = beamformer_reloadable_compute_shader_info_indices[it];
-		Arena temp  = scratch;
-		s8 file = push_s8_from_parts(&temp, s8(OS_PATH_SEPARATOR), s8("shaders"),
-		                             beamformer_reloadable_shader_files[index]);
+	if (!BakeShaders)
+	{
+		for EachElement(beamformer_reloadable_compute_shader_info_indices, it) {
+			i32   index = beamformer_reloadable_compute_shader_info_indices[it];
+			Arena temp  = scratch;
+			s8 file = push_s8_from_parts(&temp, s8(OS_PATH_SEPARATOR), s8("shaders"),
+			                             beamformer_reloadable_shader_files[index]);
 
-		BeamformerShaderReloadIndirectContext *rsi = push_struct(memory, typeof(*rsi));
-		rsi->beamformer = ctx;
-		rsi->shader     = beamformer_reloadable_shader_kinds[index];
-		os_add_file_watch(&ctx->os, memory, file, reload_shader_indirect, (iptr)rsi);
-		reload_shader_indirect(&ctx->os, file, (iptr)rsi, *memory);
+			BeamformerShaderReloadIndirectContext *rsi = push_struct(memory, typeof(*rsi));
+			rsi->beamformer = ctx;
+			rsi->shader     = beamformer_reloadable_shader_kinds[index];
+			os_add_file_watch(&ctx->os, memory, file, reload_shader_indirect, (iptr)rsi);
+			reload_shader_indirect(&ctx->os, file, (iptr)rsi, *memory);
+		}
+		os_wake_waiters(&worker->sync_variable);
 	}
-	os_wake_waiters(&worker->sync_variable);
 
 	FrameViewRenderContext *fvr = &ctx->frame_view_render_context;
 	glCreateFramebuffers(countof(fvr->framebuffers), fvr->framebuffers);
@@ -451,9 +454,8 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	              "only a single render shader is currently handled");
 	i32 render_rsi_index = beamformer_reloadable_render_shader_info_indices[0];
 
-	s8 render_file = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), s8("shaders"),
-	                                    beamformer_reloadable_shader_files[render_rsi_index]);
-	ShaderReloadContext *render_3d = push_struct(memory, typeof(*render_3d));
+	Arena *arena = BakeShaders? &scratch : memory;
+	ShaderReloadContext *render_3d = push_struct(arena, typeof(*render_3d));
 	render_3d->beamformer_context    = ctx;
 	render_3d->reloadable_info_index = render_rsi_index;
 	render_3d->gl_type = GL_FRAGMENT_SHADER;
@@ -472,7 +474,7 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	"\n"
 	"layout(binding = 0) uniform sampler3D u_texture;\n");
 
-	render_3d->link = push_struct(memory, typeof(*render_3d));
+	render_3d->link = push_struct(arena, typeof(*render_3d));
 	render_3d->link->reloadable_info_index = -1;
 	render_3d->link->gl_type = GL_VERTEX_SHADER;
 	render_3d->link->link    = render_3d;
@@ -501,8 +503,14 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	"\tf_normal    = v_normal;\n"
 	"\tgl_Position = u_projection * u_view * u_model * vec4(pos, 1);\n"
 	"}\n");
+
+	s8 render_file = {0};
+	if (!BakeShaders) {
+		render_file = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), s8("shaders"),
+		                                 beamformer_reloadable_shader_files[render_rsi_index]);
+		os_add_file_watch(&ctx->os, memory, render_file, reload_shader, (iptr)render_3d);
+	}
 	reload_shader(&ctx->os, render_file, (iptr)render_3d, *memory);
-	os_add_file_watch(&ctx->os, memory, render_file, reload_shader, (iptr)render_3d);
 
 	f32 unit_cube_vertices[] = {
 		 0.5f,  0.5f, -0.5f,

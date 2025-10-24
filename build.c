@@ -4,15 +4,6 @@
 /* TODO(rnp):
  * [ ]: refactor: merge pack_table and bake_parameters
  * [ ]: refactor: allow @Expand to come before the table definition
- * [x]: refactor: helper for appending expanded shader flags
- * [x]: refactor: "base" shaders should only be reloadable shaders
- *      - internally when a shader with no file is encountered it should
- *        not get pushed as a "base" shader.
- * [x]: bug: column indicator for compile error is off
- * [ ]: bake shaders and font data into binary
- *      - for shaders there is a way of making a separate data section and referring
- *        to it with extern from the C source (bake both data and size)
- *      - use objcopy, maybe need linker script maybe command line flags for ld will work
  * [ ]: cross compile/override baked compiler
  * [ ]: msvc build doesn't detect out of date files correctly
  * [ ]: seperate dwarf debug info
@@ -121,6 +112,7 @@ global char *g_argv0;
 DA_STRUCT(char *, Command);
 
 typedef struct {
+	b32   bake_shaders;
 	b32   debug;
 	b32   generic;
 	b32   sanitize;
@@ -488,7 +480,7 @@ s8_equal(s8 a, s8 b)
 function void
 usage(char *argv0)
 {
-	printf("%s [--debug] [--sanitize] [--time]\n"
+	printf("%s [--bake-shaders] [--debug] [--sanitize] [--time]\n"
 	       "    --debug:       dynamically link and build with debug symbols\n"
 	       "    --generic:     compile for a generic target (x86-64-v3 or armv8 with NEON)\n"
 	       "    --sanitize:    build with ASAN and UBSAN\n"
@@ -507,7 +499,9 @@ parse_options(i32 argc, char *argv[])
 	while (argc > 0) {
 		char *arg = shift(argv, argc);
 		s8 str    = c_str_to_s8(arg);
-		if (s8_equal(str, s8("--debug"))) {
+		if (s8_equal(str, s8("--bake-shaders"))) {
+			result.bake_shaders = 1;
+		} else if (s8_equal(str, s8("--debug"))) {
 			result.debug = 1;
 		} else if (s8_equal(str, s8("--generic"))) {
 			result.generic = 1;
@@ -2065,23 +2059,97 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 	meta_end_scope(m, s8("};\n"));
 }
 
+function void
+meta_push_shader_bake(MetaprogramContext *m, MetaContext *ctx)
+{
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		MetaShader *s = ctx->base_shaders.data[shader].shader;
+		s8 shader_name = ctx->shader_names.data[s->name_id];
+		meta_begin_line(m, s8("read_only global u8 beamformer_shader_"));
+		for (iz i = 0; i < shader_name.len; i++)
+			stream_append_byte(&m->stream, TOLOWER(shader_name.data[i]));
+		meta_begin_scope(m, s8("_bytes[] = {")); {
+			Arena scratch = m->scratch;
+			s8 filename = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), s8("shaders"),
+			                                 ctx->base_shaders.data[shader].file);
+			s8 file = os_read_whole_file(&scratch, (c8 *)filename.data);
+
+			for (iz i = 0; i < file.len; i++) {
+				b32 end_line = (i != 0) && (i % 16) == 0;
+				if (i != 0) meta_push(m, end_line ? s8(",") : s8(", "));
+				if (end_line) meta_end_line(m);
+				if ((i % 16) == 0) meta_indent(m);
+				meta_push(m, s8("0x"));
+				meta_push_u64_hex(m, file.data[i]);
+			}
+			meta_end_line(m);
+		} meta_end_scope(m, s8("};\n"));
+	}
+
+	meta_begin_scope(m, s8("read_only global s8 beamformer_shader_data[] = {")); {
+		Arena scratch = m->scratch;
+		s8 *columns[2];
+		columns[0] = push_array(&m->scratch, s8, ctx->base_shaders.count);
+		columns[1] = push_array(&m->scratch, s8, ctx->base_shaders.count);
+		for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+			MetaShader *s = ctx->base_shaders.data[shader].shader;
+			s8 shader_name = ctx->shader_names.data[s->name_id];
+
+			Stream sb = arena_stream(m->scratch);
+			for (iz i = 0; i < shader_name.len; i++)
+				stream_append_byte(&sb, TOLOWER(shader_name.data[i]));
+			stream_append_s8(&sb, s8("_bytes,"));
+			columns[0][shader] = arena_stream_commit_and_reset(&m->scratch, &sb);
+
+			stream_append_s8(&sb, s8(".len = countof(beamformer_shader_"));
+			for (iz i = 0; i < shader_name.len; i++)
+				stream_append_byte(&sb, TOLOWER(shader_name.data[i]));
+			columns[1][shader] = arena_stream_commit(&m->scratch, &sb);
+		}
+		metagen_push_table(m, m->scratch, s8("{.data = beamformer_shader_"), s8("_bytes)},"), columns,
+		                   (uz)ctx->base_shaders.count, 2);
+		m->scratch = scratch;
+	} meta_end_scope(m, s8("};\n"));
+}
+
 function b32
 metagen_emit_c_code(MetaContext *ctx, Arena arena)
 {
 	b32 result = 1;
 
 	os_make_directory("generated");
-	char *out = "generated/beamformer.meta.c";
-	if (!needs_rebuild(out, "beamformer.meta"))
-		return result;
+	char *out_meta    = "generated" OS_PATH_SEPARATOR "beamformer.meta.c";
+	char *out_shaders = "generated" OS_PATH_SEPARATOR "beamformer_shaders.c";
 
-	build_log_generate("Core C Code");
+	s8 header = s8("/* See LICENSE for license details. */\n\n"
+	               "// GENERATED CODE\n\n");
 
 	MetaprogramContext meta_program = {.stream = arena_stream(arena), .scratch = ctx->scratch};
 	MetaprogramContext *m = &meta_program;
 
-	meta_push_line(m, s8("/* See LICENSE for license details. */\n"));
-	meta_push_line(m, s8("// GENERATED CODE\n"));
+	////////////////////////////
+	// NOTE(rnp): shader baking
+	{
+		char **deps = push_array(&m->scratch, char *, ctx->base_shaders.count);
+		for (iz i = 0; i < ctx->base_shaders.count; i++) {
+			MetaBaseShader *b = ctx->base_shaders.data + i;
+			deps[i] = (c8 *)push_s8_from_parts(&m->scratch, s8(OS_PATH_SEPARATOR), s8("shaders"), b->file).data;
+		}
+		if (needs_rebuild_(out_shaders, deps, ctx->base_shaders.count)) {
+			build_log_generate("Bake Shaders");
+			meta_push(m, header);
+			meta_push_shader_bake(m, ctx);
+			result &= meta_write_and_reset(m, out_shaders);
+		}
+		m->scratch = ctx->scratch;
+	}
+
+	if (!needs_rebuild(out_meta, "beamformer.meta"))
+		return result;
+
+	build_log_generate("Core C Code");
+
+	meta_push(m, header);
 
 	/////////////////////////
 	// NOTE(rnp): enumarents
@@ -2291,7 +2359,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 
 	//fprintf(stderr, "%.*s\n", (i32)m.stream.widx, m.stream.data);
 
-	result = meta_write_and_reset(m, out);
+	result = meta_write_and_reset(m, out_meta);
 
 	return result;
 }
@@ -2601,6 +2669,7 @@ main(i32 argc, char *argv[])
 
 	//////////////////
 	// static portion
+	cmd_append(&arena, &c, options.bake_shaders? "-DBakeShaders=1" : "-DBakeShaders=0");
 	iz c_count = c.count;
 	cmd_append(&arena, &c, OS_MAIN, OUTPUT_EXE("ogl"));
 	cmd_pdb(&arena, &c, "ogl");
