@@ -23,9 +23,9 @@
 
 global f32 dt_for_frame;
 
-#define FILTER_LOCAL_SIZE_X 64
-#define FILTER_LOCAL_SIZE_Y  1
-#define FILTER_LOCAL_SIZE_Z  1
+#define FILTER_LOCAL_SIZE_X 128
+#define FILTER_LOCAL_SIZE_Y   1
+#define FILTER_LOCAL_SIZE_Z   1
 
 #define DECODE_LOCAL_SIZE_X  4
 #define DECODE_LOCAL_SIZE_Y  1
@@ -573,6 +573,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				bp->Filter.demodulation_frequency = pb->parameters.demodulation_frequency;
 				bp->Filter.sampling_frequency     = pb->parameters.sampling_frequency / 2;
 				bp->Filter.decimation_rate        = decimation_rate;
+				bp->Filter.sample_count           = pb->parameters.sample_count;
 
 				if (first) {
 					bp->Filter.input_channel_stride  = pb->parameters.raw_data_dimensions[0] / 2;
@@ -601,6 +602,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				bp->Filter.input_channel_stride   = sample_count * pb->parameters.acquisition_count;
 				bp->Filter.input_sample_stride    = 1;
 				bp->Filter.input_transmit_stride  = sample_count;
+				bp->Filter.sample_count           = sample_count;
 			}
 
 			/* TODO(rnp): filter may need a different dispatch layout */

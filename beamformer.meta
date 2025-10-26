@@ -90,6 +90,7 @@
 			@BakeInt(OutputChannelStride  output_channel_stride )
 			@BakeInt(OutputSampleStride   output_sample_stride  )
 			@BakeInt(OutputTransmitStride output_transmit_stride)
+			@BakeInt(SampleCount          sample_count          )
 			@BakeInt(SamplingMode         sampling_mode         )
 			@BakeFloat(DemodulationFrequency demodulation_frequency)
 			@BakeFloat(SamplingFrequency     sampling_frequency    )

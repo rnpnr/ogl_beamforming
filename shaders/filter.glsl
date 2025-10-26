@@ -1,4 +1,6 @@
 /* See LICENSE for license details. */
+/* TODO(rnp): bug: this won't filter RF data correctly */
+#define SAMPLE_TYPE vec2
 #if DataKind == DataKind_Float32
   #define DATA_TYPE           vec2
   #define RESULT_TYPE_CAST(v) (v)
@@ -26,7 +28,7 @@ layout(std430, binding = 2) writeonly restrict buffer buffer_2 {
 };
 
 layout(std430, binding = 3) readonly restrict buffer buffer_3 {
-	FILTER_TYPE filter_coefficients[];
+	FILTER_TYPE filter_coefficients[FilterLength];
 };
 
 layout(r16i, binding = 1) readonly restrict uniform iimage1D channel_mapping;
@@ -69,15 +71,16 @@ vec2 rotate_iq(vec2 iq, int index)
 }
 #endif
 
-vec2 sample_rf(uint index)
+SAMPLE_TYPE sample_rf(uint index)
 {
-	vec2 result = SAMPLE_TYPE_CAST(in_data[index]);
+	SAMPLE_TYPE result = SAMPLE_TYPE_CAST(in_data[index]);
 	return result;
 }
 
+shared SAMPLE_TYPE local_samples[FilterLength + gl_WorkGroupSize.x];
+
 void main()
 {
-	uint in_sample  = gl_GlobalInvocationID.x * DecimationRate;
 	uint out_sample = gl_GlobalInvocationID.x;
 	uint channel    = gl_GlobalInvocationID.y;
 	uint transmit   = gl_GlobalInvocationID.z;
@@ -88,32 +91,40 @@ void main()
 	                  OutputTransmitStride * transmit +
 	                  OutputSampleStride   * out_sample;
 
-	int target;
-	if (bool(MapChannels)) {
-		target = OutputChannelStride / OutputSampleStride;
-	} else {
-		target = OutputTransmitStride;
-	}
+	int thread_index = int(gl_LocalInvocationIndex);
+	int thread_count = int(gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z);
+	/////////////////////////
+	// NOTE: sample caching
+	{
+		int min_sample = DecimationRate * int((gl_WorkGroupID.x + 0) * gl_WorkGroupSize.x) - FilterLength;
+		int max_sample = DecimationRate * int((gl_WorkGroupID.x + 1) * gl_WorkGroupSize.x);
 
-	if (out_sample < target) {
-		target *= DecimationRate;
-
-		vec2 result  = vec2(0);
-		int a_length = target;
-		int index    = int(in_sample);
+		in_offset += min_sample;
+		int total_samples      = max_sample - min_sample;
+		int samples_per_thread = total_samples / thread_count;
+		int leftover_count     = total_samples % thread_count;
+		int thread_first_index = samples_per_thread * thread_index  + min(thread_index, leftover_count);
+		int thread_last_index  = thread_first_index + samples_per_thread + int(thread_index < leftover_count);
 
 		const float scale = bool(ComplexFilter) ? 1 : sqrt(2);
-
-		for (int j = max(0, index - FilterLength); j < min(index, a_length); j++) {
-			vec2        iq = sample_rf(in_offset + j);
-			FILTER_TYPE h  = filter_coefficients[index - j];
-		#if Demodulate
-			result  += scale * apply_filter(rotate_iq(iq * vec2(1, -1), -j), h);
-		#else
-			result  += apply_filter(iq, h);
-		#endif
+		for (int i = thread_first_index; i <= thread_last_index; i++) {
+			SAMPLE_TYPE valid = SAMPLE_TYPE(i + min_sample >= 0);
+			#if Demodulate
+				local_samples[i] = scale * valid * rotate_iq(sample_rf(in_offset + i) * vec2(1, -1), -i);
+			#else
+				local_samples[i] = valid * sample_rf(in_offset + i);
+			#endif
 		}
+	}
+	barrier();
 
+	if (out_sample < SampleCount / DecimationRate) {
+		SAMPLE_TYPE result = SAMPLE_TYPE(0);
+		int offset = DecimationRate * thread_index;
+		for (int j = 0; j < FilterLength; j++) {
+			result += apply_filter(local_samples[offset + j],
+			                       filter_coefficients[FilterLength - 1 - j]);
+		}
 		out_data[out_offset] = RESULT_TYPE_CAST(result);
 	}
 }
