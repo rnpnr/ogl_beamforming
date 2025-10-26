@@ -11,3 +11,4 @@
 !*.h
 !*.meta
 assets/generated
+generated/beamformer_shaders.c
