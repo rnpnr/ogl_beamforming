@@ -476,6 +476,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 		sampling_frequency /= 2 * (f32)decimation_rate;
 	}
 
+	cp->rf_size = sample_count * pb->parameters.channel_count * pb->parameters.acquisition_count;
+	if (demodulate || run_cuda_hilbert) cp->rf_size *= 8;
+	else                                cp->rf_size *= 4;
+
 	u32 das_sample_stride   = 1;
 	u32 das_transmit_stride = sample_count;
 	u32 das_channel_stride  = sample_count * pb->parameters.acquisition_count;
@@ -609,10 +613,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			cp->shader_dispatch[slot].x = (u32)ceil_f32((f32)sample_count                     / FILTER_LOCAL_SIZE_X);
 			cp->shader_dispatch[slot].y = (u32)ceil_f32((f32)pb->parameters.channel_count     / FILTER_LOCAL_SIZE_Y);
 			cp->shader_dispatch[slot].z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / FILTER_LOCAL_SIZE_Z);
-
-			cp->rf_size = sample_count * pb->parameters.channel_count * pb->parameters.acquisition_count;
-			if (demodulate || run_cuda_hilbert) cp->rf_size *= 8;
-			else                                cp->rf_size *= 4;
 
 			commit = 1;
 		}break;
