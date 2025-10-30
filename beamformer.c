@@ -466,7 +466,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 	if (demodulate) run_cuda_hilbert = 0;
 
-	if (demodulate || run_cuda_hilbert) cp->iq_pipeline = 1;
+	cp->iq_pipeline = demodulate || run_cuda_hilbert;
 
 	f32 sampling_frequency = pb->parameters.sampling_frequency;
 	u32 decimation_rate = MAX(pb->parameters.decimation_rate, 1);
@@ -477,8 +477,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	}
 
 	cp->rf_size = sample_count * pb->parameters.channel_count * pb->parameters.acquisition_count;
-	if (demodulate || run_cuda_hilbert) cp->rf_size *= 8;
-	else                                cp->rf_size *= 4;
+	if (cp->iq_pipeline) cp->rf_size *= 8;
+	else                 cp->rf_size *= 4;
 
 	u32 das_sample_stride   = 1;
 	u32 das_transmit_stride = sample_count;
