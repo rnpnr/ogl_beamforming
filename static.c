@@ -198,7 +198,11 @@ function FILE_WATCH_CALLBACK_FN(load_cuda_library)
 {
 	local_persist void *cuda_library_handle;
 
-	b32 result = os_file_exists((c8 *)path.data);
+	GLParams *gl = (typeof(gl))user_data;
+	/* TODO(rnp): (25.10.30) registering the rf buffer with CUDA is currently
+	 * causing a major performance regression. for now we are disabling its use
+	 * altogether. it will be reenabled once the issue can be fixed */
+	b32 result = 0 && gl->vendor_id == GL_VENDOR_NVIDIA && os_file_exists((c8 *)path.data);
 	if (result) {
 		Stream err = arena_stream(arena);
 
@@ -403,14 +407,8 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 
 	glfwMakeContextCurrent(raylib_window_handle);
 
-	#define X(name, ...) cuda_## name = cuda_## name ##_stub;
-	CUDALibraryProcedureList
-	#undef X
-	if (ctx->gl.vendor_id == GL_VENDOR_NVIDIA
-	    && load_cuda_library(&ctx->os, s8(OS_CUDA_LIB_NAME), 0, *memory))
-	{
-		os_add_file_watch(&ctx->os, memory, s8(OS_CUDA_LIB_NAME), load_cuda_library, 0);
-	}
+	if (load_cuda_library(&ctx->os, s8(OS_CUDA_LIB_NAME), (iptr)&ctx->gl, *memory))
+		os_add_file_watch(&ctx->os, memory, s8(OS_CUDA_LIB_NAME), load_cuda_library, (iptr)&ctx->gl);
 
 	/* NOTE: set up OpenGL debug logging */
 	struct gl_debug_ctx *gl_debug_ctx = push_struct(memory, typeof(*gl_debug_ctx));
