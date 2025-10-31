@@ -150,6 +150,12 @@ typedef enum {
 static_assert((BeamformerComputeTextureKind_Count - 1) == BeamformerComputeTextureKind_Hadamard,
               "BeamformerComputeTextureKind_Hadamard must be end of TextureKinds");
 
+typedef struct {
+	uv3 layout;
+	uv3 dispatch;
+	BeamformerShaderBakeParameters bake;
+} BeamformerShaderDescriptor;
+
 typedef struct BeamformerComputePlan BeamformerComputePlan;
 struct BeamformerComputePlan {
 	BeamformerComputePipeline pipeline;
@@ -180,8 +186,7 @@ struct BeamformerComputePlan {
 	#undef X
 
 	u128 shader_hashes[BeamformerMaxComputeShaderStages];
-	uv3  shader_dispatch[BeamformerMaxComputeShaderStages];
-	BeamformerShaderBakeParameters shader_bake_parameters[BeamformerMaxComputeShaderStages];
+	BeamformerShaderDescriptor shader_descriptors[BeamformerMaxComputeShaderStages];
 
 	BeamformerComputePlan *next;
 };
