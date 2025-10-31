@@ -64,11 +64,13 @@ SAMPLE_DATA_TYPE sample_rf_data(uint index)
 	return result;
 }
 
+shared INPUT_DATA_TYPE rf[gl_WorkGroupSize.x * TransmitCount];
+
 void main()
 {
 	uint time_sample = gl_GlobalInvocationID.x * RF_SAMPLES_PER_INDEX;
 	uint channel     = gl_GlobalInvocationID.y;
-	uint transmit    = gl_GlobalInvocationID.z;
+	uint transmit    = gl_GlobalInvocationID.z * TransmitsProcessed;
 
 	uint rf_offset = (InputChannelStride * channel + TransmitCount * time_sample) / RF_SAMPLES_PER_INDEX;
 	if (u_first_pass) {
@@ -76,27 +78,66 @@ void main()
 			uint in_off = InputChannelStride  * imageLoad(channel_mapping, int(channel)).x +
 			              InputTransmitStride * transmit +
 			              InputSampleStride   * time_sample;
-			out_rf_data[rf_offset + transmit] = rf_data[in_off / RF_SAMPLES_PER_INDEX];
+			for (uint i = 0; i < TransmitsProcessed; i++, in_off += InputTransmitStride)
+				out_rf_data[rf_offset + transmit + i] = rf_data[in_off / RF_SAMPLES_PER_INDEX];
 		}
 	} else {
+		SAMPLE_DATA_TYPE result[TransmitsProcessed];
+		switch (DecodeMode) {
+		case DecodeMode_None:{
+			for (uint i = 0; i < TransmitsProcessed; i++)
+				if (transmit + i < TransmitCount)
+					result[i] = sample_rf_data(rf_offset + transmit + i);
+		}break;
+		case DecodeMode_Hadamard:{
+			#if TransmitCount > 32
+			{
+				uint thread_count = gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z;
+				uint thread_index = gl_LocalInvocationIndex;
+
+				uint samples_per_thread  = rf.length() / thread_count;
+				uint leftover_samples    = rf.length() % thread_count;
+				uint samples_this_thread = samples_per_thread + uint(thread_index < leftover_samples);
+
+				uint rf_offset = (InputChannelStride * channel +
+				                  TransmitCount * gl_WorkGroupID.x * gl_WorkGroupSize.x) / RF_SAMPLES_PER_INDEX;
+
+				for (uint i = 0; i < samples_this_thread; i++) {
+					uint index = i * thread_count + thread_index;
+					rf[index] = rf_data[rf_offset + index];
+				}
+				barrier();
+			}
+			#endif
+
+			if (time_sample < OutputTransmitStride) {
+				for (uint i = 0; i < TransmitsProcessed; i++)
+					result[i] = SAMPLE_DATA_TYPE(0);
+
+				for (int j = 0; j < TransmitCount; j++) {
+					#if TransmitCount > 32
+					SAMPLE_DATA_TYPE s = SAMPLE_TYPE_CAST(rf[gl_LocalInvocationID.x * TransmitCount + j]);
+					#else
+					SAMPLE_DATA_TYPE s = sample_rf_data(rf_offset + j);
+					#endif
+					for (uint i = 0; i < TransmitsProcessed; i++)
+						result[i] += imageLoad(hadamard, ivec2(j, transmit + i)).x * s;
+				}
+
+				for (uint i = 0; i < TransmitsProcessed; i++)
+					result[i] /= float(TransmitCount);
+			}
+		}break;
+		}
+
 		if (time_sample < OutputTransmitStride) {
 			uint out_off = OutputChannelStride  * channel +
 			               OutputTransmitStride * transmit +
 			               OutputSampleStride   * time_sample;
 
-			SAMPLE_DATA_TYPE result = SAMPLE_DATA_TYPE(0);
-			switch (DecodeMode) {
-			case DecodeMode_None:{
-				result = sample_rf_data(rf_offset + transmit);
-			}break;
-			case DecodeMode_Hadamard:{
-				SAMPLE_DATA_TYPE sum = SAMPLE_DATA_TYPE(0);
-				for (int i = 0; i < TransmitCount; i++)
-					sum += imageLoad(hadamard, ivec2(i, transmit)).x * sample_rf_data(rf_offset++);
-				result = sum / float(TransmitCount);
-			}break;
-			}
-			out_data[out_off / OUTPUT_SAMPLES_PER_INDEX] = result;
+			for (uint i = 0; i < TransmitsProcessed; i++, out_off += OutputTransmitStride)
+				if (transmit + i < TransmitCount)
+					out_data[out_off / OUTPUT_SAMPLES_PER_INDEX] = result[i];
 		}
 	}
 }

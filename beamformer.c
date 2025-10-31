@@ -527,13 +527,15 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				db->output_transmit_stride *= decimation_rate;
 			}
 
+			db->transmits_processed = db->transmit_count >= 32 ? 2 : 1;
+
 			sd->layout.x = 4;
 			sd->layout.y = 1;
-			sd->layout.z = 16;
+			sd->layout.z = (db->transmit_count <= 32 || db->transmit_count == 80)? 16 : 32;
 
 			sd->dispatch.x = (u32)ceil_f32((f32)sample_count                     / (f32)sd->layout.x);
 			sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count     / (f32)sd->layout.y);
-			sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z);
+			sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z / (f32)db->transmits_processed);
 
 			if (first) sd->dispatch.x *= decimation_rate;
 

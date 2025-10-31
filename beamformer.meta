@@ -71,6 +71,7 @@
 			@BakeInt(OutputSampleStride   output_sample_stride  )
 			@BakeInt(OutputTransmitStride output_transmit_stride)
 			@BakeInt(TransmitCount        transmit_count        )
+			@BakeInt(TransmitsProcessed   transmits_processed   )
 		}
 	}
 
