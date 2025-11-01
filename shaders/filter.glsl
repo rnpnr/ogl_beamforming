@@ -77,7 +77,7 @@ SAMPLE_TYPE sample_rf(uint index)
 	return result;
 }
 
-shared SAMPLE_TYPE local_samples[FilterLength + gl_WorkGroupSize.x];
+shared SAMPLE_TYPE rf[FilterLength + gl_WorkGroupSize.x];
 
 void main()
 {
@@ -96,24 +96,27 @@ void main()
 	/////////////////////////
 	// NOTE: sample caching
 	{
-		int min_sample = DecimationRate * int((gl_WorkGroupID.x + 0) * gl_WorkGroupSize.x) - FilterLength;
+		int min_sample = DecimationRate * int((gl_WorkGroupID.x + 0) * gl_WorkGroupSize.x) - (FilterLength - 1);
 		int max_sample = DecimationRate * int((gl_WorkGroupID.x + 1) * gl_WorkGroupSize.x);
 
 		in_offset += min_sample;
-		int total_samples      = max_sample - min_sample;
-		int samples_per_thread = total_samples / thread_count;
-		int leftover_count     = total_samples % thread_count;
-		int thread_first_index = samples_per_thread * thread_index  + min(thread_index, leftover_count);
-		int thread_last_index  = thread_first_index + samples_per_thread + int(thread_index < leftover_count);
+		int total_samples       = max_sample - min_sample;
+		int samples_per_thread  = total_samples / thread_count;
+		int leftover_count      = total_samples % thread_count;
+		int samples_this_thread = samples_per_thread + int(thread_index < leftover_count);
 
 		const float scale = bool(ComplexFilter) ? 1 : sqrt(2);
-		for (int i = thread_first_index; i <= thread_last_index; i++) {
-			SAMPLE_TYPE valid = SAMPLE_TYPE(i + min_sample >= 0);
-			#if Demodulate
-				local_samples[i] = scale * valid * rotate_iq(sample_rf(in_offset + i) * vec2(1, -1), -i);
-			#else
-				local_samples[i] = valid * sample_rf(in_offset + i);
-			#endif
+		for (int i = 0; i < samples_this_thread; i++) {
+			int index = thread_count * i + thread_index;
+			if (gl_WorkGroupID.x == 0 && index < FilterLength) {
+				rf[index] = SAMPLE_TYPE(0);
+			} else {
+				#if Demodulate
+					rf[index] = scale * rotate_iq(sample_rf(in_offset + index) * vec2(1, -1), -index);
+				#else
+					rf[index] = sample_rf(in_offset + index);
+				#endif
+			}
 		}
 	}
 	barrier();
@@ -121,10 +124,8 @@ void main()
 	if (out_sample < SampleCount / DecimationRate) {
 		SAMPLE_TYPE result = SAMPLE_TYPE(0);
 		int offset = DecimationRate * thread_index;
-		for (int j = 0; j < FilterLength; j++) {
-			result += apply_filter(local_samples[offset + j],
-			                       filter_coefficients[FilterLength - 1 - j]);
-		}
+		for (int j = 0; j < FilterLength; j++)
+			result += apply_filter(rf[offset + j], filter_coefficients[j]);
 		out_data[out_offset] = RESULT_TYPE_CAST(result);
 	}
 }
