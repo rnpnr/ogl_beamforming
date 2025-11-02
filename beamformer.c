@@ -1373,7 +1373,6 @@ function void
 beamformer_rf_buffer_allocate(BeamformerRFBuffer *rf, u32 rf_size, Arena arena)
 {
 	assert((rf_size % 64) == 0);
-	glUnmapNamedBuffer(rf->ssbo);
 	glDeleteBuffers(1, &rf->ssbo);
 	glCreateBuffers(1, &rf->ssbo);
 
