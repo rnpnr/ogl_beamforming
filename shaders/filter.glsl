@@ -41,7 +41,7 @@ vec2 complex_mul(vec2 a, vec2 b)
 }
 
 #if Demodulate
-vec2 rotate_iq(vec2 iq, int index)
+vec2 rotate_iq(vec2 iq, uint index)
 {
 	vec2 result;
 	switch (SamplingMode) {
@@ -51,7 +51,7 @@ vec2 rotate_iq(vec2 iq, int index)
 		// cos -> 1 -1  1 -1
 		// sin -> 0  0  0  0
 		const float scales[2] = {1, -1};
-		result = scales[index & 1] * iq;
+		result = scales[index & 1u] * iq;
 	}break;
 	case SamplingMode_2X:{
 		// fs  = fd
@@ -77,7 +77,7 @@ SAMPLE_TYPE sample_rf(uint index)
 	return result;
 }
 
-shared SAMPLE_TYPE rf[FilterLength + gl_WorkGroupSize.x];
+shared SAMPLE_TYPE rf[FilterLength + gl_WorkGroupSize.x - 1];
 
 void main()
 {
@@ -91,23 +91,21 @@ void main()
 	                  OutputTransmitStride * transmit +
 	                  OutputSampleStride   * out_sample;
 
-	int thread_index = int(gl_LocalInvocationIndex);
-	int thread_count = int(gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z);
+	uint thread_index = gl_LocalInvocationIndex;
+	uint thread_count = gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z;
 	/////////////////////////
 	// NOTE: sample caching
 	{
-		int min_sample = DecimationRate * int((gl_WorkGroupID.x + 0) * gl_WorkGroupSize.x) - (FilterLength - 1);
-		int max_sample = DecimationRate * int((gl_WorkGroupID.x + 1) * gl_WorkGroupSize.x);
+		in_offset += DecimationRate * gl_WorkGroupID.x * gl_WorkGroupSize.x - (FilterLength - 1);
 
-		in_offset += min_sample;
-		int total_samples       = max_sample - min_sample;
-		int samples_per_thread  = total_samples / thread_count;
-		int leftover_count      = total_samples % thread_count;
-		int samples_this_thread = samples_per_thread + int(thread_index < leftover_count);
+		uint total_samples       = rf.length();
+		uint samples_per_thread  = total_samples / thread_count;
+		uint leftover_count      = total_samples % thread_count;
+		uint samples_this_thread = samples_per_thread + uint(thread_index < leftover_count);
 
 		const float scale = bool(ComplexFilter) ? 1 : sqrt(2);
-		for (int i = 0; i < samples_this_thread; i++) {
-			int index = thread_count * i + thread_index;
+		for (uint i = 0; i < samples_this_thread; i++) {
+			uint index = thread_count * i + thread_index;
 			if (gl_WorkGroupID.x == 0 && index < FilterLength) {
 				rf[index] = SAMPLE_TYPE(0);
 			} else {
@@ -123,8 +121,8 @@ void main()
 
 	if (out_sample < SampleCount / DecimationRate) {
 		SAMPLE_TYPE result = SAMPLE_TYPE(0);
-		int offset = DecimationRate * thread_index;
-		for (int j = 0; j < FilterLength; j++)
+		uint offset = DecimationRate * thread_index;
+		for (uint j = 0; j < FilterLength; j++)
 			result += apply_filter(rf[offset + j], filter_coefficients[j]);
 		out_data[out_offset] = RESULT_TYPE_CAST(result);
 	}
