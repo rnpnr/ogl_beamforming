@@ -529,9 +529,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 			db->transmits_processed = db->transmit_count >= 32 ? 2 : 1;
 
+			b32 use_16z  = db->transmit_count <= 32 || db->transmit_count == 80 || db->transmit_count == 96 || db->transmit_count == 160;
 			sd->layout.x = 4;
 			sd->layout.y = 1;
-			sd->layout.z = (db->transmit_count <= 32 || db->transmit_count == 80)? 16 : 32;
+			sd->layout.z = use_16z? 16 : 32;
 
 			sd->dispatch.x = (u32)ceil_f32((f32)sample_count                     / (f32)sd->layout.x);
 			sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count     / (f32)sd->layout.y);
