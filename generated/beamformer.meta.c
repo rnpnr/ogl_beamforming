@@ -112,7 +112,6 @@ typedef struct {
 	u32 output_sample_stride;
 	u32 output_transmit_stride;
 	u32 sample_count;
-	u32 sampling_mode;
 	f32 demodulation_frequency;
 	f32 sampling_frequency;
 } BeamformerShaderFilterBakeParameters;
@@ -270,7 +269,7 @@ read_only global u8 beamformer_shader_flag_strings_count[] = {
 
 read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){0, 1},
-	(i32 []){0, 3},
+	(i32 []){0},
 	(i32 []){4, 0, 5, 2},
 	0,
 	0,
@@ -279,7 +278,7 @@ read_only global i32 *beamformer_shader_header_vectors[] = {
 
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	2,
-	2,
+	1,
 	4,
 	0,
 	0,
@@ -308,7 +307,6 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("OutputSampleStride"),
 		s8_comp("OutputTransmitStride"),
 		s8_comp("SampleCount"),
-		s8_comp("SamplingMode"),
 		s8_comp("DemodulationFrequency"),
 		s8_comp("SamplingFrequency"),
 	},
@@ -334,7 +332,7 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 
 read_only global u8 *beamformer_shader_bake_parameter_is_float[] = {
 	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0},
-	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1},
+	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1},
 	(u8 []){0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1},
 	0,
 	0,
@@ -343,7 +341,7 @@ read_only global u8 *beamformer_shader_bake_parameter_is_float[] = {
 
 read_only global i32 beamformer_shader_bake_parameter_counts[] = {
 	9,
-	12,
+	11,
 	13,
 	0,
 	0,

@@ -43,30 +43,8 @@ vec2 complex_mul(vec2 a, vec2 b)
 #if Demodulate
 vec2 rotate_iq(vec2 iq, uint index)
 {
-	vec2 result;
-	switch (SamplingMode) {
-	case SamplingMode_4X:{
-		// fs = 2 * fd
-		// arg = PI * index
-		// cos -> 1 -1  1 -1
-		// sin -> 0  0  0  0
-		const float scales[2] = {1, -1};
-		result = scales[index & 1u] * iq;
-	}break;
-	case SamplingMode_2X:{
-		// fs  = fd
-		// arg = 2 * PI * index
-		// cos -> 1 1 1 1
-		// sin -> 0 0 0 0
-		result = iq;
-	}break;
-	default:{
-		float arg    = radians(360) * DemodulationFrequency * index / SamplingFrequency;
-		mat2  phasor = mat2(cos(arg), -sin(arg),
-		                    sin(arg),  cos(arg));
-		result = phasor * iq;
-	}break;
-	}
+	float arg    = radians(360) * DemodulationFrequency * index / SamplingFrequency;
+	vec2  result = complex_mul(iq, vec2(cos(arg), -sin(arg)));
 	return result;
 }
 #endif
@@ -110,7 +88,7 @@ void main()
 				rf[index] = SAMPLE_TYPE(0);
 			} else {
 				#if Demodulate
-					rf[index] = scale * rotate_iq(sample_rf(in_offset + index) * vec2(1, -1), -index);
+					rf[index] = scale * rotate_iq(sample_rf(in_offset + index) * vec2(1, -1), index);
 				#else
 					rf[index] = sample_rf(in_offset + index);
 				#endif

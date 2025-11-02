@@ -556,7 +556,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 			BeamformerShaderFilterBakeParameters *fb = &sd->bake.Filter;
 			fb->filter_length = (u32)f->length;
-			fb->sampling_mode = pb->parameters.sampling_mode;
 			if (demod)                 sd->bake.flags |= BeamformerShaderFilterFlags_Demodulate;
 			if (f->parameters.complex) sd->bake.flags |= BeamformerShaderFilterFlags_ComplexFilter;
 			if (first)                 sd->bake.flags |= BeamformerShaderFilterFlags_MapChannels;
