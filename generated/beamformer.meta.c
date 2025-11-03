@@ -53,7 +53,8 @@ typedef enum {
 } BeamformerInterpolationMode;
 
 typedef enum {
-	BeamformerShaderDecodeFlags_DilateOutput = (1 << 0),
+	BeamformerShaderDecodeFlags_DilateOutput    = (1 << 0),
+	BeamformerShaderDecodeFlags_UseSharedMemory = (1 << 1),
 } BeamformerShaderDecodeFlags;
 
 typedef enum {
@@ -240,6 +241,7 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 read_only global s8 *beamformer_shader_flag_strings[] = {
 	(s8 []){
 		s8_comp("DilateOutput"),
+		s8_comp("UseSharedMemory"),
 	},
 	(s8 []){
 		s8_comp("ComplexFilter"),
@@ -259,7 +261,7 @@ read_only global s8 *beamformer_shader_flag_strings[] = {
 };
 
 read_only global u8 beamformer_shader_flag_strings_count[] = {
-	1,
+	2,
 	3,
 	5,
 	0,

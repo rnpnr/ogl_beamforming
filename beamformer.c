@@ -505,8 +505,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				}
 			}
 
-			if (run_cuda_hilbert) sd->bake.flags |= BeamformerShaderDecodeFlags_DilateOutput;
-
 			BeamformerShaderKind *last_shader = cp->pipeline.shaders + slot - 1;
 			assert(first || ((*last_shader == BeamformerShaderKind_Demodulate ||
 			                  *last_shader == BeamformerShaderKind_Filter)));
@@ -527,9 +525,13 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				db->output_transmit_stride *= decimation_rate;
 			}
 
+			if (run_cuda_hilbert)        sd->bake.flags |= BeamformerShaderDecodeFlags_DilateOutput;
+			if (db->transmit_count > 32) sd->bake.flags |= BeamformerShaderDecodeFlags_UseSharedMemory;
+
 			db->transmits_processed = db->transmit_count >= 32 ? 2 : 1;
 
-			b32 use_16z  = db->transmit_count <= 32 || db->transmit_count == 80 || db->transmit_count == 96 || db->transmit_count == 160;
+			b32 use_16z  = db->transmit_count <= 32 || db->transmit_count == 80 ||
+			               db->transmit_count == 96 || db->transmit_count == 160;
 			sd->layout.x = 4;
 			sd->layout.y = 1;
 			sd->layout.z = use_16z? 16 : 32;

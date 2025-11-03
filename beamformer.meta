@@ -59,7 +59,7 @@
 	{
 		@Enumeration(DataKind)
 		@Enumeration(DecodeMode)
-		@Flags([DilateOutput])
+		@Flags([DilateOutput UseSharedMemory])
 
 		@Bake
 		{

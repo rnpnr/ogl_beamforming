@@ -90,7 +90,7 @@ void main()
 					result[i] = sample_rf_data(rf_offset + transmit + i);
 		}break;
 		case DecodeMode_Hadamard:{
-			#if TransmitCount > 32
+			#if UseSharedMemory
 			{
 				uint thread_count = gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z;
 				uint thread_index = gl_LocalInvocationIndex;
@@ -115,7 +115,7 @@ void main()
 					result[i] = SAMPLE_DATA_TYPE(0);
 
 				for (int j = 0; j < TransmitCount; j++) {
-					#if TransmitCount > 32
+					#if UseSharedMemory
 					SAMPLE_DATA_TYPE s = SAMPLE_TYPE_CAST(rf[gl_LocalInvocationID.x * TransmitCount + j]);
 					#else
 					SAMPLE_DATA_TYPE s = sample_rf_data(rf_offset + j);
