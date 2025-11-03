@@ -84,7 +84,7 @@ void main()
 		const float scale = bool(ComplexFilter) ? 1 : sqrt(2);
 		for (uint i = 0; i < samples_this_thread; i++) {
 			uint index = thread_count * i + thread_index;
-			if (gl_WorkGroupID.x == 0 && index < FilterLength) {
+			if (gl_WorkGroupID.x == 0 && index < FilterLength - 1) {
 				rf[index] = SAMPLE_TYPE(0);
 			} else {
 				#if Demodulate
