@@ -64,7 +64,9 @@ SAMPLE_DATA_TYPE sample_rf_data(uint index)
 	return result;
 }
 
+#if UseSharedMemory
 shared INPUT_DATA_TYPE rf[gl_WorkGroupSize.x * TransmitCount];
+#endif
 
 void main()
 {
@@ -114,15 +116,24 @@ void main()
 				for (uint i = 0; i < TransmitsProcessed; i++)
 					result[i] = SAMPLE_DATA_TYPE(0);
 
+				#if UseSharedMemory
 				for (int j = 0; j < TransmitCount; j++) {
-					#if UseSharedMemory
 					SAMPLE_DATA_TYPE s = SAMPLE_TYPE_CAST(rf[gl_LocalInvocationID.x * TransmitCount + j]);
-					#else
-					SAMPLE_DATA_TYPE s = sample_rf_data(rf_offset + j);
-					#endif
 					for (uint i = 0; i < TransmitsProcessed; i++)
 						result[i] += imageLoad(hadamard, ivec2(j, transmit + i)).x * s;
 				}
+				#else
+				INPUT_DATA_TYPE rf[TransmitsProcessed];
+				for (int j = 0; j < TransmitCount; j++)
+					rf[j] = rf_data[rf_offset + j];
+
+				for (int j = 0; j < TransmitCount; j++) {
+					SAMPLE_DATA_TYPE s = SAMPLE_TYPE_CAST(rf[j]);
+					for (uint i = 0; i < TransmitsProcessed; i++) {
+						result[i] += imageLoad(hadamard, ivec2(j, transmit + i)).x * s;
+					}
+				}
+				#endif
 
 				for (uint i = 0; i < TransmitsProcessed; i++)
 					result[i] /= float(TransmitCount);
