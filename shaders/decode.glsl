@@ -84,11 +84,14 @@ void main()
 				out_rf_data[rf_offset + transmit + i] = rf_data[in_off / RF_SAMPLES_PER_INDEX];
 		}
 	} else {
+		if (UseSharedMemory == 0 && time_sample >= OutputTransmitStride)
+			return;
+
 		SAMPLE_DATA_TYPE result[TransmitsProcessed];
 		switch (DecodeMode) {
 		case DecodeMode_None:{
 			for (uint i = 0; i < TransmitsProcessed; i++)
-				if (transmit + i < TransmitCount)
+				if (TransmitCount % (gl_WorkGroupSize.z * TransmitsProcessed) == 0 || transmit + i < TransmitCount)
 					result[i] = sample_rf_data(rf_offset + transmit + i);
 		}break;
 		case DecodeMode_Hadamard:{
@@ -147,7 +150,7 @@ void main()
 			               OutputSampleStride   * time_sample;
 
 			for (uint i = 0; i < TransmitsProcessed; i++, out_off += OutputTransmitStride)
-				if (transmit + i < TransmitCount)
+				if (TransmitCount % (gl_WorkGroupSize.z * TransmitsProcessed) == 0 || transmit + i < TransmitCount)
 					out_data[out_off / OUTPUT_SAMPLES_PER_INDEX] = result[i];
 		}
 	}

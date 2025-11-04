@@ -1,5 +1,8 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: refactor: DecodeMode_None should use a different mapping and optional conversion shader
+ *      for rf only mode with no filter and demod/filter should gain the OutputFloats flag for iq
+ *      case and rf mode with filter; this can also be used instead of first pass uniform
  * [ ]: refactor: replace UploadRF with just the scratch_rf_size variable,
  *      use below to spin wait in library
  * [ ]: utilize umonitor/umwait (intel), monitorx/mwaitx (amd), and wfe/sev (aarch64)
@@ -527,7 +530,12 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 			if (run_cuda_hilbert) sd->bake.flags |= BeamformerShaderDecodeFlags_DilateOutput;
 
-			if (db->transmit_count > 40) {
+			if (db->decode_mode == BeamformerDecodeMode_None) {
+				db->transmits_processed = 1;
+				sd->layout.x = 64;
+				sd->layout.y = 1;
+				sd->layout.z = 1;
+			} else if (db->transmit_count > 40) {
 				sd->bake.flags |= BeamformerShaderDecodeFlags_UseSharedMemory;
 				db->transmits_processed = 2;
 
