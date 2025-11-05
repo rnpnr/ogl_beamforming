@@ -99,8 +99,8 @@ typedef struct {
 	u32 output_channel_stride;
 	u32 output_sample_stride;
 	u32 output_transmit_stride;
+	u32 to_process;
 	u32 transmit_count;
-	u32 transmits_processed;
 } BeamformerShaderDecodeBakeParameters;
 
 typedef struct {
@@ -296,8 +296,8 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("OutputChannelStride"),
 		s8_comp("OutputSampleStride"),
 		s8_comp("OutputTransmitStride"),
+		s8_comp("ToProcess"),
 		s8_comp("TransmitCount"),
-		s8_comp("TransmitsProcessed"),
 	},
 	(s8 []){
 		s8_comp("DecimationRate"),

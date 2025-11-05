@@ -531,31 +531,43 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			if (run_cuda_hilbert) sd->bake.flags |= BeamformerShaderDecodeFlags_DilateOutput;
 
 			if (db->decode_mode == BeamformerDecodeMode_None) {
-				db->transmits_processed = 1;
+				db->to_process = 1;
 				sd->layout.x = 64;
 				sd->layout.y = 1;
 				sd->layout.z = 1;
+				sd->dispatch.x = (u32)ceil_f32((f32)sample_count                     / (f32)sd->layout.x);
+				sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count     / (f32)sd->layout.y);
+				sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z);
 			} else if (db->transmit_count > 40) {
 				sd->bake.flags |= BeamformerShaderDecodeFlags_UseSharedMemory;
-				db->transmits_processed = 2;
+				db->to_process = 2;
 
-				b32 use_16z  = db->transmit_count == 80 || db->transmit_count == 96 || db->transmit_count == 160;
+				if (db->transmit_count == 48)
+					db->to_process = db->transmit_count / 16;
+
+				b32 use_16z  = db->transmit_count == 48 || db->transmit_count == 80 ||
+				               db->transmit_count == 96 || db->transmit_count == 160;
 				sd->layout.x = 4;
 				sd->layout.y = 1;
 				sd->layout.z = use_16z? 16 : 32;
+
+				sd->dispatch.x = (u32)ceil_f32((f32)sample_count                     / (f32)sd->layout.x);
+				sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count     / (f32)sd->layout.y);
+				sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z / (f32)db->to_process);
 			} else {
-				db->transmits_processed = db->transmit_count;
+				db->to_process = 1;
+
 				/* NOTE(rnp): register caching. using more threads will cause the compiler to do
 				 * contortions to avoid spilling registers. using less gives higher performance */
 				/* TODO(rnp): may need to be adjusted to 16 on NVIDIA */
 				sd->layout.x = 32;
 				sd->layout.y = 1;
 				sd->layout.z = 1;
-			}
 
-			sd->dispatch.x = (u32)ceil_f32((f32)sample_count                     / (f32)sd->layout.x);
-			sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count     / (f32)sd->layout.y);
-			sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z / (f32)db->transmits_processed);
+				sd->dispatch.x = (u32)ceil_f32((f32)sample_count                 / (f32)sd->layout.x);
+				sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count / (f32)sd->layout.y);
+				sd->dispatch.z = 1;
+			}
 
 			if (first) sd->dispatch.x *= decimation_rate;
 

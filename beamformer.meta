@@ -70,8 +70,8 @@
 			@BakeInt(OutputChannelStride  output_channel_stride )
 			@BakeInt(OutputSampleStride   output_sample_stride  )
 			@BakeInt(OutputTransmitStride output_transmit_stride)
+			@BakeInt(ToProcess            to_process            )
 			@BakeInt(TransmitCount        transmit_count        )
-			@BakeInt(TransmitsProcessed   transmits_processed   )
 		}
 	}
 
