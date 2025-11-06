@@ -60,7 +60,8 @@ typedef enum {
 typedef enum {
 	BeamformerShaderFilterFlags_ComplexFilter = (1 << 0),
 	BeamformerShaderFilterFlags_MapChannels   = (1 << 1),
-	BeamformerShaderFilterFlags_Demodulate    = (1 << 2),
+	BeamformerShaderFilterFlags_OutputFloats  = (1 << 2),
+	BeamformerShaderFilterFlags_Demodulate    = (1 << 3),
 } BeamformerShaderFilterFlags;
 
 typedef enum {
@@ -246,6 +247,7 @@ read_only global s8 *beamformer_shader_flag_strings[] = {
 	(s8 []){
 		s8_comp("ComplexFilter"),
 		s8_comp("MapChannels"),
+		s8_comp("OutputFloats"),
 		s8_comp("Demodulate"),
 	},
 	(s8 []){
@@ -262,7 +264,7 @@ read_only global s8 *beamformer_shader_flag_strings[] = {
 
 read_only global u8 beamformer_shader_flag_strings_count[] = {
 	2,
-	3,
+	4,
 	5,
 	0,
 	0,

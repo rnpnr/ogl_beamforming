@@ -575,7 +575,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			if (first && data_kind == BeamformerDataKind_Int16)
 				sd->dispatch.x = (u32)ceil_f32((f32)sd->dispatch.x / 2);
 
-			commit = 1;
+			commit = first || db->decode_mode != BeamformerDecodeMode_None;
 		}break;
 		case BeamformerShaderKind_Demodulate:
 		case BeamformerShaderKind_Filter:
@@ -610,24 +610,28 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				fb->decimation_rate        = decimation_rate;
 				fb->sample_count           = pb->parameters.sample_count;
 
+				fb->output_channel_stride  = das_channel_stride;
+				fb->output_sample_stride   = das_sample_stride;
+				fb->output_transmit_stride = das_transmit_stride;
+
 				if (first) {
 					fb->input_channel_stride  = pb->parameters.raw_data_dimensions[0] / 2;
 					fb->input_sample_stride   = 1;
 					fb->input_transmit_stride = pb->parameters.sample_count / 2;
 
-					/* NOTE(rnp): output optimized layout for decoding */
-					fb->output_channel_stride  = das_channel_stride;
-					fb->output_sample_stride   = pb->parameters.acquisition_count;
-					fb->output_transmit_stride = 1;
+					if (pb->parameters.decode_mode == BeamformerDecodeMode_None) {
+						sd->bake.flags |= BeamformerShaderFilterFlags_OutputFloats;
+					} else {
+						/* NOTE(rnp): output optimized layout for decoding */
+						fb->output_channel_stride  = das_channel_stride;
+						fb->output_sample_stride   = pb->parameters.acquisition_count;
+						fb->output_transmit_stride = 1;
+					}
 				} else {
 					assert(cp->pipeline.shaders[slot - 1] == BeamformerShaderKind_Decode);
 					fb->input_channel_stride  = ld->bake.Decode.output_channel_stride;
 					fb->input_sample_stride   = ld->bake.Decode.output_sample_stride;
 					fb->input_transmit_stride = ld->bake.Decode.output_transmit_stride;
-
-					fb->output_channel_stride  = das_channel_stride;
-					fb->output_sample_stride   = das_sample_stride;
-					fb->output_transmit_stride = das_transmit_stride;
 				}
 			} else {
 				fb->decimation_rate        = 1;

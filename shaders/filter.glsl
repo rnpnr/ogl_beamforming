@@ -7,8 +7,17 @@
   #define SAMPLE_TYPE_CAST(v) (v)
 #else
   #define DATA_TYPE           uint
-  #define RESULT_TYPE_CAST(v) packSnorm2x16(v)
   #define SAMPLE_TYPE_CAST(v) unpackSnorm2x16(v)
+  #if OutputFloats
+    #define OUT_DATA_TYPE       vec2
+    #define RESULT_TYPE_CAST(v) (clamp((v), -1.0, 1.0) * 32767.0f)
+  #else
+    #define RESULT_TYPE_CAST(v) packSnorm2x16(v)
+  #endif
+#endif
+
+#ifndef OUT_DATA_TYPE
+  #define OUT_DATA_TYPE DATA_TYPE
 #endif
 
 #if ComplexFilter
@@ -24,7 +33,7 @@ layout(std430, binding = 1) readonly restrict buffer buffer_1 {
 };
 
 layout(std430, binding = 2) writeonly restrict buffer buffer_2 {
-	DATA_TYPE out_data[];
+	OUT_DATA_TYPE out_data[];
 };
 
 layout(std430, binding = 3) readonly restrict buffer buffer_3 {
@@ -55,7 +64,7 @@ SAMPLE_TYPE sample_rf(uint index)
 	return result;
 }
 
-shared SAMPLE_TYPE rf[FilterLength + gl_WorkGroupSize.x - 1];
+shared SAMPLE_TYPE rf[DecimationRate * gl_WorkGroupSize.x + FilterLength - 1];
 
 void main()
 {

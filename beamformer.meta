@@ -78,7 +78,7 @@
 	@Shader(filter.glsl) Filter
 	{
 		@Enumeration(DataKind)
-		@Flags([ComplexFilter MapChannels])
+		@Flags([ComplexFilter MapChannels OutputFloats])
 
 		@Bake
 		{
