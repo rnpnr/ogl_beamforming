@@ -132,7 +132,6 @@ typedef enum {BEAMFORMER_COMPUTE_UBO_LIST BeamformerComputeUBOKind_Count} Beamfo
 
 // X(kind, gl_kind, texture_format, pixel_type)
 #define BEAMFORMER_COMPUTE_TEXTURE_LIST \
-	X(ChannelMapping,              GL_R16I,  GL_RED_INTEGER, GL_SHORT) \
 	X(FocalVectors,                GL_RG32F, GL_RG,          GL_FLOAT) \
 	X(SparseElements,              GL_R16I,  GL_RED_INTEGER, GL_SHORT) \
 	X(TransmitReceiveOrientations, GL_R8I,   GL_RED_INTEGER, GL_BYTE)

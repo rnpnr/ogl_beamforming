@@ -3,14 +3,6 @@
 // GENERATED CODE
 
 typedef enum {
-	BeamformerDataKind_Int16          = 0,
-	BeamformerDataKind_Int16Complex   = 1,
-	BeamformerDataKind_Float32        = 2,
-	BeamformerDataKind_Float32Complex = 3,
-	BeamformerDataKind_Count,
-} BeamformerDataKind;
-
-typedef enum {
 	BeamformerDecodeMode_None     = 0,
 	BeamformerDecodeMode_Hadamard = 1,
 	BeamformerDecodeMode_Count,
@@ -46,6 +38,14 @@ typedef enum {
 } BeamformerAcquisitionKind;
 
 typedef enum {
+	BeamformerDataKind_Int16          = 0,
+	BeamformerDataKind_Int16Complex   = 1,
+	BeamformerDataKind_Float32        = 2,
+	BeamformerDataKind_Float32Complex = 3,
+	BeamformerDataKind_Count,
+} BeamformerDataKind;
+
+typedef enum {
 	BeamformerInterpolationMode_Nearest = 0,
 	BeamformerInterpolationMode_Linear  = 1,
 	BeamformerInterpolationMode_Cubic   = 2,
@@ -59,9 +59,8 @@ typedef enum {
 
 typedef enum {
 	BeamformerShaderFilterFlags_ComplexFilter = (1 << 0),
-	BeamformerShaderFilterFlags_MapChannels   = (1 << 1),
-	BeamformerShaderFilterFlags_OutputFloats  = (1 << 2),
-	BeamformerShaderFilterFlags_Demodulate    = (1 << 3),
+	BeamformerShaderFilterFlags_OutputFloats  = (1 << 1),
+	BeamformerShaderFilterFlags_Demodulate    = (1 << 2),
 } BeamformerShaderFilterFlags;
 
 typedef enum {
@@ -200,12 +199,6 @@ read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
 
 read_only global s8 beamformer_shader_global_header_strings[] = {
 	s8_comp(""
-	"#define DataKind_Int16          0\n"
-	"#define DataKind_Int16Complex   1\n"
-	"#define DataKind_Float32        2\n"
-	"#define DataKind_Float32Complex 3\n"
-	"\n"),
-	s8_comp(""
 	"#define DecodeMode_None     0\n"
 	"#define DecodeMode_Hadamard 1\n"
 	"\n"),
@@ -233,6 +226,12 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"#define AcquisitionKind_HERO_PA        11\n"
 	"\n"),
 	s8_comp(""
+	"#define DataKind_Int16          0\n"
+	"#define DataKind_Int16Complex   1\n"
+	"#define DataKind_Float32        2\n"
+	"#define DataKind_Float32Complex 3\n"
+	"\n"),
+	s8_comp(""
 	"#define InterpolationMode_Nearest 0\n"
 	"#define InterpolationMode_Linear  1\n"
 	"#define InterpolationMode_Cubic   2\n"
@@ -246,7 +245,6 @@ read_only global s8 *beamformer_shader_flag_strings[] = {
 	},
 	(s8 []){
 		s8_comp("ComplexFilter"),
-		s8_comp("MapChannels"),
 		s8_comp("OutputFloats"),
 		s8_comp("Demodulate"),
 	},
@@ -264,7 +262,7 @@ read_only global s8 *beamformer_shader_flag_strings[] = {
 
 read_only global u8 beamformer_shader_flag_strings_count[] = {
 	2,
-	4,
+	3,
 	5,
 	0,
 	0,
@@ -272,9 +270,9 @@ read_only global u8 beamformer_shader_flag_strings_count[] = {
 };
 
 read_only global i32 *beamformer_shader_header_vectors[] = {
-	(i32 []){0, 1},
-	(i32 []){0},
-	(i32 []){4, 0, 5, 2},
+	(i32 []){4, 0},
+	(i32 []){4},
+	(i32 []){3, 4, 5, 1},
 	0,
 	0,
 	0,
@@ -350,6 +348,27 @@ read_only global i32 beamformer_shader_bake_parameter_counts[] = {
 	0,
 	0,
 	0,
+};
+
+read_only global u8 beamformer_data_kind_element_size[] = {
+	2,
+	2,
+	4,
+	4,
+};
+
+read_only global u8 beamformer_data_kind_element_count[] = {
+	1,
+	2,
+	1,
+	2,
+};
+
+read_only global u8 beamformer_data_kind_byte_size[] = {
+	2 * 1,
+	2 * 2,
+	4 * 1,
+	4 * 2,
 };
 
 read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {

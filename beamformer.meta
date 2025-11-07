@@ -1,7 +1,14 @@
-@Enumeration(DataKind [Int16 Int16Complex Float32 Float32Complex])
 @Enumeration(DecodeMode [None Hadamard])
 @Enumeration(RCAOrientation [None Rows Columns])
 @Enumeration(SamplingMode [2X 4X])
+
+@Table([name size elements]) DataKind
+{
+	[Int16          2 1]
+	[Int16Complex   2 2]
+	[Float32        4 1]
+	[Float32Complex 4 2]
+}
 
 @Table([name pretty_name fixed_transmits]) AcquisitionKind
 {
@@ -27,7 +34,23 @@
 }
 
 @Expand(AcquisitionKind)   @Enumeration(AcquisitionKind `$(name)`)
+@Expand(DataKind)          @Enumeration(DataKind `$(name)`)
 @Expand(InterpolationMode) @Enumeration(InterpolationMode `$(name)`)
+
+@Emit
+{
+	`read_only global u8 beamformer_data_kind_element_size[] = {`
+	@Expand(DataKind) `	$(size),`
+	`};`
+	``
+	`read_only global u8 beamformer_data_kind_element_count[] = {`
+	@Expand(DataKind) `	$(elements),`
+	`};`
+	``
+	`read_only global u8 beamformer_data_kind_byte_size[] = {`
+	@Expand(DataKind) `	$(size) * $(elements),`
+	`};`
+}
 
 @Emit
 {
@@ -78,7 +101,7 @@
 	@Shader(filter.glsl) Filter
 	{
 		@Enumeration(DataKind)
-		@Flags([ComplexFilter MapChannels OutputFloats])
+		@Flags([ComplexFilter OutputFloats])
 
 		@Bake
 		{

@@ -40,8 +40,6 @@ layout(std430, binding = 3) readonly restrict buffer buffer_3 {
 	FILTER_TYPE filter_coefficients[FilterLength];
 };
 
-layout(r16i, binding = 1) readonly restrict uniform iimage1D channel_mapping;
-
 vec2 complex_mul(vec2 a, vec2 b)
 {
 	mat2 m = mat2(b.x, b.y, -b.y, b.x);
@@ -72,8 +70,7 @@ void main()
 	uint channel    = gl_GlobalInvocationID.y;
 	uint transmit   = gl_GlobalInvocationID.z;
 
-	uint in_channel = bool(MapChannels) ? imageLoad(channel_mapping, int(channel)).x : channel;
-	uint in_offset  = InputChannelStride * in_channel + InputTransmitStride * transmit;
+	uint in_offset  = InputChannelStride * channel + InputTransmitStride * transmit;
 	uint out_offset = OutputChannelStride  * channel +
 	                  OutputTransmitStride * transmit +
 	                  OutputSampleStride   * out_sample;

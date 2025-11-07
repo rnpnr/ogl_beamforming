@@ -56,7 +56,6 @@ layout(std430, binding = 3) writeonly restrict buffer buffer_3 {
 };
 
 layout(r32f, binding = 0) readonly restrict uniform image2D  hadamard;
-layout(r16i, binding = 1) readonly restrict uniform iimage1D channel_mapping;
 
 SAMPLE_DATA_TYPE sample_rf_data(uint index)
 {
@@ -159,7 +158,7 @@ void main()
 		uint transmit    = gl_GlobalInvocationID.z;
 
 		if (time_sample < OutputTransmitStride) {
-			uint in_off = (InputChannelStride  * imageLoad(channel_mapping, int(channel)).x +
+			uint in_off = (InputChannelStride  * channel +
 			               InputTransmitStride * transmit +
 			               InputSampleStride   * time_sample) / RF_SAMPLES_PER_INDEX;
 
@@ -177,8 +176,7 @@ void main()
 			uint transmit    = gl_GlobalInvocationID.z * ToProcess;
 			if (time_sample < InputTransmitStride) {
 				uint out_off = (InputChannelStride * channel + TransmitCount * time_sample) / RF_SAMPLES_PER_INDEX;
-				uint in_off  = InputChannelStride * imageLoad(channel_mapping, int(channel)).x +
-				               InputSampleStride  * time_sample;
+				uint in_off  = (InputChannelStride * channel + InputSampleStride  * time_sample);
 				#if UseSharedMemory
 					in_off  += InputTransmitStride * transmit;
 					out_off += transmit;
