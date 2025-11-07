@@ -152,45 +152,52 @@ void run_decode_small(void)
 
 void main()
 {
-	uint time_sample = gl_GlobalInvocationID.x * RF_SAMPLES_PER_INDEX;
-	uint channel     = gl_GlobalInvocationID.y;
-	uint transmit    = gl_GlobalInvocationID.z * ToProcess;
+	switch (DecodeMode) {
+	case DecodeMode_None:{
+		uint time_sample = gl_GlobalInvocationID.x * RF_SAMPLES_PER_INDEX;
+		uint channel     = gl_GlobalInvocationID.y;
+		uint transmit    = gl_GlobalInvocationID.z;
 
-	uint rf_offset = (InputChannelStride * channel + TransmitCount * time_sample) / RF_SAMPLES_PER_INDEX;
-	if (u_first_pass) {
-		if (time_sample < InputTransmitStride) {
-			uint in_off = InputChannelStride * imageLoad(channel_mapping, int(channel)).x +
-			              InputSampleStride  * time_sample;
-			#if DecodeMode == DecodeMode_None || UseSharedMemory
-			in_off    += InputTransmitStride * transmit;
-			rf_offset += transmit;
-			for (uint i = 0; i < ToProcess; i++, in_off += InputTransmitStride) {
-				if (transmit + i < TransmitCount)
-					out_rf_data[rf_offset + i] = rf_data[in_off / RF_SAMPLES_PER_INDEX];
-			}
-			#else
-			for (uint i = 0; i < TransmitCount; i++, in_off += InputTransmitStride)
-				out_rf_data[rf_offset + i] = rf_data[in_off / RF_SAMPLES_PER_INDEX];
-			#endif
+		if (time_sample < OutputTransmitStride) {
+			uint in_off = (InputChannelStride  * imageLoad(channel_mapping, int(channel)).x +
+			               InputTransmitStride * transmit +
+			               InputSampleStride   * time_sample) / RF_SAMPLES_PER_INDEX;
+
+			uint out_off = (OutputChannelStride  * channel +
+			                OutputTransmitStride * transmit +
+			                OutputSampleStride   * time_sample) / OUTPUT_SAMPLES_PER_INDEX;
+
+			out_data[out_off] = sample_rf_data(in_off);
 		}
-	} else {
-		switch (DecodeMode) {
-		case DecodeMode_None:{
-			uint out_off = OutputChannelStride  * channel +
-			               OutputTransmitStride * transmit +
-			               OutputSampleStride   * time_sample;
-			for (uint i = 0; i < ToProcess; i++, out_off += OutputTransmitStride) {
-				if (TransmitCount % (gl_WorkGroupSize.z * ToProcess) == 0 || transmit + i < TransmitCount)
-					out_data[out_off / OUTPUT_SAMPLES_PER_INDEX] = sample_rf_data(rf_offset + transmit + i);
+	}break;
+	case DecodeMode_Hadamard:{
+		if (u_first_pass) {
+			uint time_sample = gl_GlobalInvocationID.x * RF_SAMPLES_PER_INDEX;
+			uint channel     = gl_GlobalInvocationID.y;
+			uint transmit    = gl_GlobalInvocationID.z * ToProcess;
+			if (time_sample < InputTransmitStride) {
+				uint out_off = (InputChannelStride * channel + TransmitCount * time_sample) / RF_SAMPLES_PER_INDEX;
+				uint in_off  = InputChannelStride * imageLoad(channel_mapping, int(channel)).x +
+				               InputSampleStride  * time_sample;
+				#if UseSharedMemory
+					in_off  += InputTransmitStride * transmit;
+					out_off += transmit;
+					for (uint i = 0; i < ToProcess; i++, in_off += InputTransmitStride) {
+						if (transmit + i < TransmitCount)
+							out_rf_data[out_off + i] = rf_data[in_off / RF_SAMPLES_PER_INDEX];
+					}
+				#else
+					for (uint i = 0; i < TransmitCount; i++, in_off += InputTransmitStride)
+						out_rf_data[out_off + i] = rf_data[in_off / RF_SAMPLES_PER_INDEX];
+				#endif
 			}
-		}break;
-		case DecodeMode_Hadamard:{
+		} else {
 			#if UseSharedMemory
 				run_decode_large();
 			#else
 				run_decode_small();
 			#endif
-		}break;
 		}
+	}break;
 	}
 }

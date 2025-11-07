@@ -531,10 +531,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			if (run_cuda_hilbert) sd->bake.flags |= BeamformerShaderDecodeFlags_DilateOutput;
 
 			if (db->decode_mode == BeamformerDecodeMode_None) {
-				db->to_process = 1;
-				sd->layout.x = 64;
-				sd->layout.y = 1;
-				sd->layout.z = 1;
+				sd->layout = (uv3){{64, 1, 1}};
+
 				sd->dispatch.x = (u32)ceil_f32((f32)sample_count                     / (f32)sd->layout.x);
 				sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count     / (f32)sd->layout.y);
 				sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z);
@@ -547,9 +545,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 				b32 use_16z  = db->transmit_count == 48 || db->transmit_count == 80 ||
 				               db->transmit_count == 96 || db->transmit_count == 160;
-				sd->layout.x = 4;
-				sd->layout.y = 1;
-				sd->layout.z = use_16z? 16 : 32;
+				sd->layout = (uv3){{4, 1, use_16z? 16 : 32}};
 
 				sd->dispatch.x = (u32)ceil_f32((f32)sample_count                     / (f32)sd->layout.x);
 				sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count     / (f32)sd->layout.y);
@@ -560,9 +556,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				/* NOTE(rnp): register caching. using more threads will cause the compiler to do
 				 * contortions to avoid spilling registers. using less gives higher performance */
 				/* TODO(rnp): may need to be adjusted to 16 on NVIDIA */
-				sd->layout.x = 32;
-				sd->layout.y = 1;
-				sd->layout.z = 1;
+				sd->layout = (uv3){{32, 1, 1}};
 
 				sd->dispatch.x = (u32)ceil_f32((f32)sample_count                 / (f32)sd->layout.x);
 				sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count / (f32)sd->layout.y);
@@ -645,9 +639,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			}
 
 			/* TODO(rnp): filter may need a different dispatch layout */
-			sd->layout.x   = 128;
-			sd->layout.y   = 1;
-			sd->layout.z   = 1;
+			sd->layout     = (uv3){{128, 1, 1}};
 			sd->dispatch.x = (u32)ceil_f32((f32)sample_count                     / (f32)sd->layout.x);
 			sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count     / (f32)sd->layout.y);
 			sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z);
@@ -923,16 +915,22 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 	case BeamformerShaderKind_Decode:{
 		glBindImageTexture(0, cp->textures[BeamformerComputeTextureKind_Hadamard], 0, 0, 0, GL_READ_ONLY, GL_R32F);
 
+		BeamformerDecodeMode mode = cp->shader_descriptors[shader_slot].bake.Decode.decode_mode;
 		if (shader_slot == 0) {
-			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, cc->ping_pong_ssbos[input_ssbo_idx]);
 			glBindImageTexture(1, cp->textures[BeamformerComputeTextureKind_ChannelMapping], 0, 0, 0, GL_READ_ONLY, GL_R16I);
-			glProgramUniform1ui(program, DECODE_FIRST_PASS_UNIFORM_LOC, 1);
 
-			glDispatchCompute(dispatch.x, dispatch.y, dispatch.z);
-			glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+			if (mode != BeamformerDecodeMode_None) {
+				glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, cc->ping_pong_ssbos[input_ssbo_idx]);
+				glProgramUniform1ui(program, DECODE_FIRST_PASS_UNIFORM_LOC, 1);
+
+				glDispatchCompute(dispatch.x, dispatch.y, dispatch.z);
+				glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+			}
 		}
 
-		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, cc->ping_pong_ssbos[input_ssbo_idx]);
+		if (mode != BeamformerDecodeMode_None)
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, cc->ping_pong_ssbos[input_ssbo_idx]);
+
 		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, cc->ping_pong_ssbos[output_ssbo_idx]);
 
 		glProgramUniform1ui(program, DECODE_FIRST_PASS_UNIFORM_LOC, 0);
@@ -1496,6 +1494,8 @@ DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 	BeamformerSharedMemory *sm = ctx->shared_memory.region;
 	if (atomic_load_u32(sm->locks + BeamformerSharedMemoryLockKind_UploadRF))
 		os_wake_waiters(&ctx->os.upload_worker.sync_variable);
+	if (atomic_load_u32(sm->locks + BeamformerSharedMemoryLockKind_DispatchCompute))
+		os_wake_waiters(&ctx->os.compute_worker.sync_variable);
 
 	BeamformerFrame        *frame = ctx->latest_frame;
 	BeamformerViewPlaneTag  tag   = frame? frame->view_plane_tag : 0;
