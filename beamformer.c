@@ -516,7 +516,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			db->decode_mode    = pb->parameters.decode_mode;
 			db->transmit_count = pb->parameters.acquisition_count;
 
-			u32 channel_stride         = pb->parameters.acquistion_count * pb->parameters.sample_count;
+			u32 channel_stride         = pb->parameters.acquisition_count * pb->parameters.sample_count;
 			db->input_sample_stride    = first? 1                           : ld->bake.Filter.output_sample_stride;
 			db->input_channel_stride   = first? channel_stride              : ld->bake.Filter.output_channel_stride;
 			db->input_transmit_stride  = first? pb->parameters.sample_count : 1;
