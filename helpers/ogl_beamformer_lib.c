@@ -370,28 +370,6 @@ beamformer_flush_commands(i32 timeout_ms)
 	return result;
 }
 
-function b32
-beamformer_compute_indirect(BeamformerViewPlaneTag tag, u32 block)
-{
-	b32 result = 0;
-	if (check_shared_memory() &&
-	    lib_error_check(tag   < BeamformerViewPlaneTag_Count, BF_LIB_ERR_KIND_INVALID_IMAGE_PLANE) &&
-	    lib_error_check(block < g_beamformer_library_context.bp->reserved_parameter_blocks,
-	                    BF_LIB_ERR_KIND_PARAMETER_BLOCK_UNALLOCATED))
-	{
-		BeamformWork *work = try_push_work_queue();
-		if (work) {
-			work->kind = BeamformerWorkKind_ComputeIndirect;
-			work->compute_indirect_context.view_plane      = tag;
-			work->compute_indirect_context.parameter_block = block;
-			beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
-			beamformer_flush_commands(0);
-			result = 1;
-		}
-	}
-	return result;
-}
-
 #define BEAMFORMER_UPLOAD_FNS \
 	X(channel_mapping,               i16, 1, ChannelMapping) \
 	X(focal_vectors,                 f32, 2, FocalVectors)   \
@@ -424,48 +402,48 @@ function b32
 beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 {
 	b32 result = 0;
-	if (check_shared_memory()) {
-		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
-		if (lib_error_check(data_size <= arena_capacity(&scratch, u8), BF_LIB_ERR_KIND_BUFFER_OVERFLOW)) {
-			if (lib_try_lock(BeamformerSharedMemoryLockKind_UploadRF, timeout_ms)) {
-				if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
-					BeamformerParameterBlock *b  = beamformer_parameter_block(g_beamformer_library_context.bp, block);
-					BeamformerParameters     *bp = &b->parameters;
-					BeamformerDataKind data_kind = b->pipeline.data_kind;
+	Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
+	BeamformerParameterBlock *b  = beamformer_parameter_block(g_beamformer_library_context.bp, block);
+	BeamformerParameters     *bp = &b->parameters;
+	BeamformerDataKind data_kind = b->pipeline.data_kind;
 
-					// TODO(rnp): maybe make a mismatched size here an error
-					u32 size = bp->acquisition_count * bp->sample_count * bp->channel_count * beamformer_data_kind_byte_size[data_kind];
+	u32 size     = bp->acquisition_count * bp->sample_count * bp->channel_count * beamformer_data_kind_byte_size[data_kind];
+	u32 raw_size = bp->raw_data_dimensions[0] * bp->raw_data_dimensions[1] * beamformer_data_kind_byte_size[data_kind];
 
-					u32 channel_count      = bp->channel_count;
-					u32 out_channel_stride = beamformer_data_kind_element_count[data_kind] * bp->sample_count * bp->acquisition_count;
-					u32 in_channel_stride  = beamformer_data_kind_element_count[data_kind] * bp->raw_data_dimensions[0];
+	if (lib_error_check(size <= arena_capacity(&scratch, u8), BF_LIB_ERR_KIND_BUFFER_OVERFLOW) &&
+	    lib_error_check(size <= data_size && data_size == raw_size, BF_LIB_ERR_KIND_DATA_SIZE_MISMATCH))
+	{
+		if (lib_try_lock(BeamformerSharedMemoryLockKind_UploadRF, timeout_ms)) {
+			if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
+				u32 channel_count      = bp->channel_count;
+				u32 out_channel_stride = beamformer_data_kind_element_count[data_kind] * bp->sample_count * bp->acquisition_count;
+				u32 in_channel_stride  = beamformer_data_kind_element_count[data_kind] * bp->raw_data_dimensions[0];
 
-					for (u32 channel = 0; channel < channel_count; channel++) {
-						u16 data_channel = (u16)b->channel_mapping[channel];
-						u32 out_off = out_channel_stride * channel;
-						u32 in_off  = in_channel_stride  * data_channel;
-						for (u32 sample = 0; sample < out_channel_stride; sample++, out_off++, in_off++) {
-							switch (data_kind) {
-							case BeamformerDataKind_Int16:
-							case BeamformerDataKind_Int16Complex:
-							{
-								((i16 *)scratch.beg)[out_off] = ((i16 *)data)[in_off];
-							}break;
-							case BeamformerDataKind_Float32:
-							case BeamformerDataKind_Float32Complex:
-							{
-								((f32 *)scratch.beg)[out_off] = ((f32 *)data)[in_off];
-							}break;
-							InvalidDefaultCase;
-							}
+				for (u32 channel = 0; channel < channel_count; channel++) {
+					u16 data_channel = (u16)b->channel_mapping[channel];
+					u32 out_off = out_channel_stride * channel;
+					u32 in_off  = in_channel_stride  * data_channel;
+					for (u32 sample = 0; sample < out_channel_stride; sample++, out_off++, in_off++) {
+						switch (data_kind) {
+						case BeamformerDataKind_Int16:
+						case BeamformerDataKind_Int16Complex:
+						{
+							((i16 *)scratch.beg)[out_off] = ((i16 *)data)[in_off];
+						}break;
+						case BeamformerDataKind_Float32:
+						case BeamformerDataKind_Float32Complex:
+						{
+							((f32 *)scratch.beg)[out_off] = ((f32 *)data)[in_off];
+						}break;
+						InvalidDefaultCase;
 						}
 					}
-
-					lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
-					/* TODO(rnp): need a better way to communicate this */
-					atomic_store_u32(&g_beamformer_library_context.bp->scratch_rf_size, size);
-					result = 1;
 				}
+
+				lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
+				/* TODO(rnp): need a better way to communicate this */
+				atomic_store_u32(&g_beamformer_library_context.bp->scratch_rf_size, size);
+				result = 1;
 			}
 		}
 	}
@@ -475,8 +453,24 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 b32
 beamformer_push_data_with_compute(void *data, u32 data_size, u32 image_plane_tag, u32 parameter_slot)
 {
-	b32 result = beamformer_push_data_base(data, data_size, g_beamformer_library_context.timeout_ms, parameter_slot);
-	if (result) result = beamformer_compute_indirect(image_plane_tag, parameter_slot);
+	b32 result = 0;
+	if (check_shared_memory()) {
+		u32 reserved_blocks = g_beamformer_library_context.bp->reserved_parameter_blocks;
+		if (lib_error_check(image_plane_tag < BeamformerViewPlaneTag_Count, BF_LIB_ERR_KIND_INVALID_IMAGE_PLANE) &&
+		    lib_error_check(parameter_slot < reserved_blocks, BF_LIB_ERR_KIND_PARAMETER_BLOCK_UNALLOCATED) &&
+		    beamformer_push_data_base(data, data_size, g_beamformer_library_context.timeout_ms, parameter_slot))
+		{
+			BeamformWork *work = try_push_work_queue();
+			if (work) {
+				work->kind = BeamformerWorkKind_ComputeIndirect;
+				work->compute_indirect_context.view_plane      = image_plane_tag;
+				work->compute_indirect_context.parameter_block = parameter_slot;
+				beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
+				beamformer_flush_commands(0);
+				result = 1;
+			}
+		}
+	}
 	return result;
 }
 
