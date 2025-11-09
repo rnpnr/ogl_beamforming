@@ -99,6 +99,12 @@
 
 #define spin_wait(c) while ((c)) cpu_yield()
 
+#define DA_STRUCT(kind, name) typedef struct { \
+	kind *data;     \
+	iz    count;    \
+	iz    capacity; \
+} name ##List;
+
 /* NOTE(rnp): no guarantees about actually getting an element */
 #define SLLPop(list) list; list = list ? list->next : 0
 #define SLLPush(v, list) do { \
@@ -282,7 +288,7 @@ typedef struct {
 	b32   asleep;
 } GLWorkerThreadContext;
 
-#define FILE_WATCH_CALLBACK_FN(name) b32 name(OS *os, s8 path, iptr user_data, Arena arena)
+#define FILE_WATCH_CALLBACK_FN(name) b32 name(s8 path, iptr user_data, Arena arena)
 typedef FILE_WATCH_CALLBACK_FN(file_watch_callback);
 
 typedef struct {
@@ -301,13 +307,7 @@ typedef struct {
 	iz         capacity;
 	Arena      buffer;
 } FileWatchDirectory;
-
-typedef struct {
-	FileWatchDirectory *data;
-	iz    count;
-	iz    capacity;
-	iptr  handle;
-} FileWatchContext;
+DA_STRUCT(FileWatchDirectory, FileWatchDirectory);
 
 typedef struct {
 	void *region;
@@ -317,7 +317,7 @@ typedef struct {
 #define OS_ALLOC_ARENA_FN(name) Arena name(iz capacity)
 typedef OS_ALLOC_ARENA_FN(os_alloc_arena_fn);
 
-#define OS_ADD_FILE_WATCH_FN(name) void name(OS *os, Arena *a, s8 path, \
+#define OS_ADD_FILE_WATCH_FN(name) void name(FileWatchDirectoryList *fwctx, Arena *a, s8 path, \
                                              file_watch_callback *callback, iptr user_data)
 typedef OS_ADD_FILE_WATCH_FN(os_add_file_watch_fn);
 
@@ -362,18 +362,6 @@ typedef alignas(16) u8 RenderDocAPI[216];
 #define RENDERDOC_START_FRAME_CAPTURE(a) (renderdoc_start_frame_capture_fn *)RENDERDOC_API_FN_ADDR(a, 152)
 #define RENDERDOC_END_FRAME_CAPTURE(a)   (renderdoc_end_frame_capture_fn *)  RENDERDOC_API_FN_ADDR(a, 168)
 
-struct OS {
-	FileWatchContext file_watch_context;
-	iptr             context;
-	iptr             error_handle;
-	s8               path_separator;
-
-	GLWorkerThreadContext compute_worker;
-	GLWorkerThreadContext upload_worker;
-
-	DEBUG_DECL(renderdoc_start_frame_capture_fn *start_frame_capture;)
-	DEBUG_DECL(renderdoc_end_frame_capture_fn   *end_frame_capture;)
-};
 
 #define LABEL_GL_OBJECT(type, id, s) {s8 _s = (s); glObjectLabel(type, id, (i32)_s.len, (c8 *)_s.data);}
 

@@ -111,18 +111,16 @@ os_read_file_simp(char *fname)
 
 #elif OS_WINDOWS
 
-global w32_context os_context;
-
 function void
 os_init_timer(void)
 {
-	os_context.timer_frequency = os_get_timer_frequency();
+	os_w32_context.timer_frequency = os_get_timer_frequency();
 }
 
 function f64
 os_get_time(void)
 {
-	f64 result = (f64)os_get_timer_counter() / (f64)os_context.timer_frequency;
+	f64 result = (f64)os_get_timer_counter() / (f64)os_w32_context.timer_frequency;
 	return result;
 }
 

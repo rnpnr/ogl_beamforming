@@ -748,7 +748,7 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 		BeamformerShaderKind base_shader = beamformer_reloadable_shader_kinds[reloadable_index];
 		s8 path;
 		if (!BakeShaders)
-			path = push_s8_from_parts(&arena, ctx->os.path_separator, s8("shaders"),
+			path = push_s8_from_parts(&arena, os_path_separator(), s8("shaders"),
 		                            beamformer_reloadable_shader_files[reloadable_index]);
 
 		Stream shader_stream = arena_stream(arena);
@@ -812,7 +812,7 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 
 		/* TODO(rnp): instance name */
 		s8 shader_name = beamformer_shader_names[shader];
-		program = load_shader(&ctx->os, arena, &shader_text, (u32 []){GL_COMPUTE_SHADER}, 1, shader_name);
+		program = load_shader(arena, &shader_text, (u32 []){GL_COMPUTE_SHADER}, 1, shader_name);
 	}
 
 	glDeleteProgram(cp->programs[shader_slot]);
@@ -1134,7 +1134,7 @@ DEBUG_EXPORT BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader)
 
 	u32 *shader = &ctx->frame_view_render_context.shader;
 	glDeleteProgram(*shader);
-	*shader = load_shader(&ctx->os, arena, shader_texts, shader_types, shader_count, shader_name);
+	*shader = load_shader(arena, shader_texts, shader_types, shader_count, shader_name);
 	ctx->frame_view_render_context.updated = 1;
 
 	return 1;
@@ -1480,15 +1480,15 @@ DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 
 	if (input->executable_reloaded) {
 		ui_init(ctx, ctx->ui_backing_store);
-		DEBUG_DECL(start_frame_capture = ctx->os.start_frame_capture);
-		DEBUG_DECL(end_frame_capture   = ctx->os.end_frame_capture);
+		DEBUG_DECL(start_frame_capture = ctx->start_frame_capture);
+		DEBUG_DECL(end_frame_capture   = ctx->end_frame_capture);
 	}
 
 	BeamformerSharedMemory *sm = ctx->shared_memory.region;
 	if (atomic_load_u32(sm->locks + BeamformerSharedMemoryLockKind_UploadRF))
-		os_wake_waiters(&ctx->os.upload_worker.sync_variable);
+		os_wake_waiters(&ctx->upload_worker.sync_variable);
 	if (atomic_load_u32(sm->locks + BeamformerSharedMemoryLockKind_DispatchCompute))
-		os_wake_waiters(&ctx->os.compute_worker.sync_variable);
+		os_wake_waiters(&ctx->compute_worker.sync_variable);
 
 	BeamformerFrame        *frame = ctx->latest_frame;
 	BeamformerViewPlaneTag  tag   = frame? frame->view_plane_tag : 0;

@@ -21,6 +21,11 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+typedef struct {
+	i32           inotify_handle;
+} OS_LinuxContext;
+global OS_LinuxContext os_linux_context;
+
 /* NOTE(rnp): hidden behind feature flags -> screw compiler/standards idiots */
 #ifndef CLOCK_MONOTONIC
   #define CLOCK_MONOTONIC 1
@@ -65,6 +70,18 @@ os_fatal(s8 msg)
 	os_write_file(STDERR_FILENO, msg);
 	os_exit(1);
 	unreachable();
+}
+
+function iptr
+os_error_handle(void)
+{
+	return STDERR_FILENO;
+}
+
+function s8
+os_path_separator(void)
+{
+	return s8("/");
 }
 
 function u64
@@ -223,19 +240,18 @@ os_unload_library(void *h)
 function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
 {
 	s8 directory  = path;
-	directory.len = s8_scan_backwards(path, OS_PATH_SEPARATOR_CHAR);
+	directory.len = s8_scan_backwards(path, '/');
 	assert(directory.len > 0);
 
 	u64 hash = u64_hash_from_s8(directory);
-	FileWatchContext *fwctx = &os->file_watch_context;
 	FileWatchDirectory *dir = lookup_file_watch_directory(fwctx, hash);
 	if (!dir) {
-		assert(path.data[directory.len] == OS_PATH_SEPARATOR_CHAR);
+		assert(path.data[directory.len] == '/');
 		dir = da_push(a, fwctx);
 		dir->hash   = hash;
 		dir->name   = push_s8(a, directory);
 		u32 mask    = IN_MOVED_TO|IN_CLOSE_WRITE;
-		dir->handle = inotify_add_watch((i32)fwctx->handle, (c8 *)dir->name.data, mask);
+		dir->handle = inotify_add_watch(os_linux_context.inotify_handle, (c8 *)dir->name.data, mask);
 	}
 
 	FileWatch *fw = da_push(a, dir);
@@ -292,11 +308,4 @@ function OS_SHARED_MEMORY_UNLOCK_REGION_FN(os_shared_memory_region_unlock)
 	assert(atomic_load_u32(lock));
 	atomic_store_u32(lock, 0);
 	os_wake_waiters(lock);
-}
-
-function void
-os_init(OS *os, Arena *program_memory)
-{
-	os->file_watch_context.handle = inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
-	os->error_handle              = STDERR_FILENO;
 }

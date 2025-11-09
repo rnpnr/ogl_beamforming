@@ -74,12 +74,6 @@ arena_alloc(Arena *a, iz len, uz align, iz count)
 
 enum { DA_INITIAL_CAP = 16 };
 
-#define DA_STRUCT(kind, name) typedef struct { \
-	kind *data;     \
-	iz    count;    \
-	iz    capacity; \
-} name ##List;
-
 #define da_index(it, s) ((it) - (s)->data)
 #define da_reserve(a, s, n) \
   (s)->data = da_reserve_((a), (s)->data, &(s)->capacity, (s)->count + n, \
@@ -685,7 +679,7 @@ parse_f64(s8 s)
 }
 
 function FileWatchDirectory *
-lookup_file_watch_directory(FileWatchContext *ctx, u64 hash)
+lookup_file_watch_directory(FileWatchDirectoryList *ctx, u64 hash)
 {
 	FileWatchDirectory *result = 0;
 	for (u32 i = 0; i < ctx->count; i++) {

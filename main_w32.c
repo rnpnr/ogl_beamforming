@@ -33,7 +33,7 @@ os_gl_proc_address(char *name)
 #include "static.c"
 
 function void
-dispatch_file_watch(OS *os, FileWatchDirectory *fw_dir, u8 *buf, Arena arena)
+dispatch_file_watch(FileWatchDirectory *fw_dir, u8 *buf, Arena arena)
 {
 	i64 offset = 0;
 	TempArena save_point = {0};
@@ -48,7 +48,7 @@ dispatch_file_watch(OS *os, FileWatchDirectory *fw_dir, u8 *buf, Arena arena)
 			stream_append_s8(&path, s8("unknown file watch event: "));
 			stream_append_u64(&path, fni->action);
 			stream_append_byte(&path, '\n');
-			os_write_file(os->error_handle, stream_to_s8(&path));
+			os_write_file(os_error_handle(), stream_to_s8(&path));
 			stream_reset(&path, 0);
 		}
 
@@ -65,7 +65,7 @@ dispatch_file_watch(OS *os, FileWatchDirectory *fw_dir, u8 *buf, Arena arena)
 		for (u32 i = 0; i < fw_dir->count; i++) {
 			FileWatch *fw = fw_dir->data + i;
 			if (fw->hash == hash) {
-				fw->callback(os, stream_to_s8(&path), fw->user_data, arena);
+				fw->callback(stream_to_s8(&path), fw->user_data, arena);
 				break;
 			}
 		}
@@ -76,11 +76,9 @@ dispatch_file_watch(OS *os, FileWatchDirectory *fw_dir, u8 *buf, Arena arena)
 }
 
 function void
-clear_io_queue(OS *os, BeamformerInput *input, Arena arena)
+clear_io_queue(BeamformerInput *input, Arena arena)
 {
-	w32_context *ctx = (w32_context *)os->context;
-
-	iptr handle = ctx->io_completion_handle;
+	iptr handle = os_w32_context.io_completion_handle;
 	w32_overlapped *overlapped;
 	u32  bytes_read;
 	uptr user_data;
@@ -89,7 +87,7 @@ clear_io_queue(OS *os, BeamformerInput *input, Arena arena)
 		switch (event->tag) {
 		case W32_IO_FILE_WATCH: {
 			FileWatchDirectory *dir = (FileWatchDirectory *)event->context;
-			dispatch_file_watch(os, dir, dir->buffer.beg, arena);
+			dispatch_file_watch(dir, dir->buffer.beg, arena);
 			zero_struct(overlapped);
 			ReadDirectoryChangesW(dir->handle, dir->buffer.beg, 4096, 0,
 			                      FILE_NOTIFY_CHANGE_LAST_WRITE, 0, overlapped, 0);
@@ -107,18 +105,20 @@ main(void)
 	BeamformerCtx   *ctx   = 0;
 	BeamformerInput *input = 0;
 
-	setup_beamformer(&program_memory, &ctx, &input);
-	os_wake_waiters(&ctx->os.compute_worker.sync_variable);
+	os_w32_context.error_handle         = GetStdHandle(STD_ERROR_HANDLE);
+	os_w32_context.io_completion_handle = CreateIoCompletionPort(INVALID_FILE, 0, 0, 0);
+	os_w32_context.timer_frequency      = os_get_timer_frequency();
 
-	w32_context *w32_ctx = (w32_context *)ctx->os.context;
+	setup_beamformer(&program_memory, &ctx, &input);
+
 	u64 last_time = os_get_timer_counter();
 	while (!ctx->should_exit) {
-		clear_io_queue(&ctx->os, input, program_memory);
+		clear_io_queue(input, program_memory);
 
 		u64 now = os_get_timer_counter();
 		input->last_mouse = input->mouse;
 		input->mouse.rl   = GetMousePosition();
-		input->dt         = (f32)((f64)(now - last_time) / (f64)w32_ctx->timer_frequency);
+		input->dt         = (f32)((f64)(now - last_time) / (f64)os_w32_context.timer_frequency);
 		last_time         = now;
 
 		beamformer_frame_step(ctx, input);

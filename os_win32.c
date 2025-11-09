@@ -66,11 +66,6 @@ typedef struct {
 	iptr event_handle;
 } w32_overlapped;
 
-typedef struct {
-	iptr io_completion_handle;
-	u64  timer_frequency;
-} w32_context;
-
 typedef enum {
 	W32_IO_FILE_WATCH,
 	W32_IO_PIPE,
@@ -120,6 +115,13 @@ W32(iptr)   wglGetProcAddress(c8 *);
 W32(b32)    WriteFile(iptr, u8 *, i32, i32 *, void *);
 W32(void *) VirtualAlloc(u8 *, iz, u32, u32);
 
+typedef struct {
+	iptr error_handle;
+	iptr io_completion_handle;
+	u64  timer_frequency;
+} OS_W32Context;
+global OS_W32Context os_w32_context;
+
 #ifdef _DEBUG
 function void *
 os_get_module(char *name, Stream *e)
@@ -154,6 +156,18 @@ os_fatal(s8 msg)
 	os_write_file(GetStdHandle(STD_ERROR_HANDLE), msg);
 	os_exit(1);
 	unreachable();
+}
+
+function iptr
+os_error_handle(void)
+{
+	return os_w32_context.error_handle;
+}
+
+function s8
+os_path_separator(void)
+{
+	return s8("\\");
 }
 
 function u64
@@ -338,14 +352,13 @@ os_unload_library(void *h)
 function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
 {
 	s8 directory  = path;
-	directory.len = s8_scan_backwards(path, OS_PATH_SEPARATOR_CHAR);
+	directory.len = s8_scan_backwards(path, '\\');
 	assert(directory.len > 0);
 
 	u64 hash = u64_hash_from_s8(directory);
-	FileWatchContext *fwctx = &os->file_watch_context;
 	FileWatchDirectory *dir = lookup_file_watch_directory(fwctx, hash);
 	if (!dir) {
-		assert(path.data[directory.len] == OS_PATH_SEPARATOR_CHAR);
+		assert(path.data[directory.len] == '\\');
 
 		dir = da_push(a, fwctx);
 		dir->hash   = hash;
@@ -354,11 +367,10 @@ function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
 		                          OPEN_EXISTING,
 		                          FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OVERLAPPED, 0);
 
-		w32_context *ctx = (w32_context *)os->context;
 		w32_io_completion_event *event = push_struct(a, typeof(*event));
 		event->tag     = W32_IO_FILE_WATCH;
 		event->context = (iptr)dir;
-		CreateIoCompletionPort(dir->handle, ctx->io_completion_handle, (uptr)event, 0);
+		CreateIoCompletionPort(dir->handle, os_w32_context.io_completion_handle, (uptr)event, 0);
 
 		dir->buffer = sub_arena(a, 4096 + sizeof(w32_overlapped), 64);
 		w32_overlapped *overlapped = (w32_overlapped *)(dir->buffer.beg + 4096);
@@ -409,15 +421,4 @@ function OS_SHARED_MEMORY_UNLOCK_REGION_FN(os_shared_memory_region_unlock)
 	assert(atomic_load_u32(locks + lock_index));
 	os_wake_waiters(locks + lock_index);
 	ReleaseSemaphore(ctx->semaphores[lock_index], 1, 0);
-}
-
-function void
-os_init(OS *os, Arena *program_memory)
-{
-	w32_context *ctx          = push_struct(program_memory, typeof(*ctx));
-	ctx->io_completion_handle = CreateIoCompletionPort(INVALID_FILE, 0, 0, 0);
-	ctx->timer_frequency      = os_get_timer_frequency();
-
-	os->error_handle = GetStdHandle(STD_ERROR_HANDLE);
-	os->context      = (iptr)ctx;
 }

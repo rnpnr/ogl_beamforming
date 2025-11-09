@@ -13,6 +13,8 @@
 
 ///////////////////
 // REQUIRED OS API
+function iptr os_error_handle(void);
+function s8   os_path_separator(void);
 function OS_READ_WHOLE_FILE_FN(os_read_whole_file);
 function OS_SHARED_MEMORY_LOCK_REGION_FN(os_shared_memory_region_lock);
 function OS_SHARED_MEMORY_UNLOCK_REGION_FN(os_shared_memory_region_unlock);
@@ -325,7 +327,6 @@ typedef struct {
 	 * destroying itself on hot-reload */
 	FrameViewRenderContext frame_view_render_context;
 
-	OS     os;
 	Stream error_stream;
 
 	BeamformWorkQueue *beamform_work_queue;
@@ -343,6 +344,13 @@ typedef struct {
 	/* NOTE: this will only be used when we are averaging */
 	u32             averaged_frame_index;
 	BeamformerFrame averaged_frames[2];
+
+	FileWatchDirectoryList file_watch_list;
+	GLWorkerThreadContext  upload_worker;
+	GLWorkerThreadContext  compute_worker;
+
+	DEBUG_DECL(renderdoc_start_frame_capture_fn *start_frame_capture;)
+	DEBUG_DECL(renderdoc_end_frame_capture_fn   *end_frame_capture;)
 } BeamformerCtx;
 
 typedef struct ShaderReloadContext ShaderReloadContext;
@@ -363,7 +371,7 @@ typedef BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute_fn);
 #define BEAMFORMER_RF_UPLOAD_FN(name) void name(BeamformerUploadThreadContext *ctx, Arena arena)
 typedef BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload_fn);
 
-#define BEAMFORMER_RELOAD_SHADER_FN(name) b32 name(OS *os, s8 path, ShaderReloadContext *src, \
+#define BEAMFORMER_RELOAD_SHADER_FN(name) b32 name(s8 path, ShaderReloadContext *src, \
                                                    Arena arena, s8 shader_name)
 typedef BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader_fn);
 

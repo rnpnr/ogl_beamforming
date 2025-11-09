@@ -24,15 +24,21 @@ global void *debug_lib;
 DEBUG_ENTRY_POINTS
 #undef X
 
+struct debug_context {
+	BeamformerInput *input;
+	b32 *compute_worker_asleep;
+	b32 *upload_worker_asleep;
+};
+
 function FILE_WATCH_CALLBACK_FN(debug_reload)
 {
-	BeamformerInput *input = (BeamformerInput *)user_data;
-	Stream err             = arena_stream(arena);
+	struct debug_context *ctx = (struct debug_context *)user_data;
+	Stream err = arena_stream(arena);
 
 	/* NOTE(rnp): spin until compute thread finishes its work (we will probably
 	 * never reload while compute is in progress but just incase). */
-	spin_wait(!atomic_load_u32(&os->compute_worker.asleep));
-	spin_wait(!atomic_load_u32(&os->upload_worker.asleep));
+	spin_wait(!atomic_load_u32(ctx->compute_worker_asleep));
+	spin_wait(!atomic_load_u32(ctx->upload_worker_asleep));
 
 	os_unload_library(debug_lib);
 	debug_lib = os_load_library(OS_DEBUG_LIB_NAME, OS_DEBUG_LIB_TEMP_NAME, &err);
@@ -42,18 +48,22 @@ function FILE_WATCH_CALLBACK_FN(debug_reload)
 	#undef X
 
 	stream_append_s8(&err, s8("Reloaded Main Executable\n"));
-	os_write_file(os->error_handle, stream_to_s8(&err));
+	os_write_file(os_error_handle(), stream_to_s8(&err));
 
-	input->executable_reloaded = 1;
+	ctx->input->executable_reloaded = 1;
 
 	return 1;
 }
 
 function void
-debug_init(OS *os, iptr input, Arena *arena)
+debug_init(BeamformerCtx *ctx, BeamformerInput *input, Arena *arena)
 {
-	os_add_file_watch(os, arena, s8(OS_DEBUG_LIB_NAME), debug_reload, input);
-	debug_reload(os, s8(""), input, *arena);
+	struct debug_context *dctx = push_struct(arena, struct debug_context);
+	dctx->input = input;
+	dctx->compute_worker_asleep = &ctx->compute_worker.asleep;
+	dctx->upload_worker_asleep  = &ctx->upload_worker.asleep;
+	os_add_file_watch(&ctx->file_watch_list, arena, s8(OS_DEBUG_LIB_NAME), debug_reload, (iptr)dctx);
+	debug_reload(s8(""), (iptr)dctx, *arena);
 
 	Stream err = arena_stream(*arena);
 	void *rdoc = os_get_module(OS_RENDERDOC_SONAME, 0);
@@ -62,30 +72,24 @@ debug_init(OS *os, iptr input, Arena *arena)
 		if (get_api) {
 			RenderDocAPI *api = 0;
 			if (get_api(10600, (void **)&api)) {
-				os->start_frame_capture = RENDERDOC_START_FRAME_CAPTURE(api);
-				os->end_frame_capture   = RENDERDOC_END_FRAME_CAPTURE(api);
+				ctx->start_frame_capture = RENDERDOC_START_FRAME_CAPTURE(api);
+				ctx->end_frame_capture   = RENDERDOC_END_FRAME_CAPTURE(api);
 				stream_append_s8(&err, s8("loaded: " OS_RENDERDOC_SONAME "\n"));
 			}
 		}
 	}
 
-	os_write_file(os->error_handle, stream_to_s8(&err));
+	os_write_file(os_error_handle(), stream_to_s8(&err));
 }
 
 #endif /* _DEBUG */
 
-struct gl_debug_ctx {
-	Stream stream;
-	iptr   os_error_handle;
-};
-
 function void
 gl_debug_logger(u32 src, u32 type, u32 id, u32 lvl, i32 len, const char *msg, const void *userctx)
 {
-	struct gl_debug_ctx *ctx = (struct gl_debug_ctx *)userctx;
-	Stream *e = &ctx->stream;
+	Stream *e = (Stream *)userctx;
 	stream_append_s8s(e, s8("[OpenGL] "), (s8){.len = len, .data = (u8 *)msg}, s8("\n"));
-	os_write_file(ctx->os_error_handle, stream_to_s8(e));
+	os_write_file(os_error_handle(), stream_to_s8(e));
 	stream_reset(e, 0);
 }
 
@@ -135,7 +139,7 @@ validate_gl_requirements(GLParams *gl, Arena a)
 }
 
 function void
-dump_gl_params(GLParams *gl, Arena a, OS *os)
+dump_gl_params(GLParams *gl, Arena a)
 {
 #ifdef _DEBUG
 	s8 vendor = s8("vendor:");
@@ -164,7 +168,7 @@ dump_gl_params(GLParams *gl, Arena a, OS *os)
 	GL_PARAMETERS
 	#undef X
 	stream_append_s8(&s, s8("-----------------------\n"));
-	os_write_file(os->error_handle, stream_to_s8(&s));
+	os_write_file(os_error_handle(), stream_to_s8(&s));
 #endif
 }
 
@@ -172,7 +176,7 @@ function FILE_WATCH_CALLBACK_FN(reload_shader)
 {
 	ShaderReloadContext  *ctx  = (typeof(ctx))user_data;
 	BeamformerShaderKind  kind = beamformer_reloadable_shader_kinds[ctx->reloadable_info_index];
-	return beamformer_reload_shader(os, path, ctx, arena, beamformer_shader_names[kind]);
+	return beamformer_reload_shader(path, ctx, arena, beamformer_shader_names[kind]);
 }
 
 typedef struct {
@@ -189,7 +193,7 @@ function FILE_WATCH_CALLBACK_FN(reload_shader_indirect)
 		work->kind = BeamformerWorkKind_ReloadShader,
 		work->reload_shader = rsi->shader;
 		beamform_work_queue_push_commit(ctx->beamform_work_queue);
-		os_wake_waiters(&os->compute_worker.sync_variable);
+		os_wake_waiters(&ctx->compute_worker.sync_variable);
 	}
 	return 1;
 }
@@ -213,7 +217,7 @@ function FILE_WATCH_CALLBACK_FN(load_cuda_library)
 		CUDALibraryProcedureList
 		#undef X
 
-		os_write_file(os->error_handle, stream_to_s8(&err));
+		os_write_file(os_error_handle(), stream_to_s8(&err));
 	}
 
 	#define X(name, symname) if (!cuda_## name) cuda_## name = cuda_ ## name ## _stub;
@@ -343,14 +347,12 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	ctx->ui_backing_store = ui_arena;
 	input->executable_reloaded = 1;
 
-	os_init(&ctx->os, memory);
-	ctx->os.path_separator        = s8(OS_PATH_SEPARATOR);
-	ctx->os.compute_worker.arena  = compute_arena;
-	ctx->os.compute_worker.asleep = 1;
-	ctx->os.upload_worker.arena   = upload_arena;
-	ctx->os.upload_worker.asleep  = 1;
+	ctx->compute_worker.arena  = compute_arena;
+	ctx->compute_worker.asleep = 1;
+	ctx->upload_worker.arena   = upload_arena;
+	ctx->upload_worker.asleep  = 1;
 
-	debug_init(&ctx->os, (iptr)input, memory);
+	debug_init(ctx, input, memory);
 
 	SetConfigFlags(FLAG_VSYNC_HINT|FLAG_WINDOW_ALWAYS_RUN);
 	InitWindow(ctx->window_size.w, ctx->window_size.h, "OGL Beamformer");
@@ -366,7 +368,7 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	#undef X
 	/* NOTE: Gather information about the GPU */
 	get_gl_params(&ctx->gl, &ctx->error_stream);
-	dump_gl_params(&ctx->gl, *memory, &ctx->os);
+	dump_gl_params(&ctx->gl, *memory);
 	validate_gl_requirements(&ctx->gl, *memory);
 
 	ctx->beamform_work_queue  = push_struct(memory, BeamformWorkQueue);
@@ -387,34 +389,34 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 
 	BeamformerComputeContext *cs = &ctx->compute_context;
 
-	GLWorkerThreadContext *worker = &ctx->os.compute_worker;
+	GLWorkerThreadContext *worker = &ctx->compute_worker;
 	/* TODO(rnp): we should lock this down after we have something working */
 	worker->user_context  = (iptr)ctx;
 	worker->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
 	worker->handle        = os_create_thread(*memory, (iptr)worker, s8("[compute]"),
 	                                         compute_worker_thread_entry_point);
 
-	GLWorkerThreadContext         *upload = &ctx->os.upload_worker;
+	GLWorkerThreadContext         *upload = &ctx->upload_worker;
 	BeamformerUploadThreadContext *upctx  = push_struct(memory, typeof(*upctx));
 	upload->user_context = (iptr)upctx;
 	upctx->rf_buffer     = &cs->rf_buffer;
 	upctx->shared_memory = &ctx->shared_memory;
 	upctx->compute_timing_table = ctx->compute_timing_table;
-	upctx->compute_worker_sync  = &ctx->os.compute_worker.sync_variable;
+	upctx->compute_worker_sync  = &ctx->compute_worker.sync_variable;
 	upload->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
 	upload->handle        = os_create_thread(*memory, (iptr)upload, s8("[upload]"),
 	                                         upload_worker_thread_entry_point);
 
 	glfwMakeContextCurrent(raylib_window_handle);
 
-	if (load_cuda_library(&ctx->os, s8(OS_CUDA_LIB_NAME), (iptr)&ctx->gl, *memory))
-		os_add_file_watch(&ctx->os, memory, s8(OS_CUDA_LIB_NAME), load_cuda_library, (iptr)&ctx->gl);
+	if (load_cuda_library(s8(OS_CUDA_LIB_NAME), (iptr)&ctx->gl, *memory))
+		os_add_file_watch(&ctx->file_watch_list, memory, s8(OS_CUDA_LIB_NAME),
+		                  load_cuda_library, (iptr)&ctx->gl);
 
 	/* NOTE: set up OpenGL debug logging */
-	struct gl_debug_ctx *gl_debug_ctx = push_struct(memory, typeof(*gl_debug_ctx));
-	gl_debug_ctx->stream          = stream_alloc(memory, 1024);
-	gl_debug_ctx->os_error_handle = ctx->os.error_handle;
-	glDebugMessageCallback(gl_debug_logger, gl_debug_ctx);
+	Stream *gl_error_stream = push_struct(memory, Stream);
+	*gl_error_stream        = stream_alloc(memory, 1024);
+	glDebugMessageCallback(gl_debug_logger, gl_error_stream);
 #ifdef _DEBUG
 	glEnable(GL_DEBUG_OUTPUT);
 #endif
@@ -430,8 +432,8 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 			BeamformerShaderReloadIndirectContext *rsi = push_struct(memory, typeof(*rsi));
 			rsi->beamformer = ctx;
 			rsi->shader     = beamformer_reloadable_shader_kinds[index];
-			os_add_file_watch(&ctx->os, memory, file, reload_shader_indirect, (iptr)rsi);
-			reload_shader_indirect(&ctx->os, file, (iptr)rsi, *memory);
+			os_add_file_watch(&ctx->file_watch_list, memory, file, reload_shader_indirect, (iptr)rsi);
+			reload_shader_indirect(file, (iptr)rsi, *memory);
 		}
 		os_wake_waiters(&worker->sync_variable);
 	}
@@ -506,9 +508,9 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	if (!BakeShaders) {
 		render_file = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), s8("shaders"),
 		                                 beamformer_reloadable_shader_files[render_rsi_index]);
-		os_add_file_watch(&ctx->os, memory, render_file, reload_shader, (iptr)render_3d);
+		os_add_file_watch(&ctx->file_watch_list, memory, render_file, reload_shader, (iptr)render_3d);
 	}
-	reload_shader(&ctx->os, render_file, (iptr)render_3d, *memory);
+	reload_shader(render_file, (iptr)render_3d, *memory);
 
 	f32 unit_cube_vertices[] = {
 		 0.5f,  0.5f, -0.5f,

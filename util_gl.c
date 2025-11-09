@@ -1,6 +1,6 @@
 /* See LICENSE for license details. */
 function u32
-compile_shader(OS *os, Arena a, u32 type, s8 shader, s8 name)
+compile_shader(Arena a, u32 type, s8 shader, s8 name)
 {
 	u32 sid = glCreateShader(type);
 	glShaderSource(sid, 1, (const char **)&shader.data, (int *)&shader.len);
@@ -18,7 +18,7 @@ compile_shader(OS *os, Arena a, u32 type, s8 shader, s8 name)
 		glGetShaderInfoLog(sid, len, &out_len, (char *)(buf.data + buf.widx));
 		stream_commit(&buf, out_len);
 		glDeleteShader(sid);
-		os_write_file(os->error_handle, stream_to_s8(&buf));
+		os_write_file(os_error_handle(), stream_to_s8(&buf));
 
 		sid = 0;
 	}
@@ -27,7 +27,7 @@ compile_shader(OS *os, Arena a, u32 type, s8 shader, s8 name)
 }
 
 function u32
-link_program(OS *os, Arena a, u32 *shader_ids, i32 shader_id_count)
+link_program(Arena a, u32 *shader_ids, i32 shader_id_count)
 {
 	i32 success = 0;
 	u32 result  = glCreateProgram();
@@ -42,7 +42,7 @@ link_program(OS *os, Arena a, u32 *shader_ids, i32 shader_id_count)
 		glGetProgramInfoLog(result, buf.cap - buf.widx, &len, (c8 *)(buf.data + buf.widx));
 		stream_reset(&buf, len);
 		stream_append_byte(&buf, '\n');
-		os_write_file(os->error_handle, stream_to_s8(&buf));
+		os_write_file(os_error_handle(), stream_to_s8(&buf));
 		glDeleteProgram(result);
 		result = 0;
 	}
@@ -50,17 +50,17 @@ link_program(OS *os, Arena a, u32 *shader_ids, i32 shader_id_count)
 }
 
 function u32
-load_shader(OS *os, Arena arena, s8 *shader_texts, u32 *shader_types, i32 count, s8 name)
+load_shader(Arena arena, s8 *shader_texts, u32 *shader_types, i32 count, s8 name)
 {
 	u32 result = 0;
 	u32 *ids   = push_array(&arena, u32, count);
 	b32 valid  = 1;
 	for (i32 i = 0; i < count; i++) {
-		ids[i]  = compile_shader(os, arena, shader_types[i], shader_texts[i], name);
+		ids[i]  = compile_shader(arena, shader_types[i], shader_texts[i], name);
 		valid  &= ids[i] != 0;
 	}
 
-	if (valid) result = link_program(os, arena, ids, count);
+	if (valid) result = link_program(arena, ids, count);
 	for (i32 i = 0; i < count; i++) glDeleteShader(ids[i]);
 
 	if (result) glObjectLabel(GL_PROGRAM, result, (i32)name.len, (c8 *)name.data);

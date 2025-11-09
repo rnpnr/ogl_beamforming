@@ -4017,7 +4017,7 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 					if (fill_frame_compute_work(ctx, work, tag, selected_block, 0))
 						beamform_work_queue_push_commit(ctx->beamform_work_queue);
 				}
-				os_wake_waiters(&ctx->os.compute_worker.sync_variable);
+				os_wake_waiters(&ctx->compute_worker.sync_variable);
 			}
 		}
 	}

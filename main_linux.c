@@ -35,15 +35,14 @@ os_gl_proc_address(char *name)
 #include "static.c"
 
 function void
-dispatch_file_watch_events(OS *os, Arena arena)
+dispatch_file_watch_events(FileWatchDirectoryList *fwctx, Arena arena)
 {
-	FileWatchContext *fwctx = &os->file_watch_context;
 	u8 *mem     = arena_alloc(&arena, 4096, 16, 1);
 	Stream path = stream_alloc(&arena, 256);
 	struct inotify_event *event;
 
 	iz rlen;
-	while ((rlen = read((i32)fwctx->handle, mem, 4096)) > 0) {
+	while ((rlen = read(os_linux_context.inotify_handle, mem, 4096)) > 0) {
 		for (u8 *data = mem; data < mem + rlen; data += sizeof(*event) + event->len) {
 			event = (struct inotify_event *)data;
 			for (u32 i = 0; i < fwctx->count; i++) {
@@ -59,8 +58,7 @@ dispatch_file_watch_events(OS *os, Arena arena)
 						stream_append_s8s(&path, dir->name, s8("/"), file);
 						stream_append_byte(&path, 0);
 						stream_commit(&path, -1);
-						fw->callback(os, stream_to_s8(&path),
-						             fw->user_data, arena);
+						fw->callback(stream_to_s8(&path), fw->user_data, arena);
 						stream_reset(&path, 0);
 						break;
 					}
@@ -78,18 +76,19 @@ main(void)
 	BeamformerCtx   *ctx   = 0;
 	BeamformerInput *input = 0;
 
+	os_linux_context.inotify_handle = inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
+
 	setup_beamformer(&program_memory, &ctx, &input);
-	os_wake_waiters(&ctx->os.compute_worker.sync_variable);
 
 	struct pollfd fds[1] = {{0}};
-	fds[0].fd     = (i32)ctx->os.file_watch_context.handle;
+	fds[0].fd     = os_linux_context.inotify_handle;
 	fds[0].events = POLLIN;
 
 	u64 last_time = os_get_timer_counter();
 	while (!ctx->should_exit) {
 		poll(fds, countof(fds), 0);
 		if (fds[0].revents & POLLIN)
-			dispatch_file_watch_events(&ctx->os, program_memory);
+			dispatch_file_watch_events(&ctx->file_watch_list, program_memory);
 
 		u64 now = os_get_timer_counter();
 		input->last_mouse = input->mouse;
