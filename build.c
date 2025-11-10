@@ -1467,7 +1467,7 @@ typedef struct {
 
 typedef struct {
 	MetaIDList                global_flag_ids;
-	MetaIDList                global_enumeration_ids;
+	MetaIDList                shader_enumeration_ids;
 	MetaShaderBakeParameters *bake_parameters;
 	u32                       name_id;
 	u32                       flag_list_id;
@@ -1552,6 +1552,7 @@ typedef struct {
 	MetaEmitOperationListSet     emit_sets;
 
 	MetaShaderBakeParametersList shader_bake_parameters;
+	MetaIDList                   shader_enumerations;
 	MetaShaderGroupList          shader_groups;
 	MetaShaderList               shaders;
 	MetaBaseShaderList           base_shaders;
@@ -1766,7 +1767,8 @@ meta_pack_shader(MetaContext *ctx, MetaShaderGroup *sg, Arena scratch, MetaEntry
 			meta_entry_argument_expected(e, s8("kind"));
 			s8 kind = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
 			iz kid  = meta_enumeration_id(ctx, kind);
-			meta_intern_id(ctx, &s->global_enumeration_ids, (u32)kid);
+			meta_intern_id(ctx, &s->shader_enumeration_ids,
+			               (u32)meta_intern_id(ctx, &ctx->shader_enumerations, (u32)kid));
 		}break;
 		case MetaEntryKind_Flags:{
 			meta_entry_argument_expected(e, s8("[flag ...]"));
@@ -2232,7 +2234,8 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 	////////////////////////////////////
 	// NOTE(rnp): shader header strings
 	meta_begin_scope(m, s8("read_only global s8 beamformer_shader_global_header_strings[] = {"));
-	for (iz kind = 0; kind < ctx->enumeration_kinds.count; kind++) {
+	for (iz ref = 0; ref < ctx->shader_enumerations.count; ref++) {
+		u32 kind = ctx->shader_enumerations.data[ref];
 		s8_list *sub_list  = ctx->enumeration_members.data + kind;
 		s8 kind_name = push_s8_from_parts(&m->scratch, s8(""), ctx->enumeration_kinds.data[kind], s8("_"));
 		meta_push_line(m, s8("s8_comp(\"\""));
@@ -2465,15 +2468,15 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	meta_begin_scope(m, s8("read_only global i32 *beamformer_shader_header_vectors[] = {"));
 	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
 		MetaShader *s = ctx->base_shaders.data[shader].shader;
-		if (s->global_flag_ids.count || s->global_enumeration_ids.count) {
+		if (s->global_flag_ids.count || s->shader_enumeration_ids.count) {
 			meta_begin_line(m, s8("(i32 []){"));
 			for (iz id = 0; id < s->global_flag_ids.count; id++) {
 				if (id != 0) meta_push(m, s8(", "));
 				meta_push_u64(m, s->global_flag_ids.data[id]);
 			}
-			for (iz id = 0; id < s->global_enumeration_ids.count; id++) {
+			for (iz id = 0; id < s->shader_enumeration_ids.count; id++) {
 				if (id != 0 || s->global_flag_ids.count) meta_push(m, s8(", "));
-				meta_push_u64(m, s->global_enumeration_ids.data[id]);
+				meta_push_u64(m, s->shader_enumeration_ids.data[id]);
 			}
 			meta_end_line(m, s8("},"));
 		} else {
@@ -2486,7 +2489,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
 		MetaShader *s = ctx->base_shaders.data[shader].shader;
 		meta_indent(m);
-		meta_push_u64(m, (u64)s->global_enumeration_ids.count);
+		meta_push_u64(m, (u64)(s->global_flag_ids.count + s->shader_enumeration_ids.count));
 		meta_end_line(m, s8(","));
 	}
 	meta_end_scope(m, s8("};\n"));

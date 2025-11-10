@@ -199,17 +199,14 @@ read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
 
 read_only global s8 beamformer_shader_global_header_strings[] = {
 	s8_comp(""
+	"#define DataKind_Int16          0\n"
+	"#define DataKind_Int16Complex   1\n"
+	"#define DataKind_Float32        2\n"
+	"#define DataKind_Float32Complex 3\n"
+	"\n"),
+	s8_comp(""
 	"#define DecodeMode_None     0\n"
 	"#define DecodeMode_Hadamard 1\n"
-	"\n"),
-	s8_comp(""
-	"#define RCAOrientation_None    0\n"
-	"#define RCAOrientation_Rows    1\n"
-	"#define RCAOrientation_Columns 2\n"
-	"\n"),
-	s8_comp(""
-	"#define SamplingMode_2X 0\n"
-	"#define SamplingMode_4X 1\n"
 	"\n"),
 	s8_comp(""
 	"#define AcquisitionKind_FORCES         0\n"
@@ -226,15 +223,14 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"#define AcquisitionKind_HERO_PA        11\n"
 	"\n"),
 	s8_comp(""
-	"#define DataKind_Int16          0\n"
-	"#define DataKind_Int16Complex   1\n"
-	"#define DataKind_Float32        2\n"
-	"#define DataKind_Float32Complex 3\n"
-	"\n"),
-	s8_comp(""
 	"#define InterpolationMode_Nearest 0\n"
 	"#define InterpolationMode_Linear  1\n"
 	"#define InterpolationMode_Cubic   2\n"
+	"\n"),
+	s8_comp(""
+	"#define RCAOrientation_None    0\n"
+	"#define RCAOrientation_Rows    1\n"
+	"#define RCAOrientation_Columns 2\n"
 	"\n"),
 };
 
@@ -270,9 +266,9 @@ read_only global u8 beamformer_shader_flag_strings_count[] = {
 };
 
 read_only global i32 *beamformer_shader_header_vectors[] = {
-	(i32 []){4, 0},
-	(i32 []){4},
-	(i32 []){3, 4, 5, 1},
+	(i32 []){0, 1},
+	(i32 []){0},
+	(i32 []){2, 0, 3, 4},
 	0,
 	0,
 	0,
