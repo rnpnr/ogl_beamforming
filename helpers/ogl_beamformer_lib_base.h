@@ -26,8 +26,7 @@
 	X(SYNC_VARIABLE,               15, "failed to acquire lock within timeout period")      \
 	X(INVALID_TIMEOUT,             16, "invalid timeout value")                             \
 	X(INVALID_FILTER_KIND,         17, "invalid filter kind")                               \
-	X(INVALID_FILTER_PARAM_COUNT,  18, "invalid parameters count passed for filter")        \
-	X(INVALID_SIMPLE_PARAMETERS,   19, "invalid simple parameters struct")
+	X(INVALID_SIMPLE_PARAMETERS,   18, "invalid simple parameters struct")
 
 #define X(type, num, string) BF_LIB_ERR_KIND_ ##type = num,
 typedef enum {BEAMFORMER_LIB_ERRORS} BeamformerLibErrorKind;
@@ -127,8 +126,8 @@ LIB_FN uint32_t beamformer_push_transmit_receive_orientations_at(uint8_t *values
  *   M = (A - 8) / (2.285 (ω_s - ω_p))
  */
 
-LIB_FN uint32_t beamformer_create_filter(BeamformerFilterKind kind, float *filter_parameters,
-                                         uint32_t filter_parameter_count, float sampling_frequency,
+LIB_FN uint32_t beamformer_create_filter(BeamformerFilterKind kind, void *filter_parameters,
+                                         uint32_t filter_size, float sampling_frequency,
                                          uint32_t complex, uint8_t filter_slot, uint8_t parameter_block);
 
 //////////////////////////

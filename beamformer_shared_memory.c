@@ -1,5 +1,5 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (20UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (21UL)
 
 typedef struct BeamformerFrame BeamformerFrame;
 
@@ -12,20 +12,7 @@ typedef enum {
 	BeamformerWorkKind_UploadBuffer,
 } BeamformerWorkKind;
 
-/* TODO(rnp): this is massively bloating the queue; think of some other
- * way to communicate these to the beamformer */
 typedef struct {
-	union {
-		#define X(kind, ...) struct {__VA_ARGS__ ;} kind;
-		BEAMFORMER_FILTER_KIND_LIST(f32, ;)
-		#undef X
-	};
-	f32 sampling_frequency;
-	b16 complex;
-} BeamformerFilterParameters;
-
-typedef struct {
-	BeamformerFilterKind       kind;
 	BeamformerFilterParameters parameters;
 	u8 filter_slot;
 	u8 parameter_block;

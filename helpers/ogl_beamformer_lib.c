@@ -323,7 +323,7 @@ beamformer_push_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data
 }
 
 function b32
-beamformer_create_filter_base(BeamformerFilterKind kind, BeamformerFilterParameters params, u8 filter_slot, u8 parameter_block)
+beamformer_create_filter_base(BeamformerFilterParameters params, u8 filter_slot, u8 parameter_block)
 {
 	b32 result = 0;
 	if (check_shared_memory()) {
@@ -331,7 +331,6 @@ beamformer_create_filter_base(BeamformerFilterKind kind, BeamformerFilterParamet
 		if (work) {
 			BeamformerCreateFilterContext *ctx = &work->create_filter_context;
 			work->kind = BeamformerWorkKind_CreateFilter;
-			ctx->kind            = kind;
 			ctx->parameters      = params;
 			ctx->filter_slot     = filter_slot     % BeamformerFilterSlots;
 			ctx->parameter_block = parameter_block % BeamformerMaxParameterBlockSlots;
@@ -343,22 +342,19 @@ beamformer_create_filter_base(BeamformerFilterKind kind, BeamformerFilterParamet
 }
 
 b32
-beamformer_create_filter(BeamformerFilterKind kind, f32 *filter_parameters, u32 filter_parameter_count,
+beamformer_create_filter(BeamformerFilterKind kind, void *filter_parameters, u32 filter_size,
                          f32 sampling_frequency, b32 complex, u8 filter_slot, u8 parameter_block)
 {
 	b32 result = 0;
 	if (lib_error_check(kind >= 0 && kind < BeamformerFilterKind_Count, BF_LIB_ERR_KIND_INVALID_FILTER_KIND)) {
-		BeamformerFilterParameters fp = {.sampling_frequency = sampling_frequency, .complex = complex != 0};
-		#define X(kind, ...) sizeof(fp.kind),
-		read_only local_persist u32 kind_sizes[] = {BEAMFORMER_FILTER_KIND_LIST(,)};
-		#undef X
-		if (lib_error_check(kind_sizes[kind] == sizeof(f32) * filter_parameter_count,
-		                    BF_LIB_ERR_KIND_INVALID_FILTER_PARAM_COUNT))
-		{
-			/* NOTE(rnp): any filter kind struct works as base offset of union */
-			mem_copy(&fp.Kaiser, filter_parameters, kind_sizes[kind]);
-			result = beamformer_create_filter_base(kind, fp, filter_slot, parameter_block);
-		}
+		BeamformerFilterParameters fp = {0};
+		/* NOTE(rnp): any parameter struct works as base offset */
+		filter_size = MIN(filter_size, sizeof(fp) - offsetof(BeamformerFilterParameters, kaiser));
+		mem_copy(&fp.kaiser, filter_parameters, filter_size);
+		fp.kind               = kind;
+		fp.complex            = complex != 0;
+		fp.sampling_frequency = sampling_frequency;
+		result = beamformer_create_filter_base(fp, filter_slot, parameter_block);
 	}
 	return result;
 }

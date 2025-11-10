@@ -121,15 +121,12 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 }
 
 function void
-beamformer_filter_update(BeamformerFilter *f, BeamformerFilterKind kind,
-                         BeamformerFilterParameters fp, u32 block, u32 slot, Arena arena)
+beamformer_filter_update(BeamformerFilter *f, BeamformerFilterParameters fp, u32 block, u32 slot, Arena arena)
 {
-	#define X(k, ...) s8_comp(#k "Filter"),
-	read_only local_persist s8 filter_kinds[] = {BEAMFORMER_FILTER_KIND_LIST(,)};
-	#undef X
-
 	Stream sb = arena_stream(arena);
-	stream_append_s8s(&sb, filter_kinds[kind % countof(filter_kinds)], s8("["));
+	stream_append_s8s(&sb,
+	                  beamformer_filter_kind_strings[fp.kind % countof(beamformer_filter_kind_strings)],
+	                  s8("Filter["));
 	stream_append_u64(&sb, block);
 	stream_append_s8(&sb, s8("]["));
 	stream_append_u64(&sb, slot);
@@ -137,17 +134,17 @@ beamformer_filter_update(BeamformerFilter *f, BeamformerFilterKind kind,
 	s8 label = arena_stream_commit(&arena, &sb);
 
 	void *filter = 0;
-	switch (kind) {
+	switch (fp.kind) {
 	case BeamformerFilterKind_Kaiser:{
 		/* TODO(rnp): this should also support complex */
 		/* TODO(rnp): implement this as an IFIR filter instead to reduce computation */
-		filter = kaiser_low_pass_filter(&arena, fp.Kaiser.cutoff_frequency, fp.sampling_frequency,
-		                                fp.Kaiser.beta, (i32)fp.Kaiser.length);
-		f->length     = (i32)fp.Kaiser.length;
+		filter = kaiser_low_pass_filter(&arena, fp.kaiser.cutoff_frequency, fp.sampling_frequency,
+		                                fp.kaiser.beta, (i32)fp.kaiser.length);
+		f->length     = (i32)fp.kaiser.length;
 		f->time_delay = (f32)f->length / 2.0f / fp.sampling_frequency;
 	}break;
 	case BeamformerFilterKind_MatchedChirp:{
-		typeof(fp.MatchedChirp) *mc = &fp.MatchedChirp;
+		typeof(fp.matched_chirp) *mc = &fp.matched_chirp;
 		f32 fs    = fp.sampling_frequency;
 		f->length = (i32)(mc->duration * fs);
 		if (fp.complex) {
@@ -161,7 +158,6 @@ beamformer_filter_update(BeamformerFilter *f, BeamformerFilterKind kind,
 	InvalidDefaultCase;
 	}
 
-	f->kind       = kind;
 	f->parameters = fp;
 
 	glDeleteBuffers(1, &f->ssbo);
@@ -1205,7 +1201,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			u32 block = fctx->parameter_block;
 			u32 slot  = fctx->filter_slot;
 			BeamformerComputePlan *cp = beamformer_compute_plan_for_block(cs, block, arena);
-			beamformer_filter_update(cp->filters + slot, fctx->kind, fctx->parameters, block, slot, *arena);
+			beamformer_filter_update(cp->filters + slot, fctx->parameters, block, slot, *arena);
 		}break;
 		case BeamformerWorkKind_ComputeIndirect:{
 			fill_frame_compute_work(ctx, work, work->compute_indirect_context.view_plane,

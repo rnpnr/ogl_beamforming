@@ -105,7 +105,6 @@ typedef struct {
 } BeamformerRenderModel;
 
 typedef struct {
-	BeamformerFilterKind       kind;
 	BeamformerFilterParameters parameters;
 	f32 time_delay;
 	i32 length;

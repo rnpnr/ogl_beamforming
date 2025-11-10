@@ -22,6 +22,13 @@ typedef enum {
 } BeamformerSamplingMode;
 
 typedef enum {
+	BeamformerEmissionKind_Sine   = 0,
+	BeamformerEmissionKind_SineAM = 1,
+	BeamformerEmissionKind_Chirp  = 2,
+	BeamformerEmissionKind_Count,
+} BeamformerEmissionKind;
+
+typedef enum {
 	BeamformerAcquisitionKind_FORCES         = 0,
 	BeamformerAcquisitionKind_UFORCES        = 1,
 	BeamformerAcquisitionKind_HERCULES       = 2,
@@ -46,11 +53,10 @@ typedef enum {
 } BeamformerDataKind;
 
 typedef enum {
-	BeamformerEmissionKind_Sine   = 0,
-	BeamformerEmissionKind_SineAM = 1,
-	BeamformerEmissionKind_Chirp  = 2,
-	BeamformerEmissionKind_Count,
-} BeamformerEmissionKind;
+	BeamformerFilterKind_Kaiser       = 0,
+	BeamformerFilterKind_MatchedChirp = 1,
+	BeamformerFilterKind_Count,
+} BeamformerFilterKind;
 
 typedef enum {
 	BeamformerInterpolationMode_Nearest = 0,
@@ -149,6 +155,106 @@ typedef struct {
 	u32 data_kind;
 	u32 flags;
 } BeamformerShaderBakeParameters;
+
+typedef struct {
+	BeamformerEmissionKind kind;
+	union {
+		struct {
+			f32 cycles;
+			f32 frequency;
+		} sine;
+		struct {
+			f32 cycles;
+			f32 frequency;
+			u32 emissions;
+		} sine_am;
+		struct {
+			f32 duration;
+			f32 min_frequency;
+			f32 max_frequency;
+		} chirp;
+	};
+} BeamformerEmission;
+
+typedef struct {
+	BeamformerFilterKind kind;
+	union {
+		struct {
+			f32 cutoff_frequency;
+			f32 beta;
+			u32 length;
+		} kaiser;
+		struct {
+			f32 duration;
+			f32 min_frequency;
+			f32 max_frequency;
+		} matched_chirp;
+	};
+	f32 sampling_frequency;
+	b16 complex;
+} BeamformerFilterParameters;
+
+read_only global u8 beamformer_data_kind_element_size[] = {
+	2,
+	2,
+	4,
+	4,
+};
+
+read_only global u8 beamformer_data_kind_element_count[] = {
+	1,
+	2,
+	1,
+	2,
+};
+
+read_only global u8 beamformer_data_kind_byte_size[] = {
+	2 * 1,
+	2 * 2,
+	4 * 1,
+	4 * 2,
+};
+
+read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
+	1,
+	0,
+	1,
+	0,
+	0,
+	0,
+	1,
+	1,
+	0,
+	0,
+	0,
+	0,
+};
+
+read_only global s8 beamformer_acquisition_kind_strings[] = {
+	s8_comp("FORCES"),
+	s8_comp("UFORCES"),
+	s8_comp("HERCULES"),
+	s8_comp("VLS"),
+	s8_comp("TPW"),
+	s8_comp("UHERCULES"),
+	s8_comp("RACES"),
+	s8_comp("EPIC-FORCES"),
+	s8_comp("EPIC-UFORCES"),
+	s8_comp("EPIC-UHERCULES"),
+	s8_comp("Flash"),
+	s8_comp("HERO-PA"),
+};
+
+read_only global s8 beamformer_filter_kind_strings[] = {
+	s8_comp("Kaiser"),
+	s8_comp("MatchedChirp"),
+};
+
+read_only global s8 beamformer_interpolation_mode_strings[] = {
+	s8_comp("Nearest"),
+	s8_comp("Linear"),
+	s8_comp("Cubic"),
+};
 
 read_only global s8 beamformer_shader_names[] = {
 	s8_comp("CudaDecode"),
@@ -351,88 +457,5 @@ read_only global i32 beamformer_shader_bake_parameter_counts[] = {
 	0,
 	0,
 	0,
-};
-
-typedef struct {
-	f32 cycles;
-	f32 frequency;
-} BeamformerEmissionSineParameters;
-
-typedef struct {
-	f32 cycles;
-	f32 frequency;
-	u32 emissions;
-} BeamformerEmissionSineAMParameters;
-
-typedef struct {
-	f32 duration;
-	f32 min_frequency;
-	f32 max_frequency;
-} BeamformerEmissionChirpParameters;
-
-typedef struct {
-	BeamformerEmissionKind kind;
-	union {
-		BeamformerEmissionSineParameters   sine;
-		BeamformerEmissionSineAMParameters sine_am;
-		BeamformerEmissionChirpParameters  chirp;
-	};
-} BeamformerEmission;
-
-read_only global u8 beamformer_data_kind_element_size[] = {
-	2,
-	2,
-	4,
-	4,
-};
-
-read_only global u8 beamformer_data_kind_element_count[] = {
-	1,
-	2,
-	1,
-	2,
-};
-
-read_only global u8 beamformer_data_kind_byte_size[] = {
-	2 * 1,
-	2 * 2,
-	4 * 1,
-	4 * 2,
-};
-
-read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
-	1,
-	0,
-	1,
-	0,
-	0,
-	0,
-	1,
-	1,
-	0,
-	0,
-	0,
-	0,
-};
-
-read_only global s8 beamformer_acquisition_kind_strings[] = {
-	s8_comp("FORCES"),
-	s8_comp("UFORCES"),
-	s8_comp("HERCULES"),
-	s8_comp("VLS"),
-	s8_comp("TPW"),
-	s8_comp("UHERCULES"),
-	s8_comp("RACES"),
-	s8_comp("EPIC-FORCES"),
-	s8_comp("EPIC-UFORCES"),
-	s8_comp("EPIC-UHERCULES"),
-	s8_comp("Flash"),
-	s8_comp("HERO-PA"),
-};
-
-read_only global s8 beamformer_interpolation_mode_strings[] = {
-	s8_comp("Nearest"),
-	s8_comp("Linear"),
-	s8_comp("Cubic"),
 };
 

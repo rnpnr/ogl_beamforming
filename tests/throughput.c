@@ -334,23 +334,22 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	kaiser.Kaiser.cutoff_frequency = 2.0e6f;
 	kaiser.Kaiser.length           = 36;
 
-	beamformer_create_filter(BeamformerFilterKind_Kaiser, (f32 *)&kaiser.Kaiser,
-	                         sizeof(kaiser.Kaiser) / sizeof(f32), bp.sampling_frequency / 2, 0, 0, 0);
+	beamformer_create_filter(BeamformerFilterKind_Kaiser, (f32 *)&kaiser.kaiser,
+	                         sizeof(kaiser.kaiser), bp.sampling_frequency / 2, 0, 0, 0);
 	beamformer_set_pipeline_stage_parameters(0, 0);
 	#endif
 
 	#if 1
 	BeamformerFilterParameters matched = {0};
-	typeof(matched.MatchedChirp) *mp = &matched.MatchedChirp;
+	typeof(matched.matched_chirp) *mp = &matched.matched_chirp;
 	mp->duration      = 18e-6f;
 	mp->min_frequency = 2.9e6f - bp.demodulation_frequency;
 	mp->max_frequency = 6.0e6f - bp.demodulation_frequency;
 
 	bp.time_offset += mp->duration / 2;
 
-	beamformer_create_filter(BeamformerFilterKind_MatchedChirp, (f32 *)&matched.MatchedChirp,
-	                         sizeof(matched.MatchedChirp) / sizeof(f32), bp.sampling_frequency / 2,
-	                         1, 0, 0);
+	beamformer_create_filter(BeamformerFilterKind_MatchedChirp, (f32 *)mp, sizeof(*mp),
+	                         bp.sampling_frequency / 2, 1, 0, 0);
 	beamformer_set_pipeline_stage_parameters(0, 0);
 	#endif
 

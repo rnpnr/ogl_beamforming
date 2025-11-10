@@ -17,17 +17,6 @@ typedef struct {
 	float rf_time_deltas[32];
 } BeamformerComputeStatsTable;
 
-/* TODO(rnp): this is an absolute abuse of the preprocessor, but now is
- * not a good time to write a full metaprogram */
-#define BEAMFORMER_FILTER_KIND_LIST(type, _) \
-	X(Invalid,      type unused) \
-	X(Kaiser,       type cutoff_frequency _ type beta          _ type length) \
-	X(MatchedChirp, type duration         _ type min_frequency _ type max_frequency)
-
-#define X(kind, ...) BeamformerFilterKind_##kind,
-typedef enum {BEAMFORMER_FILTER_KIND_LIST(,) BeamformerFilterKind_Count} BeamformerFilterKind;
-#undef X
-
 /* X(type, id, pretty name) */
 #define BEAMFORMER_VIEW_PLANE_TAG_LIST \
 	X(XZ,        0, "XZ")        \

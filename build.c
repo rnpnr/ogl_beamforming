@@ -845,17 +845,6 @@ s8_trim(s8 in)
 	return result;
 }
 
-function void
-s8_list_from_s8(s8_list *list, Arena *arena, s8 str)
-{
-	s8 right = str, left;
-	while (right.len > 0) {
-		s8_split(right, &left, &right, ' ');
-		left = s8_trim(left);
-		if (left.len > 0) { *da_push(arena, list) = left; }
-	}
-}
-
 typedef struct {
 	Stream stream;
 	Arena  scratch;
@@ -906,15 +895,6 @@ meta_push_matlab_property(MetaprogramContext *m, s8 name, u64 length, s8 kind)
 	meta_begin_line(m, name, s8("(1,"));
 	meta_push_u64(m, (u64)length);
 	meta_end_line(m, s8(")"), kind.len > 0 ? s8(" ") : s8(""), kind);
-}
-
-function void
-meta_push_matlab_enum_with_value(MetaprogramContext *m, s8 name, i32 value)
-{
-	meta_indent(m);
-	stream_append_s8s(&m->stream, name, s8(" ("));
-	stream_append_i64(&m->stream, value);
-	stream_append_s8(&m->stream, s8(")\n"));
 }
 
 function b32
@@ -2526,6 +2506,8 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		metagen_push_table(m, m->scratch, s8(""), s8(";"), (s8 *[]){types, names}, countof(names), 2);
 	} meta_end_scope(m, s8("} BeamformerShaderBakeParameters;\n"));
 
+	metagen_run_emit(m, ctx);
+
 	/////////////////////////////////
 	// NOTE(rnp): shader info tables
 	meta_begin_scope(m, s8("read_only global s8 beamformer_shader_names[] = {"));
@@ -2606,8 +2588,6 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		}
 	}
 	meta_end_scope(m, s8("};\n"));
-
-	metagen_run_emit(m, ctx);
 
 	//fprintf(stderr, "%.*s\n", (i32)m.stream.widx, m.stream.data);
 
@@ -2717,7 +2697,7 @@ function b32
 metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 {
 	b32 result = 1;
-	if (!needs_rebuild(OUTPUT("matlab/OGLBeamformerFilterKind.m"), "beamformer_parameters.h", "beamformer.meta"))
+	if (!needs_rebuild(OUTPUT("matlab/OGLBeamformerLiveImagingParameters.m"), "beamformer_parameters.h", "beamformer.meta"))
 		return result;
 
 	build_log_generate("MATLAB Bindings");
@@ -2741,54 +2721,6 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 	BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST
 	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerLiveFeedbackFlags.m"));
 	#undef X
-
-	#define X(kind, ...) meta_push_matlab_enum_with_value(m, s8(#kind), BeamformerFilterKind_## kind);
-	meta_begin_matlab_class(m, "OGLBeamformerFilterKind", "int32");
-	meta_begin_scope(m, s8("enumeration"));
-	BEAMFORMER_FILTER_KIND_LIST(,)
-	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerFilterKind.m"));
-	#undef X
-
-	os_make_directory(OUTPUT("matlab/+OGLBeamformerFilter"));
-	#define X(kind, ...) {OUTPUT("matlab/+OGLBeamformerFilter/" #kind ".m"), s8_comp(#kind),  s8_comp(#__VA_ARGS__)},
-	read_only local_persist struct {char *out; s8 class, args;} filter_table[] = {
-		BEAMFORMER_FILTER_KIND_LIST(,)
-	};
-	#undef X
-
-	s8_list members = {0};
-	for EachNonZeroEnumValue(BeamformerFilterKind, filter) {
-		typeof(*filter_table) *f = filter_table + filter;
-		members.count = 0;
-		s8_list_from_s8(&members, &m->scratch, f->args);
-		meta_begin_scope(m, s8("classdef "), f->class, s8(" < OGLBeamformerFilter.BaseFilter"));
-
-		meta_begin_scope(m, s8("properties"));
-		for (iz it = 0; it < members.count; it++)
-			meta_push_matlab_property(m, members.data[it], 1, s8("single"));
-		meta_end_scope(m, s8("end"));
-
-		meta_begin_scope(m, s8("methods"));
-		meta_begin_line(m, s8("function obj = "), f->class, s8("("));
-		for (iz it = 0; it < members.count; it++)
-			meta_push(m, it > 0 ? s8(", ") : s8(""), members.data[it]);
-		meta_end_line(m, s8(")"));
-
-		m->indentation_level++;
-		for (iz it = 0; it < members.count; it++)
-			meta_push_line(m, s8("obj."), members.data[it], s8(" = "), members.data[it], s8(";"));
-		result &= meta_end_and_write_matlab(m, f->out);
-	}
-	m->scratch = ctx->scratch;
-
-	meta_begin_matlab_class(m, "BaseFilter");
-	meta_begin_scope(m, s8("methods"));
-	meta_begin_scope(m, s8("function out = Flatten(obj)"));
-	meta_push_line(m, s8("fields = struct2cell(struct(obj));"));
-	meta_push_line(m, s8("out    = zeros(1, numel(fields));"));
-	meta_begin_scope(m, s8("for i = 1:numel(fields)"));
-	meta_push_line(m, s8("out(i) = fields{i};"));
-	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/+OGLBeamformerFilter/BaseFilter.m"));
 
 	#define X(name, __t, __s, kind, elements, ...) meta_push_matlab_property(m, s8(#name), (u64)elements, s8(#kind));
 	meta_begin_matlab_class(m, "OGLBeamformerParameters");
