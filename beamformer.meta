@@ -12,24 +12,24 @@
 
 @Enumeration(EmissionKind [Sine SineAM Chirp])
 
-@Table([c_type m_type name]) SineParameters
+@Table([type name]) SineParameters
 {
-	[f32 single cycles   ]
-	[f32 single frequency]
+	[F32 cycles   ]
+	[F32 frequency]
 }
 
-@Table([c_type m_type name]) SineAMParameters
+@Table([type name]) SineAMParameters
 {
-	[f32 single cycles   ]
-	[f32 single frequency]
-	[u32 uint32 emissions]
+	[F32 cycles   ]
+	[F32 frequency]
+	[U32 emissions]
 }
 
-@Table([c_type m_type name]) ChirpParameters
+@Table([type name]) ChirpParameters
 {
-	[f32 single duration     ]
-	[f32 single min_frequency]
-	[f32 single max_frequency]
+	[F32 duration     ]
+	[F32 min_frequency]
+	[F32 max_frequency]
 }
 
 @MUnion(EmissionKind [
@@ -44,18 +44,18 @@
 	[MatchedChirp matched_chirp]
 }
 
-@Table([c_type m_type name]) KaiserFilterParameters
+@Table([type name]) KaiserFilterParameters
 {
-	[f32 single cutoff_frequency]
-	[f32 single beta]
-	[u32 uint32 length]
+	[F32 cutoff_frequency]
+	[F32 beta]
+	[U32 length]
 }
 
-@Table([c_type m_type name]) ChirpFilterParameters
+@Table([type name]) ChirpFilterParameters
 {
-	[f32 single duration]
-	[f32 single min_frequency]
-	[f32 single max_frequency]
+	[F32 duration]
+	[F32 min_frequency]
+	[F32 max_frequency]
 }
 
 @MUnion(FilterKind [
@@ -97,13 +97,13 @@
 	`	BeamformerEmissionKind kind;`
 	`	union {`
 	`		struct {`
-			@Expand(SineParameters)   `			$(c_type)$(|)$(name);`
+			@Expand(SineParameters)   `			$(%type)$(|)$(name);`
 	`		} sine;`
 	`		struct {`
-			@Expand(SineAMParameters) `			$(c_type)$(|)$(name);`
+			@Expand(SineAMParameters) `			$(%type)$(|)$(name);`
 	`		} sine_am;`
 	`		struct {`
-			@Expand(ChirpParameters)  `			$(c_type)$(|)$(name);`
+			@Expand(ChirpParameters)  `			$(%type)$(|)$(name);`
 	`		} chirp;`
 	`	};`
 	`} BeamformerEmission;`
@@ -112,10 +112,10 @@
 	`	BeamformerFilterKind kind;`
 	`	union {`
 	`		struct {`
-			@Expand(KaiserFilterParameters) `			$(c_type)$(|)$(name);`
+			@Expand(KaiserFilterParameters) `			$(%type)$(|)$(name);`
 	`		} kaiser;`
 	`		struct {`
-			@Expand(ChirpFilterParameters)  `			$(c_type)$(|)$(name);`
+			@Expand(ChirpFilterParameters)  `			$(%type)$(|)$(name);`
 	`		} matched_chirp;`
 	`	};`
 	`	f32 sampling_frequency;`

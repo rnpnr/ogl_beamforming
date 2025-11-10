@@ -925,6 +925,52 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 	X(SubShader)    \
 	X(Table)
 
+#define META_KIND_LIST \
+	X(F32, f32, float,    single, 4) \
+	X(S32, i32, int32_t,  int32,  4) \
+	X(S16, i16, int16_t,  int16,  2) \
+	X(S8,  i8,  int8_t,   int8,   1) \
+	X(U32, u32, uint32_t, uint32, 4) \
+	X(U16, u16, uint16_t, uint16, 2) \
+	X(U8,  u8,  uint8_t,  uint8,  1)
+
+typedef enum {
+	#define X(k, ...) MetaKind_## k,
+	META_KIND_LIST
+	#undef X
+	MetaKind_Count,
+} MetaKind;
+
+read_only global u8 meta_kind_byte_sizes[] = {
+	#define X(_k, _c, _b, _m, bytes, ...) bytes,
+	META_KIND_LIST
+	#undef X
+};
+
+read_only global s8 meta_kind_meta_types[] = {
+	#define X(k, ...) s8_comp(#k),
+	META_KIND_LIST
+	#undef X
+};
+
+read_only global s8 meta_kind_matlab_types[] = {
+	#define X(_k, _c, _b, m, ...) s8_comp(#m),
+	META_KIND_LIST
+	#undef X
+};
+
+read_only global s8 meta_kind_base_c_types[] = {
+	#define X(_k, _c, base, ...) s8_comp(#base),
+	META_KIND_LIST
+	#undef X
+};
+
+read_only global s8 meta_kind_c_types[] = {
+	#define X(_k, c, ...) s8_comp(#c),
+	META_KIND_LIST
+	#undef X
+};
+
 typedef enum {
 	#define X(k, ...) MetaEntryKind_## k,
 	META_ENTRY_KIND_LIST
@@ -1490,6 +1536,7 @@ DA_STRUCT(MetaMUnion, MetaMUnion);
 
 typedef enum {
 	MetaExpansionPartKind_Alignment,
+	MetaExpansionPartKind_EvalKind,
 	MetaExpansionPartKind_Reference,
 	MetaExpansionPartKind_String,
 } MetaExpansionPartKind;
@@ -1518,6 +1565,7 @@ typedef struct {
 		MetaEmitOperationExpansion expansion_operation;
 	};
 	MetaEmitOperationKind kind;
+	MetaLocation          location;
 } MetaEmitOperation;
 DA_STRUCT(MetaEmitOperation, MetaEmitOperation);
 
@@ -1846,11 +1894,9 @@ meta_push_expansion_part(MetaContext *ctx, Arena *arena, MetaExpansionPartList *
 	result->kind = kind;
 	switch (kind) {
 	case MetaExpansionPartKind_Alignment:{}break;
-	case MetaExpansionPartKind_String:{
-		result->strings    = push_struct(arena, s8);
-		result->strings[0] = string;
-	}break;
-	case MetaExpansionPartKind_Reference:{
+	case MetaExpansionPartKind_EvalKind:
+	case MetaExpansionPartKind_Reference:
+	{
 		iz index = meta_lookup_string_slow(t->fields, t->field_count, string);
 		result->strings = t->entries[index];
 		if (index < 0) {
@@ -1859,6 +1905,10 @@ meta_push_expansion_part(MetaContext *ctx, Arena *arena, MetaExpansionPartList *
 			meta_compiler_error(loc, "table \"%.*s\" does not contain member: %.*s\n",
 			                    (i32)table_name.len, table_name.data, (i32)string.len, string.data);
 		}
+	}break;
+	case MetaExpansionPartKind_String:{
+		result->strings    = push_struct(arena, s8);
+		result->strings[0] = string;
 	}break;
 	}
 	return result;
@@ -1873,8 +1923,12 @@ meta_generate_expansion_set(MetaContext *ctx, Arena *arena, s8 expansion_string,
 		meta_expansion_string_split(remainder, &left, &inner, &remainder, loc);
 		if (left.len)  meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_String, left, t, loc);
 		if (inner.len) {
-			if (inner.len == 1 && inner.data[0] == '|') {
+			s8 test   = inner;
+			s8 opcode = s8_chop(&test, 1);
+			if (test.len == 0 && opcode.data[0] == '|') {
 				meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_Alignment, inner, t, loc);
+			} else if (test.len && opcode.data[0] == '%') {
+				meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_EvalKind, test, t, loc);
 			} else {
 				meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_Reference, inner, t, loc);
 			}
@@ -1906,7 +1960,8 @@ meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count, MetaE
 			MetaExpansionPartList parts = meta_generate_expansion_set(ctx, ctx->arena, row->name, t, row->location);
 
 			MetaEmitOperation *op = da_push(ctx->arena, ops);
-			op->kind = MetaEmitOperationKind_Expand;
+			op->kind     = MetaEmitOperationKind_Expand;
+			op->location = row->location;
 			op->expansion_operation.parts      = parts.data;
 			op->expansion_operation.part_count = (u32)parts.count;
 			op->expansion_operation.table_id   = (u32)da_index(t,	&ctx->tables);
@@ -1978,8 +2033,9 @@ meta_pack_emit(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count)
 		switch (row->kind) {
 		case MetaEntryKind_String:{
 			MetaEmitOperation *op = da_push(ctx->arena, ops);
-			op->kind   = MetaEmitOperationKind_String;
-			op->string = row->name;
+			op->kind     = MetaEmitOperationKind_String;
+			op->string   = row->name;
+			op->location = row->location;
 		}break;
 		case MetaEntryKind_Expand:{
 			row += meta_expand(ctx, scratch, row, entry_count - (row - e), ops);
@@ -2089,6 +2145,18 @@ meta_extract_emit_file_dependencies(MetaContext *ctx, Arena *arena)
 	return result;
 }
 
+function MetaKind
+meta_map_kind(s8 kind, s8 table_name, MetaLocation location)
+{
+	iz id = meta_lookup_string_slow(meta_kind_meta_types, MetaKind_Count, kind);
+	if (id < 0) {
+		meta_compiler_error(location, "Invalid Kind in '%.*s' table expansion: %.*s\n",
+		                    (i32)table_name.len, table_name.data, (i32)kind.len, kind.data);
+	}
+	MetaKind result = (MetaKind)id;
+	return result;
+}
+
 function void
 metagen_push_byte_array(MetaprogramContext *m, s8 bytes)
 {
@@ -2132,7 +2200,7 @@ metagen_push_table(MetaprogramContext *m, Arena scratch, s8 row_start, s8 row_en
 }
 
 function void
-metagen_run_emit(MetaprogramContext *m, MetaContext *ctx)
+metagen_run_emit(MetaprogramContext *m, MetaContext *ctx, s8 *evaluation_table)
 {
 	for (iz set = 0; set < ctx->emit_sets.count; set++) {
 		MetaEmitOperationList *ops = ctx->emit_sets.data + set;
@@ -2152,12 +2220,32 @@ metagen_run_emit(MetaprogramContext *m, MetaContext *ctx)
 				Arena scratch = m->scratch;
 
 				MetaEmitOperationExpansion *eop = &op->expansion_operation;
-				MetaTable *t = ctx->tables.data + eop->table_id;
+				MetaTable *t  = ctx->tables.data + eop->table_id;
+				s8 table_name = ctx->table_names.data[t->table_name_id];
 
-				u32 alignment_count = 1;
+				u32 alignment_count  = 1;
+				u32 evaluation_count = 0;
 				for (u32 part = 0; part < eop->part_count; part++) {
 					if (eop->parts[part].kind == MetaExpansionPartKind_Alignment)
 						alignment_count++;
+					if (eop->parts[part].kind == MetaExpansionPartKind_EvalKind)
+						evaluation_count++;
+				}
+
+				MetaKind **evaluation_columns = push_array(&scratch, MetaKind *, evaluation_count);
+				for (u32 column = 0; column < evaluation_count; column++)
+					evaluation_columns[column] = push_array(&scratch, MetaKind, t->entry_count);
+
+				for (u32 part = 0; part < eop->part_count; part++) {
+					u32 eval_column = 0;
+					MetaExpansionPart *p = eop->parts + part;
+					if (p->kind == MetaExpansionPartKind_EvalKind) {
+						for (u32 entry = 0; entry < t->entry_count; entry++) {
+							evaluation_columns[eval_column][entry] = meta_map_kind(p->strings[entry],
+							                                                       table_name, op->location);
+						}
+						eval_column++;
+					}
 				}
 
 				s8 **columns = push_array(&scratch, s8 *, alignment_count);
@@ -2166,13 +2254,18 @@ metagen_run_emit(MetaprogramContext *m, MetaContext *ctx)
 
 				Stream sb = arena_stream(scratch);
 				for (u32 entry = 0; entry < t->entry_count; entry++) {
-					u32 column = 0;
+					u32 column      = 0;
+					u32 eval_column = 0;
 					for (u32 part = 0; part < eop->part_count; part++) {
 						MetaExpansionPart *p = eop->parts + part;
 						switch (p->kind) {
 						case MetaExpansionPartKind_Alignment:{
 							columns[column][entry] = arena_stream_commit_and_reset(&scratch, &sb);
 							column++;
+						}break;
+						case MetaExpansionPartKind_EvalKind:{
+							s8 kind = evaluation_table[evaluation_columns[eval_column][entry]];
+							stream_append_s8(&sb, kind);
 						}break;
 						case MetaExpansionPartKind_Reference:
 						case MetaExpansionPartKind_String:
@@ -2384,6 +2477,10 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 
 	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
 
+	if (setjmp(compiler_jmp_buf)) {
+		build_fatal("Failed to generate C Code");
+	}
+
 	////////////////////////////
 	// NOTE(rnp): shader baking
 	{
@@ -2506,7 +2603,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		metagen_push_table(m, m->scratch, s8(""), s8(";"), (s8 *[]){types, names}, countof(names), 2);
 	} meta_end_scope(m, s8("} BeamformerShaderBakeParameters;\n"));
 
-	metagen_run_emit(m, ctx);
+	metagen_run_emit(m, ctx, meta_kind_c_types);
 
 	/////////////////////////////////
 	// NOTE(rnp): shader info tables
@@ -2618,12 +2715,11 @@ metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaMUnion *mu, s8
 
 	struct {
 		MetaTable *table;
-		u32        m_type_index;
+		MetaKind  *kinds;
 		u32        name_index;
 	} *table_matches;
 
 	table_matches = push_array(&scratch, typeof(*table_matches), mu->sub_table_count);
-	u32 max_parameter_count = 0;
 	for (u32 index = 0; index < mu->sub_table_count; index++) {
 		s8 sub_table_name = mu->sub_table_names[index];
 		MetaTable *t = ctx->tables.data + meta_lookup_string_slow(ctx->table_names.data,
@@ -2633,17 +2729,34 @@ metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaMUnion *mu, s8
 			                    (i32)sub_table_name.len, sub_table_name.data);
 		}
 
-		iz m_type_index = meta_lookup_string_slow(t->fields, t->field_count, s8("m_type"));
-		iz name_index   = meta_lookup_string_slow(t->fields, t->field_count, s8("name"));
-		if (m_type_index < 0 || name_index < 0) {
-			meta_compiler_error(mu->location, "'%.*s' missing fields required by @MUnion: name, m_type\n",
-			                    (i32)sub_table_name.len, sub_table_name.data);
+		iz type_index = meta_lookup_string_slow(t->fields, t->field_count, s8("type"));
+		iz name_index = meta_lookup_string_slow(t->fields, t->field_count, s8("name"));
+		if (type_index < 0) {
+			meta_compiler_error_message(mu->location, "'%.*s' missing fields required by @MUnion: type\n",
+			                            (i32)sub_table_name.len, sub_table_name.data);
 		}
+		if (name_index < 0) {
+			meta_compiler_error_message(mu->location, "'%.*s' missing fields required by @MUnion: name\n",
+			                            (i32)sub_table_name.len, sub_table_name.data);
+		}
+		if (type_index < 0 || name_index < 0) meta_error();
 
-		table_matches[index].table        = t;
-		table_matches[index].m_type_index = (u32)m_type_index;
-		table_matches[index].name_index   = (u32)name_index;
-		max_parameter_count = MAX(max_parameter_count, t->entry_count);
+		table_matches[index].table      = t;
+		table_matches[index].kinds      = push_array(&scratch, MetaKind, t->entry_count);
+		table_matches[index].name_index = (u32)name_index;
+
+		for (u32 entry = 0; entry < t->entry_count; entry++) {
+			table_matches[index].kinds[entry] = meta_map_kind(t->entries[type_index][entry], sub_table_name,
+			                                                  mu->location);
+		}
+	}
+
+	u32 max_parameter_size = 0;
+	for (iz member = 0; member < enumeration_members->count; member++) {
+		u32 parameter_size = 0;
+		for (u32 prop = 0; prop < table_matches[member].table->entry_count; prop++)
+			parameter_size += meta_kind_byte_sizes[table_matches[member].kinds[prop]];
+		max_parameter_size = MAX(parameter_size, max_parameter_size);
 	}
 
 	Arena scratch_temp = scratch;
@@ -2657,12 +2770,15 @@ metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaMUnion *mu, s8
 			meta_begin_scope(m, s8("function out = Pack(obj)"));
 			{
 				meta_begin_line(m, s8("out = zeros(1, "));
-				meta_push_u64(m, 4 * max_parameter_count);
+				meta_push_u64(m, max_parameter_size);
 				meta_end_line(m, s8(", 'uint8');"));
 				meta_push_line(m, s8("fields = struct2cell(struct(obj));"));
+				meta_push_line(m, s8("offset = 1;"));
 				meta_begin_scope(m, s8("for i = 1:numel(fields)"));
 				{
-					meta_push_line(m, s8("out((4*(i - 1)):(4*i)) = typecast(fields{i}, 'uint8');"));
+					meta_push_line(m, s8("bytes = typecast(fields{i}, 'uint8');"));
+					meta_push_line(m, s8("out(offset:(offset + numel(bytes) - 1)) = bytes;"));
+					meta_push_line(m, s8("offset = offset + numel(bytes);"));
 				} meta_end_scope(m, s8("end"));
 			} meta_end_scope(m, s8("end"));
 		} meta_end_scope(m, s8("end"));
@@ -2671,18 +2787,18 @@ metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaMUnion *mu, s8
 	scratch = scratch_temp;
 
 	for (iz member = 0; member < enumeration_members->count; member++) {
-		s8 sub_name = enumeration_members->data[member];
+		MetaTable *t     = table_matches[member].table;
+		MetaKind  *kinds = table_matches[member].kinds;
 
+		s8 sub_name = enumeration_members->data[member];
 		outfile = push_s8_from_parts(&scratch, s8(""), outdir, s8(OS_PATH_SEPARATOR), sub_name, s8(".m"));
 		meta_begin_scope(m, s8("classdef "), sub_name, s8(" < OGLBeamformer"), namespace, s8(".Base"));
 		{
 			meta_begin_scope(m, s8("properties"));
 			{
-				MetaTable *t     = table_matches[member].table;
-				u32 m_type_index = table_matches[member].m_type_index;
-				u32 name_index   = table_matches[member].name_index;
+				u32 name_index = table_matches[member].name_index;
 				for (u32 prop = 0; prop < t->entry_count; prop++) {
-					meta_push_line(m, t->entries[name_index][prop], s8("(1,1) "), t->entries[m_type_index][prop]);
+					meta_push_line(m, t->entries[name_index][prop], s8("(1,1) "), meta_kind_matlab_types[kinds[prop]]);
 				}
 			} meta_end_scope(m, s8("end"));
 		} meta_end_scope(m, s8("end"));
@@ -2981,7 +3097,7 @@ metagen_file_direct(Arena arena, char *filename)
 	if (needs_rebuild_(out, deps.data, deps.count)) {
 		build_log_generate(out);
 		meta_push(m, c_file_header);
-		metagen_run_emit(m, ctx);
+		metagen_run_emit(m, ctx, meta_kind_c_types);
 		result &= meta_write_and_reset(m, out);
 	}
 
@@ -3006,6 +3122,8 @@ main(i32 argc, char *argv[])
 
 	MetaContext *meta = metagen_load_context(&arena, "beamformer.meta");
 	if (!meta) return 1;
+
+	(void)meta_kind_base_c_types;
 
 	result &= metagen_emit_c_code(meta, arena);
 	result &= metagen_emit_helper_library_header(meta, arena);
