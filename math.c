@@ -128,6 +128,21 @@ u128_equal(u128 a, u128 b)
 	return result;
 }
 
+function RangeU64
+subrange_n_from_n_m_count(u64 n, u64 n_count, u64 m)
+{
+	assert(n < n_count);
+
+	u64 per_lane            = m / n_count;
+	u64 leftover            = m - per_lane * n_count;
+	u64 leftovers_before_n  = MIN(leftover, n);
+	u64 base_index          = n * per_lane + leftovers_before_n;
+	u64 one_past_last_index = base_index + per_lane + ((n < leftover) ? 1 : 0);
+
+	RangeU64 result = {base_index, one_past_last_index};
+	return result;
+}
+
 function b32
 iv2_equal(iv2 a, iv2 b)
 {

@@ -13,6 +13,7 @@
 
 ///////////////////
 // REQUIRED OS API
+function void os_barrier_wait(Barrier);
 function iptr os_error_handle(void);
 function s8   os_path_separator(void);
 function OS_READ_WHOLE_FILE_FN(os_read_whole_file);
@@ -21,6 +22,7 @@ function OS_SHARED_MEMORY_UNLOCK_REGION_FN(os_shared_memory_region_unlock);
 function OS_WAKE_WAITERS_FN(os_wake_waiters);
 function OS_WRITE_FILE_FN(os_write_file);
 
+#include "threads.c"
 #include "util_gl.c"
 
 enum gl_vendor_ids {
@@ -368,7 +370,7 @@ typedef BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step_fn);
 #define BEAMFORMER_COMPLETE_COMPUTE_FN(name) void name(iptr user_context, Arena *arena, iptr gl_context)
 typedef BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute_fn);
 
-#define BEAMFORMER_RF_UPLOAD_FN(name) void name(BeamformerUploadThreadContext *ctx, Arena arena)
+#define BEAMFORMER_RF_UPLOAD_FN(name) void name(BeamformerUploadThreadContext *ctx)
 typedef BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload_fn);
 
 #define BEAMFORMER_RELOAD_SHADER_FN(name) b32 name(s8 path, ShaderReloadContext *src, \

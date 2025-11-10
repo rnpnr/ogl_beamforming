@@ -278,6 +278,7 @@ worker_thread_sleep(GLWorkerThreadContext *ctx, BeamformerSharedMemory *sm)
 			break;
 		}
 
+		/* TODO(rnp): clean this crap up; we shouldn't need two values to communicate this */
 		atomic_store_u32(&ctx->asleep, 1);
 		os_wait_on_value(&ctx->sync_variable, 1, (u32)-1);
 		atomic_store_u32(&ctx->asleep, 0);
@@ -306,6 +307,32 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 	return 0;
 }
 
+function OS_THREAD_ENTRY_POINT_FN(beamformer_upload_entry_point)
+{
+	GLWorkerThreadContext         *gl_thread_context = 0;
+	BeamformerUploadThreadContext *up = 0;
+	{
+		ThreadContext *ctx = (ThreadContext *)_ctx;
+		lane_context(ctx);
+
+		if (lane_index() == 0) {
+			gl_thread_context = (GLWorkerThreadContext *)ctx->lane_context.broadcast_memory[0];
+			up = (BeamformerUploadThreadContext *)gl_thread_context->user_context;
+		}
+	}
+
+	for (;;) {
+		if (lane_index() == 0)
+			worker_thread_sleep(gl_thread_context, up->shared_memory->region);
+
+		lane_sync();
+
+		beamformer_rf_upload(up);
+	}
+
+	unreachable();
+}
+
 function OS_THREAD_ENTRY_POINT_FN(upload_worker_thread_entry_point)
 {
 	GLWorkerThreadContext *ctx = (GLWorkerThreadContext *)_ctx;
@@ -317,11 +344,40 @@ function OS_THREAD_ENTRY_POINT_FN(upload_worker_thread_entry_point)
 	/* NOTE(rnp): start this here so we don't have to worry about it being started or not */
 	glQueryCounter(up->rf_buffer->data_timestamp_query, GL_TIMESTAMP);
 
-	for (;;) {
-		worker_thread_sleep(ctx, up->shared_memory->region);
-		asan_poison_region(ctx->arena.beg, ctx->arena.end - ctx->arena.beg);
-		beamformer_rf_upload(up, ctx->arena);
+	u64 lane_broadcast_value = 0;
+
+	ThreadContext *threads;
+	{
+		u32 main_threads          = 3 - 1;
+		u32 async_threads_count   = os_get_system_info()->logical_processor_count;
+		u32 main_threads_clamped  = MIN(async_threads_count, main_threads);
+		async_threads_count      -= main_threads_clamped;
+
+		/* NOTE(rnp): always memory bound right now so more threads don't help anything */
+		async_threads_count = 1;
+
+		//Barrier barrier = os_barrier_alloc(async_threads_count);
+		Barrier barrier = {0};
+		threads         = push_array(&ctx->arena, ThreadContext, (iz)async_threads_count);
+
+		for (u64 index = 0; index < async_threads_count; index++) {
+			Stream name = stream_from_buffer(threads[index].name, countof(threads[index].name));
+			stream_append_s8(&name, s8("[upload_"));
+			stream_append_u64(&name, index);
+			stream_append_s8(&name, s8("]"));
+			threads[index].lane_context.index            = index;
+			threads[index].lane_context.count            = async_threads_count;
+			threads[index].lane_context.barrier          = barrier;
+			threads[index].lane_context.broadcast_memory = &lane_broadcast_value;
+			if (index != 0) {
+				iptr thread = os_create_thread((iptr)(threads + index), beamformer_upload_entry_point);
+				os_set_thread_name(thread, stream_to_s8(&name));
+			}
+		}
 	}
+
+	threads[0].lane_context.broadcast_memory[0] = (u64)ctx;
+	beamformer_upload_entry_point((iptr)threads);
 
 	unreachable();
 
@@ -331,8 +387,8 @@ function OS_THREAD_ENTRY_POINT_FN(upload_worker_thread_entry_point)
 function void
 setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input)
 {
-	Arena  compute_arena = sub_arena(memory, MB(2),  KB(4));
-	Arena  upload_arena  = sub_arena(memory, KB(64), KB(4));
+	Arena  compute_arena = sub_arena(memory, MB(2), KB(4));
+	Arena  upload_arena  = sub_arena(memory, KB(4), KB(4));
 	Stream error         = stream_alloc(memory, MB(1));
 	Arena  ui_arena      = sub_arena(memory, MB(2), KB(4));
 
@@ -393,8 +449,8 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	/* TODO(rnp): we should lock this down after we have something working */
 	worker->user_context  = (iptr)ctx;
 	worker->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
-	worker->handle        = os_create_thread(*memory, (iptr)worker, s8("[compute]"),
-	                                         compute_worker_thread_entry_point);
+	worker->handle        = os_create_thread((iptr)worker, compute_worker_thread_entry_point);
+	os_set_thread_name(worker->handle, s8("[compute]"));
 
 	GLWorkerThreadContext         *upload = &ctx->upload_worker;
 	BeamformerUploadThreadContext *upctx  = push_struct(memory, typeof(*upctx));
@@ -404,8 +460,8 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	upctx->compute_timing_table = ctx->compute_timing_table;
 	upctx->compute_worker_sync  = &ctx->compute_worker.sync_variable;
 	upload->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
-	upload->handle        = os_create_thread(*memory, (iptr)upload, s8("[upload]"),
-	                                         upload_worker_thread_entry_point);
+	upload->handle        = os_create_thread((iptr)upload, upload_worker_thread_entry_point);
+	os_set_thread_name(worker->handle, s8("[upload_0]"));
 
 	glfwMakeContextCurrent(raylib_window_handle);
 

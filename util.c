@@ -203,10 +203,16 @@ utf16_encode(u16 *out, u32 cp)
 }
 
 function Stream
+stream_from_buffer(u8 *buffer, u32 capacity)
+{
+	Stream result = {.data = buffer, .cap = (i32)capacity};
+	return result;
+}
+
+function Stream
 stream_alloc(Arena *a, i32 cap)
 {
-	Stream result = {.cap = cap};
-	result.data = arena_commit(a, cap);
+	Stream result = stream_from_buffer(arena_commit(a, cap), (u32)cap);
 	return result;
 }
 

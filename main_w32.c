@@ -100,14 +100,16 @@ clear_io_queue(BeamformerInput *input, Arena arena)
 extern i32
 main(void)
 {
-	Arena program_memory = os_alloc_arena(MB(16));
+	os_common_init();
+
+	Arena program_memory = os_alloc_arena(MB(16) + KB(4));
 
 	BeamformerCtx   *ctx   = 0;
 	BeamformerInput *input = 0;
 
+	os_w32_context.arena                = sub_arena(&program_memory, KB(4), KB(4));
 	os_w32_context.error_handle         = GetStdHandle(STD_ERROR_HANDLE);
 	os_w32_context.io_completion_handle = CreateIoCompletionPort(INVALID_FILE, 0, 0, 0);
-	os_w32_context.timer_frequency      = os_get_timer_frequency();
 
 	setup_beamformer(&program_memory, &ctx, &input);
 

@@ -528,6 +528,9 @@ cmd_base(Arena *a, Options *o)
 	if (o->debug) cmd_append(a, &result, DEBUG_FLAGS);
 	else          cmd_append(a, &result, OPTIMIZED_FLAGS);
 
+	/* NOTE: glibc devs are actually buffoons who never write any real code */
+	if (is_unix) cmd_append(a, &result, "-D_XOPEN_SOURCE=600");
+
 	/* NOTE: ancient gcc bug: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=80454 */
 	if (is_gcc) cmd_append(a, &result, "-Wno-missing-braces");
 
@@ -2861,6 +2864,8 @@ metagen_file_direct(Arena arena, char *filename)
 i32
 main(i32 argc, char *argv[])
 {
+	os_common_init();
+
 	u64 start_time = os_get_timer_counter();
 	g_argv0 = argv[0];
 

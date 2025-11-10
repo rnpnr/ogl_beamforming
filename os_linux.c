@@ -19,10 +19,14 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/sysinfo.h>
 #include <unistd.h>
 
 typedef struct {
+	Arena         arena;
+	i32           arena_lock;
 	i32           inotify_handle;
+	OS_SystemInfo system_info;
 } OS_LinuxContext;
 global OS_LinuxContext os_linux_context;
 
@@ -33,6 +37,7 @@ global OS_LinuxContext os_linux_context;
 i32 ftruncate(i32, i64);
 i64 syscall(i64, ...);
 i32 clock_gettime(i32, struct timespec *);
+int getpagesize(void);
 
 #ifdef _DEBUG
 function void *
@@ -99,10 +104,17 @@ os_get_timer_counter(void)
 	return result;
 }
 
+function void
+os_common_init(void)
+{
+	os_linux_context.system_info.logical_processor_count = (u32)get_nprocs();
+	os_linux_context.system_info.page_size               = (u32)getpagesize();
+}
+
 function iz
 os_round_up_to_page_size(iz value)
 {
-	iz result = round_up_to(value, sysconf(_SC_PAGESIZE));
+	iz result = round_up_to(value, os_linux_context.system_info.page_size);
 	return result;
 }
 
@@ -260,16 +272,6 @@ function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
 	fw->hash      = u64_hash_from_s8(s8_cut_head(path, dir->name.len + 1));
 }
 
-i32 pthread_setname_np(pthread_t, char *);
-function iptr
-os_create_thread(Arena arena, iptr user_context, s8 name, os_thread_entry_point_fn *fn)
-{
-	pthread_t result;
-	pthread_create(&result, 0, (void *)fn, (void *)user_context);
-	pthread_setname_np(result, (char *)name.data);
-	return (iptr)result;
-}
-
 function OS_WAIT_ON_VALUE_FN(os_wait_on_value)
 {
 	struct timespec *timeout = 0, timeout_value;
@@ -289,23 +291,81 @@ function OS_WAKE_WAITERS_FN(os_wake_waiters)
 	}
 }
 
-function OS_SHARED_MEMORY_LOCK_REGION_FN(os_shared_memory_region_lock)
+function b32
+os_take_lock(i32 *lock, i32 timeout_ms)
 {
 	b32 result = 0;
 	for (;;) {
 		i32 current = 0;
-		if (atomic_cas_u32(locks + lock_index, &current, 1))
+		if (atomic_cas_u32(lock, &current, 1))
 			result = 1;
-		if (result || !timeout_ms || !os_wait_on_value(locks + lock_index, current, timeout_ms))
+		if (result || !timeout_ms || !os_wait_on_value(lock, current, (u32)timeout_ms))
 			break;
 	}
 	return result;
 }
 
-function OS_SHARED_MEMORY_UNLOCK_REGION_FN(os_shared_memory_region_unlock)
+function void
+os_release_lock(i32 *lock)
 {
-	i32 *lock = locks + lock_index;
 	assert(atomic_load_u32(lock));
 	atomic_store_u32(lock, 0);
 	os_wake_waiters(lock);
+}
+
+function OS_SHARED_MEMORY_LOCK_REGION_FN(os_shared_memory_region_lock)
+{
+	b32 result = os_take_lock(locks + lock_index, (i32)timeout_ms);
+	return result;
+}
+
+function OS_SHARED_MEMORY_UNLOCK_REGION_FN(os_shared_memory_region_unlock)
+{
+	os_release_lock(locks + lock_index);
+}
+
+function OS_SystemInfo *
+os_get_system_info(void)
+{
+	return &os_linux_context.system_info;
+}
+
+function Barrier
+os_barrier_alloc(u32 count)
+{
+	Barrier result = {0};
+	DeferLoop(os_take_lock(&os_linux_context.arena_lock, -1),
+	          os_release_lock(&os_linux_context.arena_lock))
+	{
+		pthread_barrier_t *barrier = push_struct(&os_linux_context.arena, pthread_barrier_t);
+		pthread_barrier_init(barrier, 0, count);
+		result.value[0] = (u64)barrier;
+	}
+	return result;
+}
+
+function void
+os_barrier_wait(Barrier barrier)
+{
+	pthread_barrier_t *b = (pthread_barrier_t *)barrier.value[0];
+	if (b) pthread_barrier_wait(b);
+}
+
+function iptr
+os_create_thread(iptr user_context, os_thread_entry_point_fn *fn)
+{
+	pthread_t result;
+	pthread_create(&result, 0, (void *)fn, (void *)user_context);
+	return (iptr)result;
+}
+
+i32 pthread_setname_np(pthread_t, char *);
+function void
+os_set_thread_name(iptr thread, s8 name)
+{
+	char buffer[16];
+	u64  length = (u64)CLAMP(name.len, 0, countof(buffer) - 1);
+	mem_copy(buffer, name.data, length);
+	buffer[length] = 0;
+	pthread_setname_np((pthread_t)thread, buffer);
 }

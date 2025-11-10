@@ -65,6 +65,14 @@
 #define global        static
 #define local_persist static
 
+#if COMPILER_MSVC
+  #define thread_static __declspec(thread)
+#elif COMPILER_CLANG || COMPILER_GCC
+  #define thread_static __thread
+#else
+  #error thread_static not defined for this compiler
+#endif
+
 #define alignof       _Alignof
 #define static_assert _Static_assert
 
@@ -91,6 +99,9 @@
 #define TOUPPER(c)       (((c) & ~(0x20u)))
 
 #define f32_cmp(x, y)    (ABS((x) - (y)) <= F32_EPSILON * MAX(1.0f, MAX(ABS(x), ABS(y))))
+
+#define DeferLoop(begin, end)          for (i32 _i_ = ((begin), 0); !_i_; _i_ += 1, (end))
+#define DeferLoopTag(begin, end, tag)  for (i32 __##tag = ((begin), 0); !__##tag ; __##tag += 1, (end))
 
 #define EachBit(a, it)                 (u64 it = ctz_u64(a); it != 64; a &= ~(1u << (it)), it = ctz_u64(a))
 #define EachElement(array, it)         (u64 it = 0; it < countof(array); it += 1)
@@ -189,6 +200,8 @@ typedef struct { u32 cp, consumed; } UnicodeDecode;
 typedef struct { f32 x, y; } Vector2;
 typedef struct { f32 x, y, w, h; } Rectangle;
 #endif
+
+typedef struct { u64 start, stop; } RangeU64;
 
 typedef union {
 	struct { i32 x, y; };
@@ -314,6 +327,22 @@ typedef struct {
 	iptr  os_context;
 } SharedMemoryRegion;
 
+typedef struct { u64 value[1]; } Barrier;
+
+typedef struct {
+	u64      index;
+	u64      count;
+	Barrier  barrier;
+	u64     *broadcast_memory;
+} LaneContext;
+
+typedef struct {
+	u8   name[16];
+	u64  name_length;
+
+	LaneContext lane_context;
+} ThreadContext;
+
 #define OS_ALLOC_ARENA_FN(name) Arena name(iz capacity)
 typedef OS_ALLOC_ARENA_FN(os_alloc_arena_fn);
 
@@ -362,6 +391,10 @@ typedef alignas(16) u8 RenderDocAPI[216];
 #define RENDERDOC_START_FRAME_CAPTURE(a) (renderdoc_start_frame_capture_fn *)RENDERDOC_API_FN_ADDR(a, 152)
 #define RENDERDOC_END_FRAME_CAPTURE(a)   (renderdoc_end_frame_capture_fn *)  RENDERDOC_API_FN_ADDR(a, 168)
 
+typedef struct {
+	u32 logical_processor_count;
+	u32 page_size;
+} OS_SystemInfo;
 
 #define LABEL_GL_OBJECT(type, id, s) {s8 _s = (s); glObjectLabel(type, id, (i32)_s.len, (c8 *)_s.data);}
 

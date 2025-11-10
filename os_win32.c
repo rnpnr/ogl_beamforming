@@ -58,6 +58,28 @@ typedef struct {
 } w32_file_notify_info;
 
 typedef struct {
+	u32 reserved1;
+	u32 reserved2;
+	u64 Reserved3[2];
+	u32 reserved4;
+	u32 reserved5;
+} w32_synchronization_barrier;
+
+typedef struct {
+	u16  architecture;
+	u16  _pad1;
+	u32  page_size;
+	iz   minimum_application_address;
+	iz   maximum_application_address;
+	u64  active_processor_mask;
+	u32  number_of_processors;
+	u32  processor_type;
+	u32  allocation_granularity;
+	u16  processor_level;
+	u16  processor_revision;
+} w32_system_info;
+
+typedef struct {
 	uptr internal, internal_high;
 	union {
 		struct {u32 off, off_high;};
@@ -90,6 +112,7 @@ W32(iptr)   CreateIoCompletionPort(iptr, iptr, uptr, u32);
 W32(iptr)   CreateSemaphoreA(iptr, i32, i32, c8 *);
 W32(iptr)   CreateThread(iptr, uz, iptr, iptr, u32, u32 *);
 W32(b32)    DeleteFileA(c8 *);
+W32(b32)    EnterSynchronizationBarrier(w32_synchronization_barrier *, u32);
 W32(void)   ExitProcess(i32);
 W32(b32)    FreeLibrary(void *);
 W32(i32)    GetFileAttributesA(c8 *);
@@ -99,7 +122,8 @@ W32(void *) GetModuleHandleA(c8 *);
 W32(void *) GetProcAddress(void *, c8 *);
 W32(b32)    GetQueuedCompletionStatus(iptr, u32 *, uptr *, w32_overlapped **, u32);
 W32(iptr)   GetStdHandle(i32);
-W32(void)   GetSystemInfo(void *);
+W32(void)   GetSystemInfo(w32_system_info *);
+W32(b32)    InitializeSynchronizationBarrier(w32_synchronization_barrier *, i32, i32);
 W32(void *) LoadLibraryA(c8 *);
 W32(void *) MapViewOfFile(iptr, u32, u32, u32, u64);
 W32(b32)    QueryPerformanceCounter(u64 *);
@@ -116,9 +140,12 @@ W32(b32)    WriteFile(iptr, u8 *, i32, i32 *, void *);
 W32(void *) VirtualAlloc(u8 *, iz, u32, u32);
 
 typedef struct {
-	iptr error_handle;
-	iptr io_completion_handle;
-	u64  timer_frequency;
+	Arena         arena;
+	i32           arena_lock;
+	iptr          error_handle;
+	iptr          io_completion_handle;
+	u64           timer_frequency;
+	OS_SystemInfo system_info;
 } OS_W32Context;
 global OS_W32Context os_w32_context;
 
@@ -173,8 +200,7 @@ os_path_separator(void)
 function u64
 os_get_timer_frequency(void)
 {
-	u64 result;
-	QueryPerformanceFrequency(&result);
+	u64 result = os_w32_context.timer_frequency;
 	return result;
 }
 
@@ -186,24 +212,22 @@ os_get_timer_counter(void)
 	return result;
 }
 
+function void
+os_common_init(void)
+{
+	w32_system_info info = {0};
+	GetSystemInfo(&info);
+
+	os_w32_context.system_info.page_size = info.page_size;
+	os_w32_context.system_info.logical_processor_count = info.number_of_processors;
+
+	QueryPerformanceFrequency(&os_w32_context.timer_frequency);
+}
+
 function iz
 os_round_up_to_page_size(iz value)
 {
-	struct {
-		u16  architecture;
-		u16  _pad1;
-		u32  page_size;
-		iz   minimum_application_address;
-		iz   maximum_application_address;
-		u64  active_processor_mask;
-		u32  number_of_processors;
-		u32  processor_type;
-		u32  allocation_granularity;
-		u16  processor_level;
-		u16  processor_revision;
-	} info;
-	GetSystemInfo(&info);
-	iz result = round_up_to(value, info.page_size);
+	iz result = round_up_to(value, os_w32_context.system_info.page_size);
 	return result;
 }
 
@@ -386,14 +410,6 @@ function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
 	fw->hash      = u64_hash_from_s8(s8_cut_head(path, dir->name.len + 1));
 }
 
-function iptr
-os_create_thread(Arena arena, iptr user_context, s8 name, os_thread_entry_point_fn *fn)
-{
-	iptr result = CreateThread(0, 0, (iptr)fn, user_context, 0, 0);
-	SetThreadDescription(result, s8_to_s16(&arena, name).data);
-	return result;
-}
-
 function OS_WAIT_ON_VALUE_FN(os_wait_on_value)
 {
 	return WaitOnAddress(value, &current, sizeof(*value), timeout_ms);
@@ -407,6 +423,28 @@ function OS_WAKE_WAITERS_FN(os_wake_waiters)
 	}
 }
 
+function b32
+os_take_lock(i32 *lock, i32 timeout_ms)
+{
+	b32 result = 0;
+	for (;;) {
+		i32 current = 0;
+		if (atomic_cas_u32(lock, &current, 1))
+			result = 1;
+		if (result || !timeout_ms || !os_wait_on_value(lock, current, (u32)timeout_ms))
+			break;
+	}
+	return result;
+}
+
+function void
+os_release_lock(i32 *lock)
+{
+	assert(atomic_load_u32(lock));
+	atomic_store_u32(lock, 0);
+	os_wake_waiters(lock);
+}
+
 function OS_SHARED_MEMORY_LOCK_REGION_FN(os_shared_memory_region_lock)
 {
 	w32_shared_memory_context *ctx = (typeof(ctx))sm->os_context;
@@ -418,7 +456,51 @@ function OS_SHARED_MEMORY_LOCK_REGION_FN(os_shared_memory_region_lock)
 function OS_SHARED_MEMORY_UNLOCK_REGION_FN(os_shared_memory_region_unlock)
 {
 	w32_shared_memory_context *ctx = (typeof(ctx))sm->os_context;
-	assert(atomic_load_u32(locks + lock_index));
-	os_wake_waiters(locks + lock_index);
+	os_release_lock(locks + lock_index);
 	ReleaseSemaphore(ctx->semaphores[lock_index], 1, 0);
+}
+
+function OS_SystemInfo *
+os_get_system_info(void)
+{
+	return &os_w32_context.system_info;
+}
+
+function Barrier
+os_barrier_alloc(u32 count)
+{
+	Barrier result = {0};
+	DeferLoop(os_take_lock(&os_w32_context.arena_lock, -1),
+	          os_release_lock(&os_w32_context.arena_lock))
+	{
+		w32_synchronization_barrier *barrier = push_struct(&os_w32_context.arena, w32_synchronization_barrier);
+		InitializeSynchronizationBarrier(barrier, (i32)count, -1);
+		result.value[0] = (u64)barrier;
+	}
+	return result;
+}
+
+function void
+os_barrier_wait(Barrier barrier)
+{
+	w32_synchronization_barrier *b = (w32_synchronization_barrier *)barrier.value[0];
+	if (b) EnterSynchronizationBarrier(b, 0);
+}
+
+function iptr
+os_create_thread(iptr user_context, os_thread_entry_point_fn *fn)
+{
+	iptr result = CreateThread(0, 0, (iptr)fn, user_context, 0, 0);
+	return result;
+}
+
+function void
+os_set_thread_name(iptr thread, s8 name)
+{
+	DeferLoop(os_take_lock(&os_w32_context.arena_lock, -1),
+	          os_release_lock(&os_w32_context.arena_lock))
+	{
+		Arena arena = os_w32_context.arena;
+		SetThreadDescription(thread, s8_to_s16(&arena, name).data);
+	}
 }

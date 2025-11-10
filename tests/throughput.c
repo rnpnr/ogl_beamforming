@@ -74,8 +74,6 @@ die_(char *function_name, char *format, ...)
 #include <sys/stat.h>
 #include <unistd.h>
 
-function void os_init_timer(void) { }
-
 function f64
 os_get_time(void)
 {
@@ -110,12 +108,6 @@ os_read_file_simp(char *fname)
 }
 
 #elif OS_WINDOWS
-
-function void
-os_init_timer(void)
-{
-	os_w32_context.timer_frequency = os_get_timer_frequency();
-}
 
 function f64
 os_get_time(void)
@@ -470,7 +462,7 @@ main(i32 argc, char *argv[])
 	if (!BETWEEN(options.remaining_count, 1, 2))
 		usage(argv[0]);
 
-	os_init_timer();
+	os_common_init();
 
 	signal(SIGINT, sigint);
 

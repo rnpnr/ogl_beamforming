@@ -71,11 +71,14 @@ dispatch_file_watch_events(FileWatchDirectoryList *fwctx, Arena arena)
 extern i32
 main(void)
 {
-	Arena program_memory = os_alloc_arena(MB(16));
+	os_common_init();
+
+	Arena program_memory = os_alloc_arena(MB(16) + KB(4));
 
 	BeamformerCtx   *ctx   = 0;
 	BeamformerInput *input = 0;
 
+	os_linux_context.arena = sub_arena(&program_memory, KB(4), KB(4));
 	os_linux_context.inotify_handle = inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
 
 	setup_beamformer(&program_memory, &ctx, &input);
