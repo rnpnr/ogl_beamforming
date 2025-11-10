@@ -46,6 +46,13 @@ typedef enum {
 } BeamformerDataKind;
 
 typedef enum {
+	BeamformerEmissionKind_Sine   = 0,
+	BeamformerEmissionKind_SineAM = 1,
+	BeamformerEmissionKind_Chirp  = 2,
+	BeamformerEmissionKind_Count,
+} BeamformerEmissionKind;
+
+typedef enum {
 	BeamformerInterpolationMode_Nearest = 0,
 	BeamformerInterpolationMode_Linear  = 1,
 	BeamformerInterpolationMode_Cubic   = 2,
@@ -345,6 +352,32 @@ read_only global i32 beamformer_shader_bake_parameter_counts[] = {
 	0,
 	0,
 };
+
+typedef struct {
+	f32 cycles;
+	f32 frequency;
+} BeamformerEmissionSineParameters;
+
+typedef struct {
+	f32 cycles;
+	f32 frequency;
+	u32 emissions;
+} BeamformerEmissionSineAMParameters;
+
+typedef struct {
+	f32 duration;
+	f32 min_frequency;
+	f32 max_frequency;
+} BeamformerEmissionChirpParameters;
+
+typedef struct {
+	BeamformerEmissionKind kind;
+	union {
+		BeamformerEmissionSineParameters   sine;
+		BeamformerEmissionSineAMParameters sine_am;
+		BeamformerEmissionChirpParameters  chirp;
+	};
+} BeamformerEmission;
 
 read_only global u8 beamformer_data_kind_element_size[] = {
 	2,

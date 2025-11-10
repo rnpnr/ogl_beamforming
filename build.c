@@ -938,6 +938,7 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 	X(Enumeration)  \
 	X(Expand)       \
 	X(Flags)        \
+	X(MUnion)       \
 	X(String)       \
 	X(Shader)       \
 	X(ShaderGroup)  \
@@ -1350,7 +1351,7 @@ meta_entry_extract_scope(MetaEntry *base, iz entry_count)
 }
 
 function MetaEntryStack
-meta_entry_stack_from_file(Arena *arena, Arena scratch, char *file)
+meta_entry_stack_from_file(Arena *arena, char *file)
 {
 	MetaParser     parser = {.p.s = os_read_whole_file(arena, file)};
 	MetaEntryStack result = {.raw = parser.p.s};
@@ -1497,6 +1498,16 @@ typedef struct {
 } MetaTable;
 DA_STRUCT(MetaTable, MetaTable);
 
+typedef struct {
+	s8   enumeration_name;
+	s8  *sub_table_names;
+	u32  sub_table_count;
+	u32  namespace_id;
+
+	MetaLocation location;
+} MetaMUnion;
+DA_STRUCT(MetaMUnion, MetaMUnion);
+
 typedef enum {
 	MetaExpansionPartKind_Alignment,
 	MetaExpansionPartKind_Reference,
@@ -1550,6 +1561,9 @@ typedef struct {
 	s8_list                      table_names;
 	MetaTableList                tables;
 
+	s8_list                      munion_namespaces;
+	MetaMUnionList               munions;
+
 	MetaEmitOperationListSet     emit_sets;
 
 	MetaShaderBakeParametersList shader_bake_parameters;
@@ -1560,13 +1574,14 @@ typedef struct {
 	s8_list                      shader_names;
 } MetaContext;
 
+
 function iz
-meta_lookup_string_slow(s8_list *sv, s8 s)
+meta_lookup_string_slow(s8 *strings, iz string_count, s8 s)
 {
 	// TODO(rnp): obviously this is slow
 	iz result = -1;
-	for (iz i = 0; i < sv->count; i++) {
-		if (s8_equal(s, sv->data[i])) {
+	for (iz i = 0; i < string_count; i++) {
+		if (s8_equal(s, strings[i])) {
 			result = i;
 			break;
 		}
@@ -1591,7 +1606,7 @@ meta_lookup_id_slow(MetaIDList *v, u32 id)
 function iz
 meta_intern_string(MetaContext *ctx, s8_list *sv, s8 s)
 {
-	iz result = meta_lookup_string_slow(sv, s);
+	iz result = meta_lookup_string_slow(sv->data, sv->count, s);
 	if (result < 0) {
 		*da_push(ctx->arena, sv) = s;
 		result = sv->count - 1;
@@ -1856,13 +1871,7 @@ meta_push_expansion_part(MetaContext *ctx, Arena *arena, MetaExpansionPartList *
 		result->strings[0] = string;
 	}break;
 	case MetaExpansionPartKind_Reference:{
-		iz index = -1;
-		for (u32 field = 0; field < t->field_count; field++) {
-			if (s8_equal(string, t->fields[field])) {
-				index = (iz)field;
-				break;
-			}
-		}
+		iz index = meta_lookup_string_slow(t->fields, t->field_count, string);
 		result->strings = t->entries[index];
 		if (index < 0) {
 			/* TODO(rnp): fix this location to point directly at the field in the string */
@@ -1903,7 +1912,8 @@ meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count, MetaE
 	meta_entry_argument_expected(e, s8("table_name"));
 	s8 table_name = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
 
-	MetaTable *t = ctx->tables.data + meta_lookup_string_slow(&ctx->table_names, table_name);
+	MetaTable *t = ctx->tables.data + meta_lookup_string_slow(ctx->table_names.data,
+	                                                          ctx->table_names.count, table_name);
 	if (t < ctx->tables.data)
 		meta_entry_error(e, "undefined table %.*s\n", (i32)table_name.len, table_name.data);
 
@@ -2000,14 +2010,38 @@ meta_pack_emit(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count)
 	return scope.consumed;
 }
 
+function void
+meta_pack_munion(MetaContext *ctx, MetaEntry *e, iz entry_count)
+{
+	assert(e->kind == MetaEntryKind_MUnion);
+
+	MetaMUnion *mu = da_push(ctx->arena, &ctx->munions);
+	mu->location = e->location;
+
+	iz namespace_id = meta_lookup_string_slow(ctx->munion_namespaces.data,
+	                                          ctx->munion_namespaces.count, e->name);
+	if (namespace_id >= 0) meta_entry_error(e, "MUnion redefined\n");
+
+	s8 *m_name = da_push(ctx->arena, &ctx->munion_namespaces);
+	mu->namespace_id = (u32)da_index(m_name, &ctx->munion_namespaces);
+	*m_name = e->name;
+
+	meta_entry_argument_expected(e, s8("enumeration_name"), s8("[parameter_table_name ...]"));
+
+	MetaEntryArgument sub_tables = meta_entry_argument_expect(e, 1, MetaEntryArgumentKind_Array);
+	mu->enumeration_name = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
+	mu->sub_table_names  = sub_tables.strings;
+	mu->sub_table_count  = (u32)sub_tables.count;
+}
+
 function iz
 meta_pack_table(MetaContext *ctx, MetaEntry *e, iz entry_count)
 {
 	assert(e->kind == MetaEntryKind_Table);
 
 	MetaTable *t = da_push(ctx->arena, &ctx->tables);
-	iz table_name_id = meta_lookup_string_slow(&ctx->table_names, e->name);
-	if (table_name_id >= 0) meta_entry_error(e, "table redifined\n");
+	iz table_name_id = meta_lookup_string_slow(ctx->table_names.data, ctx->table_names.count, e->name);
+	if (table_name_id >= 0) meta_entry_error(e, "table redefined\n");
 
 	s8 *t_name = da_push(ctx->arena, &ctx->table_names);
 	t->table_name_id = (u32)da_index(t_name, &ctx->table_names);
@@ -2583,6 +2617,103 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 }
 
 function b32
+metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaMUnion *mu, s8 outdir)
+{
+	b32   result  = 1;
+	Arena scratch = m->scratch;
+
+	iz enumeration_id = meta_lookup_string_slow(ctx->enumeration_kinds.data, ctx->enumeration_kinds.count,
+	                                            mu->enumeration_name);
+	if (enumeration_id < 0) {
+		meta_compiler_error(mu->location, "Kind Enumeration '%.*s' requested by @MUnion not defined\n",
+		                    (i32)mu->enumeration_name.len, mu->enumeration_name.data);
+	}
+
+	s8_list *enumeration_members = ctx->enumeration_members.data + enumeration_id;
+	if ((u32)enumeration_members->count != mu->sub_table_count) {
+		meta_compiler_error(mu->location, "'%.*s' contains %u members but %u were requested by @MUnion\n",
+		                    (i32)mu->enumeration_name.len, mu->enumeration_name.data,
+		                    (u32)enumeration_members->count, mu->sub_table_count);
+	}
+
+	struct {
+		MetaTable *table;
+		u32        m_type_index;
+		u32        name_index;
+	} *table_matches;
+
+	table_matches = push_array(&scratch, typeof(*table_matches), mu->sub_table_count);
+	u32 max_parameter_count = 0;
+	for (u32 index = 0; index < mu->sub_table_count; index++) {
+		s8 sub_table_name = mu->sub_table_names[index];
+		MetaTable *t = ctx->tables.data + meta_lookup_string_slow(ctx->table_names.data,
+		                                                          ctx->table_names.count, sub_table_name);
+		if (t < ctx->tables.data) {
+			meta_compiler_error(mu->location, "Parameter Table '%.*s' requested by @MUnion not defined\n",
+			                    (i32)sub_table_name.len, sub_table_name.data);
+		}
+
+		iz m_type_index = meta_lookup_string_slow(t->fields, t->field_count, s8("m_type"));
+		iz name_index   = meta_lookup_string_slow(t->fields, t->field_count, s8("name"));
+		if (m_type_index < 0 || name_index < 0) {
+			meta_compiler_error(mu->location, "'%.*s' missing fields required by @MUnion: name, m_type\n",
+			                    (i32)sub_table_name.len, sub_table_name.data);
+		}
+
+		table_matches[index].table        = t;
+		table_matches[index].m_type_index = (u32)m_type_index;
+		table_matches[index].name_index   = (u32)name_index;
+		max_parameter_count = MAX(max_parameter_count, t->entry_count);
+	}
+
+	Arena scratch_temp = scratch;
+	s8    namespace    = ctx->munion_namespaces.data[mu->namespace_id];
+
+	s8 outfile = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), outdir, s8("Base.m"));
+	meta_begin_scope(m, s8("classdef Base"));
+	{
+		meta_begin_scope(m, s8("methods"));
+		{
+			meta_begin_scope(m, s8("function out = Pack(obj)"));
+			{
+				meta_begin_line(m, s8("out = zeros(1, "));
+				meta_push_u64(m, 4 * max_parameter_count);
+				meta_end_line(m, s8(", 'uint8');"));
+				meta_push_line(m, s8("fields = struct2cell(struct(obj));"));
+				meta_begin_scope(m, s8("for i = 1:numel(fields)"));
+				{
+					meta_push_line(m, s8("out((4*(i - 1)):(4*i)) = typecast(fields{i}, 'uint8');"));
+				} meta_end_scope(m, s8("end"));
+			} meta_end_scope(m, s8("end"));
+		} meta_end_scope(m, s8("end"));
+	} meta_end_scope(m, s8("end"));
+	result &= meta_end_and_write_matlab(m, (c8 *)outfile.data);
+	scratch = scratch_temp;
+
+	for (iz member = 0; member < enumeration_members->count; member++) {
+		s8 sub_name = enumeration_members->data[member];
+
+		outfile = push_s8_from_parts(&scratch, s8(""), outdir, s8(OS_PATH_SEPARATOR), sub_name, s8(".m"));
+		meta_begin_scope(m, s8("classdef "), sub_name, s8(" < OGLBeamformer"), namespace, s8(".Base"));
+		{
+			meta_begin_scope(m, s8("properties"));
+			{
+				MetaTable *t     = table_matches[member].table;
+				u32 m_type_index = table_matches[member].m_type_index;
+				u32 name_index   = table_matches[member].name_index;
+				for (u32 prop = 0; prop < t->entry_count; prop++) {
+					meta_push_line(m, t->entries[name_index][prop], s8("(1,1) "), t->entries[m_type_index][prop]);
+				}
+			} meta_end_scope(m, s8("end"));
+		} meta_end_scope(m, s8("end"));
+		result &= meta_end_and_write_matlab(m, (c8 *)outfile.data);
+		scratch = scratch_temp;
+	}
+
+	return result;
+}
+
+function b32
 metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 {
 	b32 result = 1;
@@ -2593,6 +2724,13 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 	char *base_directory = OUTPUT("matlab");
 	if (!os_remove_directory(base_directory))
 		build_fatal("failed to remove directory: %s", base_directory);
+
+	if (setjmp(compiler_jmp_buf)) {
+		os_remove_directory(base_directory);
+		build_log_error("Failed to generate MATLAB Bindings");
+		return 0;
+	}
+
 	os_make_directory(base_directory);
 
 	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
@@ -2719,6 +2857,20 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 		result &= meta_end_and_write_matlab(m, (c8 *)output.data);
 	}
 
+
+	//////////////////
+	// NOTE: MUnions
+	for (iz munion = 0; munion < ctx->munions.count; munion++) {
+		Arena scratch = m->scratch;
+		MetaMUnion *mu = ctx->munions.data + munion;
+		s8 namespace   = ctx->munion_namespaces.data[mu->namespace_id];
+		s8 outdir      = push_s8_from_parts(&m->scratch, s8(""), s8(OUTPUT("matlab")),
+		                                    s8(OS_PATH_SEPARATOR "+OGLBeamformer"), namespace);
+		os_make_directory((c8 *)outdir.data);
+		result &= metagen_matlab_union(m, ctx, mu, outdir);
+		m->scratch = scratch;
+	}
+
 	return result;
 }
 
@@ -2741,7 +2893,8 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 	meta_push_line(m, s8("// GENERATED CODE\n"));
 
 	{
-		iz index = meta_lookup_string_slow(&ctx->enumeration_kinds, s8("DataKind"));
+		iz index = meta_lookup_string_slow(ctx->enumeration_kinds.data, ctx->enumeration_kinds.count,
+		                                   s8("DataKind"));
 		if (index != -1) {
 			s8 enum_name = push_s8_from_parts(&m->scratch, s8(""), s8("Beamformer"), ctx->enumeration_kinds.data[index]);
 			metagen_push_c_enum(m, m->scratch, enum_name, ctx->enumeration_members.data[index].data,
@@ -2796,7 +2949,7 @@ metagen_load_context(Arena *arena, char *filename)
 	if (ctx->directory.len <= 0) ctx->directory = s8(".");
 
 	Arena scratch = ctx->scratch;
-	MetaEntryStack entries = meta_entry_stack_from_file(ctx->arena, scratch, filename);
+	MetaEntryStack entries = meta_entry_stack_from_file(ctx->arena, filename);
 
 	i32 stack_items[32];
 	struct { i32 *data; iz capacity; iz count; } stack = {stack_items, countof(stack_items), 0};
@@ -2834,6 +2987,9 @@ metagen_load_context(Arena *arena, char *filename)
 		}break;
 		case MetaEntryKind_Expand:{
 			i += meta_expand(ctx, scratch, e, entries.count - i, 0);
+		}break;
+		case MetaEntryKind_MUnion:{
+			meta_pack_munion(ctx, e, entries.count - i);
 		}break;
 		case MetaEntryKind_ShaderGroup:{
 			MetaShaderGroup *sg = da_push(ctx->arena, &ctx->shader_groups);

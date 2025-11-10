@@ -10,6 +10,39 @@
 	[Float32Complex 4 2]
 }
 
+@Table([name name_lower]) EmissionKind
+{
+	[Sine   sine]
+	[SineAM sine_am]
+	[Chirp  chirp]
+}
+
+@Table([c_type m_type name]) SineParameters
+{
+	[f32 single cycles   ]
+	[f32 single frequency]
+}
+
+@Table([c_type m_type name]) SineAMParameters
+{
+	[f32 single cycles   ]
+	[f32 single frequency]
+	[u32 uint32 emissions]
+}
+
+@Table([c_type m_type name]) ChirpParameters
+{
+	[f32 single duration     ]
+	[f32 single min_frequency]
+	[f32 single max_frequency]
+}
+
+@MUnion(EmissionKind [
+	SineParameters
+	SineAMParameters
+	ChirpParameters
+]) Emission
+
 @Table([name pretty_name fixed_transmits]) AcquisitionKind
 {
 	[FORCES         FORCES         1]
@@ -33,12 +66,32 @@
 	[Cubic]
 }
 
-@Expand(AcquisitionKind)   @Enumeration(AcquisitionKind `$(name)`)
-@Expand(DataKind)          @Enumeration(DataKind `$(name)`)
+@Expand(AcquisitionKind)   @Enumeration(AcquisitionKind   `$(name)`)
+@Expand(DataKind)          @Enumeration(DataKind          `$(name)`)
+@Expand(EmissionKind)      @Enumeration(EmissionKind      `$(name)`)
 @Expand(InterpolationMode) @Enumeration(InterpolationMode `$(name)`)
 
 @Emit
 {
+	`typedef struct {`
+	@Expand(SineParameters) `	$(c_type)$(|)$(name);`
+	`} BeamformerEmissionSineParameters;`
+	``
+	`typedef struct {`
+	@Expand(SineAMParameters) `	$(c_type)$(|)$(name);`
+	`} BeamformerEmissionSineAMParameters;`
+	``
+	`typedef struct {`
+	@Expand(ChirpParameters) `	$(c_type)$(|)$(name);`
+	`} BeamformerEmissionChirpParameters;`
+	``
+	`typedef struct {`
+	`	BeamformerEmissionKind kind;`
+	`	union {`
+	@Expand(EmissionKind) `		BeamformerEmission$(name)Parameters$(|)$(name_lower);`
+	`	};`
+	`} BeamformerEmission;`
+	``
 	`read_only global u8 beamformer_data_kind_element_size[] = {`
 	@Expand(DataKind) `	$(size),`
 	`};`
@@ -50,24 +103,15 @@
 	`read_only global u8 beamformer_data_kind_byte_size[] = {`
 	@Expand(DataKind) `	$(size) * $(elements),`
 	`};`
-}
-
-@Emit
-{
+	``
 	`read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {`
 	@Expand(AcquisitionKind) `	$(fixed_transmits),`
 	`};`
-}
-
-@Emit
-{
+	``
 	`read_only global s8 beamformer_acquisition_kind_strings[] = {`
 	@Expand(AcquisitionKind) `	s8_comp("$(pretty_name)"),`
 	`};`
-}
-
-@Emit
-{
+	``
 	`read_only global s8 beamformer_interpolation_mode_strings[] = {`
 	@Expand(InterpolationMode) `	s8_comp("$(name)"),`
 	`};`
