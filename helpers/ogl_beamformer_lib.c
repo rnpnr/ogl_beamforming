@@ -404,7 +404,7 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 	BeamformerDataKind data_kind = b->pipeline.data_kind;
 
 	u32 size     = bp->acquisition_count * bp->sample_count * bp->channel_count * beamformer_data_kind_byte_size[data_kind];
-	u32 raw_size = bp->raw_data_dimensions[0] * bp->raw_data_dimensions[1] * beamformer_data_kind_byte_size[data_kind];
+	u32 raw_size = bp->raw_data_dimensions.x * bp->raw_data_dimensions.y * beamformer_data_kind_byte_size[data_kind];
 
 	if (lib_error_check(size <= arena_capacity(&scratch, u8), BF_LIB_ERR_KIND_BUFFER_OVERFLOW) &&
 	    lib_error_check(size <= data_size && data_size == raw_size, BF_LIB_ERR_KIND_DATA_SIZE_MISMATCH))
@@ -413,7 +413,7 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 			if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
 				u32 channel_count      = bp->channel_count;
 				u32 out_channel_stride = beamformer_data_kind_element_count[data_kind] * bp->sample_count * bp->acquisition_count;
-				u32 in_channel_stride  = beamformer_data_kind_element_count[data_kind] * bp->raw_data_dimensions[0];
+				u32 in_channel_stride  = beamformer_data_kind_element_count[data_kind] * bp->raw_data_dimensions.x;
 
 				for (u32 channel = 0; channel < channel_count; channel++) {
 					u16 data_channel = (u16)b->channel_mapping[channel];
@@ -581,9 +581,9 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 {
 	b32 result = validate_simple_parameters(bp);
 	if (result) {
-		bp->output_points[0] = MAX(1, bp->output_points[0]);
-		bp->output_points[1] = MAX(1, bp->output_points[1]);
-		bp->output_points[2] = MAX(1, bp->output_points[2]);
+		bp->output_points.E[0] = MAX(1, bp->output_points.E[0]);
+		bp->output_points.E[1] = MAX(1, bp->output_points.E[1]);
+		bp->output_points.E[2] = MAX(1, bp->output_points.E[2]);
 
 		beamformer_push_simple_parameters(bp);
 
@@ -593,7 +593,7 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 			complex |= shader == BeamformerShaderKind_Demodulate || shader == BeamformerShaderKind_CudaHilbert;
 		}
 
-		iz output_size = bp->output_points[0] * bp->output_points[1] * bp->output_points[2] * (i32)sizeof(f32);
+		iz output_size = bp->output_points.x * bp->output_points.y * bp->output_points.z * (i32)sizeof(f32);
 		if (complex) output_size *= 2;
 
 		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);

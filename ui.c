@@ -1184,11 +1184,11 @@ add_beamformer_parameters_view(Variable *parent, BeamformerCtx *ctx)
 	                           VariableGroupKind_Vector, ui->font);
 	{
 		add_beamformer_variable(ui, group, &ui->arena, s8("Min:"), s8("[mm]"),
-		                       bp->output_min_coordinate + 0, v2_inf, 1e3f, 0.5e-3f,
+		                       bp->output_min_coordinate.E + 0, v2_inf, 1e3f, 0.5e-3f,
 		                       V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 
 		add_beamformer_variable(ui, group, &ui->arena, s8("Max:"), s8("[mm]"),
-		                        bp->output_max_coordinate + 0, v2_inf, 1e3f, 0.5e-3f,
+		                        bp->output_max_coordinate.E + 0, v2_inf, 1e3f, 0.5e-3f,
 		                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 	}
 	group = end_variable_group(group);
@@ -1197,11 +1197,11 @@ add_beamformer_parameters_view(Variable *parent, BeamformerCtx *ctx)
 	                           VariableGroupKind_Vector, ui->font);
 	{
 		add_beamformer_variable(ui, group, &ui->arena, s8("Min:"), s8("[mm]"),
-		                        bp->output_min_coordinate + 2, v2_inf, 1e3f, 0.5e-3f,
+		                        bp->output_min_coordinate.E + 2, v2_inf, 1e3f, 0.5e-3f,
 		                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 
 		add_beamformer_variable(ui, group, &ui->arena, s8("Max:"), s8("[mm]"),
-		                        bp->output_max_coordinate + 2, v2_inf, 1e3f, 0.5e-3f,
+		                        bp->output_max_coordinate.E + 2, v2_inf, 1e3f, 0.5e-3f,
 		                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 	}
 	group = end_variable_group(group);
@@ -1285,10 +1285,10 @@ ui_beamformer_frame_view_convert(BeamformerUI *ui, Arena *arena, Variable *view,
 		axial->zoom_starting_coord   = F32_INFINITY;
 
 		b32 copy = kind == BeamformerFrameViewKind_Copy;
-		lateral->min_value = copy ? &bv->min_coordinate.x : ui->params.output_min_coordinate + 0;
-		lateral->max_value = copy ? &bv->max_coordinate.x : ui->params.output_max_coordinate + 0;
-		axial->min_value   = copy ? &bv->min_coordinate.z : ui->params.output_min_coordinate + 2;
-		axial->max_value   = copy ? &bv->max_coordinate.z : ui->params.output_max_coordinate + 2;
+		lateral->min_value = copy ? &bv->min_coordinate.x : &ui->params.output_min_coordinate.x;
+		lateral->max_value = copy ? &bv->max_coordinate.x : &ui->params.output_max_coordinate.x;
+		axial->min_value   = copy ? &bv->min_coordinate.z : &ui->params.output_min_coordinate.z;
+		axial->max_value   = copy ? &bv->max_coordinate.z : &ui->params.output_max_coordinate.z;
 
 		#define X(id, text) add_button(ui, menu, arena, s8(text), UI_BID_ ##id, 0, ui->small_font);
 		FRAME_VIEW_BUTTONS
@@ -1503,9 +1503,7 @@ beamformer_frame_view_plane_size(BeamformerUI *ui, BeamformerFrameView *view)
 {
 	v3 result;
 	if (view->kind == BeamformerFrameViewKind_3DXPlane) {
-		v3 min = v3_from_f32_array(ui->params.output_min_coordinate);
-		v3 max = v3_from_f32_array(ui->params.output_max_coordinate);
-		result = v3_sub(max, min);
+		result = v3_sub(ui->params.output_max_coordinate, ui->params.output_min_coordinate);
 		swap(result.y, result.z);
 		result.x = MAX(1e-3f, result.x);
 		result.y = MAX(1e-3f, result.y);
@@ -1538,8 +1536,8 @@ normalized_p_in_rect(Rect r, v2 p, b32 invert_y)
 function v3
 x_plane_position(BeamformerUI *ui)
 {
-	f32 y_min = ui->params.output_min_coordinate[2];
-	f32 y_max = ui->params.output_max_coordinate[2];
+	f32 y_min = ui->params.output_min_coordinate.E[2];
+	f32 y_max = ui->params.output_max_coordinate.E[2];
 	v3 result = {.y = y_min + (y_max - y_min) / 2};
 	return result;
 }
@@ -1713,15 +1711,15 @@ view_update(BeamformerUI *ui, BeamformerFrameView *view)
 		view->dirty |= view->frame != ui->latest_plane[index];
 		view->frame  = ui->latest_plane[index];
 		if (view->dirty) {
-			view->min_coordinate = v3_from_f32_array(ui->params.output_min_coordinate);
-			view->max_coordinate = v3_from_f32_array(ui->params.output_max_coordinate);
+			view->min_coordinate = ui->params.output_min_coordinate;
+			view->max_coordinate = ui->params.output_max_coordinate;
 		}
 	}
 
 	/* TODO(rnp): x-z or y-z */
 	/* TODO(rnp): add method of setting a target size in frame view */
 	iv2 current = view->texture_dim;
-	iv2 target  = {.w = (i32)ui->params.output_points[0], .h = (i32)ui->params.output_points[2]};
+	iv2 target  = {.w = ui->params.output_points.E[0], .h = ui->params.output_points.E[2]};
 	if (view->kind != BeamformerFrameViewKind_Copy &&
 	    view->kind != BeamformerFrameViewKind_3DXPlane &&
 	    !iv2_equal(current, target) && !iv2_equal(target, (iv2){0}))
@@ -3963,10 +3961,10 @@ ui_init(BeamformerCtx *ctx, Arena store)
 function void
 validate_ui_parameters(BeamformerUIParameters *p)
 {
-	if (p->output_min_coordinate[0] > p->output_max_coordinate[0])
-		swap(p->output_min_coordinate[0], p->output_max_coordinate[0]);
-	if (p->output_min_coordinate[2] > p->output_max_coordinate[2])
-		swap(p->output_min_coordinate[2], p->output_max_coordinate[2]);
+	if (p->output_min_coordinate.x > p->output_max_coordinate.x)
+		swap(p->output_min_coordinate.x, p->output_max_coordinate.x);
+	if (p->output_min_coordinate.z > p->output_max_coordinate.z)
+		swap(p->output_min_coordinate.z, p->output_max_coordinate.z);
 }
 
 function void

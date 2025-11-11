@@ -925,14 +925,43 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 	X(SubShader)    \
 	X(Table)
 
+typedef enum {
+	#define X(k, ...) MetaEntryKind_## k,
+	META_ENTRY_KIND_LIST
+	#undef X
+	MetaEntryKind_Count,
+} MetaEntryKind;
+
+#define X(k, ...) #k,
+read_only global char *meta_entry_kind_strings[] = {META_ENTRY_KIND_LIST};
+#undef X
+
+#define META_EMIT_LANG_LIST \
+	X(C)        \
+	X(CLibrary) \
+	X(MATLAB)
+
+typedef enum {
+	#define X(k, ...) MetaEmitLang_## k,
+	META_EMIT_LANG_LIST
+	#undef X
+	MetaEmitLang_Count,
+} MetaEmitLang;
+
 #define META_KIND_LIST \
-	X(F32, f32, float,    single, 4) \
-	X(S32, i32, int32_t,  int32,  4) \
-	X(S16, i16, int16_t,  int16,  2) \
-	X(S8,  i8,  int8_t,   int8,   1) \
-	X(U32, u32, uint32_t, uint32, 4) \
-	X(U16, u16, uint16_t, uint16, 2) \
-	X(U8,  u8,  uint8_t,  uint8,  1)
+	X(M4,  m4,  float,    single, 64, 16) \
+	X(SV4, iv4, int32_t,  int32,  16,  4) \
+	X(UV4, uv4, uint32_t, uint32, 16,  4) \
+	X(UV2, uv2, uint32_t, uint32,  8,  2) \
+	X(V3,  v3,  float,    single, 12,  3) \
+	X(V2,  v2,  float,    single,  8,  2) \
+	X(F32, f32, float,    single,  4,  1) \
+	X(S32, i32, int32_t,  int32,   4,  1) \
+	X(S16, i16, int16_t,  int16,   2,  1) \
+	X(S8,  i8,  int8_t,   int8,    1,  1) \
+	X(U32, u32, uint32_t, uint32,  4,  1) \
+	X(U16, u16, uint16_t, uint16,  2,  1) \
+	X(U8,  u8,  uint8_t,  uint8,   1,  1)
 
 typedef enum {
 	#define X(k, ...) MetaKind_## k,
@@ -943,6 +972,12 @@ typedef enum {
 
 read_only global u8 meta_kind_byte_sizes[] = {
 	#define X(_k, _c, _b, _m, bytes, ...) bytes,
+	META_KIND_LIST
+	#undef X
+};
+
+read_only global u8 meta_kind_elements[] = {
+	#define X(_k, _c, _b, _m, _by, elements, ...) elements,
 	META_KIND_LIST
 	#undef X
 };
@@ -970,17 +1005,6 @@ read_only global s8 meta_kind_c_types[] = {
 	META_KIND_LIST
 	#undef X
 };
-
-typedef enum {
-	#define X(k, ...) MetaEntryKind_## k,
-	META_ENTRY_KIND_LIST
-	#undef X
-	MetaEntryKind_Count,
-} MetaEntryKind;
-
-#define X(k, ...) #k,
-read_only global char *meta_entry_kind_strings[] = {META_ENTRY_KIND_LIST};
-#undef X
 
 typedef struct { u32 line, column; } MetaLocation;
 
@@ -1132,6 +1156,20 @@ meta_entry_print(MetaEntry *e, i32 indent, i32 caret)
 	fprintf(stderr, "\n");
 }
 
+function iz
+meta_lookup_string_slow(s8 *strings, iz string_count, s8 s)
+{
+	// TODO(rnp): obviously this is slow
+	iz result = -1;
+	for (iz i = 0; i < string_count; i++) {
+		if (s8_equal(s, strings[i])) {
+			result = i;
+			break;
+		}
+	}
+	return result;
+}
+
 function MetaEntryKind
 meta_entry_kind_from_string(s8 s)
 {
@@ -1139,12 +1177,8 @@ meta_entry_kind_from_string(s8 s)
 	read_only local_persist s8 kinds[] = {META_ENTRY_KIND_LIST};
 	#undef X
 	MetaEntryKind result = MetaEntryKind_Invalid;
-	for EachNonZeroEnumValue(MetaEntryKind, kind) {
-		if (s8_equal(kinds[kind], s)) {
-			result = kind;
-			break;
-		}
-	}
+	iz id = meta_lookup_string_slow(kinds + 1, countof(kinds) - 1, s);
+	if (id > 0) result = (MetaEntryKind)(id + 1);
 	return result;
 }
 
@@ -1162,7 +1196,8 @@ meta_parser_trim(MetaParser *p)
 		}break;
 		case '\n':{ p->p.location.line++; p->p.location.column = 0; comment = 0; }break;
 		case '/':{
-			comment = ((s + 1) != end  && s[1] == '/');
+			comment = ((s + 1) != end && s[1] == '/');
+			if (comment) s++;
 		} /* FALLTHROUGH */
 		default:{done = !comment;}break;
 		}
@@ -1536,14 +1571,48 @@ DA_STRUCT(MetaMUnion, MetaMUnion);
 
 typedef enum {
 	MetaExpansionPartKind_Alignment,
+	MetaExpansionPartKind_Conditional,
 	MetaExpansionPartKind_EvalKind,
+	MetaExpansionPartKind_EvalKindCount,
 	MetaExpansionPartKind_Reference,
 	MetaExpansionPartKind_String,
 } MetaExpansionPartKind;
 
+typedef enum {
+	MetaExpansionConditionalArgumentKind_Invalid,
+	MetaExpansionConditionalArgumentKind_Number,
+	MetaExpansionConditionalArgumentKind_Evaluation,
+	MetaExpansionConditionalArgumentKind_Reference,
+} MetaExpansionConditionalArgumentKind;
+
 typedef struct {
-	s8 *strings;
+	MetaExpansionConditionalArgumentKind kind;
+	union {
+		s8 *strings;
+		i64 number;
+	};
+} MetaExpansionConditionalArgument;
+
+typedef enum {
+	MetaExpansionOperation_Invalid,
+	MetaExpansionOperation_LessThan,
+	MetaExpansionOperation_GreaterThan,
+} MetaExpansionOperation;
+
+typedef struct {
+	MetaExpansionConditionalArgument lhs;
+	MetaExpansionConditionalArgument rhs;
+	MetaExpansionOperation           op;
+	u32 instruction_skip;
+} MetaExpansionConditional;
+
+typedef struct {
 	MetaExpansionPartKind kind;
+	union {
+		s8  string;
+		s8 *strings;
+		MetaExpansionConditional conditional;
+	};
 } MetaExpansionPart;
 DA_STRUCT(MetaExpansionPart, MetaExpansionPart);
 
@@ -1567,7 +1636,14 @@ typedef struct {
 	MetaEmitOperationKind kind;
 	MetaLocation          location;
 } MetaEmitOperation;
-DA_STRUCT(MetaEmitOperation, MetaEmitOperation);
+
+typedef struct {
+	MetaEmitOperation *data;
+	iz count;
+	iz capacity;
+
+	s8 filename;
+} MetaEmitOperationList;
 
 typedef struct {
 	MetaEmitOperationList *data;
@@ -1592,7 +1668,7 @@ typedef struct {
 	s8_list                      munion_namespaces;
 	MetaMUnionList               munions;
 
-	MetaEmitOperationListSet     emit_sets;
+	MetaEmitOperationListSet     emit_sets[MetaEmitLang_Count];
 
 	MetaShaderBakeParametersList shader_bake_parameters;
 	MetaIDList                   shader_enumerations;
@@ -1601,21 +1677,6 @@ typedef struct {
 	MetaBaseShaderList           base_shaders;
 	s8_list                      shader_names;
 } MetaContext;
-
-
-function iz
-meta_lookup_string_slow(s8 *strings, iz string_count, s8 s)
-{
-	// TODO(rnp): obviously this is slow
-	iz result = -1;
-	for (iz i = 0; i < string_count; i++) {
-		if (s8_equal(s, strings[i])) {
-			result = i;
-			break;
-		}
-	}
-	return result;
-}
 
 function iz
 meta_lookup_id_slow(MetaIDList *v, u32 id)
@@ -1893,8 +1954,11 @@ meta_push_expansion_part(MetaContext *ctx, Arena *arena, MetaExpansionPartList *
 	MetaExpansionPart *result = da_push(arena, parts);
 	result->kind = kind;
 	switch (kind) {
-	case MetaExpansionPartKind_Alignment:{}break;
+	case MetaExpansionPartKind_Alignment:
+	case MetaExpansionPartKind_Conditional:
+	{}break;
 	case MetaExpansionPartKind_EvalKind:
+	case MetaExpansionPartKind_EvalKindCount:
 	case MetaExpansionPartKind_Reference:
 	{
 		iz index = meta_lookup_string_slow(t->fields, t->field_count, string);
@@ -1906,12 +1970,152 @@ meta_push_expansion_part(MetaContext *ctx, Arena *arena, MetaExpansionPartList *
 			                    (i32)table_name.len, table_name.data, (i32)string.len, string.data);
 		}
 	}break;
-	case MetaExpansionPartKind_String:{
-		result->strings    = push_struct(arena, s8);
-		result->strings[0] = string;
-	}break;
+	case MetaExpansionPartKind_String:{ result->string = string; }break;
+	InvalidDefaultCase;
 	}
 	return result;
+}
+
+#define META_EXPANSION_TOKEN_LIST \
+	X('|', Alignment) \
+	X('%', TypeEval) \
+	X('#', TypeEvalElements) \
+	X('"', Quote) \
+	X('-', Dash) \
+	X('>', GreaterThan) \
+	X('<', LessThan) \
+
+typedef enum {
+	MetaExpansionToken_EOF,
+	MetaExpansionToken_Identifier,
+	MetaExpansionToken_Number,
+	MetaExpansionToken_String,
+	#define X(__1, kind, ...) MetaExpansionToken_## kind,
+	META_EXPANSION_TOKEN_LIST
+	#undef X
+	MetaExpansionToken_Count,
+} MetaExpansionToken;
+
+read_only global s8 meta_expansion_token_strings[] = {
+	s8_comp("EOF"),
+	s8_comp("Indentifier"),
+	s8_comp("Number"),
+	s8_comp("String"),
+	#define X(s, kind, ...) s8_comp(#s),
+	META_EXPANSION_TOKEN_LIST
+	#undef X
+};
+
+typedef	struct {
+	s8 s;
+	union {
+		i64 number;
+		s8  string;
+	};
+	s8 save;
+	MetaLocation loc;
+} MetaExpansionParser;
+
+#define meta_expansion_save(v)    (v)->save = (v)->s
+#define meta_expansion_restore(v) swap((v)->s, (v)->save)
+#define meta_expansion_commit(v)  meta_expansion_restore(v)
+
+#define meta_expansion_expected(loc, e, g) \
+	meta_compiler_error(loc, "invalid expansion string: expected %.*s after %.*s\n", \
+	                    (i32)meta_expansion_token_strings[e].len, meta_expansion_token_strings[e].data, \
+	                    (i32)meta_expansion_token_strings[g].len, meta_expansion_token_strings[g].data)
+
+function s8
+meta_expansion_extract_string(MetaExpansionParser *p)
+{
+	s8 result = {.data = p->s.data};
+	for (; result.len < p->s.len; result.len++) {
+		b32 done = 0;
+		switch (p->s.data[result.len]) {
+		#define X(t, ...) case t:
+		META_EXPANSION_TOKEN_LIST
+		#undef X
+		case ' ':
+		{done = 1;}break;
+		default:{}break;
+		}
+		if (done) break;
+	}
+	p->s.data += result.len;
+	p->s.len  -= result.len;
+	return result;
+}
+
+function MetaExpansionToken
+meta_expansion_token(MetaExpansionParser *p)
+{
+	MetaExpansionToken result = MetaExpansionToken_EOF;
+	meta_expansion_save(p);
+	if (p->s.len > 0) {
+		b32 chop = 1;
+		switch (p->s.data[0]) {
+		#define X(t, kind, ...) case t:{ result = MetaExpansionToken_## kind; }break;
+		META_EXPANSION_TOKEN_LIST
+		#undef X
+		default:{
+			chop = 0;
+			if (BETWEEN(p->s.data[0], '0', '9')) result = MetaExpansionToken_Number;
+			else                                 result = MetaExpansionToken_Identifier;
+		}break;
+		}
+		if (chop) {
+			s8_chop(&p->s, 1);
+			p->s = s8_trim(p->s);
+		}
+
+		switch (result) {
+		case MetaExpansionToken_Number:{
+			IntegerConversion integer = integer_from_s8(p->s);
+			if (integer.result != IntegerConversionResult_Success) {
+				/* TODO(rnp): point at start */
+				meta_compiler_error(p->loc, "invalid integer in expansion string\n");
+			}
+			p->number = integer.S64;
+			p->s      = integer.unparsed;
+		}break;
+		case MetaExpansionToken_Identifier:{ p->string = meta_expansion_extract_string(p); }break;
+		default:{}break;
+		}
+		p->s = s8_trim(p->s);
+	}
+	return result;
+}
+
+function MetaExpansionPart *
+meta_expansion_start_conditional(MetaContext *ctx, Arena *arena, MetaExpansionPartList *ops,
+                                 MetaExpansionParser *p, MetaExpansionToken token, b32 negate)
+{
+	MetaExpansionPart *result = meta_push_expansion_part(ctx, arena, ops, MetaExpansionPartKind_Conditional,
+	                                                     s8(""), 0, p->loc);
+	switch (token) {
+	case MetaExpansionToken_Number:{
+		result->conditional.lhs.kind   = MetaExpansionConditionalArgumentKind_Number;
+		result->conditional.lhs.number = negate ? -p->number : p->number;
+	}break;
+	default:{}break;
+	}
+	return result;
+}
+
+function void
+meta_expansion_end_conditional(MetaExpansionPart *ep, MetaExpansionParser *p, MetaExpansionToken token, b32 negate)
+{
+	if (ep->conditional.rhs.kind != MetaExpansionConditionalArgumentKind_Invalid) {
+		meta_compiler_error(p->loc, "invalid expansion conditional: duplicate right hand expression: '%.*s'\n",
+		                    (i32)p->save.len, p->save.data);
+	}
+	switch (token) {
+	case MetaExpansionToken_Number:{
+		ep->conditional.rhs.kind   = MetaExpansionConditionalArgumentKind_Number;
+		ep->conditional.rhs.number = negate ? -p->number : p->number;
+	}break;
+	default:{}break;
+	}
 }
 
 function MetaExpansionPartList
@@ -1923,14 +2127,118 @@ meta_generate_expansion_set(MetaContext *ctx, Arena *arena, s8 expansion_string,
 		meta_expansion_string_split(remainder, &left, &inner, &remainder, loc);
 		if (left.len)  meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_String, left, t, loc);
 		if (inner.len) {
-			s8 test   = inner;
-			s8 opcode = s8_chop(&test, 1);
-			if (test.len == 0 && opcode.data[0] == '|') {
-				meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_Alignment, inner, t, loc);
-			} else if (test.len && opcode.data[0] == '%') {
-				meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_EvalKind, test, t, loc);
-			} else {
-				meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_Reference, inner, t, loc);
+			MetaExpansionParser p[1] = {{.s = inner, .loc = loc}};
+
+			MetaExpansionPart *test_part = 0;
+			b32 count_test_parts = 0;
+
+			for (MetaExpansionToken token = meta_expansion_token(p);
+			     token != MetaExpansionToken_EOF;
+			     token = meta_expansion_token(p))
+			{
+				if (count_test_parts) test_part->conditional.instruction_skip++;
+				switch (token) {
+				case MetaExpansionToken_Alignment:{
+					meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_Alignment, p->s, t, loc);
+				}break;
+
+				case MetaExpansionToken_Identifier:{
+					meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_Reference, p->string, t, loc);
+				}break;
+
+				case MetaExpansionToken_TypeEval:
+				case MetaExpansionToken_TypeEvalElements:
+				{
+					if (meta_expansion_token(p) != MetaExpansionToken_Identifier) {
+						loc.column += p->save.data - expansion_string.data;
+						meta_expansion_expected(loc, MetaExpansionToken_Identifier, token);
+					}
+					MetaExpansionPartKind kind = token == MetaExpansionToken_TypeEval ?
+					                                      MetaExpansionPartKind_EvalKind :
+					                                      MetaExpansionPartKind_EvalKindCount;
+					meta_push_expansion_part(ctx, arena, &result, kind, p->string, t, loc);
+				}break;
+
+				case MetaExpansionToken_Quote:{
+					u8 *point = p->s.data;
+					s8 string = meta_expansion_extract_string(p);
+					token = meta_expansion_token(p);
+					if (token != MetaExpansionToken_Quote) {
+						loc.column += point - expansion_string.data;
+						/* TODO(rnp): point at start */
+						meta_compiler_error(loc, "unterminated string in expansion\n");
+					}
+					meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_String, string, t, loc);
+				}break;
+
+				case MetaExpansionToken_Dash:{
+					token = meta_expansion_token(p);
+					switch (token) {
+					case MetaExpansionToken_GreaterThan:{
+						if (!test_part) goto error;
+						if (test_part->conditional.lhs.kind == MetaExpansionConditionalArgumentKind_Invalid ||
+						    test_part->conditional.rhs.kind == MetaExpansionConditionalArgumentKind_Invalid)
+						{
+							b32 lhs = test_part->conditional.lhs.kind == MetaExpansionConditionalArgumentKind_Invalid;
+							b32 rhs = test_part->conditional.rhs.kind == MetaExpansionConditionalArgumentKind_Invalid;
+							if (lhs && rhs)
+								meta_compiler_error(loc, "expansion string test terminated without arguments\n");
+							meta_compiler_error(loc, "expansion string test terminated without %s argument\n",
+							                    lhs? "left" : "right");
+						}
+						count_test_parts = 1;
+					}break;
+					case MetaExpansionToken_Number:{
+						if (test_part) meta_expansion_end_conditional(test_part, p, token, 1);
+						else           test_part = meta_expansion_start_conditional(ctx, arena, &result, p, token, 1);
+					}break;
+					default:{ goto error; }break;
+					}
+				}break;
+
+				case MetaExpansionToken_Number:{
+					if (test_part) meta_expansion_end_conditional(test_part, p, token, 0);
+					else           test_part = meta_expansion_start_conditional(ctx, arena, &result, p, token, 0);
+				}break;
+
+				case MetaExpansionToken_GreaterThan:
+				case MetaExpansionToken_LessThan:
+				{
+					if (test_part && test_part->conditional.op != MetaExpansionOperation_Invalid) goto error;
+					if (!test_part) {
+						if (result.count == 0) {
+							meta_compiler_error(p->loc, "invalid expansion conditional: missing left hand side\n");
+						}
+
+						s8 *strings = result.data[result.count - 1].strings;
+						MetaExpansionPartKind last_kind = result.data[result.count - 1].kind;
+						if (last_kind != MetaExpansionPartKind_EvalKindCount &&
+						    last_kind != MetaExpansionPartKind_Reference)
+						{
+							meta_compiler_error(p->loc, "invalid expansion conditional: left hand side not numeric\n");
+						}
+						result.count--;
+						test_part = meta_expansion_start_conditional(ctx, arena, &result, p, token, 0);
+						if (last_kind == MetaExpansionPartKind_EvalKindCount) {
+							test_part->conditional.lhs.kind = MetaExpansionConditionalArgumentKind_Evaluation;
+						} else {
+							test_part->conditional.lhs.kind = MetaExpansionConditionalArgumentKind_Reference;
+						}
+						test_part->conditional.lhs.strings = strings;
+					}
+					test_part->conditional.op = token == MetaExpansionToken_LessThan ?
+					                                     MetaExpansionOperation_LessThan :
+					                                     MetaExpansionOperation_GreaterThan;
+				}break;
+
+				error:
+				default:
+				{
+					meta_compiler_error(loc, "invalid nested %.*s in expansion string\n",
+					                    (i32)meta_expansion_token_strings[token].len,
+					                    meta_expansion_token_strings[token].data);
+				}break;
+				}
 			}
 		}
 	} while (remainder.len);
@@ -2005,7 +2313,7 @@ meta_embed(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count)
 	meta_entry_argument_expected(e, s8("filename"));
 	s8 filename = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
 
-	MetaEmitOperationList *ops = da_push(ctx->arena, &ctx->emit_sets);
+	MetaEmitOperationList *ops = da_push(ctx->arena, ctx->emit_sets + MetaEmitLang_C);
 	if (e->name.len == 0) meta_entry_error(e, "name must be provided for output array");
 
 	MetaEmitOperation *op;
@@ -2022,12 +2330,52 @@ meta_embed(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count)
 	op->string = s8("};");
 }
 
+function MetaKind
+meta_map_kind(s8 kind, s8 table_name, MetaLocation location)
+{
+	iz id = meta_lookup_string_slow(meta_kind_meta_types, MetaKind_Count, kind);
+	if (id < 0) {
+		meta_compiler_error(location, "Invalid Kind in '%.*s' table expansion: %.*s\n",
+		                    (i32)table_name.len, table_name.data, (i32)kind.len, kind.data);
+	}
+	MetaKind result = (MetaKind)id;
+	return result;
+}
+
+function MetaEmitLang
+meta_map_emit_lang(s8 lang, MetaEntry *e)
+{
+	#define X(k, ...) s8_comp(#k),
+	read_only local_persist s8 meta_lang_strings[] = {META_EMIT_LANG_LIST};
+	#undef X
+
+	iz id = meta_lookup_string_slow(meta_lang_strings, MetaEmitLang_Count, lang);
+	if (id < 0) {
+		#define X(k, ...) #k ", "
+		meta_entry_error(e, "Unknown Emit Language: '%.*s'\nPossible Values: "
+		                 META_EMIT_LANG_LIST "\n", (i32)lang.len, lang.data);
+		#undef X
+	}
+	MetaEmitLang result = (MetaEmitLang)id;
+	return result;
+}
+
 function iz
 meta_pack_emit(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count)
 {
 	assert(e->kind == MetaEntryKind_Emit);
 
-	MetaEmitOperationList *ops = da_push(ctx->arena, &ctx->emit_sets);
+	MetaEmitLang lang = MetaEmitLang_C;
+	if (e->argument_count) {
+		meta_entry_argument_expected(e, s8("emit_language"));
+		s8 name = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
+		lang = meta_map_emit_lang(name, e);
+	}
+
+	MetaEmitOperationList *ops = da_push(ctx->arena, ctx->emit_sets + lang);
+	/* TODO(rnp): probably we should check this is unique */
+	ops->filename = e->name;
+
 	MetaEntryScope scope = meta_entry_extract_scope(e, entry_count);
 	for (MetaEntry *row = scope.start; row != scope.one_past_last; row++) {
 		switch (row->kind) {
@@ -2129,8 +2477,8 @@ function CommandList
 meta_extract_emit_file_dependencies(MetaContext *ctx, Arena *arena)
 {
 	CommandList result = {0};
-	for (iz set = 0; set < ctx->emit_sets.count; set++) {
-		MetaEmitOperationList *ops = ctx->emit_sets.data + set;
+	for (iz set = 0; set < ctx->emit_sets[MetaEmitLang_C].count; set++) {
+		MetaEmitOperationList *ops = ctx->emit_sets[MetaEmitLang_C].data + set;
 		for (iz opcode = 0; opcode < ops->count; opcode++) {
 			MetaEmitOperation *op = ops->data + opcode;
 			switch (op->kind) {
@@ -2142,18 +2490,6 @@ meta_extract_emit_file_dependencies(MetaContext *ctx, Arena *arena)
 			}
 		}
 	}
-	return result;
-}
-
-function MetaKind
-meta_map_kind(s8 kind, s8 table_name, MetaLocation location)
-{
-	iz id = meta_lookup_string_slow(meta_kind_meta_types, MetaKind_Count, kind);
-	if (id < 0) {
-		meta_compiler_error(location, "Invalid Kind in '%.*s' table expansion: %.*s\n",
-		                    (i32)table_name.len, table_name.data, (i32)kind.len, kind.data);
-	}
-	MetaKind result = (MetaKind)id;
 	return result;
 }
 
@@ -2199,90 +2535,159 @@ metagen_push_table(MetaprogramContext *m, Arena scratch, s8 row_start, s8 row_en
 	}
 }
 
-function void
-metagen_run_emit(MetaprogramContext *m, MetaContext *ctx, s8 *evaluation_table)
+function i64
+meta_expansion_part_conditional_argument(MetaExpansionConditionalArgument a, u32 entry,
+                                         s8 table_name, MetaLocation loc)
 {
-	for (iz set = 0; set < ctx->emit_sets.count; set++) {
-		MetaEmitOperationList *ops = ctx->emit_sets.data + set;
-		for (iz opcode = 0; opcode < ops->count; opcode++) {
-			MetaEmitOperation *op = ops->data + opcode;
-			switch (op->kind) {
-			case MetaEmitOperationKind_String:{ meta_push_line(m, op->string); }break;
-			case MetaEmitOperationKind_FileBytes:{
-				Arena scratch = m->scratch;
-				s8 filename = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), ctx->directory, op->string);
-				s8 file     = os_read_whole_file(&scratch, (c8 *)filename.data);
-				m->indentation_level++;
-				metagen_push_byte_array(m, file);
-				m->indentation_level--;
-			}break;
-			case MetaEmitOperationKind_Expand:{
-				Arena scratch = m->scratch;
+	i64 result = 0;
+	switch (a.kind) {
+	case MetaExpansionConditionalArgumentKind_Number:{
+		result = a.number;
+	}break;
 
-				MetaEmitOperationExpansion *eop = &op->expansion_operation;
-				MetaTable *t  = ctx->tables.data + eop->table_id;
-				s8 table_name = ctx->table_names.data[t->table_name_id];
+	case MetaExpansionConditionalArgumentKind_Evaluation:
+	{
+		s8 string     = a.strings[entry];
+		MetaKind kind = meta_map_kind(string, table_name, loc);
+		result        = meta_kind_elements[kind];
+	}break;
 
-				u32 alignment_count  = 1;
-				u32 evaluation_count = 0;
-				for (u32 part = 0; part < eop->part_count; part++) {
-					if (eop->parts[part].kind == MetaExpansionPartKind_Alignment)
-						alignment_count++;
-					if (eop->parts[part].kind == MetaExpansionPartKind_EvalKind)
-						evaluation_count++;
-				}
-
-				MetaKind **evaluation_columns = push_array(&scratch, MetaKind *, evaluation_count);
-				for (u32 column = 0; column < evaluation_count; column++)
-					evaluation_columns[column] = push_array(&scratch, MetaKind, t->entry_count);
-
-				for (u32 part = 0; part < eop->part_count; part++) {
-					u32 eval_column = 0;
-					MetaExpansionPart *p = eop->parts + part;
-					if (p->kind == MetaExpansionPartKind_EvalKind) {
-						for (u32 entry = 0; entry < t->entry_count; entry++) {
-							evaluation_columns[eval_column][entry] = meta_map_kind(p->strings[entry],
-							                                                       table_name, op->location);
-						}
-						eval_column++;
-					}
-				}
-
-				s8 **columns = push_array(&scratch, s8 *, alignment_count);
-				for (u32 column = 0; column < alignment_count; column++)
-					columns[column] = push_array(&scratch, s8, t->entry_count);
-
-				Stream sb = arena_stream(scratch);
-				for (u32 entry = 0; entry < t->entry_count; entry++) {
-					u32 column      = 0;
-					u32 eval_column = 0;
-					for (u32 part = 0; part < eop->part_count; part++) {
-						MetaExpansionPart *p = eop->parts + part;
-						switch (p->kind) {
-						case MetaExpansionPartKind_Alignment:{
-							columns[column][entry] = arena_stream_commit_and_reset(&scratch, &sb);
-							column++;
-						}break;
-						case MetaExpansionPartKind_EvalKind:{
-							s8 kind = evaluation_table[evaluation_columns[eval_column][entry]];
-							stream_append_s8(&sb, kind);
-						}break;
-						case MetaExpansionPartKind_Reference:
-						case MetaExpansionPartKind_String:
-						{
-							u32 index = p->kind == MetaExpansionPartKind_Reference ? entry : 0;
-							stream_append_s8(&sb, p->strings[index]);
-						}break;
-						}
-					}
-					columns[column][entry] = arena_stream_commit_and_reset(&scratch, &sb);
-				}
-				metagen_push_table(m, scratch, s8(""), s8(""), columns, t->entry_count, alignment_count);
-			}break;
-			InvalidDefaultCase;
-			}
+	case MetaExpansionConditionalArgumentKind_Reference:{
+		s8 string = a.strings[entry];
+		IntegerConversion integer = integer_from_s8(string);
+		if (integer.result != IntegerConversionResult_Success) {
+			meta_compiler_error(loc, "Invalid integer in '%.*s' table expansion: %.*s\n",
+			                    (i32)table_name.len, table_name.data, (i32)string.len, string.data);
 		}
-		meta_end_line(m);
+		result = integer.S64;
+	}break;
+
+	InvalidDefaultCase;
+	}
+
+	return result;
+}
+
+function b32
+meta_expansion_part_conditional(MetaExpansionPart *p, u32 entry, s8 table_name, MetaLocation loc)
+{
+	assert(p->kind == MetaExpansionPartKind_Conditional);
+	b32 result = 0;
+	i64 lhs = meta_expansion_part_conditional_argument(p->conditional.lhs, entry, table_name, loc);
+	i64 rhs = meta_expansion_part_conditional_argument(p->conditional.rhs, entry, table_name, loc);
+	switch (p->conditional.op) {
+	case MetaExpansionOperation_LessThan:{    result = lhs < rhs; }break;
+	case MetaExpansionOperation_GreaterThan:{ result = lhs > rhs; }break;
+	InvalidDefaultCase;
+	}
+	return result;
+}
+
+function void
+metagen_run_emit(MetaprogramContext *m, MetaContext *ctx, MetaEmitOperationList *ops,
+                 s8 *evaluation_table)
+{
+	for (iz opcode = 0; opcode < ops->count; opcode++) {
+		MetaEmitOperation *op = ops->data + opcode;
+		switch (op->kind) {
+		case MetaEmitOperationKind_String:{ meta_push_line(m, op->string); }break;
+		case MetaEmitOperationKind_FileBytes:{
+			Arena scratch = m->scratch;
+			s8 filename = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), ctx->directory, op->string);
+			s8 file     = os_read_whole_file(&scratch, (c8 *)filename.data);
+			m->indentation_level++;
+			metagen_push_byte_array(m, file);
+			m->indentation_level--;
+		}break;
+		case MetaEmitOperationKind_Expand:{
+			Arena scratch = m->scratch;
+
+			MetaEmitOperationExpansion *eop = &op->expansion_operation;
+			MetaTable *t  = ctx->tables.data + eop->table_id;
+			s8 table_name = ctx->table_names.data[t->table_name_id];
+
+			u32 alignment_count  = 1;
+			u32 evaluation_count = 0;
+			for (u32 part = 0; part < eop->part_count; part++) {
+				if (eop->parts[part].kind == MetaExpansionPartKind_Alignment)
+					alignment_count++;
+				if (eop->parts[part].kind == MetaExpansionPartKind_EvalKind ||
+				    eop->parts[part].kind == MetaExpansionPartKind_EvalKindCount)
+					evaluation_count++;
+			}
+
+			MetaKind **evaluation_columns = push_array(&scratch, MetaKind *, evaluation_count);
+			for (u32 column = 0; column < evaluation_count; column++)
+				evaluation_columns[column] = push_array(&scratch, MetaKind, t->entry_count);
+
+			for (u32 part = 0; part < eop->part_count; part++) {
+				u32 eval_column = 0;
+				MetaExpansionPart *p = eop->parts + part;
+				if (p->kind == MetaExpansionPartKind_EvalKind) {
+					for (u32 entry = 0; entry < t->entry_count; entry++) {
+						evaluation_columns[eval_column][entry] = meta_map_kind(p->strings[entry],
+						                                                       table_name, op->location);
+					}
+					eval_column++;
+				}
+			}
+
+			s8 **columns = push_array(&scratch, s8 *, alignment_count);
+			for (u32 column = 0; column < alignment_count; column++)
+				columns[column] = push_array(&scratch, s8, t->entry_count);
+
+			Stream sb = arena_stream(scratch);
+			for (u32 entry = 0; entry < t->entry_count; entry++) {
+				u32 column      = 0;
+				u32 eval_column = 0;
+				for (u32 part = 0; part < eop->part_count; part++) {
+					MetaExpansionPart *p = eop->parts + part;
+					switch (p->kind) {
+					case MetaExpansionPartKind_Alignment:{
+						columns[column][entry] = arena_stream_commit_and_reset(&scratch, &sb);
+						column++;
+					}break;
+
+					case MetaExpansionPartKind_Conditional:{
+						if (!meta_expansion_part_conditional(p, entry, table_name, op->location))
+							part += p->conditional.instruction_skip;
+					}break;
+
+					case MetaExpansionPartKind_EvalKind:{
+						s8 kind = evaluation_table[evaluation_columns[eval_column][entry]];
+						stream_append_s8(&sb, kind);
+					}break;
+
+					case MetaExpansionPartKind_EvalKindCount:{
+						stream_append_u64(&sb, meta_kind_elements[evaluation_columns[eval_column][entry]]);
+					}break;
+
+					case MetaExpansionPartKind_Reference:
+					case MetaExpansionPartKind_String:
+					{
+						s8 string = p->kind == MetaExpansionPartKind_Reference ? p->strings[entry] : p->string;
+						stream_append_s8(&sb, string);
+					}break;
+					}
+				}
+
+				columns[column][entry] = arena_stream_commit_and_reset(&scratch, &sb);
+			}
+			metagen_push_table(m, scratch, s8(""), s8(""), columns, t->entry_count, alignment_count);
+		}break;
+		InvalidDefaultCase;
+		}
+	}
+	meta_end_line(m);
+}
+
+function void
+metagen_run_emit_set(MetaprogramContext *m, MetaContext *ctx, MetaEmitOperationListSet *emit_set,
+                     s8 *evaluation_table)
+{
+	for (iz set = 0; set < emit_set->count; set++) {
+		MetaEmitOperationList *ops = emit_set->data + set;
+		metagen_run_emit(m, ctx, ops, evaluation_table);
 	}
 }
 
@@ -2603,7 +3008,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		metagen_push_table(m, m->scratch, s8(""), s8(";"), (s8 *[]){types, names}, countof(names), 2);
 	} meta_end_scope(m, s8("} BeamformerShaderBakeParameters;\n"));
 
-	metagen_run_emit(m, ctx, meta_kind_c_types);
+	metagen_run_emit_set(m, ctx, ctx->emit_sets + MetaEmitLang_C, meta_kind_c_types);
 
 	/////////////////////////////////
 	// NOTE(rnp): shader info tables
@@ -2798,7 +3203,9 @@ metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaMUnion *mu, s8
 			{
 				u32 name_index = table_matches[member].name_index;
 				for (u32 prop = 0; prop < t->entry_count; prop++) {
-					meta_push_line(m, t->entries[name_index][prop], s8("(1,1) "), meta_kind_matlab_types[kinds[prop]]);
+					meta_begin_line(m, t->entries[name_index][prop], s8("(1,"));
+					meta_push_u64(m, meta_kind_elements[kinds[prop]]);
+					meta_end_line(m, s8(") "), meta_kind_matlab_types[kinds[prop]]);
 				}
 			} meta_end_scope(m, s8("end"));
 		} meta_end_scope(m, s8("end"));
@@ -2836,31 +3243,6 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 	meta_begin_scope(m, s8("enumeration"));
 	BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST
 	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerLiveFeedbackFlags.m"));
-	#undef X
-
-	#define X(name, __t, __s, kind, elements, ...) meta_push_matlab_property(m, s8(#name), (u64)elements, s8(#kind));
-	meta_begin_matlab_class(m, "OGLBeamformerParameters");
-	meta_begin_scope(m, s8("properties"));
-	BEAMFORMER_PARAMS_HEAD
-	BEAMFORMER_UI_PARAMS
-	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerParameters.m"));
-
-	meta_begin_matlab_class(m, "OGLBeamformerParametersHead");
-	meta_begin_scope(m, s8("properties"));
-	BEAMFORMER_PARAMS_HEAD
-	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerParametersHead.m"));
-
-	meta_begin_matlab_class(m, "OGLBeamformerParametersUI");
-	meta_begin_scope(m, s8("properties"));
-	BEAMFORMER_UI_PARAMS
-	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerParametersUI.m"));
-
-	meta_begin_matlab_class(m, "OGLBeamformerSimpleParameters");
-	meta_begin_scope(m, s8("properties"));
-	BEAMFORMER_PARAMS_HEAD
-	BEAMFORMER_UI_PARAMS
-	BEAMFORMER_SIMPLE_PARAMS
-	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerSimpleParameters.m"));
 	#undef X
 
 	#define X(name, __t, __s, elements, ...) meta_push_matlab_property(m, s8(#name), elements, s8(""));
@@ -2905,6 +3287,22 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 		result &= meta_end_and_write_matlab(m, (c8 *)output.data);
 	}
 
+	////////////////////
+	// NOTE: emit files
+	{
+		MetaEmitOperationListSet *emit_set = ctx->emit_sets + MetaEmitLang_MATLAB;
+		for (u32 list = 0; list < emit_set->count; list++) {
+			MetaEmitOperationList *ops = emit_set->data + list;
+			Arena scratch = m->scratch;
+			s8 output = push_s8_from_parts(&m->scratch, s8(""),
+			                               s8(OUTPUT("matlab") OS_PATH_SEPARATOR "OGLBeamformer"),
+			                               ops->filename, s8(".m"));
+			meta_push_line(m, s8("% GENERATED CODE"));
+			metagen_run_emit(m, ctx, ops, meta_kind_matlab_types);
+			result &= meta_write_and_reset(m, (c8 *)output.data);
+			m->scratch = scratch;
+		}
+	}
 
 	//////////////////
 	// NOTE: MUnions
@@ -2939,6 +3337,7 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 
 	meta_push_line(m, s8("/* See LICENSE for license details. */\n"));
 	meta_push_line(m, s8("// GENERATED CODE\n"));
+	meta_push_line(m, s8("#include <stdint.h>\n"));
 
 	{
 		iz index = meta_lookup_string_slow(ctx->enumeration_kinds.data, ctx->enumeration_kinds.count,
@@ -2970,6 +3369,8 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 			build_log_failure("failed to find Compute shader group in meta info\n");
 		}
 	}
+
+	metagen_run_emit_set(m, ctx, ctx->emit_sets + MetaEmitLang_CLibrary, meta_kind_base_c_types);
 
 	meta_push(m, parameters_header, base_header);
 	result &= meta_write_and_reset(m, out);
@@ -3097,7 +3498,7 @@ metagen_file_direct(Arena arena, char *filename)
 	if (needs_rebuild_(out, deps.data, deps.count)) {
 		build_log_generate(out);
 		meta_push(m, c_file_header);
-		metagen_run_emit(m, ctx, meta_kind_c_types);
+		metagen_run_emit_set(m, ctx, ctx->emit_sets + MetaEmitLang_C, meta_kind_c_types);
 		result &= meta_write_and_reset(m, out);
 	}
 

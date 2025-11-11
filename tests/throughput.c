@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <zstd.h>
 
-global i32 g_output_points[4] = {512, 1, 1024, 1};
+global iv3 g_output_points    = {{512, 1, 1024}};
 global v2  g_axial_extent     = {{ 10e-3f, 165e-3f}};
 global v2  g_lateral_extent   = {{-60e-3f,  60e-3f}};
 global f32 g_f_number         = 0.5f;
@@ -188,9 +188,9 @@ read_zemp_bp_v1(u8 *path)
 function void
 beamformer_parameters_from_zemp_bp_v1(zemp_bp_v1 *zbp, BeamformerParameters *out)
 {
-	mem_copy(out->xdc_transform,       zbp->xdc_transform,     sizeof(out->xdc_transform));
-	mem_copy(out->xdc_element_pitch,   zbp->xdc_element_pitch, sizeof(out->xdc_element_pitch));
-	mem_copy(out->raw_data_dimensions, zbp->raw_data_dim,      sizeof(out->raw_data_dimensions));
+	mem_copy(out->xdc_transform.E,       zbp->xdc_transform,     sizeof(out->xdc_transform));
+	mem_copy(out->xdc_element_pitch.E,   zbp->xdc_element_pitch, sizeof(out->xdc_element_pitch));
+	mem_copy(out->raw_data_dimensions.E, zbp->raw_data_dim,      sizeof(out->raw_data_dimensions));
 
 	out->sample_count           = zbp->decoded_data_dim[0];
 	out->channel_count          = zbp->decoded_data_dim[1];
@@ -281,7 +281,7 @@ decompress_data_at_work_index(Stream *path_base, u32 index)
 function b32
 send_frame(i16 *restrict i16_data, BeamformerParameters *restrict bp)
 {
-	u32 data_size = bp->raw_data_dimensions[0] * bp->raw_data_dimensions[1] * sizeof(i16);
+	u32 data_size = bp->raw_data_dimensions.E[0] * bp->raw_data_dimensions.E[1] * sizeof(i16);
 	b32 result    = beamformer_push_data_with_compute(i16_data, data_size, BeamformerViewPlaneTag_XZ, 0);
 	if (!result && !g_should_exit) printf("lib error: %s\n", beamformer_get_last_error_string());
 
@@ -307,16 +307,16 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	BeamformerParameters bp = {0};
 	beamformer_parameters_from_zemp_bp_v1(zbp, &bp);
 
-	mem_copy(bp.output_points, g_output_points, sizeof(bp.output_points));
-	bp.output_points[3] = 1;
+	bp.output_points.xyz = g_output_points;
+	bp.output_points.w   = 1;
 
-	bp.output_min_coordinate[0] = g_lateral_extent.x;
-	bp.output_min_coordinate[1] = 0;
-	bp.output_min_coordinate[2] = g_axial_extent.x;
+	bp.output_min_coordinate.E[0] = g_lateral_extent.x;
+	bp.output_min_coordinate.E[1] = 0;
+	bp.output_min_coordinate.E[2] = g_axial_extent.x;
 
-	bp.output_max_coordinate[0] = g_lateral_extent.y;
-	bp.output_max_coordinate[1] = 0;
-	bp.output_max_coordinate[2] = g_axial_extent.y;
+	bp.output_max_coordinate.E[0] = g_lateral_extent.y;
+	bp.output_max_coordinate.E[1] = 0;
+	bp.output_max_coordinate.E[2] = g_axial_extent.y;
 
 	bp.f_number           = g_f_number;
 	bp.beamform_plane     = 0;
@@ -373,8 +373,8 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 		bp.single_orientation = 1;
 
 		bp.transmit_receive_orientation = packed_tx_rx;
-		bp.focal_vector[0] = zbp->transmit_angles[0];
-		bp.focal_vector[1] = zbp->focal_depths[0];
+		bp.focal_vector.E[0] = zbp->transmit_angles[0];
+		bp.focal_vector.E[1] = zbp->focal_depths[0];
 	} else {
 		alignas(64) v2 focal_vectors[BeamformerMaxChannelCount];
 		for (u32 i = 0; i < countof(focal_vectors); i++)
@@ -412,7 +412,7 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 
 		u32 frame = 0;
 		f32 times[32] = {0};
-		f32 data_size = (f32)(bp.raw_data_dimensions[0] * bp.raw_data_dimensions[1] * sizeof(*data));
+		f32 data_size = (f32)(bp.raw_data_dimensions.E[0] * bp.raw_data_dimensions.E[1] * sizeof(*data));
 		f64 start = os_get_time();
 		for (;!g_should_exit;) {
 			if (send_frame(data, &bp)) {
@@ -440,7 +440,7 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 		beamformer_set_live_parameters(&lip);
 	} else {
 		for (u32 i = 0; i < zbp->raw_data_dim[2]; i++)
-			send_frame(data + i * bp.raw_data_dimensions[0] * bp.raw_data_dimensions[1], &bp);
+			send_frame(data + i * bp.raw_data_dimensions.E[0] * bp.raw_data_dimensions.E[1], &bp);
 	}
 
 	free(zbp);

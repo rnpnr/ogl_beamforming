@@ -86,6 +86,54 @@
 	[Cubic]
 }
 
+@Table([name type]) ParametersHead
+{
+	[xdc_transform                 M4]
+	[xdc_element_pitch             V2]
+	[raw_data_dimensions          UV2]
+	[focal_vector                  V2]
+	[transmit_receive_orientation U32]
+	[sample_count                 U32]
+	[channel_count                U32]
+	[acquisition_count            U32]
+	[das_shader_id                U32]
+	[time_offset                  F32]
+	[single_focus                  U8]
+	[single_orientation            U8]
+	[decode_mode                   U8]
+	[sampling_mode                 U8]
+}
+
+@Table([name type]) ParametersUI
+{
+	[output_min_coordinate   V3]
+	[output_max_coordinate   V3]
+	[output_points          SV4]
+	[sampling_frequency     F32]
+	[demodulation_frequency F32]
+	[speed_of_sound         F32]
+	[f_number               F32]
+	[off_axis_pos           F32]
+	[interpolation_mode     U32]
+	[coherency_weighting    U32]
+	[beamform_plane         U32]
+	[decimation_rate        U32]
+}
+
+// TODO(rnp): definable constants in meta code (or at least references to enum values)
+@Table([name type elements]) ParametersSimple
+{
+	[channel_mapping               S16  256]
+	[sparse_elements               S16  256]
+	[transmit_receive_orientations  U8  256]
+	[steering_angles               F32  256]
+	[focal_depths                  F32  256]
+	[compute_stages                S32   16]
+	[compute_stage_parameters      S32   16]
+	[compute_stages_count          U32    1]
+	[data_kind                     S32    1]
+}
+
 @Expand(AcquisitionKind)   @Enumeration(AcquisitionKind   `$(name)`)
 @Expand(DataKind)          @Enumeration(DataKind          `$(name)`)
 @Expand(FilterKind)        @Enumeration(FilterKind        `$(name)`)
@@ -93,6 +141,25 @@
 
 @Emit
 {
+	`typedef struct {`
+	@Expand(ParametersHead) `	$(%type)$(|)$(name);`
+	@Expand(ParametersUI)   `	$(%type)$(|)$(name);`
+	`} BeamformerParameters;`
+	``
+	`typedef struct {`
+	@Expand(ParametersHead) `	$(%type)$(|)$(name);`
+	`} BeamformerParametersHead;`
+	``
+	`typedef struct {`
+	@Expand(ParametersUI) `	$(%type)$(|)$(name);`
+	`} BeamformerUIParameters;`
+	``
+	`typedef struct {`
+	@Expand(ParametersHead)         `	$(%type)$(|)$(name);`
+	@Expand(ParametersUI)           `	$(%type)$(|)$(name);`
+	@Expand(ParametersSimple)       `	$(%type)$(|)$(name)$(elements > 1 -> "[" elements "]");`
+	`} BeamformerSimpleParameters;`
+	``
 	`typedef struct {`
 	`	BeamformerEmissionKind kind;`
 	`	union {`
@@ -233,4 +300,73 @@
 @ShaderGroup Render
 {
 	@Shader(render_3d.frag.glsl) Render3D
+}
+
+/////////////////
+// NOTE: Library
+
+@Emit(CLibrary)
+{
+	`typedef struct {`
+	@Expand(ParametersHead)   `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
+	@Expand(ParametersUI)     `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
+	@Expand(ParametersSimple) `	$(%type)$(|)$(name)$(elements > 1 -> "[" elements "]");`
+	`} BeamformerSimpleParameters;`
+	``
+	`typedef struct {`
+	@Expand(ParametersUI)     `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
+	`} BeamformerUIParameters;`
+	``
+	`typedef struct {`
+	@Expand(ParametersHead)   `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
+	`} BeamformerParametersHead;`
+	``
+	`typedef struct {`
+	@Expand(ParametersHead)   `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
+	@Expand(ParametersUI)     `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
+	`} BeamformerParameters;`
+	``
+}
+
+////////////////
+// NOTE: MATLAB
+
+@Emit(MATLAB) Parameters
+{
+	`classdef OGLBeamformerParameters`
+	`	properties`
+	@Expand(ParametersHead) `		$(name)(1,$(#type))$(|)$(%type)`
+	`		% UI Parameters`
+	@Expand(ParametersUI)   `		$(name)(1,$(#type))$(|)$(%type)`
+	`	end`
+	`end`
+}
+
+@Emit(MATLAB) ParametersHead
+{
+	`classdef OGLBeamformerParametersHead`
+	`	properties`
+	@Expand(ParametersHead) `		$(name)(1,$(#type))$(|)$(%type)`
+	`	end`
+	`end`
+}
+
+@Emit(MATLAB) ParametersUI
+{
+	`classdef OGLBeamformerParametersUI`
+	`	properties`
+	@Expand(ParametersUI) `		$(name)(1,$(#type))$(|)$(%type)`
+	`	end`
+	`end`
+}
+
+@Emit(MATLAB) SimpleParameters
+{
+	`classdef OGLBeamformerSimpleParameters`
+	`	properties`
+	@Expand(ParametersHead)   `		$(name)(1,$(#type)) $(%type)`
+	@Expand(ParametersUI)     `		$(name)(1,$(#type)) $(%type)`
+	@Expand(ParametersSimple) `		$(name)(1,$(elements)) $(%type)`
+	`	end`
+	`end`
 }

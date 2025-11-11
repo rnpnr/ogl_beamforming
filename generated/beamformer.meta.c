@@ -157,6 +157,105 @@ typedef struct {
 } BeamformerShaderBakeParameters;
 
 typedef struct {
+	m4  xdc_transform;
+	v2  xdc_element_pitch;
+	uv2 raw_data_dimensions;
+	v2  focal_vector;
+	u32 transmit_receive_orientation;
+	u32 sample_count;
+	u32 channel_count;
+	u32 acquisition_count;
+	u32 das_shader_id;
+	f32 time_offset;
+	u8  single_focus;
+	u8  single_orientation;
+	u8  decode_mode;
+	u8  sampling_mode;
+	v3  output_min_coordinate;
+	v3  output_max_coordinate;
+	iv4 output_points;
+	f32 sampling_frequency;
+	f32 demodulation_frequency;
+	f32 speed_of_sound;
+	f32 f_number;
+	f32 off_axis_pos;
+	u32 interpolation_mode;
+	u32 coherency_weighting;
+	u32 beamform_plane;
+	u32 decimation_rate;
+} BeamformerParameters;
+
+typedef struct {
+	m4  xdc_transform;
+	v2  xdc_element_pitch;
+	uv2 raw_data_dimensions;
+	v2  focal_vector;
+	u32 transmit_receive_orientation;
+	u32 sample_count;
+	u32 channel_count;
+	u32 acquisition_count;
+	u32 das_shader_id;
+	f32 time_offset;
+	u8  single_focus;
+	u8  single_orientation;
+	u8  decode_mode;
+	u8  sampling_mode;
+} BeamformerParametersHead;
+
+typedef struct {
+	v3  output_min_coordinate;
+	v3  output_max_coordinate;
+	iv4 output_points;
+	f32 sampling_frequency;
+	f32 demodulation_frequency;
+	f32 speed_of_sound;
+	f32 f_number;
+	f32 off_axis_pos;
+	u32 interpolation_mode;
+	u32 coherency_weighting;
+	u32 beamform_plane;
+	u32 decimation_rate;
+} BeamformerUIParameters;
+
+typedef struct {
+	m4  xdc_transform;
+	v2  xdc_element_pitch;
+	uv2 raw_data_dimensions;
+	v2  focal_vector;
+	u32 transmit_receive_orientation;
+	u32 sample_count;
+	u32 channel_count;
+	u32 acquisition_count;
+	u32 das_shader_id;
+	f32 time_offset;
+	u8  single_focus;
+	u8  single_orientation;
+	u8  decode_mode;
+	u8  sampling_mode;
+	v3  output_min_coordinate;
+	v3  output_max_coordinate;
+	iv4 output_points;
+	f32 sampling_frequency;
+	f32 demodulation_frequency;
+	f32 speed_of_sound;
+	f32 f_number;
+	f32 off_axis_pos;
+	u32 interpolation_mode;
+	u32 coherency_weighting;
+	u32 beamform_plane;
+	u32 decimation_rate;
+	i16 channel_mapping[256];
+	i16 sparse_elements[256];
+	u8  transmit_receive_orientations[256];
+	f32 steering_angles[256];
+	f32 focal_depths[256];
+	i32 compute_stages[16];
+	i32 compute_stage_parameters[16];
+	u32 compute_stages_count;
+	i32 data_kind;
+} BeamformerSimpleParameters;
+
+typedef struct {
 	BeamformerEmissionKind kind;
 	union {
 		struct {

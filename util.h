@@ -151,6 +151,7 @@
 #define I32_MAX          (0x7FFFFFFFL)
 #define U16_MAX          (0x0000FFFFUL)
 #define U32_MAX          (0xFFFFFFFFUL)
+#define U64_MAX          (0xFFFFFFFFFFFFFFFFULL)
 #define F32_INFINITY     (1e+300*1e+300)
 #define F32_EPSILON      (1e-6f)
 #ifndef PI
@@ -195,6 +196,21 @@ typedef struct { iz len; u16 *data; } s16;
 
 typedef struct { u32 cp, consumed; } UnicodeDecode;
 
+typedef enum {
+	IntegerConversionResult_Invalid,
+	IntegerConversionResult_OutOfRange,
+	IntegerConversionResult_Success,
+} IntegerConversionResult;
+
+typedef struct {
+	IntegerConversionResult result;
+	union {
+		u64 U64;
+		i64 S64;
+	};
+	s8 unparsed;
+} IntegerConversion;
+
 /* NOTE: raylib stubs */
 #ifndef RAYLIB_H
 typedef struct { f32 x, y; } Vector2;
@@ -215,6 +231,12 @@ typedef union {
 	iv2 xy;
 	i32 E[3];
 } iv3;
+
+typedef union {
+	struct { i32 x, y, z, w; };
+	struct { iv3 xyz; i32 _w; };
+	i32 E[4];
+} iv4;
 
 typedef union {
 	struct { u32 x, y; };

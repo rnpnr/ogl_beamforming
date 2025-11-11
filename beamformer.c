@@ -290,7 +290,7 @@ alloc_shader_storage(BeamformerCtx *ctx, u32 decoded_data_size, Arena arena)
 	/* NOTE(rnp): these are stubs when CUDA isn't supported */
 	cuda_register_buffers(cc->ping_pong_ssbos, countof(cc->ping_pong_ssbos), cc->rf_buffer.ssbo);
 	u32 decoded_data_dimension[3] = {pb->parameters.sample_count, pb->parameters.channel_count, pb->parameters.acquisition_count};
-	cuda_init(pb->parameters.raw_data_dimensions, decoded_data_dimension);
+	cuda_init(pb->parameters.raw_data_dimensions.E, decoded_data_dimension);
 }
 
 function void
@@ -406,13 +406,11 @@ compute_cursor_finished(struct compute_cursor *cursor)
 function m4
 das_voxel_transform_matrix(BeamformerParameters *bp)
 {
-	v3 min = v3_from_f32_array(bp->output_min_coordinate);
-	v3 max = v3_from_f32_array(bp->output_max_coordinate);
-	v3 extent = v3_abs(v3_sub(max, min));
-	v3 points = v3_from_iv3(make_valid_output_points(bp->output_points));
+	v3 extent = v3_abs(v3_sub(bp->output_max_coordinate, bp->output_min_coordinate));
+	v3 points = v3_from_iv3(make_valid_output_points(bp->output_points.E));
 
 	m4 T1 = m4_translation(v3_scale(v3_sub(points, (v3){{1.0f, 1.0f, 1.0f}}), -0.5f));
-	m4 T2 = m4_translation(v3_add(min, v3_scale(extent, 0.5f)));
+	m4 T2 = m4_translation(v3_add(bp->output_min_coordinate, v3_scale(extent, 0.5f)));
 	m4 S  = m4_scale(v3_div(extent, points));
 
 	m4 R;
@@ -649,9 +647,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 			BeamformerShaderDASBakeParameters *db = &sd->bake.DAS;
 			BeamformerDASUBO *du = &cp->das_ubo_data;
-			du->voxel_transform = das_voxel_transform_matrix(&pb->parameters);
-			mem_copy(du->xdc_transform.E,     pb->parameters.xdc_transform,     sizeof(du->xdc_transform));
-			mem_copy(du->xdc_element_pitch.E, pb->parameters.xdc_element_pitch, sizeof(du->xdc_element_pitch));
+			du->voxel_transform        = das_voxel_transform_matrix(&pb->parameters);
+			du->xdc_transform          = pb->parameters.xdc_transform;
+			du->xdc_element_pitch      = pb->parameters.xdc_element_pitch;
 			db->sampling_frequency     = sampling_frequency;
 			db->demodulation_frequency = pb->parameters.demodulation_frequency;
 			db->speed_of_sound         = pb->parameters.speed_of_sound;
@@ -662,8 +660,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			db->channel_count          = pb->parameters.channel_count;
 			db->acquisition_count      = pb->parameters.acquisition_count;
 			db->interpolation_mode     = pb->parameters.interpolation_mode;
-			db->transmit_angle         = pb->parameters.focal_vector[0];
-			db->focus_depth            = pb->parameters.focal_vector[1];
+			db->transmit_angle         = pb->parameters.focal_vector.E[0];
+			db->focus_depth            = pb->parameters.focal_vector.E[1];
 			db->transmit_receive_orientation = pb->parameters.transmit_receive_orientation;
 
 			if (pb->parameters.single_focus)        sd->bake.flags |= BeamformerShaderDASFlags_SingleFocus;
@@ -853,11 +851,11 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			if (cp->hadamard_order != (i32)cp->acquisition_count)
 				update_hadamard_texture(cp, (i32)cp->acquisition_count, arena);
 
-			cp->min_coordinate = v3_from_f32_array(pb->parameters.output_min_coordinate);
-			cp->max_coordinate = v3_from_f32_array(pb->parameters.output_max_coordinate);
+			cp->min_coordinate = pb->parameters.output_min_coordinate;
+			cp->max_coordinate = pb->parameters.output_max_coordinate;
 
-			cp->output_points  = make_valid_output_points(pb->parameters.output_points);
-			cp->average_frames = pb->parameters.output_points[3];
+			cp->output_points  = make_valid_output_points(pb->parameters.output_points.E);
+			cp->average_frames = pb->parameters.output_points.E[3];
 
 			GLenum gl_kind = cp->iq_pipeline ? GL_RG32F : GL_R32F;
 			if (cp->average_frames > 1 && !beamformer_frame_compatible(ctx->averaged_frames + 0, cp->output_points, gl_kind)) {

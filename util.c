@@ -655,32 +655,54 @@ cut_rect_vertical(Rect rect, f32 at, Rect *top, Rect *bot)
 	}
 }
 
+function IntegerConversion
+integer_from_s8(s8 raw)
+{
+	IntegerConversion result = {0};
+
+	iz  i     = 0;
+	i64 scale = 1;
+	if (raw.len && raw.data[0] == '-') {
+		scale = -1;
+		i     =  1;
+	}
+
+	for (; i < raw.len; i++) {
+		i64 digit = (i64)raw.data[i] - '0';
+		if (BETWEEN(digit, 0, 9)) {
+			if (result.U64 > (U64_MAX - (u64)digit) / 10) {
+				result.result = IntegerConversionResult_OutOfRange;
+				result.U64    = U64_MAX;
+			} else {
+				result.U64 = 10 * result.U64 + (u64)digit;
+			}
+		} else {
+			break;
+		}
+	}
+	result.unparsed = (s8){.len = raw.len - i, .data = raw.data + i};
+	result.result   = IntegerConversionResult_Success;
+	result.S64      = (i64)result.U64 * scale;
+
+	return result;
+}
+
 function f64
 parse_f64(s8 s)
 {
-	f64 integral = 0, fractional = 0, sign = 1;
+	IntegerConversion integral = integer_from_s8(s);
 
-	if (s.len > 0 && *s.data == '-') {
-		sign = -1;
-		s.data++;
-		s.len--;
-	}
-
-	while (s.len > 0 && *s.data != '.') {
-		integral *= 10;
-		integral += *s.data - '0';
-		s.data++;
-		s.len--;
-	}
-
+	s = integral.unparsed;
 	if (*s.data == '.') { s.data++; s.len--; }
+	while (s.len > 0 && s.data[s.len - 1] == '0') s.len--;
 
-	while (s.len > 0) {
-		ASSERT(s.data[s.len - 1] != '.');
-		fractional /= 10;
-		fractional += (f64)(s.data[--s.len] - '0') / 10.0;
-	}
-	f64 result = sign * (integral + fractional);
+	IntegerConversion fractional = integer_from_s8(s);
+
+	u64 power = (u64)(fractional.unparsed.data - s.data);
+	f64 frac  = (f64)fractional.U64;
+	while (power > 0) { frac /= 10.0; power--; }
+
+	f64 result = (f64)integral.S64 + frac;
 	return result;
 }
 
