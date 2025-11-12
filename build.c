@@ -3339,17 +3339,13 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 	meta_push_line(m, s8("// GENERATED CODE\n"));
 	meta_push_line(m, s8("#include <stdint.h>\n"));
 
-	{
-		iz index = meta_lookup_string_slow(ctx->enumeration_kinds.data, ctx->enumeration_kinds.count,
-		                                   s8("DataKind"));
-		if (index != -1) {
-			s8 enum_name = push_s8_from_parts(&m->scratch, s8(""), s8("Beamformer"), ctx->enumeration_kinds.data[index]);
-			metagen_push_c_enum(m, m->scratch, enum_name, ctx->enumeration_members.data[index].data,
-			                    ctx->enumeration_members.data[index].count);
-			m->scratch = ctx->scratch;
-		} else {
-			build_log_failure("failed to find DataKind in meta info\n");
-		}
+	/////////////////////////
+	// NOTE(rnp): enumarents
+	for (iz kind = 0; kind < ctx->enumeration_kinds.count; kind++) {
+		s8 enum_name = push_s8_from_parts(&m->scratch, s8(""), s8("Beamformer"), ctx->enumeration_kinds.data[kind]);
+		metagen_push_c_enum(m, m->scratch, enum_name, ctx->enumeration_members.data[kind].data,
+		                    ctx->enumeration_members.data[kind].count);
+		m->scratch = ctx->scratch;
 	}
 
 	{
@@ -3360,8 +3356,34 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 				break;
 			}
 		}
+
 		if (index != -1) {
+			u64 offset = 0;
+			for (iz group = 0; group < index; group++)
+				offset += (u64)ctx->shader_groups.data[group].shaders.count;
+
 			MetaShaderGroup *sg = ctx->shader_groups.data + index;
+			s8 *columns[2];
+			columns[0] = push_array(&m->scratch, s8, sg->shaders.count);
+			columns[1] = push_array(&m->scratch, s8, sg->shaders.count);
+
+			Stream sb = arena_stream(m->scratch);
+			for (iz id = 0; id < sg->shaders.count; id++) {
+				stream_append_s8(&sb, s8("= "));
+				stream_append_u64(&sb, offset + (u64)id);
+
+				MetaShader *s = ctx->shaders.data + sg->shaders.data[id];
+				columns[0][id] = ctx->shader_names.data[s->name_id];
+				columns[1][id] = arena_stream_commit_and_reset(&m->scratch, &sb);
+			}
+
+			meta_begin_scope(m, s8("typedef enum {"));
+			metagen_push_table(m, m->scratch, s8("BeamformerShaderKind_"), s8(","), columns,
+			                   (uz)sg->shaders.count, 2);
+			meta_end_scope(m, s8("} BeamformerShaderKind;\n"));
+
+			m->scratch = ctx->scratch;
+
 			meta_begin_line(m, s8("#define BeamformerShaderKind_ComputeCount ("));
 			meta_push_u64(m, (u64)sg->shaders.count);
 			meta_end_line(m, s8(")\n"));
@@ -3371,6 +3393,8 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 	}
 
 	metagen_run_emit_set(m, ctx, ctx->emit_sets + MetaEmitLang_CLibrary, meta_kind_base_c_types);
+
+	meta_push_line(m, s8("// END GENERATED CODE\n"));
 
 	meta_push(m, parameters_header, base_header);
 	result &= meta_write_and_reset(m, out);

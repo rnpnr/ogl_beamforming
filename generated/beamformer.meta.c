@@ -156,6 +156,23 @@ typedef struct {
 	u32 flags;
 } BeamformerShaderBakeParameters;
 
+typedef union {
+	struct {
+		f32 cycles;
+		f32 frequency;
+	} sine;
+	struct {
+		f32 cycles;
+		f32 frequency;
+		u32 emissions;
+	} sine_am;
+	struct {
+		f32 duration;
+		f32 min_frequency;
+		f32 max_frequency;
+	} chirp;
+} BeamformerEmissionParameters;
+
 typedef struct {
 	m4  xdc_transform;
 	v2  xdc_element_pitch;
@@ -183,6 +200,8 @@ typedef struct {
 	u32 coherency_weighting;
 	u32 beamform_plane;
 	u32 decimation_rate;
+	BeamformerEmissionKind       emission_kind;
+	BeamformerEmissionParameters emission_parameters;
 } BeamformerParameters;
 
 typedef struct {
@@ -244,6 +263,8 @@ typedef struct {
 	u32 coherency_weighting;
 	u32 beamform_plane;
 	u32 decimation_rate;
+	BeamformerEmissionKind       emission_kind;
+	BeamformerEmissionParameters emission_parameters;
 	i16 channel_mapping[256];
 	i16 sparse_elements[256];
 	u8  transmit_receive_orientations[256];
@@ -254,26 +275,6 @@ typedef struct {
 	u32 compute_stages_count;
 	i32 data_kind;
 } BeamformerSimpleParameters;
-
-typedef struct {
-	BeamformerEmissionKind kind;
-	union {
-		struct {
-			f32 cycles;
-			f32 frequency;
-		} sine;
-		struct {
-			f32 cycles;
-			f32 frequency;
-			u32 emissions;
-		} sine_am;
-		struct {
-			f32 duration;
-			f32 min_frequency;
-			f32 max_frequency;
-		} chirp;
-	};
-} BeamformerEmission;
 
 typedef struct {
 	BeamformerFilterKind kind;

@@ -1,5 +1,5 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (21UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (22UL)
 
 typedef struct BeamformerFrame BeamformerFrame;
 

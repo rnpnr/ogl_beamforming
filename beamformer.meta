@@ -120,6 +120,12 @@
 	[decimation_rate        U32]
 }
 
+@Table([name c_type m_type m_size]) ParametersExtra
+{
+	[emission_kind       BeamformerEmissionKind       uint32  1]
+	[emission_parameters BeamformerEmissionParameters uint8  12]
+}
+
 // TODO(rnp): definable constants in meta code (or at least references to enum values)
 @Table([name type elements]) ParametersSimple
 {
@@ -141,9 +147,22 @@
 
 @Emit
 {
+	`typedef union {`
+	`	struct {`
+		@Expand(SineParameters)   `		$(%type)$(|)$(name);`
+	`	} sine;`
+	`	struct {`
+		@Expand(SineAMParameters) `		$(%type)$(|)$(name);`
+	`	} sine_am;`
+	`	struct {`
+		@Expand(ChirpParameters)  `		$(%type)$(|)$(name);`
+	`	} chirp;`
+	`} BeamformerEmissionParameters;`
+	``
 	`typedef struct {`
-	@Expand(ParametersHead) `	$(%type)$(|)$(name);`
-	@Expand(ParametersUI)   `	$(%type)$(|)$(name);`
+	@Expand(ParametersHead)  `	$(%type)$(|)$(name);`
+	@Expand(ParametersUI)    `	$(%type)$(|)$(name);`
+	@Expand(ParametersExtra) `	$(c_type)$(|)$(name);`
 	`} BeamformerParameters;`
 	``
 	`typedef struct {`
@@ -155,25 +174,11 @@
 	`} BeamformerUIParameters;`
 	``
 	`typedef struct {`
-	@Expand(ParametersHead)         `	$(%type)$(|)$(name);`
-	@Expand(ParametersUI)           `	$(%type)$(|)$(name);`
-	@Expand(ParametersSimple)       `	$(%type)$(|)$(name)$(elements > 1 -> "[" elements "]");`
+	@Expand(ParametersHead)   `	$(%type)$(|)$(name);`
+	@Expand(ParametersUI)     `	$(%type)$(|)$(name);`
+	@Expand(ParametersExtra)  `	$(c_type)$(|)$(name);`
+	@Expand(ParametersSimple) `	$(%type)$(|)$(name)$(elements > 1 -> "[" elements "]");`
 	`} BeamformerSimpleParameters;`
-	``
-	`typedef struct {`
-	`	BeamformerEmissionKind kind;`
-	`	union {`
-	`		struct {`
-			@Expand(SineParameters)   `			$(%type)$(|)$(name);`
-	`		} sine;`
-	`		struct {`
-			@Expand(SineAMParameters) `			$(%type)$(|)$(name);`
-	`		} sine_am;`
-	`		struct {`
-			@Expand(ChirpParameters)  `			$(%type)$(|)$(name);`
-	`		} chirp;`
-	`	};`
-	`} BeamformerEmission;`
 	``
 	`typedef struct {`
 	`	BeamformerFilterKind kind;`
@@ -307,9 +312,22 @@
 
 @Emit(CLibrary)
 {
+	`typedef union {`
+	`	struct {`
+		@Expand(SineParameters)   `		$(%type)$(|)$(name);`
+	`	} sine;`
+	`	struct {`
+		@Expand(SineAMParameters) `		$(%type)$(|)$(name);`
+	`	} sine_am;`
+	`	struct {`
+		@Expand(ChirpParameters)  `		$(%type)$(|)$(name);`
+	`	} chirp;`
+	`} BeamformerEmissionParameters;`
+	``
 	`typedef struct {`
 	@Expand(ParametersHead)   `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
 	@Expand(ParametersUI)     `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
+	@Expand(ParametersExtra)  `	$(c_type)$(|)$(name);`
 	@Expand(ParametersSimple) `	$(%type)$(|)$(name)$(elements > 1 -> "[" elements "]");`
 	`} BeamformerSimpleParameters;`
 	``
@@ -324,6 +342,7 @@
 	`typedef struct {`
 	@Expand(ParametersHead)   `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
 	@Expand(ParametersUI)     `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
+	@Expand(ParametersExtra)  `	$(c_type)$(|)$(name);`
 	`} BeamformerParameters;`
 	``
 }
@@ -335,9 +354,10 @@
 {
 	`classdef OGLBeamformerParameters`
 	`	properties`
-	@Expand(ParametersHead) `		$(name)(1,$(#type))$(|)$(%type)`
+	@Expand(ParametersHead)  `		$(name)(1,$(#type))$(|)$(%type)`
 	`		% UI Parameters`
-	@Expand(ParametersUI)   `		$(name)(1,$(#type))$(|)$(%type)`
+	@Expand(ParametersUI)    `		$(name)(1,$(#type))$(|)$(%type)`
+	@Expand(ParametersExtra) `		$(name)(1,$(m_size))$(|)$(m_type)`
 	`	end`
 	`end`
 }
@@ -366,6 +386,7 @@
 	`	properties`
 	@Expand(ParametersHead)   `		$(name)(1,$(#type)) $(%type)`
 	@Expand(ParametersUI)     `		$(name)(1,$(#type)) $(%type)`
+	@Expand(ParametersExtra)  `		$(name)(1,$(m_size))$(|)$(m_type)`
 	@Expand(ParametersSimple) `		$(name)(1,$(elements)) $(%type)`
 	`	end`
 	`end`
