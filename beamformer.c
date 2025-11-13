@@ -209,7 +209,7 @@ make_valid_output_points(i32 points[3])
 }
 
 function void
-alloc_beamform_frame(GLParams *gp, BeamformerFrame *out, iv3 out_dim, GLenum gl_kind, s8 name, Arena arena)
+alloc_beamform_frame(GLParameters *gp, BeamformerFrame *out, iv3 out_dim, GLenum gl_kind, s8 name, Arena arena)
 {
 	out->dim = make_valid_output_points(out_dim.E);
 	if (gp) {
@@ -1391,14 +1391,23 @@ DEBUG_EXPORT BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute)
 }
 
 function void
-beamformer_rf_buffer_allocate(BeamformerRFBuffer *rf, u32 rf_size)
+beamformer_rf_buffer_allocate(BeamformerRFBuffer *rf, u32 rf_size, b32 nvidia)
 {
 	assert((rf_size % 64) == 0);
+	if (!nvidia) glUnmapNamedBuffer(rf->ssbo);
 	glDeleteBuffers(1, &rf->ssbo);
 	glCreateBuffers(1, &rf->ssbo);
 
-	glNamedBufferStorage(rf->ssbo, countof(rf->compute_syncs) * rf_size, 0,
-	                     GL_DYNAMIC_STORAGE_BIT|GL_MAP_WRITE_BIT);
+	u32 buffer_flags = GL_DYNAMIC_STORAGE_BIT;
+	if (!nvidia) buffer_flags |= GL_MAP_PERSISTENT_BIT|GL_MAP_WRITE_BIT;
+
+	glNamedBufferStorage(rf->ssbo, countof(rf->compute_syncs) * rf_size, 0, buffer_flags);
+
+	if (!nvidia) {
+		u32 access = GL_MAP_PERSISTENT_BIT|GL_MAP_WRITE_BIT|GL_MAP_FLUSH_EXPLICIT_BIT|GL_MAP_UNSYNCHRONIZED_BIT;
+		rf->buffer = glMapNamedBufferRange(rf->ssbo, 0, (GLsizei)(countof(rf->compute_syncs) * rf_size), access);
+	}
+
 	LABEL_GL_OBJECT(GL_BUFFER, rf->ssbo, s8("Raw_RF_SSBO"));
 	rf->size = rf_size;
 }
@@ -1406,10 +1415,12 @@ beamformer_rf_buffer_allocate(BeamformerRFBuffer *rf, u32 rf_size)
 DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 {
 	struct load_context {
-		u8   *buffer;
+		uptr  buffer;
 		void *data;
+		u32   offset;
 		u32   channel_count;
 		u32   channel_stride_bytes;
+		b32   nvidia;
 	} load_context_store = {0};
 	struct load_context *lctx = 0;
 
@@ -1427,10 +1438,11 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		    (scratch_rf_size = atomic_swap_u32(&sm->rf_meta.size, 0)) &&
 		    os_shared_memory_region_lock(ctx->shared_memory, sm->locks, (i32)scratch_lock, (u32)-1))
 		{
+			lctx->nvidia = ctx->gl->vendor_id == GLVendor_NVIDIA;
 			BeamformerRFBuffer *rf = ctx->rf_buffer;
 			rf->active_rf_size = (u32)round_up_to(scratch_rf_size, 64);
 			if (rf->size < rf->active_rf_size)
-				beamformer_rf_buffer_allocate(rf, rf->active_rf_size);
+				beamformer_rf_buffer_allocate(rf, rf->active_rf_size, lctx->nvidia);
 
 			insertion_slot = rf->insertion_index++ % countof(rf->compute_syncs);
 
@@ -1447,12 +1459,8 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 				glDeleteSync(rf->compute_syncs[insertion_slot]);
 			}
 
-			/* NOTE(rnp): nVidia's drivers really don't play nice with persistant mapping,
-			 * at least when it is a big as this one wants to be. mapping and unmapping the
-			 * desired range each time doesn't seem to introduce any performance hit */
-			u32 access = GL_MAP_WRITE_BIT|GL_MAP_FLUSH_EXPLICIT_BIT|GL_MAP_UNSYNCHRONIZED_BIT;
-			lctx->buffer = glMapNamedBufferRange(rf->ssbo, insertion_slot * rf->active_rf_size,
-			                                            (i32)rf->active_rf_size, access);
+			lctx->offset = insertion_slot * rf->active_rf_size;
+			lctx->buffer = lctx->nvidia? rf->ssbo : (uptr)rf->buffer;
 			lctx->data   = beamformer_shared_memory_scratch_arena(sm).beg;
 
 			BeamformerParameterBlock *b = beamformer_parameter_block(sm, atomic_load_u32(&sm->rf_meta.block));
@@ -1468,10 +1476,17 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 
 	if (lctx->buffer) {
 		RangeU64 range = lane_range(lctx->channel_count);
-		for (u64 channel = range.start; channel < range.stop; channel++) {
-			u8 *out = lctx->buffer + channel * lctx->channel_stride_bytes;
-			u8 *in  = lctx->data   + channel * lctx->channel_stride_bytes;
-			mem_copy(out, in, lctx->channel_stride_bytes);
+		if (lctx->nvidia) {
+			i64 offset = (i64)(lctx->offset + range.start * lctx->channel_stride_bytes);
+			i32 size   = (i32)(lctx->channel_stride_bytes * (range.stop - range.start));
+			u8 *in     = lctx->data + range.start * lctx->channel_stride_bytes;
+			glNamedBufferSubData((u32)lctx->buffer, offset, size, in);
+		} else {
+			for (u64 channel = range.start; channel < range.stop; channel++) {
+				u8 *in  = lctx->data + channel * lctx->channel_stride_bytes;
+				u8 *out = (u8 *)lctx->buffer + lctx->offset + channel * lctx->channel_stride_bytes;
+				mem_copy(out, in, lctx->channel_stride_bytes);
+			}
 		}
 	}
 	lane_sync();
@@ -1481,8 +1496,8 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		post_sync_barrier(ctx->shared_memory, upload_lock, sm->locks);
 
 		BeamformerRFBuffer *rf = ctx->rf_buffer;
-		glFlushMappedNamedBufferRange(rf->ssbo, 0, (i32)rf->active_rf_size);
-		glUnmapNamedBuffer(rf->ssbo);
+		if (!lctx->nvidia)
+			glFlushMappedNamedBufferRange(rf->ssbo, insertion_slot * rf->active_rf_size, (i32)rf->active_rf_size);
 
 		atomic_store_u64(rf->upload_syncs + insertion_slot,  glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
 		atomic_store_u64(rf->compute_syncs + insertion_slot, 0);

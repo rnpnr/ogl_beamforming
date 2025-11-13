@@ -94,7 +94,7 @@ gl_debug_logger(u32 src, u32 type, u32 id, u32 lvl, i32 len, const char *msg, co
 }
 
 function void
-get_gl_params(GLParams *gl, Stream *err)
+get_gl_params(GLParameters *gl, Stream *err)
 {
 	char *vendor = (char *)glGetString(GL_VENDOR);
 	if (!vendor) {
@@ -103,13 +103,13 @@ get_gl_params(GLParams *gl, Stream *err)
 	}
 	/* TODO(rnp): str prefix of */
 	switch (vendor[0]) {
-	case 'A': gl->vendor_id = GL_VENDOR_AMD;    break;
-	case 'I': gl->vendor_id = GL_VENDOR_INTEL;  break;
-	case 'N': gl->vendor_id = GL_VENDOR_NVIDIA; break;
+	case 'A': gl->vendor_id = GLVendor_AMD;    break;
+	case 'I': gl->vendor_id = GLVendor_Intel;  break;
+	case 'N': gl->vendor_id = GLVendor_NVIDIA; break;
 	/* NOTE(rnp): freedreno */
-	case 'f': gl->vendor_id = GL_VENDOR_ARM;    break;
+	case 'f': gl->vendor_id = GLVendor_ARM;    break;
 	/* NOTE(rnp): Microsoft Corporation - weird win32 thing (microsoft is just using mesa for the driver) */
-	case 'M': gl->vendor_id = GL_VENDOR_ARM;    break;
+	case 'M': gl->vendor_id = GLVendor_ARM;    break;
 	default:
 		stream_append_s8s(err, s8("Unknown GL Vendor: "), c_str_to_s8(vendor), s8("\n"));
 		os_fatal(stream_to_s8(err));
@@ -121,7 +121,7 @@ get_gl_params(GLParams *gl, Stream *err)
 }
 
 function void
-validate_gl_requirements(GLParams *gl, Arena a)
+validate_gl_requirements(GLParameters *gl, Arena a)
 {
 	Stream s = arena_stream(a);
 
@@ -139,7 +139,7 @@ validate_gl_requirements(GLParams *gl, Arena a)
 }
 
 function void
-dump_gl_params(GLParams *gl, Arena a)
+dump_gl_params(GLParameters *gl, Arena a)
 {
 #ifdef _DEBUG
 	s8 vendor = s8("vendor:");
@@ -153,10 +153,10 @@ dump_gl_params(GLParams *gl, Arena a)
 	stream_append_s8s(&s, s8("---- GL Parameters ----\n"), vendor);
 	stream_pad(&s, ' ', max_width - (i32)vendor.len);
 	switch (gl->vendor_id) {
-	case GL_VENDOR_AMD:    stream_append_s8(&s, s8("AMD\n"));    break;
-	case GL_VENDOR_ARM:    stream_append_s8(&s, s8("ARM\n"));    break;
-	case GL_VENDOR_INTEL:  stream_append_s8(&s, s8("Intel\n"));  break;
-	case GL_VENDOR_NVIDIA: stream_append_s8(&s, s8("nVidia\n")); break;
+	case GLVendor_AMD:    stream_append_s8(&s, s8("AMD\n"));    break;
+	case GLVendor_ARM:    stream_append_s8(&s, s8("ARM\n"));    break;
+	case GLVendor_Intel:  stream_append_s8(&s, s8("Intel\n"));  break;
+	case GLVendor_NVIDIA: stream_append_s8(&s, s8("nVidia\n")); break;
 	}
 
 	#define X(glname, name, suffix) \
@@ -202,11 +202,11 @@ function FILE_WATCH_CALLBACK_FN(load_cuda_library)
 {
 	local_persist void *cuda_library_handle;
 
-	GLParams *gl = (typeof(gl))user_data;
+	GLParameters *gl = (typeof(gl))user_data;
 	/* TODO(rnp): (25.10.30) registering the rf buffer with CUDA is currently
 	 * causing a major performance regression. for now we are disabling its use
 	 * altogether. it will be reenabled once the issue can be fixed */
-	b32 result = 0 && gl->vendor_id == GL_VENDOR_NVIDIA && os_file_exists((c8 *)path.data);
+	b32 result = 0 && gl->vendor_id == GLVendor_NVIDIA && os_file_exists((c8 *)path.data);
 	if (result) {
 		Stream err = arena_stream(arena);
 
@@ -459,6 +459,7 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	upctx->shared_memory = &ctx->shared_memory;
 	upctx->compute_timing_table = ctx->compute_timing_table;
 	upctx->compute_worker_sync  = &ctx->compute_worker.sync_variable;
+	upctx->gl                   = &ctx->gl;
 	upload->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
 	upload->handle        = os_create_thread((iptr)upload, upload_worker_thread_entry_point);
 	os_set_thread_name(worker->handle, s8("[upload_0]"));
@@ -500,7 +501,7 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	LABEL_GL_OBJECT(GL_FRAMEBUFFER, fvr->framebuffers[1], s8("Frame View Resolving Framebuffer"));
 
 	glCreateRenderbuffers(countof(fvr->renderbuffers), fvr->renderbuffers);
-	i32 msaa_samples = ctx->gl.vendor_id == GL_VENDOR_ARM? 4 : 8;
+	i32 msaa_samples = ctx->gl.vendor_id == GLVendor_ARM? 4 : 8;
 	glNamedRenderbufferStorageMultisample(fvr->renderbuffers[0], msaa_samples, GL_RGBA8,
 	                                      FRAME_VIEW_RENDER_TARGET_SIZE);
 	glNamedRenderbufferStorageMultisample(fvr->renderbuffers[1], msaa_samples, GL_DEPTH_COMPONENT24,
