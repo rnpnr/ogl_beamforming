@@ -88,6 +88,7 @@ read_only global Work works[] = {
 	//{.kind = WorkKind_Decode, .subdir = s8_comp("decode_cuda_txrx"),  .decode = {.cuda = 1}                    },
 	{.kind = WorkKind_Decode, .subdir = s8_comp("decode_256rx"),      .decode = {.full_aperture = 1}           },
 	{.kind = WorkKind_Decode, .subdir = s8_comp("decode_txrx")                                                 },
+	#if 0
 	{
 		.kind    = WorkKind_FullCompute,
 		.subdir  = s8_comp("bscan"),
@@ -226,6 +227,7 @@ read_only global Work works[] = {
 			.decimation_rate = 4,
 		},
 	},
+	#endif
 };
 
 read_only global u32 decode_transmit_counts[] = {
