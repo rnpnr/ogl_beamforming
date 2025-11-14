@@ -1,5 +1,5 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (22UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (23UL)
 
 typedef struct BeamformerFrame BeamformerFrame;
 
@@ -154,7 +154,7 @@ typedef struct {
 	u32 reserved_parameter_blocks;
 
 	/* TODO(rnp): this is really sucky. we need a better way to communicate this */
-	alignas(8) union { struct {u32 block, size;}; u64 U64; } rf_meta;
+	u64 rf_block_rf_size;
 
 	BeamformerLiveImagingParameters live_imaging_parameters;
 	BeamformerLiveImagingDirtyFlags live_imaging_dirty_flags;

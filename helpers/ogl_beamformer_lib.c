@@ -438,8 +438,8 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 
 				lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
 				/* TODO(rnp): need a better way to communicate this */
-				typeof(g_beamformer_library_context.bp->rf_meta) meta = {.block = block, .size = size};
-				atomic_store_u64(&g_beamformer_library_context.bp->rf_meta.U64, meta.U64);
+				u64 rf_block_rf_size = (u64)block << 32ULL | (u64)size;
+				atomic_store_u64(&g_beamformer_library_context.bp->rf_block_rf_size, rf_block_rf_size);
 				result = 1;
 			}
 		}

@@ -1414,93 +1414,55 @@ beamformer_rf_buffer_allocate(BeamformerRFBuffer *rf, u32 rf_size, b32 nvidia)
 
 DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 {
-	struct load_context {
-		uptr  buffer;
-		void *data;
-		u32   offset;
-		u32   channel_count;
-		u32   channel_stride_bytes;
-		b32   nvidia;
-	} load_context_store = {0};
-	struct load_context *lctx = 0;
-
-	BeamformerSharedMemory *sm                  = 0;
+	BeamformerSharedMemory *sm                  = ctx->shared_memory->region;
 	BeamformerSharedMemoryLockKind scratch_lock = BeamformerSharedMemoryLockKind_ScratchSpace;
 	BeamformerSharedMemoryLockKind upload_lock  = BeamformerSharedMemoryLockKind_UploadRF;
 
-	u32 insertion_slot = 0;
-	if (lane_index() == 0) {
-		sm   = ctx->shared_memory->region;
-		lctx = &load_context_store;
-		u32 scratch_rf_size;
+	u64 rf_block_rf_size;
+	if (atomic_load_u32(sm->locks + upload_lock) &&
+	    (rf_block_rf_size = atomic_swap_u64(&sm->rf_block_rf_size, 0)) &&
+	    os_shared_memory_region_lock(ctx->shared_memory, sm->locks, (i32)scratch_lock, (u32)-1))
+	{
+		BeamformerRFBuffer       *rf = ctx->rf_buffer;
+		BeamformerParameterBlock *b  = beamformer_parameter_block(sm, (u32)(rf_block_rf_size >> 32ULL));
+		BeamformerParameters     *bp = &b->parameters;
+		BeamformerDataKind data_kind = b->pipeline.data_kind;
 
-		if (atomic_load_u32(sm->locks + upload_lock) &&
-		    (scratch_rf_size = atomic_swap_u32(&sm->rf_meta.size, 0)) &&
-		    os_shared_memory_region_lock(ctx->shared_memory, sm->locks, (i32)scratch_lock, (u32)-1))
-		{
-			lctx->nvidia = ctx->gl->vendor_id == GLVendor_NVIDIA;
-			BeamformerRFBuffer *rf = ctx->rf_buffer;
-			rf->active_rf_size = (u32)round_up_to(scratch_rf_size, 64);
-			if (rf->size < rf->active_rf_size)
-				beamformer_rf_buffer_allocate(rf, rf->active_rf_size, lctx->nvidia);
+		b32 nvidia = ctx->gl->vendor_id == GLVendor_NVIDIA;
 
-			insertion_slot = rf->insertion_index++ % countof(rf->compute_syncs);
+		rf->active_rf_size = (u32)round_up_to(rf_block_rf_size & 0xFFFFFFFFULL, 64);
+		if (rf->size < rf->active_rf_size)
+			beamformer_rf_buffer_allocate(rf, rf->active_rf_size, nvidia);
 
-			/* NOTE(rnp): if the rest of the code is functioning then the first
-			 * time the compute thread processes an upload it must have gone
-			 * through this path. therefore it is safe to spin until it gets processed */
-			spin_wait(atomic_load_u64(rf->upload_syncs + insertion_slot));
+		u32 slot = rf->insertion_index++ % countof(rf->compute_syncs);
 
-			if (atomic_load_u64(rf->compute_syncs + insertion_slot)) {
-				GLenum sync_result = glClientWaitSync(rf->compute_syncs[insertion_slot], 0, 1000000000);
-				if (sync_result == GL_TIMEOUT_EXPIRED || sync_result == GL_WAIT_FAILED) {
-					// TODO(rnp): what do?
-				}
-				glDeleteSync(rf->compute_syncs[insertion_slot]);
+		/* NOTE(rnp): if the rest of the code is functioning then the first
+		 * time the compute thread processes an upload it must have gone
+		 * through this path. therefore it is safe to spin until it gets processed */
+		spin_wait(atomic_load_u64(rf->upload_syncs + slot));
+
+		if (atomic_load_u64(rf->compute_syncs + slot)) {
+			GLenum sync_result = glClientWaitSync(rf->compute_syncs[slot], 0, 1000000000);
+			if (sync_result == GL_TIMEOUT_EXPIRED || sync_result == GL_WAIT_FAILED) {
+				// TODO(rnp): what do?
 			}
-
-			lctx->offset = insertion_slot * rf->active_rf_size;
-			lctx->buffer = lctx->nvidia? rf->ssbo : (uptr)rf->buffer;
-			lctx->data   = beamformer_shared_memory_scratch_arena(sm).beg;
-
-			BeamformerParameterBlock *b = beamformer_parameter_block(sm, atomic_load_u32(&sm->rf_meta.block));
-			BeamformerParameters     *bp = &b->parameters;
-			BeamformerDataKind data_kind = b->pipeline.data_kind;
-
-			u32 size = bp->acquisition_count * bp->sample_count * beamformer_data_kind_byte_size[data_kind];
-			lctx->channel_count        = bp->channel_count;
-			lctx->channel_stride_bytes = size;
+			glDeleteSync(rf->compute_syncs[slot]);
 		}
-	}
-	lane_sync_u64(&lctx, 0);
 
-	if (lctx->buffer) {
-		RangeU64 range = lane_range(lctx->channel_count);
-		if (lctx->nvidia) {
-			i64 offset = (i64)(lctx->offset + range.start * lctx->channel_stride_bytes);
-			i32 size   = (i32)(lctx->channel_stride_bytes * (range.stop - range.start));
-			u8 *in     = lctx->data + range.start * lctx->channel_stride_bytes;
-			glNamedBufferSubData((u32)lctx->buffer, offset, size, in);
-		} else {
-			for (u64 channel = range.start; channel < range.stop; channel++) {
-				u8 *in  = lctx->data + channel * lctx->channel_stride_bytes;
-				u8 *out = (u8 *)lctx->buffer + lctx->offset + channel * lctx->channel_stride_bytes;
-				mem_copy(out, in, lctx->channel_stride_bytes);
-			}
-		}
-	}
-	lane_sync();
+		u32 size = bp->channel_count * bp->acquisition_count * bp->sample_count * beamformer_data_kind_byte_size[data_kind];
+		u8 *data = beamformer_shared_memory_scratch_arena(sm).beg;
 
-	if (lctx->buffer && lane_index() == 0) {
+		if (nvidia) glNamedBufferSubData(rf->ssbo, slot * rf->active_rf_size, (i32)size, data);
+		else        mem_copy(rf->buffer + slot * rf->active_rf_size, data, size);
+
 		os_shared_memory_region_unlock(ctx->shared_memory, sm->locks, (i32)scratch_lock);
 		post_sync_barrier(ctx->shared_memory, upload_lock, sm->locks);
 
-		BeamformerRFBuffer *rf = ctx->rf_buffer;
-		if (!lctx->nvidia)
-			glFlushMappedNamedBufferRange(rf->ssbo, insertion_slot * rf->active_rf_size, (i32)rf->active_rf_size);
+		if (!nvidia)
+			glFlushMappedNamedBufferRange(rf->ssbo, slot * rf->active_rf_size, (i32)rf->active_rf_size);
 
-		atomic_store_u64(rf->upload_syncs + insertion_slot,  glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
-		atomic_store_u64(rf->compute_syncs + insertion_slot, 0);
+		atomic_store_u64(rf->upload_syncs  + slot, glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
+		atomic_store_u64(rf->compute_syncs + slot, 0);
 
 		os_wake_waiters(ctx->compute_worker_sync);
 
