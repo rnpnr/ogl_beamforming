@@ -202,21 +202,16 @@ function iv3
 make_valid_output_points(i32 points[3])
 {
 	iv3 result;
-	result.E[0] = MAX(1, points[0]);
-	result.E[1] = MAX(1, points[1]);
-	result.E[2] = MAX(1, points[2]);
+	result.E[0] = CLAMP(points[0], 1, gl_parameters.max_3d_texture_dim);
+	result.E[1] = CLAMP(points[1], 1, gl_parameters.max_3d_texture_dim);
+	result.E[2] = CLAMP(points[2], 1, gl_parameters.max_3d_texture_dim);
 	return result;
 }
 
 function void
-alloc_beamform_frame(GLParameters *gp, BeamformerFrame *out, iv3 out_dim, GLenum gl_kind, s8 name, Arena arena)
+alloc_beamform_frame(BeamformerFrame *out, iv3 out_dim, GLenum gl_kind, s8 name, Arena arena)
 {
 	out->dim = make_valid_output_points(out_dim.E);
-	if (gp) {
-		out->dim.x = MIN(out->dim.x, gp->max_3d_texture_dim);
-		out->dim.y = MIN(out->dim.y, gp->max_3d_texture_dim);
-		out->dim.z = MIN(out->dim.z, gp->max_3d_texture_dim);
-	}
 
 	/* NOTE: allocate storage for beamformed output data;
 	 * this is shared between compute and fragment shaders */
@@ -859,8 +854,8 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 
 			GLenum gl_kind = cp->iq_pipeline ? GL_RG32F : GL_R32F;
 			if (cp->average_frames > 1 && !beamformer_frame_compatible(ctx->averaged_frames + 0, cp->output_points, gl_kind)) {
-				alloc_beamform_frame(&ctx->gl, ctx->averaged_frames + 0, cp->output_points, gl_kind, s8("Averaged Frame"), arena);
-				alloc_beamform_frame(&ctx->gl, ctx->averaged_frames + 1, cp->output_points, gl_kind, s8("Averaged Frame"), arena);
+				alloc_beamform_frame(ctx->averaged_frames + 0, cp->output_points, gl_kind, s8("Averaged Frame"), arena);
+				alloc_beamform_frame(ctx->averaged_frames + 1, cp->output_points, gl_kind, s8("Averaged Frame"), arena);
 			}
 		}break;
 		case BeamformerParameterBlockRegion_ChannelMapping:{
@@ -1236,7 +1231,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 
 			GLenum gl_kind = cp->iq_pipeline ? GL_RG32F : GL_R32F;
 			if (!beamformer_frame_compatible(frame, cp->output_points, gl_kind))
-				alloc_beamform_frame(&ctx->gl, frame, cp->output_points, gl_kind, s8("Beamformed_Data"), *arena);
+				alloc_beamform_frame(frame, cp->output_points, gl_kind, s8("Beamformed_Data"), *arena);
 
 			frame->min_coordinate   = cp->min_coordinate;
 			frame->max_coordinate   = cp->max_coordinate;
@@ -1428,7 +1423,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		BeamformerParameters     *bp = &b->parameters;
 		BeamformerDataKind data_kind = b->pipeline.data_kind;
 
-		b32 nvidia = ctx->gl->vendor_id == GLVendor_NVIDIA;
+		b32 nvidia = gl_parameters.vendor_id == GLVendor_NVIDIA;
 
 		rf->active_rf_size = (u32)round_up_to(rf_block_rf_size & 0xFFFFFFFFULL, 64);
 		if (rf->size < rf->active_rf_size)

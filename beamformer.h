@@ -90,33 +90,6 @@ typedef struct {
 #include "beamformer_parameters.h"
 #include "beamformer_shared_memory.c"
 
-typedef enum {
-	GLVendor_AMD,
-	GLVendor_ARM,
-	GLVendor_Intel,
-	GLVendor_NVIDIA,
-} GLVendorID;
-
-#define GL_PARAMETERS \
-	X(MAJOR_VERSION,                   version_major,                   "") \
-	X(MINOR_VERSION,                   version_minor,                   "") \
-	X(MIN_MAP_BUFFER_ALIGNMENT,        min_map_buffer_alignment,        "") \
-	X(TEXTURE_BUFFER_OFFSET_ALIGNMENT, texture_buffer_offset_alignment, "") \
-	X(MAX_TEXTURE_BUFFER_SIZE,         max_texture_buffer_size,         "") \
-	X(MAX_TEXTURE_SIZE,                max_2d_texture_dim,              "") \
-	X(MAX_3D_TEXTURE_SIZE,             max_3d_texture_dim,              "") \
-	X(MAX_SHADER_STORAGE_BLOCK_SIZE,   max_ssbo_size,                   "") \
-	X(MAX_COMPUTE_SHARED_MEMORY_SIZE,  max_shared_memory_size,          "") \
-	X(MAX_UNIFORM_BLOCK_SIZE,          max_ubo_size,                    "") \
-	X(MAX_SERVER_WAIT_TIMEOUT,         max_server_wait_time,            " [ns]") \
-
-typedef struct {
-	GLVendorID vendor_id;
-	#define X(glname, name, suffix) i32 name;
-	GL_PARAMETERS
-	#undef X
-} GLParameters;
-
 typedef struct {
 	iptr elements_offset;
 	i32  elements;
@@ -290,7 +263,6 @@ typedef struct {
 	SharedMemoryRegion *shared_memory;
 	ComputeTimingTable *compute_timing_table;
 	i32                *compute_worker_sync;
-	GLParameters       *gl;
 } BeamformerUploadThreadContext;
 
 struct BeamformerFrame {
@@ -317,8 +289,6 @@ struct BeamformerFrame {
 };
 
 typedef struct {
-	GLParameters gl;
-
 	iv2 window_size;
 	b32 should_exit;
 
