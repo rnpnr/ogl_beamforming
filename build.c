@@ -31,8 +31,8 @@ global char *g_argv0;
   #define COMMON_FLAGS     "-std=c11", "-pipe", "-Wall"
   #define DEBUG_FLAGS      "-O0", "-D_DEBUG", "-Wno-unused-function"
   #define OPTIMIZED_FLAGS  "-O3"
-  #define EXTRA_FLAGS_BASE "-Werror", "-Wextra", "-Wshadow", "-Wconversion", "-Wno-unused-parameter", \
-                           "-Wno-error=unused-function", "-funsafe-math-optimizations", "-fno-math-errno"
+  #define EXTRA_FLAGS_BASE "-Werror", "-Wextra", "-Wshadow", "-Wno-unused-parameter", \
+                           "-Wno-error=unused-function", "-fno-builtin"
   #if COMPILER_GCC
     #define EXTRA_FLAGS EXTRA_FLAGS_BASE, "-Wno-unused-variable"
   #else
@@ -425,9 +425,9 @@ os_get_filetime(char *file)
 	u64 result = (u64)-1;
 	iptr h = CreateFileA(file, 0, 0, 0, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, 0);
 	if (h != INVALID_FILE) {
-		struct { u32 low, high; } w32_filetime;
+		union { struct { u32 low, high; }; u64 U64; } w32_filetime;
 		GetFileTime(h, 0, 0, (iptr)&w32_filetime);
-		result = (u64)w32_filetime.high << 32ULL | w32_filetime.low;
+		result = w32_filetime.U64;
 		CloseHandle(h);
 	}
 	return result;
@@ -529,7 +529,7 @@ cmd_base(Arena *a, Options *o)
 	else          cmd_append(a, &result, OPTIMIZED_FLAGS);
 
 	/* NOTE: glibc devs are actually buffoons who never write any real code */
-	if (is_unix) cmd_append(a, &result, "-D_XOPEN_SOURCE=600");
+	if (is_unix) cmd_append(a, &result, "-D_GNU_SOURCE");
 
 	/* NOTE: ancient gcc bug: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=80454 */
 	if (is_gcc) cmd_append(a, &result, "-Wno-missing-braces");
@@ -721,7 +721,7 @@ check_build_raylib(Arena a, CommandList cc, b32 shared)
 {
 	b32 result = 1;
 	char *libraylib = shared ? OS_SHARED_LINK_LIB("raylib") : OUTPUT_LIB(OS_STATIC_LIB("raylib"));
-	if (needs_rebuild(libraylib, __FILE__, "external/include/rlgl.h", "external/raylib")) {
+	if (needs_rebuild(libraylib, "external/include/rlgl.h", "external/raylib")) {
 		git_submodule_update(a, "external/raylib");
 		os_copy_file("external/raylib/src/rlgl.h", "external/include/rlgl.h");
 
@@ -1387,7 +1387,7 @@ typedef struct {
 function MetaEntryScope
 meta_entry_extract_scope(MetaEntry *base, iz entry_count)
 {
-	assert(base->kind != MetaEntryKind_BeginScope || base->kind != MetaEntryKind_EndScope);
+	assert(base->kind != MetaEntryKind_BeginScope && base->kind != MetaEntryKind_EndScope);
 	assert(entry_count > 0);
 
 	MetaEntryScope result = {.start = base + 1, .consumed = 1};
@@ -1723,7 +1723,7 @@ meta_pack_shader_bake_parameters(MetaContext *ctx, MetaEntry *e, iz entry_count,
 	bp->shader_id = shader_id;
 	if (table_id) *table_id = (u32)da_index(bp, &ctx->shader_bake_parameters);
 
-	if (e->argument_count) meta_entry_argument_expected(e);
+	if (e->argument_count) meta_entry_argument_expected_(e, 0, 0);
 
 	MetaEntryScope scope = meta_entry_extract_scope(e, entry_count);
 	if (scope.consumed > 1) {
@@ -2150,7 +2150,7 @@ meta_generate_expansion_set(MetaContext *ctx, Arena *arena, s8 expansion_string,
 				case MetaExpansionToken_TypeEvalElements:
 				{
 					if (meta_expansion_token(p) != MetaExpansionToken_Identifier) {
-						loc.column += p->save.data - expansion_string.data;
+						loc.column += (u32)(p->save.data - expansion_string.data);
 						meta_expansion_expected(loc, MetaExpansionToken_Identifier, token);
 					}
 					MetaExpansionPartKind kind = token == MetaExpansionToken_TypeEval ?
@@ -2164,7 +2164,7 @@ meta_generate_expansion_set(MetaContext *ctx, Arena *arena, s8 expansion_string,
 					s8 string = meta_expansion_extract_string(p);
 					token = meta_expansion_token(p);
 					if (token != MetaExpansionToken_Quote) {
-						loc.column += point - expansion_string.data;
+						loc.column += (u32)(point - expansion_string.data);
 						/* TODO(rnp): point at start */
 						meta_compiler_error(loc, "unterminated string in expansion\n");
 					}
@@ -2866,7 +2866,7 @@ meta_push_shader_bake(MetaprogramContext *m, MetaContext *ctx)
 	} meta_end_scope(m, s8("};\n"));
 }
 
-read_only global s8 c_file_header = s8(""
+read_only global s8 c_file_header = s8_comp(""
 	"/* See LICENSE for license details. */\n\n"
 	"// GENERATED CODE\n\n"
 );
@@ -3118,13 +3118,13 @@ metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaMUnion *mu, s8
 		                    (u32)enumeration_members->count, mu->sub_table_count);
 	}
 
-	struct {
+	struct table_match {
 		MetaTable *table;
 		MetaKind  *kinds;
 		u32        name_index;
 	} *table_matches;
 
-	table_matches = push_array(&scratch, typeof(*table_matches), mu->sub_table_count);
+	table_matches = push_array(&scratch, struct table_match, mu->sub_table_count);
 	for (u32 index = 0; index < mu->sub_table_count; index++) {
 		s8 sub_table_name = mu->sub_table_names[index];
 		MetaTable *t = ctx->tables.data + meta_lookup_string_slow(ctx->table_names.data,

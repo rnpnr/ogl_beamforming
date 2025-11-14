@@ -20,7 +20,7 @@ jobs:
           sudo apt install libxkbcommon-dev xorg-dev
       - name: Build
         run: |
-          ${{matrix.cc}} -march=native -O3 build.c -Iexternal/include -o build && \
+          ${{matrix.cc}} -march=native -O3 -D_GNU_SOURCE build.c -Iexternal/include -o build && \
           ./build --tests && \
           ./build --debug
 

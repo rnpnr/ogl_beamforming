@@ -26,7 +26,11 @@
   #define debugbreak()  __debugbreak()
   #define unreachable() __assume(0)
 
-  #define memory_write_barrier()       _WriteBarrier()
+  #if ARCH_ARM64
+    #define cpu_yield() __yield()
+  #endif
+
+  #define memory_write_barrier()         _WriteBarrier()
 
   #define atomic_add_u32(ptr, n)         _InterlockedExchangeAdd((volatile u32 *)(ptr), (n))
   #define atomic_add_u64(ptr, n)         _InterlockedExchangeAdd64((volatile u64 *)(ptr), (n))
@@ -37,10 +41,10 @@
   #define atomic_load_u32(ptr)         *((volatile u32 *)(ptr))
   #define atomic_load_u64(ptr)         *((volatile u64 *)(ptr))
   #define atomic_or_u32(ptr, n)          _InterlockedOr((volatile u32 *)(ptr), (n))
-  #define atomic_store_u32(ptr, n)     *((volatile u32 *)(ptr)) = (n)
-  #define atomic_store_u64(ptr, n)     *((volatile u64 *)(ptr)) = (n)
+  #define atomic_store_u32(ptr, n)     *((volatile u32 *)(ptr)) = (u32)(n)
+  #define atomic_store_u64(ptr, n)     *((volatile u64 *)(ptr)) = (u64)(n)
   #define atomic_swap_u32(ptr, n)        _InterlockedExchange((volatile u32 *)(ptr), n)
-  #define atomic_swap_u64(ptr, n)        _InterlockedExchange64((volatile u32 *)(ptr), n)
+  #define atomic_swap_u64(ptr, n)        _InterlockedExchange64((volatile u64 *)(ptr), n)
 
   #define atan2_f32(y, x) atan2f(y, x)
   #define cos_f32(a)      cosf(a)
@@ -60,6 +64,7 @@
   #if ARCH_ARM64
     /* TODO? debuggers just loop here forever and need a manual PC increment (step over) */
     #define debugbreak() asm volatile ("brk 0xf000")
+    #define cpu_yield()  asm volatile ("yield")
   #else
     #define debugbreak() asm volatile ("int3; nop")
   #endif
@@ -183,8 +188,6 @@ typedef uint32x4_t  u32x4;
 #define store_f32x4(o, a)     vst1q_f32(o, a)
 #define store_i32x4(o, a)     vst1q_s32(o, a)
 #define sub_f32x4(a, b)       vsubq_f32(a, b)
-
-#define cpu_yield()           asm volatile ("yield")
 
 #elif ARCH_X64
 #include <immintrin.h>

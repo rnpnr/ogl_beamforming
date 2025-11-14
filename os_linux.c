@@ -30,15 +30,6 @@ typedef struct {
 } OS_LinuxContext;
 global OS_LinuxContext os_linux_context;
 
-/* NOTE(rnp): hidden behind feature flags -> screw compiler/standards idiots */
-#ifndef CLOCK_MONOTONIC
-  #define CLOCK_MONOTONIC 1
-#endif
-i32 ftruncate(i32, i64);
-i64 syscall(i64, ...);
-i32 clock_gettime(i32, struct timespec *);
-int getpagesize(void);
-
 #ifdef _DEBUG
 function void *
 os_get_module(char *name, Stream *e)
@@ -359,7 +350,6 @@ os_create_thread(iptr user_context, os_thread_entry_point_fn *fn)
 	return (iptr)result;
 }
 
-i32 pthread_setname_np(pthread_t, char *);
 function void
 os_set_thread_name(iptr thread, s8 name)
 {
