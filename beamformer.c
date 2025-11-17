@@ -1414,9 +1414,10 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 
 	u64 rf_block_rf_size;
 	if (atomic_load_u32(sm->locks + upload_lock) &&
-	    (rf_block_rf_size = atomic_swap_u64(&sm->rf_block_rf_size, 0)) &&
-	    os_shared_memory_region_lock(ctx->shared_memory, sm->locks, (i32)scratch_lock, (u32)-1))
+	    (rf_block_rf_size = atomic_swap_u64(&sm->rf_block_rf_size, 0)))
 	{
+		os_shared_memory_region_lock(ctx->shared_memory, sm->locks, (i32)scratch_lock, (u32)-1);
+
 		BeamformerRFBuffer       *rf = ctx->rf_buffer;
 		BeamformerParameterBlock *b  = beamformer_parameter_block(sm, (u32)(rf_block_rf_size >> 32ULL));
 		BeamformerParameters     *bp = &b->parameters;

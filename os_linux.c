@@ -290,7 +290,7 @@ os_take_lock(i32 *lock, i32 timeout_ms)
 		i32 current = 0;
 		if (atomic_cas_u32(lock, &current, 1))
 			result = 1;
-		if (result || !timeout_ms || !os_wait_on_value(lock, current, (u32)timeout_ms))
+		if (result || !timeout_ms || (!os_wait_on_value(lock, current, (u32)timeout_ms) && timeout_ms != -1))
 			break;
 	}
 	return result;
