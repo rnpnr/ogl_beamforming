@@ -541,13 +541,13 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 	0,
 };
 
-read_only global u8 *beamformer_shader_bake_parameter_is_float[] = {
-	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0},
-	(u8 []){0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1},
-	(u8 []){0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1},
-	0,
-	0,
-	0,
+read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
+	0x00000000UL,
+	0x00000600UL,
+	0x00001fc0UL,
+	0x00000000UL,
+	0x00000000UL,
+	0x00000000UL,
 };
 
 read_only global i32 beamformer_shader_bake_parameter_counts[] = {

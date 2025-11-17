@@ -868,16 +868,17 @@ meta_push_(MetaprogramContext *m, s8 *items, iz count)
 	stream_append_s8s_(&m->stream, items, count);
 }
 
-#define meta_pad(m, b, n)             stream_pad(&(m)->stream, (b), (n))
-#define meta_indent(m)                meta_pad((m), '\t', (m)->indentation_level)
-#define meta_begin_line(m, ...)  do { meta_indent(m); meta_push(m, __VA_ARGS__);           } while(0)
-#define meta_end_line(m, ...)                         meta_push(m, ##__VA_ARGS__, s8("\n"))
-#define meta_push_line(m, ...)   do { meta_indent(m); meta_push(m, ##__VA_ARGS__, s8("\n")); } while(0)
-#define meta_begin_scope(m, ...) do { meta_push_line(m, __VA_ARGS__); (m)->indentation_level++; } while(0)
-#define meta_end_scope(m, ...)   do { (m)->indentation_level--; meta_push_line(m, __VA_ARGS__); } while(0)
-#define meta_push_u64(m, n)           stream_append_u64(&(m)->stream, (n))
-#define meta_push_i64(m, n)           stream_append_i64(&(m)->stream, (n))
-#define meta_push_u64_hex(m, n)       stream_append_hex_u64(&(m)->stream, (n))
+#define meta_pad(m, b, n)                stream_pad(&(m)->stream, (b), (n))
+#define meta_indent(m)                   meta_pad((m), '\t', (m)->indentation_level)
+#define meta_begin_line(m, ...)     do { meta_indent(m); meta_push(m, __VA_ARGS__);                } while(0)
+#define meta_end_line(m, ...)                            meta_push(m, ##__VA_ARGS__, s8("\n"))
+#define meta_push_line(m, ...)      do { meta_indent(m); meta_push(m, ##__VA_ARGS__, s8("\n"));    } while(0)
+#define meta_begin_scope(m, ...)    do { meta_push_line(m, __VA_ARGS__); (m)->indentation_level++; } while(0)
+#define meta_end_scope(m, ...)      do { (m)->indentation_level--; meta_push_line(m, __VA_ARGS__); } while(0)
+#define meta_push_u64(m, n)              stream_append_u64(&(m)->stream, (n))
+#define meta_push_i64(m, n)              stream_append_i64(&(m)->stream, (n))
+#define meta_push_u64_hex(m, n)          stream_append_hex_u64(&(m)->stream, (n))
+#define meta_push_u64_hex_width(m, n, w) stream_append_hex_u64_width(&(m)->stream, (n), (w))
 
 #define meta_begin_matlab_class_cracker(_1, _2, FN, ...) FN
 #define meta_begin_matlab_class_1(m, name) meta_begin_scope(m, s8("classdef " name))
@@ -1510,7 +1511,7 @@ typedef struct {
 typedef struct {
 	s8  *names_upper;
 	s8  *names_lower;
-	u8  *floating_point;
+	u32  floating_point;
 	u32  entry_count;
 	u32  shader_id;
 } MetaShaderBakeParameters;
@@ -1734,15 +1735,17 @@ meta_pack_shader_bake_parameters(MetaContext *ctx, MetaEntry *e, iz entry_count,
 			bp->entry_count++;
 		}
 
-		bp->names_upper    = push_array(ctx->arena, s8, bp->entry_count);
-		bp->names_lower    = push_array(ctx->arena, s8, bp->entry_count);
-		bp->floating_point = push_array(ctx->arena, u8, bp->entry_count);
+		if (bp->entry_count > 32)
+			meta_entry_error(e, "maximum bake parameter count exceeded: limit: 32\n");
+
+		bp->names_upper = push_array(ctx->arena, s8, bp->entry_count);
+		bp->names_lower = push_array(ctx->arena, s8, bp->entry_count);
 
 		u32 row_index = 0;
 		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++, row_index++) {
-			bp->names_upper[row_index]    = row->arguments[0].string;
-			bp->names_lower[row_index]    = row->arguments[1].string;
-			bp->floating_point[row_index] = row->kind == MetaEntryKind_BakeFloat;
+			bp->names_upper[row_index]  = row->arguments[0].string;
+			bp->names_lower[row_index]  = row->arguments[1].string;
+			bp->floating_point         |= (row->kind == MetaEntryKind_BakeFloat) << row_index;
 		}
 	}
 
@@ -2976,7 +2979,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		                             ctx->shader_names.data[s->name_id], s8("BakeParameters"));
 		meta_begin_scope(m, s8("typedef struct {"));
 			for (u32 entry = 0; entry < b->entry_count; entry++) {
-				s8 kind = b->floating_point[entry] ? s8("f32 ") : s8("u32 ");
+				s8 kind = (b->floating_point & (1 << entry))? s8("f32 ") : s8("u32 ");
 				meta_push_line(m, kind, b->names_lower[entry], s8(";"));
 			}
 		meta_end_scope(m, s8("} "), name, s8(";\n"));
@@ -3062,19 +3065,12 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	}
 	meta_end_scope(m, s8("};\n"));
 
-	meta_begin_scope(m, s8("read_only global u8 *beamformer_shader_bake_parameter_is_float[] = {"));
+	meta_begin_scope(m, s8("read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {"));
 	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
 		MetaShader *s = ctx->base_shaders.data[shader].shader;
-		if (s->bake_parameters) {
-			meta_begin_line(m, s8("(u8 []){"));
-			for (u32 index = 0; index < s->bake_parameters->entry_count; index++) {
-				if (index != 0) meta_push(m, s8(", "));
-				meta_push(m, s->bake_parameters->floating_point[index] ? s8("1") : s8("0"));
-			}
-			meta_end_line(m, s8("},"));
-		} else {
-			meta_push_line(m, s8("0,"));
-		}
+		meta_begin_line(m, s8("0x"));
+		meta_push_u64_hex_width(m, s->bake_parameters? s->bake_parameters->floating_point : 0, 8);
+		meta_end_line(m, s8("UL,"));
 	}
 	meta_end_scope(m, s8("};\n"));
 

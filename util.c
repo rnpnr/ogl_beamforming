@@ -298,8 +298,9 @@ stream_append_u64(Stream *s, u64 n)
 }
 
 function void
-stream_append_hex_u64(Stream *s, u64 n)
+stream_append_hex_u64_width(Stream *s, u64 n, iz width)
 {
+	assert(width <= 16);
 	if (!s->errors) {
 		u8  buf[16];
 		u8 *end = buf + sizeof(buf);
@@ -308,10 +309,16 @@ stream_append_hex_u64(Stream *s, u64 n)
 			*--beg = (u8)"0123456789abcdef"[n & 0x0F];
 			n >>= 4;
 		}
-		while (end - beg < 2)
+		while (end - beg < width)
 			*--beg = '0';
 		stream_append(s, beg, end - beg);
 	}
+}
+
+function void
+stream_append_hex_u64(Stream *s, u64 n)
+{
+	stream_append_hex_u64_width(s, n, 2);
 }
 
 function void

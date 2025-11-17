@@ -748,41 +748,40 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 		for (i32 index = 0; index < header_vector_length; index++)
 			stream_append_s8(&shader_stream, beamformer_shader_global_header_strings[header_vector[index]]);
 
-		if (beamformer_shader_bake_parameter_counts[reloadable_index]) {
-			i32 count = beamformer_shader_bake_parameter_counts[reloadable_index];
-			BeamformerShaderDescriptor *sd = cp->shader_descriptors + shader_slot;
+		BeamformerShaderDescriptor *sd = cp->shader_descriptors + shader_slot;
 
-			if (sd->layout.x != 0) {
-				stream_append_s8(&shader_stream,  s8("layout(local_size_x = "));
-				stream_append_u64(&shader_stream, sd->layout.x);
-				stream_append_s8(&shader_stream,  s8(", local_size_y = "));
-				stream_append_u64(&shader_stream, sd->layout.y);
-				stream_append_s8(&shader_stream,  s8(", local_size_z = "));
-				stream_append_u64(&shader_stream, sd->layout.z);
-				stream_append_s8(&shader_stream,  s8(") in;\n\n"));
-			}
+		if (sd->layout.x != 0) {
+			stream_append_s8(&shader_stream,  s8("layout(local_size_x = "));
+			stream_append_u64(&shader_stream, sd->layout.x);
+			stream_append_s8(&shader_stream,  s8(", local_size_y = "));
+			stream_append_u64(&shader_stream, sd->layout.y);
+			stream_append_s8(&shader_stream,  s8(", local_size_z = "));
+			stream_append_u64(&shader_stream, sd->layout.z);
+			stream_append_s8(&shader_stream,  s8(") in;\n\n"));
+		}
 
-			u32 *parameters = (u32 *)&sd->bake;
-			s8  *names      = beamformer_shader_bake_parameter_names[reloadable_index];
-			u8  *is_float   = beamformer_shader_bake_parameter_is_float[reloadable_index];
-			for (i32 index = 0; index < count; index++) {
-				stream_append_s8s(&shader_stream, s8("#define "), names[index],
-				                  is_float[index]? s8(" uintBitsToFloat") : s8(" "), s8("(0x"));
-				stream_append_hex_u64(&shader_stream, parameters[index]);
-				stream_append_s8(&shader_stream, s8(")\n"));
-			}
+		u32 *parameters = (u32 *)&sd->bake;
+		s8  *names      = beamformer_shader_bake_parameter_names[reloadable_index];
+		u32  float_bits = beamformer_shader_bake_parameter_float_bits[reloadable_index];
+		i32  count      = beamformer_shader_bake_parameter_counts[reloadable_index];
 
-			stream_append_s8(&shader_stream, s8("#define DataKind (0x"));
-			stream_append_hex_u64(&shader_stream, sd->bake.data_kind);
-			stream_append_s8(&shader_stream, s8(")\n\n"));
+		for (i32 index = 0; index < count; index++) {
+			stream_append_s8s(&shader_stream, s8("#define "), names[index],
+			                  (float_bits & (1 << index))? s8(" uintBitsToFloat") : s8(" "), s8("(0x"));
+			stream_append_hex_u64(&shader_stream, parameters[index]);
+			stream_append_s8(&shader_stream, s8(")\n"));
+		}
 
-			s8  *flag_names = beamformer_shader_flag_strings[reloadable_index];
-			u32  flag_count = beamformer_shader_flag_strings_count[reloadable_index];
-			u32  flags      = sd->bake.flags;
-			for (u32 bit = 0; bit < flag_count; bit++) {
-				stream_append_s8s(&shader_stream, s8("#define "), flag_names[bit],
-				                  (flags & (1 << bit))? s8(" 1") : s8(" 0"), s8("\n"));
-			}
+		stream_append_s8(&shader_stream, s8("#define DataKind (0x"));
+		stream_append_hex_u64(&shader_stream, sd->bake.data_kind);
+		stream_append_s8(&shader_stream, s8(")\n\n"));
+
+		s8  *flag_names = beamformer_shader_flag_strings[reloadable_index];
+		u32  flag_count = beamformer_shader_flag_strings_count[reloadable_index];
+		u32  flags      = sd->bake.flags;
+		for (u32 bit = 0; bit < flag_count; bit++) {
+			stream_append_s8s(&shader_stream, s8("#define "), flag_names[bit],
+			                  (flags & (1 << bit))? s8(" 1") : s8(" 0"), s8("\n"));
 		}
 
 		stream_append_s8(&shader_stream, s8("\n#line 1\n"));
