@@ -116,6 +116,7 @@ lib_error_check(b32 condition, BeamformerLibErrorKind error_kind)
 {
 	b32 result = condition;
 	if (!result) g_beamformer_library_context.last_error = error_kind;
+	assert(result);
 	return result;
 }
 
@@ -359,11 +360,12 @@ beamformer_create_filter(BeamformerFilterKind kind, void *filter_parameters, u32
 	return result;
 }
 
-function b32
-beamformer_flush_commands(i32 timeout_ms)
+function void
+beamformer_flush_commands(void)
 {
-	b32 result = lib_try_lock(BeamformerSharedMemoryLockKind_DispatchCompute, timeout_ms);
-	return result;
+	i32 lock = BeamformerSharedMemoryLockKind_DispatchCompute;
+	os_shared_memory_region_lock(&g_beamformer_library_context.shared_memory,
+	                             g_beamformer_library_context.bp->locks, lock, 0);
 }
 
 #define BEAMFORMER_UPLOAD_FNS \
@@ -463,7 +465,7 @@ beamformer_push_data_with_compute(void *data, u32 data_size, u32 image_plane_tag
 				work->compute_indirect_context.view_plane      = image_plane_tag;
 				work->compute_indirect_context.parameter_block = parameter_slot;
 				beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
-				beamformer_flush_commands(0);
+				beamformer_flush_commands();
 				result = 1;
 			}
 		}
@@ -560,7 +562,7 @@ beamformer_export(BeamformerExportContext export, void *out, i32 timeout_ms)
 		/* NOTE(rnp): if this fails it just means that the work from push_data hasn't
 		 * started yet. This is here to catch the other case where the work started
 		 * and finished before we finished queuing the export work item */
-		beamformer_flush_commands(0);
+		beamformer_flush_commands();
 
 		if (lib_try_lock(BeamformerSharedMemoryLockKind_ExportSync, timeout_ms)) {
 			if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
