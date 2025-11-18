@@ -765,8 +765,7 @@ build_helper_library(Arena arena, CommandList cc)
 
 	if (!is_msvc) cmd_append(&arena, &cc, "-Wno-unused-function");
 	b32 result = build_shared_library(arena, cc, "ogl_beamformer_lib", library,
-	                                  libs, libs_count,
-	                                  arg_list(char *, "helpers/ogl_beamformer_lib.c"));
+	                                  libs, libs_count, (char *[]){"lib/ogl_beamformer_lib.c"}, 1);
 	return result;
 }
 
@@ -792,7 +791,7 @@ build_tests(Arena arena, CommandList cc)
 
 	os_make_directory(OUTPUT("tests"));
 	if (!is_msvc) cmd_append(&arena, &cc, "-Wno-unused-function");
-	cmd_append(&arena, &cc, "-I.", "-Ihelpers");
+	cmd_append(&arena, &cc, "-I.", "-Ilib");
 
 	b32 result = 1;
 	iz cc_count = cc.count;
@@ -3321,13 +3320,13 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 {
 	b32 result = 1;
 	char *out = OUTPUT("ogl_beamformer_lib.h");
-	if (!needs_rebuild(out, "helpers/ogl_beamformer_lib_base.h", "beamformer.meta"))
+	if (!needs_rebuild(out, "lib/ogl_beamformer_lib_base.h", "beamformer.meta"))
 		return result;
 
-	build_log_generate("Helper Library Header");
+	build_log_generate("Library Header");
 
 	s8 parameters_header = os_read_whole_file(&arena, "beamformer_parameters.h");
-	s8 base_header       = os_read_whole_file(&arena, "helpers/ogl_beamformer_lib_base.h");
+	s8 base_header       = os_read_whole_file(&arena, "lib/ogl_beamformer_lib_base.h");
 
 	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
 
@@ -3560,7 +3559,7 @@ main(i32 argc, char *argv[])
 	cmd_append(&arena, &c, EXTRA_FLAGS);
 
 	/////////////////
-	// helpers/tests
+	// lib/tests
 	result &= build_helper_library(arena, c);
 	if (options.tests) result &= build_tests(arena, c);
 
