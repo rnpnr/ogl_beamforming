@@ -22,7 +22,13 @@ float sdf_wire_box_outside(vec3 p, vec3 b, float e)
 
 void main()
 {
-	float smp = length(texture(u_texture, texture_coordinate).xy);
+	vec4  value  = vec4(0);
+	ivec3 P      = ivec3((u_image_points - 1) * texture_coordinate);
+	int   offset = u_image_components * (u_image_points.x * u_image_points.y * P.z + u_image_points.x * P.y + P.x);
+	for (int c = 0; c < u_image_components; c++)
+		value[c] = image_data[offset + c];
+
+	float smp = length(value);
 	float threshold_val = pow(10.0f, u_threshold / 20.0f);
 	smp = clamp(smp, 0.0f, threshold_val);
 	smp = smp / threshold_val;

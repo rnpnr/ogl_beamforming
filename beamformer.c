@@ -37,7 +37,6 @@ global f32 dt_for_frame;
 #define DAS_FAST_CHANNEL_UNIFORM_LOC  4
 
 #define MIN_MAX_MIPS_LEVEL_UNIFORM_LOC 1
-#define SUM_PRESCALE_UNIFORM_LOC       1
 
 #ifndef _DEBUG
 #define start_renderdoc_capture(...)
@@ -192,9 +191,9 @@ frame_next(ComputeFrameIterator *bfi)
 }
 
 function b32
-beamformer_frame_compatible(BeamformerFrame *f, iv3 dim, GLenum gl_kind)
+beamformer_frame_compatible(BeamformerFrame *f, iv3 dim, b32 complex)
 {
-	b32 result = gl_kind == f->gl_kind && iv3_equal(dim, f->dim);
+	b32 result = complex == f->complex && iv3_equal(dim, f->dim);
 	return result;
 }
 
@@ -209,16 +208,10 @@ make_valid_output_points(i32 points[3])
 }
 
 function void
-alloc_beamform_frame(BeamformerFrame *out, iv3 out_dim, GLenum gl_kind, s8 name, Arena arena)
+alloc_beamform_frame(BeamformerFrame *out, iv3 out_dim, b32 complex, s8 name, Arena arena)
 {
-	out->dim = make_valid_output_points(out_dim.E);
-
-	/* NOTE: allocate storage for beamformed output data;
-	 * this is shared between compute and fragment shaders */
-	u32 max_dim = (u32)MAX(out->dim.x, MAX(out->dim.y, out->dim.z));
-	out->mips   = (i32)ctz_u32(round_up_power_of_2(max_dim)) + 1;
-
-	out->gl_kind = gl_kind;
+	out->dim     = make_valid_output_points(out_dim.E);
+	out->complex = complex;
 
 	Stream label = arena_stream(arena);
 	stream_append_s8(&label, name);
@@ -226,14 +219,12 @@ alloc_beamform_frame(BeamformerFrame *out, iv3 out_dim, GLenum gl_kind, s8 name,
 	stream_append_hex_u64(&label, out->id);
 	stream_append_byte(&label, ']');
 
-	glDeleteTextures(1, &out->texture);
-	glCreateTextures(GL_TEXTURE_3D, 1, &out->texture);
-	glTextureStorage3D(out->texture, out->mips, gl_kind, out->dim.x, out->dim.y, out->dim.z);
+	iz output_data_size = out->dim.x * out->dim.y * out->dim.z * sizeof(f32) * (complex ? 2 : 1);
+	glDeleteBuffers(1, &out->ssbo);
+	glCreateBuffers(1, &out->ssbo);
+	glNamedBufferStorage(out->ssbo, (iz)output_data_size, 0, GL_MAP_READ_BIT);
 
-	glTextureParameteri(out->texture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTextureParameteri(out->texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-	LABEL_GL_OBJECT(GL_TEXTURE, out->texture, stream_to_s8(&label));
+	glObjectLabel(GL_BUFFER, out->ssbo, label.widx, (c8 *)label.data);
 }
 
 function void
@@ -312,24 +303,6 @@ fill_frame_compute_work(BeamformerCtx *ctx, BeamformWork *work, BeamformerViewPl
 		work->compute_context.frame->id               = frame_id;
 	}
 	return result;
-}
-
-function void
-do_sum_shader(BeamformerComputeContext *cc, u32 *in_textures, u32 in_texture_count,
-              u32 out_texture, iv3 out_data_dim)
-{
-	/* NOTE: zero output before summing */
-	glClearTexImage(out_texture, 0, GL_RED, GL_FLOAT, 0);
-	glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
-
-	glBindImageTexture(0, out_texture, 0, GL_TRUE, 0, GL_READ_WRITE, GL_RG32F);
-	for (u32 i = 0; i < in_texture_count; i++) {
-		glBindImageTexture(1, in_textures[i], 0, GL_TRUE, 0, GL_READ_ONLY, GL_RG32F);
-		glDispatchCompute(ORONE((u32)out_data_dim.x / 32u),
-		                  ORONE((u32)out_data_dim.y),
-		                  ORONE((u32)out_data_dim.z / 32u));
-		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-	}
 }
 
 struct compute_cursor {
@@ -659,6 +632,11 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			db->focus_depth            = pb->parameters.focal_vector.E[1];
 			db->transmit_receive_orientation = pb->parameters.transmit_receive_orientation;
 
+			db->out_image_x    = cp->output_points.x;
+			db->out_image_y    = cp->output_points.y;
+			db->out_image_z    = cp->output_points.z;
+			db->out_components = cp->iq_pipeline ? 2 : 1;
+
 			if (pb->parameters.single_focus)        sd->bake.flags |= BeamformerShaderDASFlags_SingleFocus;
 			if (pb->parameters.single_orientation)  sd->bake.flags |= BeamformerShaderDASFlags_SingleOrientation;
 			if (pb->parameters.coherency_weighting) sd->bake.flags |= BeamformerShaderDASFlags_CoherencyWeighting;
@@ -673,6 +651,20 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			sd->layout.z = DAS_LOCAL_SIZE_Z;
 
 			commit = 1;
+		}break;
+		case BeamformerShaderKind_Sum:{
+			u32 to_average = MAX(1, cp->average_frames);
+			sd->bake.Sum.scale      = 1.0f /(f32)to_average;
+			sd->bake.Sum.elements   = cp->output_points.x * cp->output_points.y * cp->output_points.z;
+			sd->bake.Sum.components = cp->iq_pipeline ? 2 : 1;
+
+			sd->layout = (uv3){{128, 1, 1}};
+
+			sd->dispatch.x = (u32)ceil_f32((f32)sd->bake.Sum.elements / (f32)sd->layout.x);
+			sd->dispatch.y = 1;
+			sd->dispatch.z = 1;
+
+			commit = to_average > 1;
 		}break;
 		default:{ commit = 1; }break;
 		}
@@ -707,10 +699,6 @@ stream_push_shader_header(Stream *s, BeamformerShaderKind shader_kind, s8 header
 	case BeamformerShaderKind_MinMax:{
 		stream_append_s8(s, s8("layout(location = " str(MIN_MAX_MIPS_LEVEL_UNIFORM_LOC)
 		                       ") uniform int u_mip_map;\n\n"));
-	}break;
-	case BeamformerShaderKind_Sum:{
-		stream_append_s8(s, s8("layout(location = " str(SUM_PRESCALE_UNIFORM_LOC)
-		                       ") uniform float u_sum_prescale = 1.0;\n\n"));
 	}break;
 	default:{}break;
 	}
@@ -816,6 +804,11 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 		case BeamformerParameterBlockRegion_ComputePipeline:
 		case BeamformerParameterBlockRegion_Parameters:
 		{
+			cp->min_coordinate = pb->parameters.output_min_coordinate;
+			cp->max_coordinate = pb->parameters.output_max_coordinate;
+			cp->output_points  = make_valid_output_points(pb->parameters.output_points.E);
+			cp->average_frames = pb->parameters.output_points.E[3];
+
 			plan_compute_pipeline(cp, pb);
 
 			/* NOTE(rnp): these are both handled by plan_compute_pipeline() */
@@ -845,16 +838,9 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			if (cp->hadamard_order != (i32)cp->acquisition_count)
 				update_hadamard_texture(cp, (i32)cp->acquisition_count, arena);
 
-			cp->min_coordinate = pb->parameters.output_min_coordinate;
-			cp->max_coordinate = pb->parameters.output_max_coordinate;
-
-			cp->output_points  = make_valid_output_points(pb->parameters.output_points.E);
-			cp->average_frames = pb->parameters.output_points.E[3];
-
-			GLenum gl_kind = cp->iq_pipeline ? GL_RG32F : GL_R32F;
-			if (cp->average_frames > 1 && !beamformer_frame_compatible(ctx->averaged_frames + 0, cp->output_points, gl_kind)) {
-				alloc_beamform_frame(ctx->averaged_frames + 0, cp->output_points, gl_kind, s8("Averaged Frame"), arena);
-				alloc_beamform_frame(ctx->averaged_frames + 1, cp->output_points, gl_kind, s8("Averaged Frame"), arena);
+			if (cp->average_frames > 1 && !beamformer_frame_compatible(ctx->averaged_frames + 0, cp->output_points, cp->iq_pipeline)) {
+				alloc_beamform_frame(ctx->averaged_frames + 0, cp->output_points, cp->iq_pipeline, s8("Averaged Frame"), arena);
+				alloc_beamform_frame(ctx->averaged_frames + 1, cp->output_points, cp->iq_pipeline, s8("Averaged Frame"), arena);
 			}
 		}break;
 		case BeamformerParameterBlockRegion_ChannelMapping:{
@@ -948,6 +934,8 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 		cc->last_output_ssbo_index = !cc->last_output_ssbo_index;
 	}break;
 	case BeamformerShaderKind_MinMax:{
+		// TODO(rnp): this needs to be reimplemented for ssbo output using some other method
+		#if 0
 		for (i32 i = 1; i < frame->mips; i++) {
 			glBindImageTexture(0, frame->texture, i - 1, GL_TRUE, 0, GL_READ_ONLY,  GL_RG32F);
 			glBindImageTexture(1, frame->texture, i - 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RG32F);
@@ -959,6 +947,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 			glDispatchCompute(ORONE(width / 32), ORONE(height), ORONE(depth / 32));
 			glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 		}
+		#endif
 	}break;
 	case BeamformerShaderKind_DAS:{
 		local_persist u32 das_cycle_t = 0;
@@ -967,13 +956,9 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 		b32 fast   = (bp->flags & BeamformerShaderDASFlags_Fast)   != 0;
 		b32 sparse = (bp->flags & BeamformerShaderDASFlags_Sparse) != 0;
 
-		if (fast) {
-			glClearTexImage(frame->texture, 0, GL_RED, GL_FLOAT, 0);
-			glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
-			glBindImageTexture(0, frame->texture, 0, GL_TRUE, 0, GL_READ_WRITE, cp->iq_pipeline ? GL_RG32F : GL_R32F);
-		} else {
-			glBindImageTexture(0, frame->texture, 0, GL_TRUE, 0, GL_WRITE_ONLY, cp->iq_pipeline ? GL_RG32F : GL_R32F);
-		}
+		GLenum ssbo_kind = frame->complex ? GL_RG32F : GL_R32F;
+		glClearNamedBufferData(frame->ssbo, ssbo_kind, GL_RED, GL_FLOAT, 0);
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, frame->ssbo);
 
 		u32 sparse_texture = cp->textures[BeamformerComputeTextureKind_SparseElements];
 		if (!sparse) sparse_texture = 0;
@@ -1001,13 +986,11 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 			cc->processing_progress = -percent_per_step;
 			for (i32 index = 0; index < loop_end; index++) {
 				cc->processing_progress += percent_per_step;
-				/* IMPORTANT(rnp): prevents OS from coalescing and killing our shader */
-				glFinish();
 				glProgramUniform1i(program, DAS_FAST_CHANNEL_UNIFORM_LOC, index);
 				glDispatchCompute((u32)ceil_f32((f32)frame->dim.x / DAS_LOCAL_SIZE_X),
 				                  (u32)ceil_f32((f32)frame->dim.y / DAS_LOCAL_SIZE_Y),
 				                  (u32)ceil_f32((f32)frame->dim.z / DAS_LOCAL_SIZE_Z));
-				glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+				glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 			}
 		} else {
 			#if 1
@@ -1022,8 +1005,6 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 			     offset = step_compute_cursor(&cursor))
 			{
 				cc->processing_progress += percent_per_step;
-				/* IMPORTANT(rnp): prevents OS from coalescing and killing our shader */
-				glFinish();
 				glProgramUniform3iv(program, DAS_VOXEL_OFFSET_UNIFORM_LOC, 1, offset.E);
 				glDispatchCompute(cursor.dispatch.x, cursor.dispatch.y, cursor.dispatch.z);
 			}
@@ -1037,7 +1018,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 			                  (u32)ceil_f32((f32)dim.z / DAS_LOCAL_SIZE_Z));
 			#endif
 		}
-		glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT|GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+		glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 	}break;
 	case BeamformerShaderKind_Sum:{
 		u32 aframe_index = ctx->averaged_frame_index % ARRAY_COUNT(ctx->averaged_frames);
@@ -1048,18 +1029,20 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 		 * this is fine for rolling averaging but what if we want to do something else */
 		assert(frame >= ctx->beamform_frames);
 		assert(frame < ctx->beamform_frames + countof(ctx->beamform_frames));
-		u32 base_index   = (u32)(frame - ctx->beamform_frames);
-		u32 to_average   = (u32)cp->average_frames;
-		u32 frame_count  = 0;
-		u32 *in_textures = push_array(&arena, u32, BeamformerMaxSavedFrames);
+		u32 base_index = (u32)(frame - ctx->beamform_frames);
+		u32 to_average = (u32)cp->average_frames;
+
+		GLenum ssbo_kind = aframe->complex ? GL_RG32F : GL_R32F;
+		glClearNamedBufferData(aframe->ssbo, ssbo_kind, GL_RED, GL_FLOAT, 0);
+		glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, aframe->ssbo);
+
 		ComputeFrameIterator cfi = compute_frame_iterator(ctx, 1 + base_index - to_average, to_average);
-		for (BeamformerFrame *it = frame_next(&cfi); it; it = frame_next(&cfi))
-			in_textures[frame_count++] = it->texture;
+		for (BeamformerFrame *it = frame_next(&cfi); it; it = frame_next(&cfi)) {
+			glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, it->ssbo);
+			glDispatchCompute(dispatch.x, dispatch.y, dispatch.z);
+			glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+		}
 
-		assert(to_average == frame_count);
-
-		glProgramUniform1f(program, SUM_PRESCALE_UNIFORM_LOC, 1 / (f32)frame_count);
-		do_sum_shader(cc, in_textures, frame_count, aframe->texture, aframe->dim);
 		aframe->min_coordinate   = frame->min_coordinate;
 		aframe->max_coordinate   = frame->max_coordinate;
 		aframe->compound_count   = frame->compound_count;
@@ -1165,12 +1148,13 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 				BeamformerFrame *frame = ctx->latest_frame;
 				if (frame) {
 					assert(frame->ready_to_present);
-					u32 texture  = frame->texture;
-					iv3 dim      = frame->dim;
-					u32 out_size = (u32)dim.x * (u32)dim.y * (u32)dim.z * 2 * sizeof(f32);
+					u32 out_size = (u32)(frame->dim.x * frame->dim.y * frame->dim.z) * 2 * sizeof(f32);
 					if (out_size <= ec->size) {
-						glGetTextureImage(texture, 0, GL_RG, GL_FLOAT, (i32)out_size,
-						                  beamformer_shared_memory_scratch_arena(sm).beg);
+						void *buffer = glMapNamedBufferRange(frame->ssbo, 0, out_size, GL_READ_ONLY);
+						if (buffer) {
+							mem_copy(beamformer_shared_memory_scratch_arena(sm).beg, buffer, out_size);
+							glUnmapNamedBuffer(frame->ssbo);
+						}
 					}
 				}
 			}break;
@@ -1228,9 +1212,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 
 			BeamformerFrame *frame = work->compute_context.frame;
 
-			GLenum gl_kind = cp->iq_pipeline ? GL_RG32F : GL_R32F;
-			if (!beamformer_frame_compatible(frame, cp->output_points, gl_kind))
-				alloc_beamform_frame(frame, cp->output_points, gl_kind, s8("Beamformed_Data"), *arena);
+			if (!beamformer_frame_compatible(frame, cp->output_points, cp->iq_pipeline))
+				alloc_beamform_frame(frame, cp->output_points, cp->iq_pipeline, s8("Beamformed_Data"), *arena);
 
 			frame->min_coordinate   = cp->min_coordinate;
 			frame->max_coordinate   = cp->max_coordinate;

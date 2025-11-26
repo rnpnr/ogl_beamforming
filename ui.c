@@ -960,8 +960,8 @@ function void
 ui_beamformer_frame_view_release_subresources(BeamformerUI *ui, BeamformerFrameView *bv, BeamformerFrameViewKind kind)
 {
 	if (kind == BeamformerFrameViewKind_Copy && bv->frame) {
-		glDeleteTextures(1, &bv->frame->texture);
-		bv->frame->texture = 0;
+		glDeleteBuffers(1, &bv->frame->ssbo);
+		bv->frame->ssbo = 0;
 		SLLPushFreelist(bv->frame, ui->frame_freelist);
 	}
 
@@ -1484,14 +1484,13 @@ ui_beamformer_frame_view_copy_frame(BeamformerUI *ui, BeamformerFrameView *new, 
 	if (!new->frame) new->frame = push_struct(&ui->arena, typeof(*new->frame));
 
 	mem_copy(new->frame, old->frame, sizeof(*new->frame));
-	new->frame->texture = 0;
-	new->frame->next    = 0;
-	alloc_beamform_frame(new->frame, old->frame->dim, old->frame->gl_kind, s8("Frame Copy: "), ui->arena);
+	new->frame->ssbo = 0;
+	new->frame->next = 0;
+	alloc_beamform_frame(new->frame, old->frame->dim, old->frame->complex, s8("Frame Copy: "), ui->arena);
 
-	glCopyImageSubData(old->frame->texture, GL_TEXTURE_3D, 0, 0, 0, 0,
-	                   new->frame->texture, GL_TEXTURE_3D, 0, 0, 0, 0,
-	                   new->frame->dim.x, new->frame->dim.y, new->frame->dim.z);
-	glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
+
+	iz size = new->frame->dim.x * new->frame->dim.y * new->frame->dim.z * sizeof(f32) * (new->frame->complex ? 2 : 1);
+	glCopyNamedBufferSubData(old->frame->ssbo, new->frame->ssbo, 0, 0, size);
 	/* TODO(rnp): x vs y here */
 	resize_frame_view(new, (iv2){{new->frame->dim.x, new->frame->dim.z}}, 1);
 }
@@ -1749,9 +1748,14 @@ function void
 render_single_xplane(BeamformerUI *ui, BeamformerFrameView *view, Variable *x_plane_shift,
                      u32 program, f32 rotation_turns, v3 translate, BeamformerViewPlaneTag tag)
 {
-	u32 texture = 0;
-	if (ui->latest_plane[tag])
-		texture = ui->latest_plane[tag]->texture;
+	u32 ssbo       = 0;
+	u32 components = 0;
+	iv3 dim        = {0};
+	if (ui->latest_plane[tag]) {
+		ssbo       = ui->latest_plane[tag]->ssbo;
+		dim        = ui->latest_plane[tag]->dim;
+		components = ui->latest_plane[tag]->complex ? 2 : 1;
+	}
 
 	v3 scale = beamformer_frame_view_plane_size(ui, view);
 	m4 model_transform = y_aligned_volume_transform(scale, translate, rotation_turns);
@@ -1760,7 +1764,9 @@ render_single_xplane(BeamformerUI *ui, BeamformerFrameView *view, Variable *x_pl
 	glProgramUniformMatrix4fv(program, FRAME_VIEW_MODEL_MATRIX_LOC, 1, 0, model_transform.E);
 	glProgramUniform4fv(program, FRAME_VIEW_BB_COLOUR_LOC, 1, colour.E);
 	glProgramUniform1ui(program, FRAME_VIEW_SOLID_BB_LOC, 0);
-	glBindTextureUnit(0, texture);
+	glProgramUniform1ui(program, FRAME_VIEW_IMAGE_COMPONENTS_LOC, components);
+	glProgramUniform3iv(program, FRAME_VIEW_IMAGE_POINTS_LOC, 1, dim.E);
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
 	glDrawElements(GL_TRIANGLES, ui->unit_cube_model.elements, GL_UNSIGNED_SHORT,
 	               (void *)ui->unit_cube_model.elements_offset);
 
@@ -1821,8 +1827,11 @@ render_2D_plane(BeamformerUI *ui, BeamformerFrameView *view, u32 program)
 	glProgramUniformMatrix4fv(program, FRAME_VIEW_VIEW_MATRIX_LOC,  1, 0, view_m.E);
 	glProgramUniformMatrix4fv(program, FRAME_VIEW_PROJ_MATRIX_LOC,  1, 0, projection.E);
 
+	glProgramUniform1i(program, FRAME_VIEW_IMAGE_COMPONENTS_LOC, view->frame->complex ? 2 : 1);
+	glProgramUniform3iv(program, FRAME_VIEW_IMAGE_POINTS_LOC, 1, view->frame->dim.E);
 	glProgramUniform1f(program, FRAME_VIEW_BB_FRACTION_LOC, 0);
-	glBindTextureUnit(0, view->frame->texture);
+
+	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, view->frame->ssbo);
 	glDrawElements(GL_TRIANGLES, ui->unit_cube_model.elements, GL_UNSIGNED_SHORT,
 	               (void *)ui->unit_cube_model.elements_offset);
 }

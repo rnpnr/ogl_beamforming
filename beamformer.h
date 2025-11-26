@@ -66,16 +66,18 @@ CUDALibraryProcedureList
 #undef X
 
 /* TODO(rnp): this should be a UBO */
-#define FRAME_VIEW_MODEL_MATRIX_LOC   0
-#define FRAME_VIEW_VIEW_MATRIX_LOC    1
-#define FRAME_VIEW_PROJ_MATRIX_LOC    2
-#define FRAME_VIEW_DYNAMIC_RANGE_LOC  3
-#define FRAME_VIEW_THRESHOLD_LOC      4
-#define FRAME_VIEW_GAMMA_LOC          5
-#define FRAME_VIEW_LOG_SCALE_LOC      6
-#define FRAME_VIEW_BB_COLOUR_LOC      7
-#define FRAME_VIEW_BB_FRACTION_LOC    8
-#define FRAME_VIEW_SOLID_BB_LOC      10
+#define FRAME_VIEW_MODEL_MATRIX_LOC      0
+#define FRAME_VIEW_VIEW_MATRIX_LOC       1
+#define FRAME_VIEW_PROJ_MATRIX_LOC       2
+#define FRAME_VIEW_DYNAMIC_RANGE_LOC     3
+#define FRAME_VIEW_THRESHOLD_LOC         4
+#define FRAME_VIEW_GAMMA_LOC             5
+#define FRAME_VIEW_LOG_SCALE_LOC         6
+#define FRAME_VIEW_BB_COLOUR_LOC         7
+#define FRAME_VIEW_BB_FRACTION_LOC       8
+#define FRAME_VIEW_SOLID_BB_LOC          9
+#define FRAME_VIEW_IMAGE_POINTS_LOC     10
+#define FRAME_VIEW_IMAGE_COMPONENTS_LOC 11
 
 #define FRAME_VIEW_BB_COLOUR   0.92, 0.88, 0.78, 1.0
 #define FRAME_VIEW_BB_FRACTION 0.007f
@@ -268,11 +270,10 @@ typedef struct {
 } BeamformerUploadThreadContext;
 
 struct BeamformerFrame {
-	u32 texture;
+	u32 ssbo;
 	b32 ready_to_present;
 
 	iv3 dim;
-	i32 mips;
 
 	/* NOTE: for use when displaying either prebeamformed frames or on the current frame
 	 * when we intend to recompute on the next frame */
@@ -280,7 +281,7 @@ struct BeamformerFrame {
 	v3  max_coordinate;
 
 	// metadata
-	GLenum                    gl_kind;
+	b32                       complex;
 	u32                       id;
 	u32                       compound_count;
 	u32                       parameter_block;
