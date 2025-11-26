@@ -457,15 +457,20 @@ setup_beamformer(Arena *memory, BeamformerCtx **o_ctx, BeamformerInput **o_input
 	"layout(location = 1) in  vec3 texture_coordinate;\n\n"
 	"layout(location = 2) in  vec3 test_texture_coordinate;\n\n"
 	"layout(location = 0) out vec4 out_colour;\n\n"
-	"layout(location = " str(FRAME_VIEW_DYNAMIC_RANGE_LOC) ") uniform float u_db_cutoff = 60;\n"
-	"layout(location = " str(FRAME_VIEW_THRESHOLD_LOC)     ") uniform float u_threshold = 40;\n"
-	"layout(location = " str(FRAME_VIEW_GAMMA_LOC)         ") uniform float u_gamma     = 1;\n"
-	"layout(location = " str(FRAME_VIEW_LOG_SCALE_LOC)     ") uniform bool  u_log_scale;\n"
-	"layout(location = " str(FRAME_VIEW_BB_COLOUR_LOC)     ") uniform vec4  u_bb_colour   = vec4(" str(FRAME_VIEW_BB_COLOUR) ");\n"
-	"layout(location = " str(FRAME_VIEW_BB_FRACTION_LOC)   ") uniform float u_bb_fraction = " str(FRAME_VIEW_BB_FRACTION) ";\n"
-	"layout(location = " str(FRAME_VIEW_SOLID_BB_LOC)      ") uniform bool  u_solid_bb;\n"
+	"layout(location = " str(FRAME_VIEW_DYNAMIC_RANGE_LOC)    ") uniform float u_db_cutoff = 60;\n"
+	"layout(location = " str(FRAME_VIEW_THRESHOLD_LOC)        ") uniform float u_threshold = 40;\n"
+	"layout(location = " str(FRAME_VIEW_GAMMA_LOC)            ") uniform float u_gamma     = 1;\n"
+	"layout(location = " str(FRAME_VIEW_LOG_SCALE_LOC)        ") uniform bool  u_log_scale;\n"
+	"layout(location = " str(FRAME_VIEW_BB_COLOUR_LOC)        ") uniform vec4  u_bb_colour   = vec4(" str(FRAME_VIEW_BB_COLOUR) ");\n"
+	"layout(location = " str(FRAME_VIEW_BB_FRACTION_LOC)      ") uniform float u_bb_fraction = " str(FRAME_VIEW_BB_FRACTION) ";\n"
+	"layout(location = " str(FRAME_VIEW_SOLID_BB_LOC)         ") uniform bool  u_solid_bb;\n"
+	"layout(location = " str(FRAME_VIEW_IMAGE_POINTS_LOC)     ") uniform ivec3 u_image_points;\n"
+	"layout(location = " str(FRAME_VIEW_IMAGE_COMPONENTS_LOC) ") uniform int   u_image_components;\n"
 	"\n"
-	"layout(binding = 0) uniform sampler3D u_texture;\n");
+	"layout(std430, binding = 0) readonly restrict buffer image {\n"
+	"	float image_data[];\n"
+	"};\n"
+	"\n");
 
 	render_3d->link = push_struct(arena, typeof(*render_3d));
 	render_3d->link->reloadable_info_index = -1;

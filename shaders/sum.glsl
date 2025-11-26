@@ -1,12 +1,17 @@
 /* See LICENSE for license details. */
-layout(local_size_x = 32, local_size_y = 1, local_size_z = 32) in;
+layout(std430, binding = 0) restrict buffer output_buffer {
+	float output_data[Elements][Components];
+};
 
-layout(rg32f, binding = 0)           uniform image3D u_out_img;
-layout(rg32f, binding = 1) readonly  uniform image3D u_in_img;
+layout(std430, binding = 1) readonly restrict buffer input_buffer {
+	float input_data[Elements][Components];
+};
 
-void main()
+void main(void)
 {
-	ivec3 voxel = ivec3(gl_GlobalInvocationID);
-	vec4  sum   = imageLoad(u_out_img, voxel) + u_sum_prescale * imageLoad(u_in_img, voxel);
-	imageStore(u_out_img, voxel, sum);
+	uint element = gl_GlobalInvocationID.x;
+	if (element < Elements) {
+		for (uint c = 0; c < Components; c++)
+			output_data[element][c] += Scale * input_data[element][c];
+	}
 }

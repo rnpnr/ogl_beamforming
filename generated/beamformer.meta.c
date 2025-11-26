@@ -137,6 +137,10 @@ typedef struct {
 	u32 interpolation_mode;
 	u32 sample_count;
 	u32 transmit_receive_orientation;
+	u32 out_components;
+	u32 out_image_x;
+	u32 out_image_y;
+	u32 out_image_z;
 	f32 demodulation_frequency;
 	f32 f_number;
 	f32 focus_depth;
@@ -147,10 +151,17 @@ typedef struct {
 } BeamformerShaderDASBakeParameters;
 
 typedef struct {
+	u32 components;
+	u32 elements;
+	f32 scale;
+} BeamformerShaderSumBakeParameters;
+
+typedef struct {
 	union {
 		BeamformerShaderDecodeBakeParameters Decode;
 		BeamformerShaderFilterBakeParameters Filter;
 		BeamformerShaderDASBakeParameters    DAS;
+		BeamformerShaderSumBakeParameters    Sum;
 	};
 	u32 data_kind;
 	u32 flags;
@@ -528,6 +539,10 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("InterpolationMode"),
 		s8_comp("SampleCount"),
 		s8_comp("TransmitReceiveOrientation"),
+		s8_comp("OutComponents"),
+		s8_comp("OutImageX"),
+		s8_comp("OutImageY"),
+		s8_comp("OutImageZ"),
 		s8_comp("DemodulationFrequency"),
 		s8_comp("FNumber"),
 		s8_comp("FocusDepth"),
@@ -537,25 +552,29 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("TransmitAngle"),
 	},
 	0,
-	0,
+	(s8 []){
+		s8_comp("Components"),
+		s8_comp("Elements"),
+		s8_comp("Scale"),
+	},
 	0,
 };
 
 read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
 	0x00000000UL,
 	0x00000600UL,
-	0x00001fc0UL,
+	0x0001fc00UL,
 	0x00000000UL,
-	0x00000000UL,
+	0x00000004UL,
 	0x00000000UL,
 };
 
 read_only global i32 beamformer_shader_bake_parameter_counts[] = {
 	9,
 	11,
-	13,
+	17,
 	0,
-	0,
+	3,
 	0,
 };
 

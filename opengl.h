@@ -11,6 +11,7 @@
 #include <GL/gl.h>
 
 /* NOTE: do not add extra 0s to these, even at the start -> garbage compilers will complain */
+#define GL_MAP_READ_BIT                    0x0001
 #define GL_MAP_WRITE_BIT                   0x0002
 #define GL_MAP_FLUSH_EXPLICIT_BIT          0x0010
 #define GL_MAP_UNSYNCHRONIZED_BIT          0x0020
@@ -90,10 +91,9 @@ typedef struct __GLsync *GLsync;
 	X(glBlitNamedFramebuffer,                void,   (GLuint sfb, GLuint dfb, GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GLint dy0, GLint dx1, GLint dy1, GLbitfield mask, GLenum filter)) \
 	X(glClearNamedBufferData,                void,   (GLuint buffer, GLenum internalformat, GLenum format, GLenum type, const void *data)) \
 	X(glClearNamedFramebufferfv,             void,   (GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLfloat *value)) \
-	X(glClearTexImage,                       void,   (GLuint texture, GLint level, GLenum format, GLenum type, const void *data)) \
 	X(glClientWaitSync,                      GLenum, (GLsync sync, GLbitfield flags, GLuint64 timeout)) \
 	X(glCompileShader,                       void,   (GLuint shader)) \
-	X(glCopyImageSubData,                    void,   (GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth)) \
+	X(glCopyNamedBufferSubData,              void,   (GLuint readBuffer, GLuint writeBuffer, GLintptr readOffset, GLintptr writeOffset, GLsizei size)) \
 	X(glCreateBuffers,                       void,   (GLsizei n, GLuint *buffers)) \
 	X(glCreateFramebuffers,                  void,   (GLsizei n, GLuint *ids)) \
 	X(glCreateProgram,                       GLuint, (void)) \

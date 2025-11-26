@@ -3,7 +3,6 @@
   #define SAMPLE_TYPE           float
   #define TEXTURE_KIND          r32f
   #define RESULT_TYPE_CAST(a)   (a).x
-  #define OUTPUT_TYPE_CAST(a)   vec4((a).x, 0, 0, 0)
   #if !Fast
     #define RESULT_TYPE         vec2
     #define RESULT_LAST_INDEX   1
@@ -12,7 +11,6 @@
   #define SAMPLE_TYPE           vec2
   #define TEXTURE_KIND          rg32f
   #define RESULT_TYPE_CAST(a)   (a).xy
-  #define OUTPUT_TYPE_CAST(a)   vec4((a).xy, 0, 0)
   #if !Fast
     #define RESULT_TYPE         vec3
     #define RESULT_LAST_INDEX   2
@@ -30,11 +28,15 @@ layout(std430, binding = 1) readonly restrict buffer buffer_1 {
 #endif
 
 #if Fast
-  #define RESULT_STORE(a, length_a) RESULT_TYPE(a)
-	layout(TEXTURE_KIND, binding = 0)           restrict uniform image3D  u_out_data_tex;
+	#define RESULT_STORE(a, length_a) RESULT_TYPE(a)
+	layout(std430, binding = 2) restrict buffer output_buffer {
+		SAMPLE_TYPE output_data[OutImageZ][OutImageY][OutImageX];
+	};
 #else
-  #define RESULT_STORE(a, length_a) RESULT_TYPE(a, length_a)
-	layout(TEXTURE_KIND, binding = 0) writeonly restrict uniform image3D  u_out_data_tex;
+	#define RESULT_STORE(a, length_a) RESULT_TYPE(a, length_a)
+	layout(std430, binding = 2) writeonly restrict buffer output_buffer {
+		SAMPLE_TYPE output_data[OutImageZ][OutImageY][OutImageX];
+	};
 #endif
 
 layout(r16i,  binding = 1) readonly  restrict uniform iimage1D sparse_elements;
@@ -280,18 +282,16 @@ RESULT_TYPE FORCES(const vec3 world_point)
 void main()
 {
 	ivec3 out_voxel = ivec3(gl_GlobalInvocationID);
-	if (!all(lessThan(out_voxel, imageSize(u_out_data_tex))))
-		return;
+	#if !Fast
+		out_voxel += u_voxel_offset;
+	#endif
 
-#if Fast
-	RESULT_TYPE sum = RESULT_TYPE_CAST(imageLoad(u_out_data_tex, out_voxel));
-#else
-	RESULT_TYPE sum = RESULT_TYPE(0);
-	out_voxel += u_voxel_offset;
-#endif
+	if (!all(lessThan(out_voxel, ivec3(OutImageX, OutImageY, OutImageZ))))
+		return;
 
 	vec3 world_point = (voxel_transform * vec4(out_voxel, 1)).xyz;
 
+	RESULT_TYPE sum = RESULT_TYPE(0);
 	switch (AcquisitionKind) {
 	case AcquisitionKind_FORCES:
 	case AcquisitionKind_UFORCES:
@@ -318,5 +318,9 @@ void main()
 		RESULT_TYPE_CAST(sum) *= RESULT_TYPE_CAST(sum) / denominator;
 	#endif
 
-	imageStore(u_out_data_tex, out_voxel, OUTPUT_TYPE_CAST(sum));
+	#if Fast
+		output_data[out_voxel.z][out_voxel.y][out_voxel.x] += RESULT_TYPE_CAST(sum);
+	#else
+		output_data[out_voxel.z][out_voxel.y][out_voxel.x]  = RESULT_TYPE_CAST(sum);
+	#endif
 }

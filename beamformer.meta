@@ -288,6 +288,11 @@
 			@BakeInt(SampleCount                sample_count                )
 			@BakeInt(TransmitReceiveOrientation transmit_receive_orientation)
 
+			@BakeInt(OutComponents out_components)
+			@BakeInt(OutImageX     out_image_x  )
+			@BakeInt(OutImageY     out_image_y  )
+			@BakeInt(OutImageZ     out_image_z  )
+
 			@BakeFloat(DemodulationFrequency demodulation_frequency)
 			@BakeFloat(FNumber               f_number              )
 			@BakeFloat(FocusDepth            focus_depth           )
@@ -300,6 +305,15 @@
 
 	@Shader(min_max.glsl) MinMax
 	@Shader(sum.glsl) Sum
+	{
+		@Bake
+		{
+			@BakeInt(Components components)
+			@BakeInt(Elements   elements  )
+
+			@BakeFloat(Scale scale)
+		}
+	}
 }
 
 @ShaderGroup Render
