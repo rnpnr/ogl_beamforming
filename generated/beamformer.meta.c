@@ -92,6 +92,7 @@ typedef enum {
 	BeamformerAcquisitionKind_EPIC_UHERCULES = 9,
 	BeamformerAcquisitionKind_Flash          = 10,
 	BeamformerAcquisitionKind_HERO_PA        = 11,
+	BeamformerAcquisitionKind_ULM            = 12,
 	BeamformerAcquisitionKind_Count,
 } BeamformerAcquisitionKind;
 
@@ -486,6 +487,7 @@ read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
 	0,
 	0,
 	0,
+	0,
 };
 
 read_only global s8 beamformer_acquisition_kind_strings[] = {
@@ -501,6 +503,7 @@ read_only global s8 beamformer_acquisition_kind_strings[] = {
 	s8_comp("EPIC-UHERCULES"),
 	s8_comp("Flash"),
 	s8_comp("HERO-PA"),
+	s8_comp("ULM"),
 };
 
 read_only global s8 beamformer_filter_kind_strings[] = {
@@ -636,6 +639,7 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"#define AcquisitionKind_EPIC_UHERCULES 9\n"
 	"#define AcquisitionKind_Flash          10\n"
 	"#define AcquisitionKind_HERO_PA        11\n"
+	"#define AcquisitionKind_ULM            12\n"
 	"\n"),
 	s8_comp(""
 	"#define InterpolationMode_Nearest 0\n"

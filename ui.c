@@ -247,6 +247,8 @@ typedef enum {
 	UI_BID_VIEW_CLOSE,
 	GLOBAL_MENU_BUTTONS
 	FRAME_VIEW_BUTTONS
+	UI_BID_ACQUISITION_KIND_FIRST,
+	UI_BID_ACQUISITION_KIND_LAST = UI_BID_ACQUISITION_KIND_FIRST + BeamformerAcquisitionKind_Count - 1,
 } UIButtonID;
 #undef X
 
@@ -376,6 +378,7 @@ struct BeamformerFrameView {
 
 typedef struct BeamformerLiveControlsView BeamformerLiveControlsView;
 struct BeamformerLiveControlsView {
+	Variable acquisition_menu;
 	Variable transmit_power;
 	Variable tgc_control_points[countof(((BeamformerLiveImagingParameters *)0)->tgc_control_points)];
 	Variable save_button;
@@ -392,6 +395,7 @@ typedef enum {
 	InteractionKind_Auto,
 	InteractionKind_Button,
 	InteractionKind_Drag,
+	InteractionKind_AcquisitionMenu,
 	InteractionKind_Menu,
 	InteractionKind_Ruler,
 	InteractionKind_Scroll,
@@ -1499,6 +1503,10 @@ add_live_controls_view(BeamformerUI *ui, Variable *parent, Arena *arena)
 	                                  VT_LIVE_CONTROLS_VIEW, ui->small_font);
 	Variable *view = result->view.child;
 	BeamformerLiveControlsView *lv = view->generic = push_struct(arena, typeof(*lv));
+
+	Variable *amenu = &lv->acquisition_menu;
+	fill_variable(amenu, view, s8(""), V_INPUT, VT_GROUP, ui->small_font);
+	amenu->group.kind = VariableGroupKind_List;
 
 	fill_variable(&lv->transmit_power, view, s8(""), V_INPUT|V_LIVE_CONTROL,
 	              VT_BEAMFORMER_VARIABLE, ui->small_font);
@@ -2965,6 +2973,31 @@ draw_live_controls_view(BeamformerUI *ui, Variable *var, Rect r, v2 mouse, Arena
 
 	v2 at = {{text_off, r.pos.y}};
 
+	if (popcount_u64(lip->acquisition_kind_enabled_flags) > 1) {
+		u32 kind = lip->acquisition_kind;
+		s8 kind_string = kind < BeamformerAcquisitionKind_Count ? beamformer_acquisition_kind_strings[kind]
+		                                                        : s8("Invalid");
+		v2 label_size = draw_text(s8("Acquisition:"), at, &text_spec);
+
+		text_spec.colour = v4_lerp(FG_COLOUR, HOVERED_COLOUR, lv->acquisition_menu.hover_t);
+		text_spec.limits.size.w -= label_size.x + (f32)ui->small_font.baseSize / 2;
+
+		Rect menu   = {.pos = at};
+		menu.pos.x += label_size.x + (f32)ui->small_font.baseSize / 2;
+		menu.size.h = (f32)ui->small_font.baseSize + TITLE_BAR_PAD;
+		menu.size.w = draw_text(kind_string, menu.pos, &text_spec).x;
+
+		text_spec.colour = FG_COLOUR;
+		text_spec.limits.size.w = r.size.w - (text_off - r.pos.x);
+
+		Interaction interaction = {.kind = InteractionKind_AcquisitionMenu,
+		                           .var  = &lv->acquisition_menu,
+		                           .rect = menu};
+		hover_interaction(ui, mouse, interaction);
+
+		at.y += label_size.y;
+	}
+
 	v4 hsv_power_slider = {{0.35f * ease_in_out_cubic(1.0f - lip->transmit_power), 0.65f, 0.65f, 1}};
 	at.y += draw_text(s8("Power:"), at, &text_spec).y;
 	at.x  = slider_off;
@@ -3638,20 +3671,30 @@ function void
 ui_button_interaction(BeamformerUI *ui, Variable *button)
 {
 	assert(button->type == VT_UI_BUTTON);
-	switch (button->button) {
-	case UI_BID_VIEW_CLOSE:{ ui_view_close(ui, button->parent); }break;
-	case UI_BID_FV_COPY_HORIZONTAL:{
-		ui_copy_frame(ui, button->parent->parent, RSD_HORIZONTAL);
-	}break;
-	case UI_BID_FV_COPY_VERTICAL:{
-		ui_copy_frame(ui, button->parent->parent, RSD_VERTICAL);
-	}break;
-	case UI_BID_GM_OPEN_VIEW_RIGHT:{
-		ui_add_live_frame_view(ui, button->parent->parent, RSD_HORIZONTAL, BeamformerFrameViewKind_Latest);
-	}break;
-	case UI_BID_GM_OPEN_VIEW_BELOW:{
-		ui_add_live_frame_view(ui, button->parent->parent, RSD_VERTICAL, BeamformerFrameViewKind_Latest);
-	}break;
+	if (Between(button->button, UI_BID_ACQUISITION_KIND_FIRST, UI_BID_ACQUISITION_KIND_LAST)) {
+		BeamformerSharedMemory          *sm  = ui->shared_memory;
+		BeamformerLiveImagingParameters *lip = &sm->live_imaging_parameters;
+
+		lip->acquisition_kind = button->button - UI_BID_ACQUISITION_KIND_FIRST;
+		atomic_or_u32(&sm->live_imaging_dirty_flags, BeamformerLiveImagingDirtyFlags_AcquisitionKind);
+		ui_view_close(ui, button->parent->group.container);
+	} else {
+		switch (button->button) {
+		case UI_BID_VIEW_CLOSE:{ ui_view_close(ui, button->parent); }break;
+		case UI_BID_FV_COPY_HORIZONTAL:{
+			ui_copy_frame(ui, button->parent->parent, RSD_HORIZONTAL);
+		}break;
+		case UI_BID_FV_COPY_VERTICAL:{
+			ui_copy_frame(ui, button->parent->parent, RSD_VERTICAL);
+		}break;
+		case UI_BID_GM_OPEN_VIEW_RIGHT:{
+			ui_add_live_frame_view(ui, button->parent->parent, RSD_HORIZONTAL, BeamformerFrameViewKind_Latest);
+		}break;
+		case UI_BID_GM_OPEN_VIEW_BELOW:{
+			ui_add_live_frame_view(ui, button->parent->parent, RSD_VERTICAL, BeamformerFrameViewKind_Latest);
+		}break;
+		InvalidDefaultCase;
+		}
 	}
 }
 
@@ -3859,12 +3902,31 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 		InvalidDefaultCase;
 		}
 	}break;
-	case InteractionKind_Menu:{
+	case InteractionKind_AcquisitionMenu:
+	case InteractionKind_Menu:
+	{
 		assert(it->var->type == VT_GROUP);
 		VariableGroup *g = &it->var->group;
 		if (g->container) {
 			ui_widget_bring_to_front(&ui->floating_widget_sentinal, g->container);
 		} else {
+			if (it->kind == InteractionKind_AcquisitionMenu) {
+				for (Variable *var = g->first; var;) {
+					Variable *next = var->next;
+					var->next = var->parent = 0;
+					ui_variable_free(ui, var);
+					var = next;
+				}
+				g->first = g->last = 0;
+
+				BeamformerLiveImagingParameters *lip = &ui->shared_memory->live_imaging_parameters;
+				u64 enabled_kinds = atomic_load_u64(&lip->acquisition_kind_enabled_flags);
+				for EachBit(enabled_kinds, kind) {
+					Variable *button = add_variable(ui, it->var, &ui->arena, beamformer_acquisition_kind_strings[kind],
+					                                V_INPUT, VT_UI_BUTTON, ui->small_font);
+					button->button = UI_BID_ACQUISITION_KIND_FIRST + kind;
+				}
+			}
 			g->container = add_floating_view(ui, &ui->arena, VT_UI_MENU, mouse, it->var, 1);
 		}
 	}break;

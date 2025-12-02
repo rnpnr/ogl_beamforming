@@ -156,6 +156,7 @@
 	[EPIC_UHERCULES EPIC-UHERCULES 0]
 	[Flash          Flash          0]
 	[HERO_PA        HERO-PA        0]
+	[ULM            ULM            0]
 }
 @Expand(AcquisitionKindTable) @Enumeration(`$(name)`) AcquisitionKind
 

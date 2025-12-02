@@ -518,7 +518,13 @@ execute_study(Arena arena, Stream path, Options *options)
 	}
 
 	if (options->loop) {
-		BeamformerLiveImagingParameters lip = {.active = 1, .save_enabled = 1};
+		BeamformerLiveImagingParameters lip = {
+			.active = 1,
+			.acquisition_kind = bp.acquisition_kind,
+			.save_enabled = 1,
+			.acquisition_kind_enabled_flags = 1 << bp.acquisition_kind,
+		};
+
 		s8 short_name = s8("Throughput");
 		mem_copy(lip.save_name_tag, short_name.data, (uz)short_name.len);
 		lip.save_name_tag_length = (i32)short_name.len;
