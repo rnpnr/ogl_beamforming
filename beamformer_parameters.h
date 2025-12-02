@@ -47,13 +47,15 @@ typedef enum {BEAMFORMER_CONSTANTS_LIST} BeamformerConstants;
 	X(TGCControlPoints,  2) \
 	X(SaveData,          3) \
 	X(SaveNameTag,       4) \
-	X(StopImaging,       5)
+	X(StopImaging,       5) \
+	X(AcquisitionKind,   6) \
 /* NOTE(rnp): if this exceeds 32 you need to fix the flag handling code */
 
 #define BEAMFORMER_LIVE_IMAGING_PARAMETERS_LIST \
 	X(active,               uint32_t, ,                               1)   \
 	X(save_enabled,         uint32_t, ,                               1)   \
 	X(save_active,          uint32_t, ,                               1)   \
+	X(acquisition_kind,     uint32_t, ,                               1)   \
 	X(transmit_power,       float,    ,                               1)   \
 	X(image_plane_offsets,  float,    [BeamformerViewPlaneTag_Count], BeamformerViewPlaneTag_Count) \
 	X(tgc_control_points,   float,    [8],                            8)   \

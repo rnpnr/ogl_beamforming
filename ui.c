@@ -239,6 +239,8 @@ typedef enum {
 	UI_BID_VIEW_CLOSE,
 	GLOBAL_MENU_BUTTONS
 	FRAME_VIEW_BUTTONS
+	UI_BID_ACQUISITION_KIND_FIRST,
+	UI_BID_ACQUISITION_KIND_COUNT = UI_BID_ACQUISITION_KIND_FIRST + BeamformerAcquisitionKind_Count,
 } UIButtonID;
 #undef X
 
@@ -364,6 +366,8 @@ struct BeamformerFrameView {
 
 typedef struct BeamformerLiveControlsView BeamformerLiveControlsView;
 struct BeamformerLiveControlsView {
+	Variable acquisition_menu;
+	Variable acquisition_kind_buttons[BeamformerAcquisitionKind_Count];
 	Variable transmit_power;
 	Variable tgc_control_points[countof(((BeamformerLiveImagingParameters *)0)->tgc_control_points)];
 	Variable save_button;
@@ -1407,6 +1411,15 @@ add_live_controls_view(BeamformerUI *ui, Variable *parent, Arena *arena)
 	                                  VT_LIVE_CONTROLS_VIEW, ui->small_font);
 	Variable *view = result->view.child;
 	BeamformerLiveControlsView *lv = view->generic = push_struct(arena, typeof(*lv));
+
+	Variable *amenu = &lv->acquisition_menu;
+	fill_variable(amenu, view, s8(""), V_INPUT, VT_GROUP, ui->small_font);
+	amenu->group.kind = VariableGroupKind_List;
+	for EachElement(lv->acquisition_kind_buttons, it) {
+		fill_variable(lv->acquisition_kind_buttons + it, amenu, beamformer_acquisition_kind_strings[it],
+		              V_INPUT, VT_UI_BUTTON, ui->small_font);
+		lv->acquisition_kind_buttons[it].button = UI_BID_ACQUISITION_KIND_FIRST + it;
+	}
 
 	fill_variable(&lv->transmit_power, view, s8(""), V_INPUT|V_LIVE_CONTROL,
 	              VT_BEAMFORMER_VARIABLE, ui->small_font);
@@ -2839,6 +2852,32 @@ draw_live_controls_view(BeamformerUI *ui, Variable *var, Rect r, v2 mouse, Arena
 
 	v2 at = {{text_off, r.pos.y}};
 
+	{
+		u32 kind = lip->acquisition_kind;
+		s8 kind_string = kind < BeamformerAcquisitionKind_Count ? beamformer_acquisition_kind_strings[kind]
+		                                                        : s8("Invalid");
+		v2 label_size = draw_text(s8("Acquisition:"), at, &text_spec);
+
+		text_spec.colour = v4_lerp(FG_COLOUR, HOVERED_COLOUR, lv->acquisition_menu.hover_t);
+		text_spec.limits.size.w -= label_size.x + (f32)ui->small_font.baseSize / 2;
+
+		Rect menu   = {.pos = at};
+		menu.pos.x += label_size.x + (f32)ui->small_font.baseSize / 2;
+		menu.size.h = (f32)ui->small_font.baseSize + TITLE_BAR_PAD;
+		menu.size.w = draw_text(kind_string, menu.pos, &text_spec).x;
+
+		text_spec.colour = FG_COLOUR;
+		text_spec.limits.size.w = r.size.w - (text_off - r.pos.x);
+
+		Interaction interaction = {.kind = InteractionKind_Menu, .var = &lv->acquisition_menu, .rect = menu};
+		hover_interaction(ui, mouse, interaction);
+		if (interaction_is_hot(ui, interaction))
+			lv->hot_field_flag = BeamformerLiveImagingDirtyFlags_AcquisitionKind;
+
+		at.y += label_size.y;
+	}
+
+
 	v4 hsv_power_slider = {{0.35f * ease_in_out_cubic(1.0f - lip->transmit_power), 0.65f, 0.65f, 1}};
 	at.y += draw_text(s8("Power:"), at, &text_spec).y;
 	at.x  = slider_off;
@@ -3511,20 +3550,30 @@ function void
 ui_button_interaction(BeamformerUI *ui, Variable *button)
 {
 	assert(button->type == VT_UI_BUTTON);
-	switch (button->button) {
-	case UI_BID_VIEW_CLOSE:{ ui_view_close(ui, button->parent); }break;
-	case UI_BID_FV_COPY_HORIZONTAL:{
-		ui_copy_frame(ui, button->parent->parent, RSD_HORIZONTAL);
-	}break;
-	case UI_BID_FV_COPY_VERTICAL:{
-		ui_copy_frame(ui, button->parent->parent, RSD_VERTICAL);
-	}break;
-	case UI_BID_GM_OPEN_VIEW_RIGHT:{
-		ui_add_live_frame_view(ui, button->parent->parent, RSD_HORIZONTAL, BeamformerFrameViewKind_Latest);
-	}break;
-	case UI_BID_GM_OPEN_VIEW_BELOW:{
-		ui_add_live_frame_view(ui, button->parent->parent, RSD_VERTICAL, BeamformerFrameViewKind_Latest);
-	}break;
+	if (BETWEEN(button->button, UI_BID_ACQUISITION_KIND_FIRST, UI_BID_ACQUISITION_KIND_COUNT)) {
+		BeamformerLiveControlsView      *lv  = button->parent->parent->generic;
+		BeamformerSharedMemory          *sm  = ui->shared_memory.region;
+		BeamformerLiveImagingParameters *lip = &sm->live_imaging_parameters;
+
+		lip->acquisition_kind = button->button - UI_BID_ACQUISITION_KIND_FIRST;
+		atomic_or_u32(&sm->live_imaging_dirty_flags, lv->active_field_flag);
+	} else {
+		switch (button->button) {
+		case UI_BID_VIEW_CLOSE:{ ui_view_close(ui, button->parent); }break;
+		case UI_BID_FV_COPY_HORIZONTAL:{
+			ui_copy_frame(ui, button->parent->parent, RSD_HORIZONTAL);
+		}break;
+		case UI_BID_FV_COPY_VERTICAL:{
+			ui_copy_frame(ui, button->parent->parent, RSD_VERTICAL);
+		}break;
+		case UI_BID_GM_OPEN_VIEW_RIGHT:{
+			ui_add_live_frame_view(ui, button->parent->parent, RSD_HORIZONTAL, BeamformerFrameViewKind_Latest);
+		}break;
+		case UI_BID_GM_OPEN_VIEW_BELOW:{
+			ui_add_live_frame_view(ui, button->parent->parent, RSD_VERTICAL, BeamformerFrameViewKind_Latest);
+		}break;
+		InvalidDefaultCase;
+		}
 	}
 }
 
