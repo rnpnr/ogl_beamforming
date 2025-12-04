@@ -2,10 +2,18 @@
 #ifndef _UTIL_H_
 #define _UTIL_H_
 
+#include "compiler.h"
+
+/* NOTE: glibc devs are actually buffoons who never write any real code
+ * the following headers include a bunch of other headers which need this crap defined first */
+#if OS_LINUX
+  #ifndef _GNU_SOURCE
+    #define _GNU_SOURCE
+  #endif
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
-
-#include "compiler.h"
 
 #ifndef asm
 #define asm __asm__

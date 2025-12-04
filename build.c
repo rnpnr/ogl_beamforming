@@ -8,11 +8,11 @@
  * [ ]: msvc build doesn't detect out of date files correctly
  * [ ]: seperate dwarf debug info
  */
+#include "util.h"
+
 #include <stdarg.h>
 #include <setjmp.h>
 #include <stdio.h>
-
-#include "util.h"
 
 #define BeamformerShaderKind_ComputeCount (1)
 #include "beamformer_parameters.h"
@@ -527,9 +527,6 @@ cmd_base(Arena *a, Options *o)
 	cmd_append(a, &result, COMMON_FLAGS, "-Iexternal/include");
 	if (o->debug) cmd_append(a, &result, DEBUG_FLAGS);
 	else          cmd_append(a, &result, OPTIMIZED_FLAGS);
-
-	/* NOTE: glibc devs are actually buffoons who never write any real code */
-	if (is_unix) cmd_append(a, &result, "-D_GNU_SOURCE");
 
 	/* NOTE: ancient gcc bug: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=80454 */
 	if (is_gcc) cmd_append(a, &result, "-Wno-missing-braces");
@@ -2876,8 +2873,6 @@ read_only global s8 c_file_header = s8_comp(""
 function b32
 metagen_emit_c_code(MetaContext *ctx, Arena arena)
 {
-	b32 result = 1;
-
 	os_make_directory("generated");
 	char *out_meta    = "generated" OS_PATH_SEPARATOR "beamformer.meta.c";
 	char *out_shaders = "generated" OS_PATH_SEPARATOR "beamformer_shaders.c";
@@ -2887,6 +2882,8 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	if (setjmp(compiler_jmp_buf)) {
 		build_fatal("Failed to generate C Code");
 	}
+
+	b32 result = 1;
 
 	////////////////////////////
 	// NOTE(rnp): shader baking
