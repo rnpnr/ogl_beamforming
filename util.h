@@ -211,12 +211,6 @@ typedef struct {
 	s8 unparsed;
 } IntegerConversion;
 
-/* NOTE: raylib stubs */
-#ifndef RAYLIB_H
-typedef struct { f32 x, y; } Vector2;
-typedef struct { f32 x, y, w, h; } Rectangle;
-#endif
-
 typedef struct { u64 start, stop; } RangeU64;
 
 typedef union {
@@ -260,7 +254,6 @@ typedef union {
 typedef union {
 	struct { f32 x, y; };
 	struct { f32 w, h; };
-	Vector2 rl;
 	f32 E[2];
 } v2;
 
@@ -295,10 +288,7 @@ typedef struct {
 	v3 direction;
 } ray;
 
-typedef union {
-	struct { v2 pos, size; };
-	Rectangle rl;
-} Rect;
+typedef struct { v2 pos, size; } Rect;
 #define INVERTED_INFINITY_RECT (Rect){.pos  = {.x = -F32_INFINITY, .y = -F32_INFINITY}, \
                                       .size = {.x = -F32_INFINITY, .y = -F32_INFINITY}}
 

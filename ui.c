@@ -540,6 +540,20 @@ typedef struct {
 	Rect          cell_rect;
 } TableIterator;
 
+function Vector2
+rl_v2(v2 a)
+{
+	Vector2 result = {a.x, a.y};
+	return result;
+}
+
+function Rectangle
+rl_rect(Rect a)
+{
+	Rectangle result = {a.pos.x, a.pos.y, a.size.w, a.size.h};
+	return result;
+}
+
 function f32
 ui_blinker_update(UIBlinker *b, f32 scale)
 {
@@ -1987,9 +2001,9 @@ draw_close_button(BeamformerUI *ui, Variable *close, v2 mouse, Rect r, v2 x_scal
 
 	Color colour = colour_from_normalized(v4_lerp(MENU_CLOSE_COLOUR, FG_COLOUR, close->hover_t));
 	r = scale_rect_centered(r, x_scale);
-	DrawLineEx(r.pos.rl, v2_add(r.pos, r.size).rl, 4, colour);
-	DrawLineEx(v2_add(r.pos, (v2){.x = r.size.w}).rl,
-	           v2_add(r.pos, (v2){.y = r.size.h}).rl, 4, colour);
+	DrawLineEx(rl_v2(r.pos), rl_v2(v2_add(r.pos, r.size)), 4, colour);
+	DrawLineEx(rl_v2(v2_add(r.pos, (v2){.x = r.size.w})),
+	           rl_v2(v2_add(r.pos, (v2){.y = r.size.h})), 4, colour);
 }
 
 function Rect
@@ -2009,10 +2023,10 @@ draw_title_bar(BeamformerUI *ui, Arena arena, Variable *ui_view, Rect r, v2 mous
 	cut_rect_vertical(r, (f32)ui->small_font.baseSize + TITLE_BAR_PAD, &title_rect, &result);
 	cut_rect_vertical(result, LISTING_LINE_PAD, 0, &result);
 
-	DrawRectangleRec(title_rect.rl, BLACK);
+	DrawRectangleRec(rl_rect(title_rect), BLACK);
 
 	title_rect = shrink_rect_centered(title_rect, (v2){.x = 1.5f * TITLE_BAR_PAD});
-	DrawRectangleRounded(title_rect.rl, 0.5f, 0, fade(colour_from_normalized(BG_COLOUR), 0.55f));
+	DrawRectangleRounded(rl_rect(title_rect), 0.5f, 0, fade(colour_from_normalized(BG_COLOUR), 0.55f));
 	title_rect = shrink_rect_centered(title_rect, (v2){.x = 3.0f * TITLE_BAR_PAD});
 
 	if (view->close) {
@@ -2029,10 +2043,10 @@ draw_title_bar(BeamformerUI *ui, Arena arena, Variable *ui_view, Rect r, v2 mous
 
 		Color colour = colour_from_normalized(v4_lerp(MENU_PLUS_COLOUR, FG_COLOUR, view->menu->hover_t));
 		menu = shrink_rect_centered(menu, (v2){{14.0f, 14.0f}});
-		DrawLineEx(v2_add(menu.pos, (v2){.x = menu.size.w / 2}).rl,
-		           v2_add(menu.pos, (v2){.x = menu.size.w / 2, .y = menu.size.h}).rl, 4, colour);
-		DrawLineEx(v2_add(menu.pos, (v2){.y = menu.size.h / 2}).rl,
-		           v2_add(menu.pos, (v2){.x = menu.size.w, .y = menu.size.h / 2}).rl, 4, colour);
+		DrawLineEx(rl_v2(v2_add(menu.pos, (v2){.x = menu.size.w / 2})),
+		           rl_v2(v2_add(menu.pos, (v2){.x = menu.size.w / 2, .y = menu.size.h})), 4, colour);
+		DrawLineEx(rl_v2(v2_add(menu.pos, (v2){.y = menu.size.h / 2})),
+		           rl_v2(v2_add(menu.pos, (v2){.x = menu.size.w, .y = menu.size.h / 2})), 4, colour);
 	}
 
 	v2 title_pos = title_rect.pos;
@@ -2070,7 +2084,7 @@ draw_ruler(BeamformerUI *ui, Arena arena, v2 start_point, v2 end_point,
 	TextSpec text_spec = {.font = &ui->small_font, .rotation = 90.0f, .colour = txt_colour, .flags = TF_ROTATED};
 	Color rl_txt_colour = colour_from_normalized(txt_colour);
 	for (u32 j = 0; j <= segments; j++) {
-		DrawLineEx(sp.rl, ep.rl, 3, rl_txt_colour);
+		DrawLineEx(rl_v2(sp), rl_v2(ep), 3, rl_txt_colour);
 
 		stream_reset(&buf, 0);
 		if (draw_plus && value > 0) stream_append_byte(&buf, '+');
@@ -2089,8 +2103,8 @@ draw_ruler(BeamformerUI *ui, Arena arena, v2 start_point, v2 end_point,
 	for (u32 i = 0; i < marker_count; i++) {
 		if (markers[i] < F32_INFINITY) {
 			ep.x  = sp.x = markers[i];
-			DrawLineEx(sp.rl, ep.rl, 3, rl_marker_colour);
-			DrawCircleV(ep.rl, 3, rl_marker_colour);
+			DrawLineEx(rl_v2(sp), rl_v2(ep), 3, rl_marker_colour);
+			DrawCircleV(rl_v2(ep), 3, rl_marker_colour);
 		}
 	}
 
@@ -2155,8 +2169,8 @@ draw_radio_button(BeamformerUI *ui, Variable *var, v2 at, v2 mouse, v4 base_colo
 	hover_rect = shrink_rect_centered(hover_rect, (v2){{8.0f, 8.0f}});
 	Rect inner = shrink_rect_centered(hover_rect, (v2){{4.0f, 4.0f}});
 	v4 fill = v4_lerp(value? base_colour : (v4){0}, HOVERED_COLOUR, var->hover_t);
-	DrawRectangleRoundedLinesEx(hover_rect.rl, 0.2f, 0, 2, colour_from_normalized(base_colour));
-	DrawRectangleRec(inner.rl, colour_from_normalized(fill));
+	DrawRectangleRoundedLinesEx(rl_rect(hover_rect), 0.2f, 0, 2, colour_from_normalized(base_colour));
+	DrawRectangleRec(rl_rect(inner), colour_from_normalized(fill));
 
 	return result;
 }
@@ -2180,9 +2194,9 @@ draw_variable_slider(BeamformerUI *ui, Variable *var, Rect r, f32 fill, v4 fill_
 
 	hover_interaction(ui, mouse, auto_interaction(inner, var));
 
-	DrawRectangleRec(filled.rl, colour_from_normalized(fill_colour));
-	DrawRectangleRoundedLinesEx(inner.rl, 0.2f, 0, border_thick, BLACK);
-	DrawRectangleRounded(bar.rl, 0.6f, 1, colour_from_normalized(bar_colour));
+	DrawRectangleRec(rl_rect(filled), colour_from_normalized(fill_colour));
+	DrawRectangleRoundedLinesEx(rl_rect(inner), 0.2f, 0, border_thick, BLACK);
+	DrawRectangleRounded(rl_rect(bar), 0.6f, 1, colour_from_normalized(bar_colour));
 
 	return r.size.y;
 }
@@ -2205,10 +2219,10 @@ draw_fancy_button(BeamformerUI *ui, Variable *var, s8 label, Rect r, v4 border_c
 
 	border.pos = v2_add(border.pos, shadow_off);
 
-	DrawRectangleRoundedLinesEx(border.rl, 0.6f, 0, border_thick, fade(BLACK, 0.8f));
+	DrawRectangleRoundedLinesEx(rl_rect(border), 0.6f, 0, border_thick, fade(BLACK, 0.8f));
 	border.pos = v2_sub(border.pos, shadow_off);
-	DrawRectangleRounded(border.rl, 0.6f, 1, colour_from_normalized(BG_COLOUR));
-	DrawRectangleRoundedLinesEx(border.rl, 0.6f, 0, border_thick, colour_from_normalized(border_colour));
+	DrawRectangleRounded(rl_rect(border), 0.6f, 1, colour_from_normalized(BG_COLOUR));
+	DrawRectangleRoundedLinesEx(rl_rect(border), 0.6f, 0, border_thick, colour_from_normalized(border_colour));
 
 	/* TODO(rnp): teach draw_text() about alignment */
 	v2 at = align_text_in_rect(label, inner, *ts.font);
@@ -2303,7 +2317,7 @@ draw_table_borders(Table *t, Rect r, f32 line_height)
 			start.x += dx;
 			end.x   += dx;
 			if (t->widths[i + 1] > 0)
-				DrawLineEx(start.rl, end.rl, t->column_border_thick, fade(BLACK, 0.8f));
+				DrawLineEx(rl_v2(start), rl_v2(end), t->column_border_thick, fade(BLACK, 0.8f));
 		}
 	}
 
@@ -2315,7 +2329,7 @@ draw_table_borders(Table *t, Rect r, f32 line_height)
 			f32 dy   = line_height + t->cell_pad.y + t->row_border_thick;
 			start.y += dy;
 			end.y   += dy;
-			DrawLineEx(start.rl, end.rl, t->row_border_thick, fade(BLACK, 0.8f));
+			DrawLineEx(rl_v2(start), rl_v2(end), t->row_border_thick, fade(BLACK, 0.8f));
 		}
 	}
 }
@@ -2350,9 +2364,9 @@ draw_view_ruler(BeamformerFrameView *view, Arena a, Rect view_rect, TextSpec ts)
 	                                       XZ(view->max_coordinate), view_rect.pos, vr_max_p);
 
 	Color rl_colour = colour_from_normalized(ts.colour);
-	DrawCircleV(start_p.rl, 3, rl_colour);
-	DrawLineEx(end_p.rl, start_p.rl, 2, rl_colour);
-	DrawCircleV(end_p.rl, 3, rl_colour);
+	DrawCircleV(rl_v2(start_p), 3, rl_colour);
+	DrawLineEx(rl_v2(end_p), rl_v2(start_p), 2, rl_colour);
+	DrawCircleV(rl_v2(end_p), 3, rl_colour);
 
 	Stream buf = arena_stream(a);
 	stream_append_f64(&buf, 1e3 * v2_magnitude(v2_sub(view->ruler.end, view->ruler.start)), 100);
@@ -2450,7 +2464,7 @@ draw_3D_xplane_frame_view(BeamformerUI *ui, Arena arena, Variable *var, Rect dis
 
 	Rectangle  tex_r  = {0, 0, (f32)view->texture_dim.w, (f32)view->texture_dim.h};
 	NPatchInfo tex_np = {tex_r, 0, 0, 0, 0, NPATCH_NINE_PATCH};
-	DrawTextureNPatch(make_raylib_texture(view), tex_np, vr.rl, (Vector2){0}, 0, WHITE);
+	DrawTextureNPatch(make_raylib_texture(view), tex_np, rl_rect(vr), (Vector2){0}, 0, WHITE);
 
 	draw_frame_view_controls(ui, arena, view, vr, mouse);
 }
@@ -2517,7 +2531,7 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 
 	Rectangle  tex_r  = {texture_start.x, texture_start.y, texture_points.x, texture_points.y};
 	NPatchInfo tex_np = { tex_r, 0, 0, 0, 0, NPATCH_NINE_PATCH };
-	DrawTextureNPatch(make_raylib_texture(view), tex_np, vr.rl, (Vector2){0}, 0, WHITE);
+	DrawTextureNPatch(make_raylib_texture(view), tex_np, rl_rect(vr), (Vector2){0}, 0, WHITE);
 
 	v2 start_pos  = vr.pos;
 	start_pos.y  += vr.size.y;
@@ -2603,9 +2617,8 @@ draw_compute_progress_bar(BeamformerUI *ui, ComputeProgressBar *state, Rect r)
 		outline      = scale_rect_centered(outline, (v2){{0.96f, 0.7f}});
 		Rect filled  = outline;
 		filled.size.w *= *state->progress;
-		DrawRectangleRounded(filled.rl, 2.0f, 0, fade(colour_from_normalized(HOVERED_COLOUR),
-		                                           state->display_t));
-		DrawRectangleRoundedLinesEx(outline.rl, 2.0f, 0, 3, fade(BLACK, state->display_t));
+		DrawRectangleRounded(rl_rect(filled), 2.0f, 0, fade(colour_from_normalized(HOVERED_COLOUR), state->display_t));
+		DrawRectangleRoundedLinesEx(rl_rect(outline), 2.0f, 0, 3, fade(BLACK, state->display_t));
 	}
 
 	v2 result = {{r.size.w, (f32)ui->font.baseSize}};
@@ -2668,7 +2681,7 @@ draw_compute_stats_bar_view(BeamformerUI *ui, Arena arena, ComputeShaderStats *s
 		for (u32 i = 0; i < stages_count; i++) {
 			rect.size.w = total_width * stats->table.times[frame_index][stages[i]] / total_times[row_index];
 			Color color = colour_from_normalized(g_colour_palette[i % countof(g_colour_palette)]);
-			DrawRectangleRec(rect.rl, color);
+			DrawRectangleRec(rl_rect(rect), color);
 			if (point_in_rect(mouse, rect)) {
 				text_pos   = v2_add(rect.pos, (v2){.x = table->cell_pad.w});
 				s8 name    = push_s8_from_parts(&arena, s8(""), beamformer_shader_names[stages[i]], s8(": "));
@@ -2681,7 +2694,7 @@ draw_compute_stats_bar_view(BeamformerUI *ui, Arena arena, ComputeShaderStats *s
 
 	v2 start = v2_add(r.pos, (v2){.x = table->widths[0] + average_width + table->cell_pad.w});
 	v2 end   = v2_add(start, (v2){.y = result.y});
-	DrawLineEx(start.rl, end.rl, 4, colour_from_normalized(FG_COLOUR));
+	DrawLineEx(rl_v2(start), rl_v2(end), 4, colour_from_normalized(FG_COLOUR));
 
 	if (mouse_text.len) {
 		ts.font = &ui->small_font;
@@ -3039,20 +3052,20 @@ draw_ui_view_container(BeamformerUI *ui, Variable *var, v2 mouse, Rect bounds)
 		if (fw->close) {
 			container.pos.y  -= 5 + line_height;
 			container.size.y += 2 + line_height;
-			Rect handle = {{container.pos, (v2){.x = container.size.w, .y = 2 + line_height}}};
+			Rect handle = {container.pos, (v2){.x = container.size.w, .y = 2 + line_height}};
 			Rect close;
 			hover_interaction(ui, mouse, auto_interaction(container, var));
 			cut_rect_horizontal(handle, handle.size.w - handle.size.h - 6, 0, &close);
 			close.size.w = close.size.h;
-			DrawRectangleRounded(handle.rl, 0.1f, 0, colour_from_normalized(BG_COLOUR));
-			DrawRectangleRoundedLinesEx(handle.rl, 0.2f, 0, 2, BLACK);
+			DrawRectangleRounded(rl_rect(handle), 0.1f, 0, colour_from_normalized(BG_COLOUR));
+			DrawRectangleRoundedLinesEx(rl_rect(handle), 0.2f, 0, 2, BLACK);
 			draw_close_button(ui, fw->close, mouse, close, (v2){{0.45f, 0.45f}});
 		} else {
 			hover_interaction(ui, mouse, auto_interaction(container, var));
 		}
 		f32 roundness = 12.0f / fw->rect.size.y;
-		DrawRectangleRounded(result.rl, roundness / 2.0f, 0, colour_from_normalized(BG_COLOUR));
-		DrawRectangleRoundedLinesEx(result.rl, roundness, 0, 2, BLACK);
+		DrawRectangleRounded(rl_rect(result), roundness / 2.0f, 0, colour_from_normalized(BG_COLOUR));
+		DrawRectangleRoundedLinesEx(rl_rect(result), roundness, 0, 2, BLACK);
 	}
 	return result;
 }
@@ -3126,7 +3139,7 @@ draw_layout_variable(BeamformerUI *ui, Variable *var, Rect draw_rect, v2 mouse)
 	}
 
 	/* TODO(rnp): post order traversal of the ui tree will remove the need for this */
-	if (!CheckCollisionPointRec(mouse.rl, draw_rect.rl))
+	if (!CheckCollisionPointRec(rl_v2(mouse), rl_rect(draw_rect)))
 		mouse = (v2){.x = F32_INFINITY, .y = F32_INFINITY};
 
 	draw_rect.size = v2_floor(draw_rect.size);
@@ -3140,7 +3153,7 @@ draw_layout_variable(BeamformerUI *ui, Variable *var, Rect draw_rect, v2 mouse)
 	case VT_UI_REGION_SPLIT: {
 		RegionSplit *rs = &var->region_split;
 
-		Rect split, hover;
+		Rect split = {0}, hover = {0};
 		switch (rs->direction) {
 		case RSD_VERTICAL: {
 			split_rect_vertical(draw_rect, rs->fraction, 0, &split);
@@ -3165,7 +3178,7 @@ draw_layout_variable(BeamformerUI *ui, Variable *var, Rect draw_rect, v2 mouse)
 
 		v4 colour = HOVERED_COLOUR;
 		colour.a  = var->hover_t;
-		DrawRectangleRounded(split.rl, 0.6f, 0, colour_from_normalized(colour));
+		DrawRectangleRounded(rl_rect(split), 0.6f, 0, colour_from_normalized(colour));
 	} break;
 	InvalidDefaultCase;
 	}
@@ -3251,7 +3264,7 @@ draw_floating_widgets(BeamformerUI *ui, Rect window_rect, v2 mouse)
 
 			TextSpec input_text_spec = {.font = is->font, .colour = text_colour};
 			draw_text(text, text_position, &input_text_spec);
-			DrawRectanglePro(cursor.rl, (Vector2){0}, 0, colour_from_normalized(cursor_colour));
+			DrawRectanglePro(rl_rect(cursor), (Vector2){0}, 0, colour_from_normalized(cursor_colour));
 		} else {
 			draw_ui_view(ui, var, window_rect, mouse, text_spec);
 		}
@@ -3789,7 +3802,7 @@ ui_sticky_interaction_check_end(BeamformerUI *ui, v2 mouse)
 			ui_end_interact(ui, mouse);
 	}break;
 	case InteractionKind_Text:{
-		Interaction text_box = auto_interaction({{0}}, ui->text_input_state.container);
+		Interaction text_box = auto_interaction({0}, ui->text_input_state.container);
 		if (!interactions_equal(text_box, ui->hot_interaction))
 			ui_end_interact(ui, mouse);
 	}break;

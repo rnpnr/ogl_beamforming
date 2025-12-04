@@ -93,9 +93,10 @@ main(void)
 		if (fds[0].revents & POLLIN)
 			dispatch_file_watch_events(&ctx->file_watch_list, program_memory);
 
+		Vector2 new_mouse = GetMousePosition();
 		u64 now = os_get_timer_counter();
 		input->last_mouse = input->mouse;
-		input->mouse.rl   = GetMousePosition();
+		input->mouse      = (v2){{new_mouse.x, new_mouse.y}};
 		input->dt         = (f32)((f64)(now - last_time) / (f64)os_get_timer_frequency());
 		last_time         = now;
 

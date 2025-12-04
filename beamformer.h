@@ -2,14 +2,14 @@
 #ifndef _BEAMFORMER_H_
 #define _BEAMFORMER_H_
 
-#include <raylib_extended.h>
-#include <rlgl.h>
-
 #include "util.h"
 #include "opengl.h"
 
 #include "generated/beamformer.meta.c"
 #include "generated/beamformer_shaders.c"
+
+#include <raylib_extended.h>
+#include <rlgl.h>
 
 ///////////////////
 // REQUIRED OS API

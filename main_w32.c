@@ -117,9 +117,10 @@ main(void)
 	while (!ctx->should_exit) {
 		clear_io_queue(input, program_memory);
 
+		Vector2 new_mouse = GetMousePosition();
 		u64 now = os_get_timer_counter();
 		input->last_mouse = input->mouse;
-		input->mouse.rl   = GetMousePosition();
+		input->mouse      = (v2){{new_mouse.x, new_mouse.y}};
 		input->dt         = (f32)((f64)(now - last_time) / (f64)os_w32_context.timer_frequency);
 		last_time         = now;
 
