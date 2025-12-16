@@ -39,3 +39,14 @@ miscompiling parts of the code. Additionally there have been valid
 project that have caused MSVC to **crash** during compilation. If
 your compiler is so poorly written that it crashes on **ANY**
 input is it really worth our effort to support?
+
+
+# Publication
+
+This project has a paper covering some of the design and
+optimization up until commit 295b9c4. It is currently available as
+a preprint: [arXiv:2512.11086]. If you wish to refer to this
+project in any published work you can cite that article. The link
+will be updated once a full publication is available.
+
+[arXiv:2512.11086]: https://arxiv.org/abs/2512.11086
