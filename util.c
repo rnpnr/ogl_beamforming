@@ -23,6 +23,15 @@ mem_move(u8 *dest, u8 *src, uz n)
 }
 
 function void *
+memory_scan_backwards(void *memory, u8 byte, iz n)
+{
+	void *result = 0;
+	u8   *s      = memory;
+	while (n > 0) if (s[--n] == byte) { result = s + n; break; }
+	return result;
+}
+
+function void *
 arena_aligned_start(Arena a, uz alignment)
 {
 	uz padding = -(uintptr_t)a.beg & (alignment - 1);
@@ -479,9 +488,7 @@ c_str_to_s8(char *cstr)
 function iz
 s8_scan_backwards(s8 s, u8 byte)
 {
-	iz result = s.len;
-	while (result && s.data[result - 1] != byte) result--;
-	result--;
+	iz result = (u8 *)memory_scan_backwards(s.data, byte, s.len) - s.data;
 	return result;
 }
 
