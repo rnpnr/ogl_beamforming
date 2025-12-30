@@ -1,6 +1,18 @@
 /* See LICENSE for license details. */
 #include "compiler.h"
 
+// NOTE(rnp): for test compilations on linux (we don't use headers from windows) */
+#if OS_LINUX
+  #undef OS_WINDOWS
+  #undef OS_LINUX
+  #undef __declspec
+  #undef __stdcall
+  #define OS_WINDOWS 1
+  #define OS_LINUX   0
+  #define __declspec(x)
+  #define __stdcall
+#endif
+
 #if !OS_WINDOWS
 #error This file is only meant to be compiled for Win32
 #endif

@@ -531,7 +531,7 @@ cmd_base(Arena *a, Options *o)
 	/* NOTE: ancient gcc bug: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=80454 */
 	if (is_gcc) cmd_append(a, &result, "-Wno-missing-braces");
 
-	if (is_w32 && is_clang) cmd_append(a, &result, "-fms-extensions");
+	if (!is_msvc) cmd_append(a, &result, "-fms-extensions");
 
 	if (o->debug && is_unix) cmd_append(a, &result, "-gdwarf-4");
 
