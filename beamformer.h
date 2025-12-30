@@ -26,10 +26,10 @@ function OS_WRITE_FILE_FN(os_write_file);
 #include "util_gl.c"
 
 typedef struct {
+	f64  dt;
 	v2   mouse;
 	v2   last_mouse;
 	b32  executable_reloaded;
-	f32  dt;
 } BeamformerInput;
 
 #define CUDA_INIT_FN(name) void name(u32 *input_dims, u32 *decoded_dims)
@@ -290,8 +290,8 @@ struct BeamformerFrame {
 
 typedef struct {
 	iv2 window_size;
-	b32 should_exit;
 
+	Arena  arena;
 	Arena  ui_backing_store;
 	void  *ui;
 	u32    ui_dirty_parameter_blocks;
@@ -320,13 +320,13 @@ typedef struct {
 	u32             averaged_frame_index;
 	BeamformerFrame averaged_frames[2];
 
-	FileWatchDirectoryList file_watch_list;
 	GLWorkerThreadContext  upload_worker;
 	GLWorkerThreadContext  compute_worker;
 
 	DEBUG_DECL(renderdoc_start_frame_capture_fn *start_frame_capture;)
 	DEBUG_DECL(renderdoc_end_frame_capture_fn   *end_frame_capture;)
 } BeamformerCtx;
+#define BeamformerContextMemory(a) (BeamformerCtx *)arena_aligned_start(a, alignof(BeamformerCtx))
 
 typedef struct ShaderReloadContext ShaderReloadContext;
 struct ShaderReloadContext {
@@ -337,7 +337,7 @@ struct ShaderReloadContext {
 	i32    reloadable_info_index;
 };
 
-#define BEAMFORMER_FRAME_STEP_FN(name) void name(BeamformerCtx *ctx, BeamformerInput *input)
+#define BEAMFORMER_FRAME_STEP_FN(name) void name(Arena memory, BeamformerInput *input)
 typedef BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step_fn);
 
 #define BEAMFORMER_COMPLETE_COMPUTE_FN(name) void name(iptr user_context, Arena *arena, iptr gl_context)
@@ -350,7 +350,7 @@ typedef BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload_fn);
                                                    Arena arena, s8 shader_name)
 typedef BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader_fn);
 
-#define BEAMFORMER_DEBUG_UI_DEINIT_FN(name) void name(BeamformerCtx *ctx)
+#define BEAMFORMER_DEBUG_UI_DEINIT_FN(name) void name(Arena memory)
 typedef BEAMFORMER_DEBUG_UI_DEINIT_FN(beamformer_debug_ui_deinit_fn);
 
 #endif /*_BEAMFORMER_H_ */

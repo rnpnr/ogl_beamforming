@@ -81,6 +81,50 @@ arena_alloc(Arena *a, iz len, uz align, iz count)
 	return result;
 }
 
+function Arena
+sub_arena(Arena *a, iz len, uz align)
+{
+	Arena result = {0};
+
+	uz padding = -(uintptr_t)a->beg & (align - 1);
+	result.beg   = a->beg + padding;
+	result.end   = result.beg + len;
+	arena_commit(a, len + (iz)padding);
+
+	return result;
+}
+
+function Arena
+sub_arena_end(Arena *a, iz len, uz align)
+{
+	Arena result;
+	result.beg = (u8 *)((uintptr_t)(a->end - len) & ~(align - 1)),
+	result.end = a->end,
+
+	a->end = result.beg;
+	assert(a->end >= a->beg);
+
+	return result;
+}
+
+function TempArena
+begin_temp_arena(Arena *a)
+{
+	TempArena result = {.arena = a, .old_beg = a->beg};
+	return result;
+}
+
+function void
+end_temp_arena(TempArena ta)
+{
+	Arena *a = ta.arena;
+	if (a) {
+		assert(a->beg >= ta.old_beg);
+		a->beg = ta.old_beg;
+	}
+}
+
+
 enum { DA_INITIAL_CAP = 16 };
 
 #define da_index(it, s) ((it) - (s)->data)
@@ -118,36 +162,6 @@ da_reserve_(Arena *a, void *data, iz *capacity, iz needed, uz align, iz size)
 	arena_alloc(a, size, align, cap - *capacity);
 	*capacity = cap;
 	return data;
-}
-
-function Arena
-sub_arena(Arena *a, iz len, uz align)
-{
-	Arena result = {0};
-
-	uz padding = -(uintptr_t)a->beg & (align - 1);
-	result.beg   = a->beg + padding;
-	result.end   = result.beg + len;
-	arena_commit(a, len + (iz)padding);
-
-	return result;
-}
-
-function TempArena
-begin_temp_arena(Arena *a)
-{
-	TempArena result = {.arena = a, .old_beg = a->beg};
-	return result;
-}
-
-function void
-end_temp_arena(TempArena ta)
-{
-	Arena *a = ta.arena;
-	if (a) {
-		assert(a->beg >= ta.old_beg);
-		a->beg = ta.old_beg;
-	}
 }
 
 function u32
@@ -717,19 +731,5 @@ parse_f64(s8 s)
 	while (power > 0) { frac /= 10.0; power--; }
 
 	f64 result = (f64)integral.S64 + frac;
-	return result;
-}
-
-function FileWatchDirectory *
-lookup_file_watch_directory(FileWatchDirectoryList *ctx, u64 hash)
-{
-	FileWatchDirectory *result = 0;
-	for (u32 i = 0; i < ctx->count; i++) {
-		FileWatchDirectory *test = ctx->data + i;
-		if (test->hash == hash) {
-			result = test;
-			break;
-		}
-	}
 	return result;
 }

@@ -331,18 +331,6 @@ typedef struct {
 } FileWatch;
 
 typedef struct {
-	u64       hash;
-	iptr      handle;
-	s8        name;
-
-	FileWatch *data;
-	iz         count;
-	iz         capacity;
-	Arena      buffer;
-} FileWatchDirectory;
-DA_STRUCT(FileWatchDirectory, FileWatchDirectory);
-
-typedef struct {
 	void *region;
 	iptr  os_context;
 } SharedMemoryRegion;
@@ -366,8 +354,7 @@ typedef struct {
 #define OS_ALLOC_ARENA_FN(name) Arena name(iz capacity)
 typedef OS_ALLOC_ARENA_FN(os_alloc_arena_fn);
 
-#define OS_ADD_FILE_WATCH_FN(name) void name(FileWatchDirectoryList *fwctx, Arena *a, s8 path, \
-                                             file_watch_callback *callback, iptr user_data)
+#define OS_ADD_FILE_WATCH_FN(name) void name(s8 path, file_watch_callback *callback, iptr user_data)
 typedef OS_ADD_FILE_WATCH_FN(os_add_file_watch_fn);
 
 #define OS_WAKE_WORKER_FN(name) void name(GLWorkerThreadContext *ctx)

@@ -89,9 +89,8 @@ typedef struct {
 } w32_overlapped;
 
 typedef enum {
-	W32_IO_FILE_WATCH,
-	W32_IO_PIPE,
-} W32_IO_Event;
+	W32IOEvent_FileWatch,
+} W32IOEvent;
 
 typedef struct {
 	u64  tag;
@@ -139,6 +138,23 @@ W32(iptr)   wglGetProcAddress(c8 *);
 W32(b32)    WriteFile(iptr, u8 *, i32, i32 *, void *);
 W32(void *) VirtualAlloc(u8 *, iz, u32, u32);
 
+enum {OSW32_FileWatchDirectoryBufferSize = KB(4)};
+typedef struct {
+	u64        hash;
+	iptr       handle;
+	s8         name;
+
+	FileWatch *data;
+	iz         count;
+	iz         capacity;
+
+	w32_overlapped          overlapped;
+  w32_io_completion_event event;
+
+	void *buffer;
+} OSW32_FileWatchDirectory;
+DA_STRUCT(OSW32_FileWatchDirectory, OSW32_FileWatchDirectory);
+
 typedef struct {
 	Arena         arena;
 	i32           arena_lock;
@@ -146,8 +162,10 @@ typedef struct {
 	iptr          io_completion_handle;
 	u64           timer_frequency;
 	OS_SystemInfo system_info;
-} OS_W32Context;
-global OS_W32Context os_w32_context;
+
+	OSW32_FileWatchDirectoryList file_watch_list;
+} OSW32_Context;
+global OSW32_Context os_w32_context;
 
 #ifdef _DEBUG
 function void *
@@ -166,7 +184,7 @@ os_get_module(char *name, Stream *e)
 function OS_WRITE_FILE_FN(os_write_file)
 {
 	i32 wlen = 0;
-	if (raw.len > 0 && raw.len <= U32_MAX) WriteFile(file, raw.data, (i32)raw.len, &wlen, 0);
+	if (raw.len > 0 && raw.len <= (iz)U32_MAX) WriteFile(file, raw.data, (i32)raw.len, &wlen, 0);
 	return raw.len == wlen;
 }
 
@@ -252,7 +270,7 @@ function OS_READ_WHOLE_FILE_FN(os_read_whole_file)
 	if (h >= 0 && GetFileInformationByHandle(h, &fileinfo)) {
 		iz filesize  = (iz)fileinfo.nFileSizeHigh << 32;
 		filesize    |= (iz)fileinfo.nFileSizeLow;
-		if (filesize <= U32_MAX) {
+		if (filesize <= (iz)U32_MAX) {
 			result = s8_alloc(arena, filesize);
 			i32 rlen;
 			if (!ReadFile(h, result.data, (i32)result.len, &rlen, 0) || rlen != result.len)
@@ -373,38 +391,46 @@ os_unload_library(void *h)
 	FreeLibrary(h);
 }
 
+function OSW32_FileWatchDirectory *
+os_lookup_file_watch_directory(OSW32_FileWatchDirectoryList *ctx, u64 hash)
+{
+	OSW32_FileWatchDirectory *result = 0;
+	for (iz i = 0; !result && i < ctx->count; i++)
+		if (ctx->data[i].hash == hash)
+			result = ctx->data + i;
+	return result;
+}
+
 function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
 {
 	s8 directory  = path;
 	directory.len = s8_scan_backwards(path, '\\');
 	assert(directory.len > 0);
 
+	OSW32_FileWatchDirectoryList *fwctx = &os_w32_context.file_watch_list;
+
 	u64 hash = u64_hash_from_s8(directory);
-	FileWatchDirectory *dir = lookup_file_watch_directory(fwctx, hash);
+	OSW32_FileWatchDirectory *dir = os_lookup_file_watch_directory(fwctx, hash);
 	if (!dir) {
 		assert(path.data[directory.len] == '\\');
 
-		dir = da_push(a, fwctx);
+		dir = da_push(&os_w32_context.arena, fwctx);
 		dir->hash   = hash;
-		dir->name   = push_s8(a, directory);
+		dir->name   = push_s8(&os_w32_context.arena, directory);
 		dir->handle = CreateFileA((c8 *)dir->name.data, GENERIC_READ, FILE_SHARE_READ, 0,
 		                          OPEN_EXISTING,
 		                          FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OVERLAPPED, 0);
 
-		w32_io_completion_event *event = push_struct(a, typeof(*event));
-		event->tag     = W32_IO_FILE_WATCH;
-		event->context = (iptr)dir;
-		CreateIoCompletionPort(dir->handle, os_w32_context.io_completion_handle, (uptr)event, 0);
+		dir->event.tag     = W32IOEvent_FileWatch;
+		dir->event.context = (iptr)dir;
+		CreateIoCompletionPort(dir->handle, os_w32_context.io_completion_handle, (uptr)&dir->event, 0);
 
-		dir->buffer = sub_arena(a, 4096 + sizeof(w32_overlapped), 64);
-		w32_overlapped *overlapped = (w32_overlapped *)(dir->buffer.beg + 4096);
-		zero_struct(overlapped);
-
-		ReadDirectoryChangesW(dir->handle, dir->buffer.beg, 4096, 0,
-		                      FILE_NOTIFY_CHANGE_LAST_WRITE, 0, overlapped, 0);
+		dir->buffer = arena_alloc(&os_w32_context.arena, OSW32_FileWatchDirectoryBufferSize, 8, 1);
+		ReadDirectoryChangesW(dir->handle, dir->buffer, OSW32_FileWatchDirectoryBufferSize, 0,
+		                      FILE_NOTIFY_CHANGE_LAST_WRITE, 0, &dir->overlapped, 0);
 	}
 
-	FileWatch *fw = da_push(a, dir);
+	FileWatch *fw = da_push(&os_w32_context.arena, dir);
 	fw->user_data = user_data;
 	fw->callback  = callback;
 	fw->hash      = u64_hash_from_s8(s8_cut_head(path, dir->name.len + 1));

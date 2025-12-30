@@ -35,8 +35,10 @@ os_gl_proc_address(char *name)
 #include "static.c"
 
 function void
-dispatch_file_watch_events(FileWatchDirectoryList *fwctx, Arena arena)
+dispatch_file_watch_events(void)
 {
+	OSLinux_FileWatchDirectoryList *fwctx = &os_linux_context.file_watch_list;
+	Arena arena = os_linux_context.arena;
 	u8 *mem     = arena_alloc(&arena, 4096, 16, 1);
 	Stream path = stream_alloc(&arena, 256);
 	struct inotify_event *event;
@@ -46,7 +48,7 @@ dispatch_file_watch_events(FileWatchDirectoryList *fwctx, Arena arena)
 		for (u8 *data = mem; data < mem + rlen; data += sizeof(*event) + event->len) {
 			event = (struct inotify_event *)data;
 			for (u32 i = 0; i < fwctx->count; i++) {
-				FileWatchDirectory *dir = fwctx->data + i;
+				OSLinux_FileWatchDirectory *dir = fwctx->data + i;
 				if (event->wd != dir->handle)
 					continue;
 
@@ -73,40 +75,40 @@ main(void)
 {
 	os_common_init();
 
-	Arena program_memory = os_alloc_arena(MB(16) + KB(4));
+	Arena program_memory = os_alloc_arena(MB(16) + KB(16));
 
-	BeamformerCtx   *ctx   = 0;
-	BeamformerInput *input = 0;
-
-	os_linux_context.arena = sub_arena(&program_memory, KB(4), KB(4));
+	os_linux_context.arena = sub_arena(&program_memory, KB(16), KB(4));
 	os_linux_context.inotify_handle = inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
 
-	setup_beamformer(&program_memory, &ctx, &input);
+
+	BeamformerInput *input = push_struct(&program_memory, BeamformerInput);
+	input->executable_reloaded = 1;
+	beamformer_init(program_memory, input);
 
 	struct pollfd fds[1] = {{0}};
 	fds[0].fd     = os_linux_context.inotify_handle;
 	fds[0].events = POLLIN;
 
 	u64 last_time = os_get_timer_counter();
-	while (!ctx->should_exit) {
+	while (!WindowShouldClose()) {
 		poll(fds, countof(fds), 0);
 		if (fds[0].revents & POLLIN)
-			dispatch_file_watch_events(&ctx->file_watch_list, program_memory);
+			dispatch_file_watch_events();
 
 		Vector2 new_mouse = GetMousePosition();
 		u64 now = os_get_timer_counter();
 		input->last_mouse = input->mouse;
 		input->mouse      = (v2){{new_mouse.x, new_mouse.y}};
-		input->dt         = (f32)((f64)(now - last_time) / (f64)os_get_timer_frequency());
+		input->dt         = (f64)(now - last_time) / (f64)os_get_timer_frequency();
 		last_time         = now;
 
-		beamformer_frame_step(ctx, input);
+		beamformer_frame_step(program_memory, input);
 
 		input->executable_reloaded = 0;
 	}
 
-	beamformer_invalidate_shared_memory(ctx);
-	beamformer_debug_ui_deinit(ctx);
+	beamformer_invalidate_shared_memory(program_memory);
+	beamformer_debug_ui_deinit(program_memory);
 
 	/* NOTE: make sure this will get cleaned up after external
 	 * programs release their references */

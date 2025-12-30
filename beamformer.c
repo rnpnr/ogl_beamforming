@@ -1472,6 +1472,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 
 DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 {
+	BeamformerCtx *ctx = BeamformerContextMemory(memory);
 	dt_for_frame = input->dt;
 
 	if (IsWindowResized()) {
@@ -1498,9 +1499,6 @@ DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 	draw_ui(ctx, input, frame, tag);
 
 	ctx->frame_view_render_context.updated = 0;
-
-	if (WindowShouldClose())
-		ctx->should_exit = 1;
 }
 
 /* NOTE(rnp): functions defined in these shouldn't be visible to the whole program */

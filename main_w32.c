@@ -33,11 +33,12 @@ os_gl_proc_address(char *name)
 #include "static.c"
 
 function void
-dispatch_file_watch(FileWatchDirectory *fw_dir, u8 *buf, Arena arena)
+dispatch_file_watch(OSW32_FileWatchDirectory *fw_dir, Arena arena)
 {
-	i64 offset = 0;
 	TempArena save_point = {0};
-	w32_file_notify_info *fni = (w32_file_notify_info *)buf;
+	i64       offset     = 0;
+
+	w32_file_notify_info *fni = (w32_file_notify_info *)fw_dir->buffer;
 	do {
 		end_temp_arena(save_point);
 		save_point = begin_temp_arena(&arena);
@@ -48,7 +49,7 @@ dispatch_file_watch(FileWatchDirectory *fw_dir, u8 *buf, Arena arena)
 			stream_append_s8(&path, s8("unknown file watch event: "));
 			stream_append_u64(&path, fni->action);
 			stream_append_byte(&path, '\n');
-			os_write_file(os_error_handle(), stream_to_s8(&path));
+			os_write_file(os_w32_context.error_handle, stream_to_s8(&path));
 			stream_reset(&path, 0);
 		}
 
@@ -85,14 +86,13 @@ clear_io_queue(BeamformerInput *input, Arena arena)
 	while (GetQueuedCompletionStatus(handle, &bytes_read, &user_data, &overlapped, 0)) {
 		w32_io_completion_event *event = (w32_io_completion_event *)user_data;
 		switch (event->tag) {
-		case W32_IO_FILE_WATCH: {
-			FileWatchDirectory *dir = (FileWatchDirectory *)event->context;
-			dispatch_file_watch(dir, dir->buffer.beg, arena);
-			zero_struct(overlapped);
-			ReadDirectoryChangesW(dir->handle, dir->buffer.beg, 4096, 0,
-			                      FILE_NOTIFY_CHANGE_LAST_WRITE, 0, overlapped, 0);
-		} break;
-		case W32_IO_PIPE: break;
+		case W32IOEvent_FileWatch:{
+			OSW32_FileWatchDirectory *dir = (OSW32_FileWatchDirectory *)event->context;
+			dispatch_file_watch(dir, arena);
+			zero_struct(&dir->overlapped);
+			ReadDirectoryChangesW(dir->handle, dir->buffer, OSW32_FileWatchDirectoryBufferSize, 0,
+			                      FILE_NOTIFY_CHANGE_LAST_WRITE, 0, &dir->overlapped, 0);
+		}break;
 		}
 	}
 }
@@ -102,33 +102,36 @@ main(void)
 {
 	os_common_init();
 
-	Arena program_memory = os_alloc_arena(MB(16) + KB(4));
+	Arena program_memory = os_alloc_arena(MB(16) + MB(2));
 
-	BeamformerCtx   *ctx   = 0;
-	BeamformerInput *input = 0;
-
-	os_w32_context.arena                = sub_arena(&program_memory, KB(4), KB(4));
+	os_w32_context.arena                = sub_arena(&program_memory, MB(2), KB(4));
 	os_w32_context.error_handle         = GetStdHandle(STD_ERROR_HANDLE);
 	os_w32_context.io_completion_handle = CreateIoCompletionPort(INVALID_FILE, 0, 0, 0);
 
-	setup_beamformer(&program_memory, &ctx, &input);
+	BeamformerInput *input = push_struct(&program_memory, BeamformerInput);
+	input->executable_reloaded = 1;
+	beamformer_init(program_memory, input);
 
 	u64 last_time = os_get_timer_counter();
-	while (!ctx->should_exit) {
-		clear_io_queue(input, program_memory);
+	while (!WindowShouldClose()) {
+		DeferLoop(os_take_lock(&os_w32_context.arena_lock, -1),
+		          os_release_lock(&os_w32_context.arena_lock))
+		{
+			clear_io_queue(input, os_w32_context.arena);
+		}
 
 		Vector2 new_mouse = GetMousePosition();
 		u64 now = os_get_timer_counter();
 		input->last_mouse = input->mouse;
 		input->mouse      = (v2){{new_mouse.x, new_mouse.y}};
-		input->dt         = (f32)((f64)(now - last_time) / (f64)os_w32_context.timer_frequency);
+		input->dt         = (f64)(now - last_time) / (f64)os_w32_context.timer_frequency;
 		last_time         = now;
 
-		beamformer_frame_step(ctx, input);
+		beamformer_frame_step(program_memory, input);
 
 		input->executable_reloaded = 0;
 	}
 
-	beamformer_invalidate_shared_memory(ctx);
-	beamformer_debug_ui_deinit(ctx);
+	beamformer_invalidate_shared_memory(program_memory);
+	beamformer_debug_ui_deinit(program_memory);
 }

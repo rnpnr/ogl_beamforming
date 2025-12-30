@@ -23,12 +23,25 @@
 #include <unistd.h>
 
 typedef struct {
+	u64        hash;
+	iptr       handle;
+	s8         name;
+
+	FileWatch *data;
+	iz         count;
+	iz         capacity;
+} OSLinux_FileWatchDirectory;
+DA_STRUCT(OSLinux_FileWatchDirectory, OSLinux_FileWatchDirectory);
+
+typedef struct {
 	Arena         arena;
 	i32           arena_lock;
 	i32           inotify_handle;
 	OS_SystemInfo system_info;
-} OS_LinuxContext;
-global OS_LinuxContext os_linux_context;
+
+	OSLinux_FileWatchDirectoryList file_watch_list;
+} OSLinux_Context;
+global OSLinux_Context os_linux_context;
 
 #ifdef _DEBUG
 function void *
@@ -240,24 +253,36 @@ os_unload_library(void *h)
 		dlclose(h);
 }
 
+function OSLinux_FileWatchDirectory *
+os_lookup_file_watch_directory(OSLinux_FileWatchDirectoryList *ctx, u64 hash)
+{
+	OSLinux_FileWatchDirectory *result = 0;
+	for (iz i = 0; !result && i < ctx->count; i++)
+		if (ctx->data[i].hash == hash)
+			result = ctx->data + i;
+	return result;
+}
+
 function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
 {
 	s8 directory  = path;
 	directory.len = s8_scan_backwards(path, '/');
 	assert(directory.len > 0);
 
+	OSLinux_FileWatchDirectoryList *fwctx = &os_linux_context.file_watch_list;
+
 	u64 hash = u64_hash_from_s8(directory);
-	FileWatchDirectory *dir = lookup_file_watch_directory(fwctx, hash);
+	OSLinux_FileWatchDirectory *dir = os_lookup_file_watch_directory(fwctx, hash);
 	if (!dir) {
 		assert(path.data[directory.len] == '/');
-		dir = da_push(a, fwctx);
+		dir = da_push(&os_linux_context.arena, fwctx);
 		dir->hash   = hash;
-		dir->name   = push_s8(a, directory);
+		dir->name   = push_s8(&os_linux_context.arena, directory);
 		u32 mask    = IN_MOVED_TO|IN_CLOSE_WRITE;
 		dir->handle = inotify_add_watch(os_linux_context.inotify_handle, (c8 *)dir->name.data, mask);
 	}
 
-	FileWatch *fw = da_push(a, dir);
+	FileWatch *fw = da_push(&os_linux_context.arena, dir);
 	fw->user_data = user_data;
 	fw->callback  = callback;
 	fw->hash      = u64_hash_from_s8(s8_cut_head(path, dir->name.len + 1));
