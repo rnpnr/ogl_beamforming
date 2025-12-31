@@ -120,9 +120,10 @@ main(void)
 	os_w32_context.error_handle         = GetStdHandle(STD_ERROR_HANDLE);
 	os_w32_context.io_completion_handle = CreateIoCompletionPort(INVALID_FILE, 0, 0, 0);
 
-	BeamformerInput *input = push_struct(&program_memory, BeamformerInput);
+	BeamformerInput *input     = push_struct(&program_memory, BeamformerInput);
+	input->memory              = program_memory;
 	input->executable_reloaded = 1;
-	beamformer_init(program_memory, input);
+	beamformer_init(input);
 
 	u64 last_time = os_get_timer_counter();
 	while (!WindowShouldClose()) {
@@ -139,7 +140,7 @@ main(void)
 		input->dt         = (f64)(now - last_time) / (f64)os_w32_context.timer_frequency;
 		last_time         = now;
 
-		beamformer_frame_step(program_memory, input);
+		beamformer_frame_step(input);
 
 		input->executable_reloaded = 0;
 	}

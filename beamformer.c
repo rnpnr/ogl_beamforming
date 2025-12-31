@@ -1472,7 +1472,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 
 DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 {
-	BeamformerCtx *ctx = BeamformerContextMemory(memory);
+	BeamformerCtx *ctx = BeamformerContextMemory(input->memory);
 	dt_for_frame = input->dt;
 
 	if (IsWindowResized()) {

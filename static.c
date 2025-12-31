@@ -329,8 +329,9 @@ function OS_THREAD_ENTRY_POINT_FN(beamformer_upload_entry_point)
 }
 
 function void
-beamformer_init(Arena memory, BeamformerInput *input)
+beamformer_init(BeamformerInput *input)
 {
+	Arena  memory        = input->memory;
 	Arena  compute_arena = sub_arena_end(&memory, MB(2), KB(4));
 	Arena  upload_arena  = sub_arena_end(&memory, KB(4), KB(4));
 	Arena  ui_arena      = sub_arena_end(&memory, MB(2), KB(4));

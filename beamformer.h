@@ -26,10 +26,11 @@ function OS_WRITE_FILE_FN(os_write_file);
 #include "util_gl.c"
 
 typedef struct {
-	f64  dt;
-	v2   mouse;
-	v2   last_mouse;
-	b32  executable_reloaded;
+	Arena memory;
+	f64   dt;
+	v2    mouse;
+	v2    last_mouse;
+	b32   executable_reloaded;
 } BeamformerInput;
 
 #define CUDA_INIT_FN(name) void name(u32 *input_dims, u32 *decoded_dims)
@@ -337,7 +338,7 @@ struct ShaderReloadContext {
 	i32    reloadable_info_index;
 };
 
-#define BEAMFORMER_FRAME_STEP_FN(name) void name(Arena memory, BeamformerInput *input)
+#define BEAMFORMER_FRAME_STEP_FN(name) void name(BeamformerInput *input)
 typedef BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step_fn);
 
 #define BEAMFORMER_COMPLETE_COMPUTE_FN(name) void name(iptr user_context, Arena *arena, iptr gl_context)

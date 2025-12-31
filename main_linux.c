@@ -81,9 +81,10 @@ main(void)
 	os_linux_context.inotify_handle = inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
 
 
-	BeamformerInput *input = push_struct(&program_memory, BeamformerInput);
+	BeamformerInput *input     = push_struct(&program_memory, BeamformerInput);
+	input->memory              = program_memory;
 	input->executable_reloaded = 1;
-	beamformer_init(program_memory, input);
+	beamformer_init(input);
 
 	struct pollfd fds[1] = {{0}};
 	fds[0].fd     = os_linux_context.inotify_handle;
@@ -102,7 +103,7 @@ main(void)
 		input->dt         = (f64)(now - last_time) / (f64)os_get_timer_frequency();
 		last_time         = now;
 
-		beamformer_frame_step(program_memory, input);
+		beamformer_frame_step(input);
 
 		input->executable_reloaded = 0;
 	}
