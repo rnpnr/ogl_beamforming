@@ -69,6 +69,9 @@
 #define GL_COMPUTE_SHADER                  0x91B9
 #define GL_DEBUG_OUTPUT                    0x92E0
 
+#define GL_HANDLE_TYPE_OPAQUE_FD_EXT       0x9586
+#define GL_HANDLE_TYPE_OPAQUE_WIN32_EXT    0x9587
+
 #define GL_TIMEOUT_IGNORED                 0xFFFFFFFFFFFFFFFFull
 
 typedef char GLchar;
@@ -151,13 +154,28 @@ typedef struct __GLsync *GLsync;
 	X(glVertexArrayAttribFormat,             void,   (GLuint vao, GLuint attribindex, GLint size, GLenum type, GLboolean normalized, GLuint relativeoffset)) \
 	X(glVertexArrayElementBuffer,            void,   (GLuint vao, GLuint buffer)) \
 	X(glVertexArrayVertexBuffer,             void,   (GLuint vao, GLuint bindingindex, GLuint buffer, GLintptr offset, GLsizei stride)) \
-	X(glWaitSync,                            void,   (GLsync sync, GLbitfield flags, GLuint64 timeout))
+	X(glWaitSync,                            void,   (GLsync sync, GLbitfield flags, GLuint64 timeout)) \
+
+
+#define OGLRequiredExtensionProcedureList \
+	X(glCreateMemoryObjectsEXT,              void,   (GLsizei n, GLuint *memoryObjects)) \
+	X(glDeleteMemoryObjectsEXT,              void,   (GLsizei n, GLuint *memoryObjects)) \
+	X(glGenSemaphoresEXT,                    void,   (GLsizei n, GLuint *semaphores)) \
+	X(glImportMemoryFdEXT,                   void,   (GLuint memory, GLuint64 size, GLenum handleType, int fd)) \
+	X(glImportMemoryWin32HandleEXT,          void,   (GLuint memory, GLuint64 size, GLenum handleType, void *handle)) \
+	X(glImportSemaphoreFdEXT,                void,   (GLuint semaphore, GLenum handleType, int fd)) \
+	X(glImportSemaphoreWin32HandleEXT,       void,   (GLuint semaphore, GLenum handleType, void *handle)) \
+	X(glNamedBufferStorageMemEXT,            void,   (GLuint buffer, GLsizeiptr size, GLuint memory, GLuint64 offset)) \
+	X(glWaitSemaphoreEXT,                    void,   (GLuint semaphore, GLuint numBufferBarriers, const GLuint *buffers, GLuint numTextureBarriers, const GLuint *textures, const GLenum *srcLayouts)) \
+
 
 #define X(name, ret, params) typedef ret name##_fn params;
 OGLProcedureList
+OGLRequiredExtensionProcedureList
 #undef X
 #define X(name, ret, params) DEBUG_IMPORT name##_fn *name;
 OGLProcedureList
+OGLRequiredExtensionProcedureList
 #undef X
 
 typedef enum {
