@@ -425,7 +425,7 @@ function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
 		dir->event.context = (iptr)dir;
 		CreateIoCompletionPort(dir->handle, os_w32_context.io_completion_handle, (uptr)&dir->event, 0);
 
-		dir->buffer = arena_alloc(&os_w32_context.arena, OSW32_FileWatchDirectoryBufferSize, 8, 1);
+		dir->buffer = arena_alloc(&os_w32_context.arena, .size = OSW32_FileWatchDirectoryBufferSize);
 		ReadDirectoryChangesW(dir->handle, dir->buffer, OSW32_FileWatchDirectoryBufferSize, 0,
 		                      FILE_NOTIFY_CHANGE_LAST_WRITE, 0, &dir->overlapped, 0);
 	}

@@ -1,4 +1,10 @@
 /* See LICENSE for license details. */
+#if   COMPILER_CLANG
+  #pragma GCC diagnostic ignored "-Winitializer-overrides"
+#elif COMPILER_GCC
+  #pragma GCC diagnostic ignored "-Woverride-init"
+#endif
+
 #define zero_struct(s) mem_clear(s, 0, sizeof(*s))
 function void *
 mem_clear(void *restrict p_, u8 c, iz size)
@@ -72,34 +78,45 @@ arena_pop(Arena *a, iz length)
 	a->beg -= length;
 }
 
-#define push_array(a, t, n) (t *)arena_alloc(a, sizeof(t), _Alignof(t), n)
-#define push_struct(a, t)   (t *)arena_alloc(a, sizeof(t), _Alignof(t), 1)
+typedef enum {
+	ArenaAllocateFlags_NoZero = 1 << 0,
+} ArenaAllocateFlags;
+
+typedef struct {
+	iz size;
+	uz align;
+	iz count;
+	ArenaAllocateFlags flags;
+} ArenaAllocateInfo;
+
+#define arena_alloc(a, ...)         arena_alloc_(a, (ArenaAllocateInfo){.align = 8, .count = 1, ##__VA_ARGS__})
+#define push_array(a, t, n)         (t *)arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n)
+#define push_array_no_zero(a, t, n) (t *)arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n, .flags = ArenaAllocateFlags_NoZero)
+#define push_struct(a, t)           push_array(a, t, 1)
+#define push_struct_no_zero(a, t)   push_array_no_zero(a, t, 1)
+
 function void *
-arena_alloc(Arena *a, iz len, uz align, iz count)
+arena_alloc_(Arena *a, ArenaAllocateInfo info)
 {
 	void *result = 0;
 	if (a->beg) {
-		u8 *start = arena_aligned_start(*a, align);
+		u8 *start = arena_aligned_start(*a, info.align);
 		iz available = a->end - start;
-		assert((available >= 0 && count <= available / len));
-		asan_unpoison_region(start, count * len);
-		a->beg = start + count * len;
-		/* TODO: Performance? */
-		result = mem_clear(start, 0, count * len);
+		assert((available >= 0 && info.count <= available / info.size));
+		asan_unpoison_region(start, info.count * info.size);
+		a->beg = start + info.count * info.size;
+		result = start;
+		if ((info.flags & ArenaAllocateFlags_NoZero) == 0)
+			result = mem_clear(start, 0, info.count * info.size);
 	}
 	return result;
 }
 
 function Arena
-sub_arena(Arena *a, iz len, uz align)
+sub_arena(Arena *a, iz size, uz align)
 {
-	Arena result = {0};
-
-	uz padding = -(uintptr_t)a->beg & (align - 1);
-	result.beg   = a->beg + padding;
-	result.end   = result.beg + len;
-	arena_commit(a, len + (iz)padding);
-
+	Arena result = {.beg = arena_alloc(a, .size = size, .align = align, .flags = ArenaAllocateFlags_NoZero)};
+	result.end   = result.beg + size;
 	return result;
 }
 
@@ -161,14 +178,14 @@ da_reserve_(Arena *a, void *data, iz *capacity, iz needed, uz align, iz size)
 	/* NOTE(rnp): handle both 0 initialized DAs and DAs that need to be moved (they started
 	 * on the stack or someone allocated something in the middle of the arena during usage) */
 	if (!data || a->beg != (u8 *)data + cap * size) {
-		void *copy = arena_alloc(a, size, align, cap);
+		void *copy = arena_alloc(a, .size = size, .align = align, .count = cap);
 		if (data) mem_copy(copy, data, (uz)(cap * size));
 		data = copy;
 	}
 
 	if (!cap) cap = DA_INITIAL_CAP;
 	while (cap < needed) cap *= 2;
-	arena_alloc(a, size, align, cap - *capacity);
+	arena_alloc(a, .size = size, .align = align, .count = cap - *capacity);
 	*capacity = cap;
 	return data;
 }

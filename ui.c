@@ -1049,8 +1049,8 @@ add_variable(BeamformerUI *ui, Variable *group, Arena *arena, s8 name, u32 flags
              VariableType type, Font font)
 {
 	Variable *result = SLLPopFreelist(ui->variable_freelist);
-	if (result) zero_struct(result);
-	else        result = push_struct(arena, Variable);
+	if (!result) result = push_struct_no_zero(arena, Variable);
+	zero_struct(result);
 	return fill_variable(result, group, name, flags, type, font);
 }
 
@@ -1349,8 +1349,8 @@ function BeamformerFrameView *
 ui_beamformer_frame_view_new(BeamformerUI *ui, Arena *arena)
 {
 	BeamformerFrameView *result = SLLPopFreelist(ui->view_freelist);
-	if (result) zero_struct(result);
-	else        result = push_struct(arena, typeof(*result));
+	if (!result) result = push_struct_no_zero(arena, typeof(*result));
+	zero_struct(result);
 	DLLPushDown(result, ui->views);
 	return result;
 }

@@ -39,7 +39,7 @@ dispatch_file_watch_events(void)
 {
 	OSLinux_FileWatchDirectoryList *fwctx = &os_linux_context.file_watch_list;
 	Arena arena = os_linux_context.arena;
-	u8 *mem     = arena_alloc(&arena, 4096, 16, 1);
+	u8 *mem     = arena_alloc(&arena, .size = 4096, .align = 16);
 	Stream path = stream_alloc(&arena, 256);
 	struct inotify_event *event;
 
