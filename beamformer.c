@@ -50,6 +50,8 @@ fatal(s8 message)
 	unreachable();
 }
 
+#include "vulkan.c"
+
 // TODO(rnp): none of this belongs here, but will be removed
 // once vulkan migration is complete
 #define GLFW_VISIBLE 0x00020004
@@ -270,9 +272,26 @@ function OS_THREAD_ENTRY_POINT_FN(beamformer_upload_entry_point)
 	ctx->gl_context = os_get_native_gl_context(ctx->window_handle);
 
 	BeamformerUploadThreadContext *up = (typeof(up))ctx->user_context;
-	glCreateQueries(GL_TIMESTAMP, 1, &up->rf_buffer->data_timestamp_query);
+	BeamformerRFBuffer            *rf = up->rf_buffer;
+	glCreateQueries(GL_TIMESTAMP, 1, &rf->data_timestamp_query);
 	/* NOTE(rnp): start this here so we don't have to worry about it being started or not */
-	glQueryCounter(up->rf_buffer->data_timestamp_query, GL_TIMESTAMP);
+	glQueryCounter(rf->data_timestamp_query, GL_TIMESTAMP);
+
+	glGenSemaphoresEXT(countof(rf->gl_upload_semaphores), rf->gl_upload_semaphores);
+	for EachElement(rf->vk_upload_semaphores, it) {
+		OSHandle export = {0};
+		rf->vk_upload_semaphores[it] = vk_semaphore_create(rf->upload_semaphores_handles + it);
+
+		if (OS_WINDOWS) {
+			glImportSemaphoreWin32HandleEXT(rf->gl_upload_semaphores[it], GL_HANDLE_TYPE_OPAQUE_WIN32_EXT,
+			                                 (void *)export.value[0]);
+			// NOTE(rnp): w32 does not transfer ownership from handle back to driver
+			rf->upload_semaphores_handles[it] = export;
+		} else {
+			glImportSemaphoreFdEXT(rf->gl_upload_semaphores[it], GL_HANDLE_TYPE_OPAQUE_FD_EXT, export.value[0]);
+			rf->upload_semaphores_handles[it].value[0] = OSInvalidHandleValue;
+		}
+	}
 
 	for (;;) {
 		worker_thread_sleep(ctx, up->shared_memory);
@@ -292,17 +311,19 @@ beamformer_init(BeamformerInput *input)
 	Arena  upload_arena  = sub_arena_end(&memory, KB(4), KB(4));
 	Arena  ui_arena      = sub_arena_end(&memory, MB(2), KB(4));
 	Stream error         = arena_stream(sub_arena_end(&memory, MB(1), 1));
+
 	BeamformerCtx *ctx   = push_struct(&memory, BeamformerCtx);
 
 	Arena scratch = {.beg = memory.end - 4096L, .end = memory.end};
 	memory.end = scratch.beg;
 
-	ctx->window_size = (iv2){{1280, 840}};
-	ctx->error_stream = error;
-	ctx->ui_backing_store = ui_arena;
-
+	ctx->window_size           = (iv2){{1280, 840}};
+	ctx->error_stream          = error;
+	ctx->ui_backing_store      = ui_arena;
 	ctx->compute_worker.arena  = compute_arena;
 	ctx->upload_worker.arena   = upload_arena;
+
+	vk_load(input->vulkan_library_handle, &memory, &ctx->error_stream);
 
 	beamformer_load_cuda_library(ctx, input->cuda_library_handle, memory);
 
@@ -355,6 +376,7 @@ beamformer_init(BeamformerInput *input)
 	#endif
 
 	BeamformerComputeContext *cs = &ctx->compute_context;
+	cs->rf_buffer.export_handle  = (OSHandle){OSInvalidHandleValue};
 
 	GLWorkerThreadContext *worker = &ctx->compute_worker;
 	/* TODO(rnp): we should lock this down after we have something working */

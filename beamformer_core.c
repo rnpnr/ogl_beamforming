@@ -1237,17 +1237,19 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			 * it out into a separate step. This way data can get released as soon as possible */
 			if (pipeline->shader_count > 0) {
 				BeamformerRFBuffer *rf = &cs->rf_buffer;
-				u32 slot = rf->compute_index % countof(rf->compute_syncs);
+				u32 compute_index = rf->compute_index;
+				u32 slot = compute_index % countof(rf->compute_syncs);
 
 				if (work->kind == BeamformerWorkKind_ComputeIndirect) {
 					/* NOTE(rnp): compute indirect is used when uploading data. if compute thread
-					 * preempts upload it must wait for the fence to exist. then it must tell the
-					 * GPU to wait for upload to complete before it can start compute */
-					spin_wait(!atomic_load_u64(rf->upload_syncs + slot));
+					 * preempts upload it must wait for slot counter to reach a value it hasn't
+					 * processed yet. */
+					spin_wait(atomic_load_u64(rf->uploaded_data_indices + slot) <= compute_index);
 
-					glWaitSync(rf->upload_syncs[slot], 0, GL_TIMEOUT_IGNORED);
-					glDeleteSync(rf->upload_syncs[slot]);
-					rf->compute_index++;
+					/* NOTE(rnp): if the GPU supports BAR there may be no need to synchronize
+					 * other than the above spin */
+					if (vk_buffer_needs_sync(&rf->buffer))
+						glWaitSemaphoreEXT(rf->gl_upload_semaphores[slot], 0, 0, 0, 0, 0);
 				} else {
 					slot = (rf->compute_index - 1) % countof(rf->compute_syncs);
 				}
@@ -1260,7 +1262,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 
 				if (work->kind == BeamformerWorkKind_ComputeIndirect) {
 					atomic_store_u64(rf->compute_syncs + slot, glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
-					atomic_store_u64(rf->upload_syncs + slot,  0);
+					atomic_add_u64(&rf->compute_index, 1);
 				}
 			}
 
@@ -1379,25 +1381,33 @@ DEBUG_EXPORT BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute)
 }
 
 function void
-beamformer_rf_buffer_allocate(BeamformerRFBuffer *rf, u32 rf_size, b32 nvidia)
+beamformer_rf_buffer_allocate(BeamformerRFBuffer *rf, u32 rf_size)
 {
-	assert((rf_size % 64) == 0);
-	if (!nvidia) glUnmapNamedBuffer(rf->ssbo);
+	if ValidHandle(rf->export_handle)
+		os_release_handle(rf->export_handle);
+
+	OSHandle export = {0};
+	vk_buffer_allocate(&rf->buffer, (iz)rf_size, GPUBufferCreateFlags_HostWritable|GPUBufferCreateFlags_MemoryOnly,
+	                   &export, s8(""));
+
 	glDeleteBuffers(1, &rf->ssbo);
 	glCreateBuffers(1, &rf->ssbo);
 
-	u32 buffer_flags = GL_DYNAMIC_STORAGE_BIT;
-	if (!nvidia) buffer_flags |= GL_MAP_PERSISTENT_BIT|GL_MAP_WRITE_BIT;
+	glDeleteMemoryObjectsEXT(1, &rf->memory_object);
+	glCreateMemoryObjectsEXT(1, &rf->memory_object);
 
-	glNamedBufferStorage(rf->ssbo, countof(rf->compute_syncs) * rf_size, 0, buffer_flags);
-
-	if (!nvidia) {
-		u32 access = GL_MAP_PERSISTENT_BIT|GL_MAP_WRITE_BIT|GL_MAP_FLUSH_EXPLICIT_BIT|GL_MAP_UNSYNCHRONIZED_BIT;
-		rf->buffer = glMapNamedBufferRange(rf->ssbo, 0, (GLsizei)(countof(rf->compute_syncs) * rf_size), access);
+	if (OS_WINDOWS) {
+		glImportMemoryWin32HandleEXT(rf->memory_object, rf->buffer.size, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT,
+		                             (void *)export.value[0]);
+		// NOTE(rnp): w32 does not transfer ownership from handle back to driver
+		rf->export_handle = export;
+	} else {
+		glImportMemoryFdEXT(rf->memory_object, rf->buffer.size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, export.value[0]);
 	}
 
+	glNamedBufferStorageMemEXT(rf->ssbo, rf->buffer.size, rf->memory_object, 0);
+
 	LABEL_GL_OBJECT(GL_BUFFER, rf->ssbo, s8("Raw_RF_SSBO"));
-	rf->size = rf_size;
 }
 
 DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
@@ -1412,23 +1422,17 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 	{
 		beamformer_shared_memory_take_lock(ctx->shared_memory, (i32)scratch_lock, (u32)-1);
 
-		BeamformerRFBuffer       *rf = ctx->rf_buffer;
-		BeamformerParameterBlock *b  = beamformer_parameter_block(sm, (u32)(rf_block_rf_size >> 32ULL));
-		BeamformerParameters     *bp = &b->parameters;
-		BeamformerDataKind data_kind = b->pipeline.data_kind;
+		BeamformerRFBuffer *rf = ctx->rf_buffer;
 
-		b32 nvidia = gl_parameters.vendor_id == GLVendor_NVIDIA;
-
-		rf->active_rf_size = (u32)round_up_to(rf_block_rf_size & 0xFFFFFFFFULL, 64);
-		if unlikely(rf->size < rf->active_rf_size)
-			beamformer_rf_buffer_allocate(rf, rf->active_rf_size, nvidia);
+		rf->active_rf_size = vk_round_up_to_sync_size(rf_block_rf_size & 0xFFFFFFFFULL, 64);
+		if unlikely(rf->buffer.size < countof(rf->compute_syncs) * rf->active_rf_size)
+			beamformer_rf_buffer_allocate(rf, countof(rf->compute_syncs) * rf->active_rf_size);
 
 		u32 slot = rf->insertion_index++ % countof(rf->compute_syncs);
 
-		/* NOTE(rnp): if the rest of the code is functioning then the first
-		 * time the compute thread processes an upload it must have gone
-		 * through this path. therefore it is safe to spin until it gets processed */
-		spin_wait(atomic_load_u64(rf->upload_syncs + slot));
+		/* NOTE(rnp): don't overwrite slot if the compute thread hasn't processed it */
+		u64 current_slot_value = rf->uploaded_data_indices[slot];
+		spin_wait(atomic_load_u64(&rf->compute_index) < current_slot_value);
 
 		if (atomic_load_u64(rf->compute_syncs + slot)) {
 			GLenum sync_result = glClientWaitSync(rf->compute_syncs[slot], 0, 1000000000);
@@ -1438,20 +1442,18 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 			glDeleteSync(rf->compute_syncs[slot]);
 		}
 
-		u32 size = bp->channel_count * bp->acquisition_count * bp->sample_count * beamformer_data_kind_byte_size[data_kind];
-		u8 *data = beamformer_shared_memory_scratch_arena(sm).beg;
-
-		if (nvidia) glNamedBufferSubData(rf->ssbo, slot * rf->active_rf_size, (i32)size, data);
-		else        memory_copy_non_temporal(rf->buffer + slot * rf->active_rf_size, data, size);
+		vk_buffer_range_upload(&rf->buffer, beamformer_shared_memory_scratch_arena(sm).beg,
+		                       slot * rf->active_rf_size, rf->active_rf_size, 1);
 		store_fence();
 
 		beamformer_shared_memory_release_lock(ctx->shared_memory, (i32)scratch_lock);
 		post_sync_barrier(ctx->shared_memory, upload_lock);
 
-		if (!nvidia)
-			glFlushMappedNamedBufferRange(rf->ssbo, slot * rf->active_rf_size, (i32)rf->active_rf_size);
+		if (vk_buffer_needs_sync(&rf->buffer)) {
+			// TODO(rnp): vk_buffer_sync
+		}
 
-		atomic_store_u64(rf->upload_syncs  + slot, glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
+		atomic_store_u64(rf->uploaded_data_indices + slot, rf->insertion_index);
 		atomic_store_u64(rf->compute_syncs + slot, 0);
 
 		os_wake_all_waiters(ctx->compute_worker_sync);

@@ -147,6 +147,13 @@ os_copy_file(char *name, char *new)
 	return result;
 }
 
+BEAMFORMER_IMPORT void
+os_release_handle(OSHandle h)
+{
+	if ValidHandle(h)
+		close(h.value[0]);
+}
+
 BEAMFORMER_IMPORT OS_WAIT_ON_ADDRESS_FN(os_wait_on_address)
 {
 	struct timespec *timeout = 0, timeout_value;

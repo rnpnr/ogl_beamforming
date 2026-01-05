@@ -105,6 +105,10 @@ BEAMFORMER_IMPORT void           os_wake_all_waiters(int32_t *lock);
 BEAMFORMER_IMPORT void           os_console_log(uint8_t *data, int64_t length);
 BEAMFORMER_IMPORT void           os_fatal(uint8_t *data, int64_t length);
 
+
+// NOTE(rnp): for vulkan cross API export on win32 (will be removed eventually)
+BEAMFORMER_IMPORT void           os_release_handle(OSHandle handle);
+
 /* NOTE(rnp): this functionality is only needed on win32 to provide cross process
  * synchronization. While posix has equivalent functionality there is no reason to
  * use it over a value located in shared memory. */
@@ -168,9 +172,11 @@ typedef struct {
 	BeamformerInputEvent event_queue[256];
 
 	/* NOTE(rnp): the beamformer is not allowed to dynamically load libraries
-	 * itself. Libraries are optional and the beamformer will not use features
-	 * from libraries which have not been provided. */
+	 * itself. Besides Vulkan, which is required, libraries are optional and
+	 * the beamformer will not use features from libraries which have not
+	 * been provided. */
 	OSLibrary cuda_library_handle;
+	OSLibrary vulkan_library_handle;
 
 	#if BEAMFORMER_RENDERDOC_HOOKS
 	void *renderdoc_start_frame_capture;

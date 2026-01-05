@@ -53,6 +53,9 @@ W32(i32)    SetThreadDescription(u64, u16 *);
 
 #define OS_RENDERDOC_SONAME    "renderdoc.dll"
 
+#define OS_VULKAN_SONAME_LIST \
+	X("vulkan-1.dll") \
+
 enum {OSW32_FileWatchDirectoryBufferSize = KB(4)};
 typedef enum {
 	OSW32_FileWatchKindPlatform,
@@ -277,6 +280,16 @@ load_platform_libraries(BeamformerInput *input)
 		os_w32_add_file_watch(s8(OS_DEBUG_LIB_NAME), (void *)BeamformerInputEventKind_ExecutableReload,
 		                      OSW32_FileWatchKindPlatform);
 	#endif
+
+	input->vulkan_library_handle = (OSLibrary){OSInvalidHandleValue};
+	#define X(name) \
+		if InvalidHandle(input->vulkan_library_handle) \
+			input->vulkan_library_handle = load_library(name, 0);
+	OS_VULKAN_SONAME_LIST
+	#undef X
+
+	if InvalidHandle(input->vulkan_library_handle)
+		fatal(s8("[os] fatal error: failed to find valid vulkan library\n"));
 
 	input->cuda_library_handle = load_library(OS_CUDA_LIB_NAME, OS_CUDA_LIB_TEMP_NAME);
 
