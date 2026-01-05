@@ -147,12 +147,12 @@ typedef u64    uptr;
 	iz    capacity; \
 } name ##List;
 
+#define SLLStackPush(list, n) ((n)->next = (list), (list) = (n))
+// TODO(rnp): clean this up
+#define SLLPush(v, list) SLLStackPush(list, v)
+
 /* NOTE(rnp): no guarantees about actually getting an element */
 #define SLLPop(list) list; list = list ? list->next : 0
-#define SLLPush(v, list) do { \
-	(v)->next = (list); \
-	(list)    = v;      \
-} while (0)
 
 #define SLLPopFreelist(list) list; do { \
 	asan_unpoison_region((list), sizeof(*(list))); \
@@ -328,8 +328,6 @@ typedef struct {
 
 #define ValidHandle(h)     ((h).value[0] != OSInvalidHandleValue)
 #define InvalidHandle(h)   ((h).value[0] == OSInvalidHandleValue)
-
-typedef struct OS OS;
 
 typedef struct {
 	u64        index;

@@ -11,10 +11,6 @@
 #include <GL/gl.h>
 
 /* NOTE: do not add extra 0s to these, even at the start -> garbage compilers will complain */
-#define GL_MAP_WRITE_BIT                   0x0002
-#define GL_MAP_FLUSH_EXPLICIT_BIT          0x0010
-#define GL_MAP_UNSYNCHRONIZED_BIT          0x0020
-#define GL_MAP_PERSISTENT_BIT              0x0040
 #define GL_DYNAMIC_STORAGE_BIT             0x0100
 #define GL_SHADER_IMAGE_ACCESS_BARRIER_BIT 0x00000020
 #define GL_TEXTURE_UPDATE_BARRIER_BIT      0x00000100
@@ -72,8 +68,6 @@
 #define GL_HANDLE_TYPE_OPAQUE_FD_EXT       0x9586
 #define GL_HANDLE_TYPE_OPAQUE_WIN32_EXT    0x9587
 
-#define GL_TIMEOUT_IGNORED                 0xFFFFFFFFFFFFFFFFull
-
 typedef char GLchar;
 typedef i64  GLsizeiptr;
 typedef i64  GLintptr;
@@ -114,7 +108,6 @@ typedef struct __GLsync *GLsync;
 	X(glEndQuery,                            void,   (GLenum target)) \
 	X(glEnableVertexArrayAttrib,             void,   (GLuint vao, GLuint index)) \
 	X(glFenceSync,                           GLsync, (GLenum condition, GLbitfield flags)) \
-	X(glFlushMappedNamedBufferRange,         void,   (GLuint buffer, GLintptr offset, GLsizei length)) \
 	X(glGenerateTextureMipmap,               void,   (GLuint texture)) \
 	X(glGetProgramInfoLog,                   void,   (GLuint program, GLsizei maxLength, GLsizei *length, GLchar *infoLog)) \
 	X(glGetProgramiv,                        void,   (GLuint program, GLenum pname, GLint *params)) \
@@ -123,7 +116,6 @@ typedef struct __GLsync *GLsync;
 	X(glGetShaderiv,                         void,   (GLuint shader, GLenum pname, GLint *params)) \
 	X(glGetTextureImage,                     void,   (GLuint texture, GLint level, GLenum format, GLenum type, GLsizei bufSize, void *pixels)) \
 	X(glLinkProgram,                         void,   (GLuint program)) \
-	X(glMapNamedBufferRange,                 void *, (GLuint buffer, GLintptr offset, GLsizei length, GLbitfield access)) \
 	X(glMemoryBarrier,                       void,   (GLbitfield barriers)) \
 	X(glNamedBufferData,                     void,   (GLuint buffer, GLsizeiptr size, const void *data, GLenum usage)) \
 	X(glNamedBufferStorage,                  void,   (GLuint buffer, GLsizeiptr size, const void *data, GLbitfield flags)) \
@@ -148,13 +140,11 @@ typedef struct __GLsync *GLsync;
 	X(glTextureSubImage1D,                   void,   (GLuint texture, GLint level, GLint xoff, GLsizei width, GLenum format, GLenum type, const void *pix)) \
 	X(glTextureSubImage2D,                   void,   (GLuint texture, GLint level, GLint xoff, GLint yoff, GLsizei width, GLsizei height, GLenum format, GLenum type, const void *pix)) \
 	X(glTextureSubImage3D,                   void,   (GLuint texture, GLint level, GLint xoff, GLint yoff, GLint zoff, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void *pix)) \
-	X(glUnmapNamedBuffer,                    GLboolean, (GLuint buffer)) \
 	X(glUseProgram,                          void,   (GLuint program)) \
 	X(glVertexArrayAttribBinding,            void,   (GLuint vao, GLuint attribindex, GLuint bindingindex)) \
 	X(glVertexArrayAttribFormat,             void,   (GLuint vao, GLuint attribindex, GLint size, GLenum type, GLboolean normalized, GLuint relativeoffset)) \
 	X(glVertexArrayElementBuffer,            void,   (GLuint vao, GLuint buffer)) \
 	X(glVertexArrayVertexBuffer,             void,   (GLuint vao, GLuint bindingindex, GLuint buffer, GLintptr offset, GLsizei stride)) \
-	X(glWaitSync,                            void,   (GLsync sync, GLbitfield flags, GLuint64 timeout)) \
 
 
 #define OGLRequiredExtensionProcedureList \
