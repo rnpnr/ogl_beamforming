@@ -222,6 +222,13 @@ os_copy_file(char *name, char *new)
 	return CopyFileA(name, new, 0);
 }
 
+BEAMFORMER_IMPORT void
+os_release_handle(OSHandle h)
+{
+	if ValidHandle(h)
+		CloseHandle(h.value[0]);
+}
+
 BEAMFORMER_IMPORT OS_WAIT_ON_ADDRESS_FN(os_wait_on_address)
 {
 	return WaitOnAddress(value, &current, sizeof(*value), timeout_ms);
