@@ -21,6 +21,10 @@
 
 #define OS_RENDERDOC_SONAME    "librenderdoc.so"
 
+#define OS_VULKAN_SONAME_LIST \
+	X("libvulkan.so") \
+	X("libvulkan.so.1") \
+
 #include <dlfcn.h>
 
 typedef enum {
@@ -227,6 +231,16 @@ load_platform_libraries(BeamformerInput *input)
 		os_linux_add_file_watch(s8(OS_DEBUG_LIB_NAME), (void *)BeamformerInputEventKind_ExecutableReload,
 		                        OSLinux_FileWatchKindPlatform);
 	#endif
+
+	input->vulkan_library_handle = (OSLibrary){OSInvalidHandleValue};
+	#define X(name) \
+		if InvalidHandle(input->vulkan_library_handle) \
+			input->vulkan_library_handle = load_library(name, 0, RTLD_NOW|RTLD_LOCAL);
+	OS_VULKAN_SONAME_LIST
+	#undef X
+
+	if InvalidHandle(input->vulkan_library_handle)
+		fatal(s8("[os] fatal error: failed to find valid vulkan library\n"));
 
 	input->cuda_library_handle = load_library(OS_CUDA_LIB_NAME, OS_CUDA_LIB_TEMP_NAME, RTLD_NOW|RTLD_LOCAL);
 
