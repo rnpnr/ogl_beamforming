@@ -218,6 +218,8 @@ alloc_beamform_frame(BeamformerFrame *out, iv3 out_dim, GLenum gl_kind, s8 name,
 	u32 max_dim = (u32)MAX(out->dim.x, MAX(out->dim.y, out->dim.z));
 	out->mips   = (i32)ctz_u32(round_up_power_of_2(max_dim)) + 1;
 
+	printf("+++++++++++ testing for cmd output 1 \n");
+
 	out->gl_kind = gl_kind;
 
 	Stream label = arena_stream(arena);
@@ -1401,6 +1403,7 @@ beamformer_rf_buffer_allocate(BeamformerRFBuffer *rf, u32 rf_size, b32 nvidia)
 		u32 access = GL_MAP_PERSISTENT_BIT|GL_MAP_WRITE_BIT|GL_MAP_FLUSH_EXPLICIT_BIT|GL_MAP_UNSYNCHRONIZED_BIT;
 		rf->buffer = glMapNamedBufferRange(rf->ssbo, 0, (GLsizei)(countof(rf->compute_syncs) * rf_size), access);
 	}
+	printf("++++++++++++++++++ Testing cmd output, rf size: %u \n", rf_size);
 
 	LABEL_GL_OBJECT(GL_BUFFER, rf->ssbo, s8("Raw_RF_SSBO"));
 	rf->size = rf_size;

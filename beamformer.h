@@ -11,6 +11,8 @@
 #include "generated/beamformer.meta.c"
 #include "generated/beamformer_shaders.c"
 
+#include <stdio.h> // for printf
+
 ///////////////////
 // REQUIRED OS API
 function void os_barrier_wait(Barrier);
