@@ -2116,6 +2116,7 @@ typedef struct {
 /* X(name, ret, params) */
 #define VkInstanceProcedureList \
 	X(vkCreateDevice,                           VkResult, (VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkDevice *pDevice)) \
+	X(vkEnumerateDeviceExtensionProperties,     VkResult, (VkPhysicalDevice physicalDevice, const char *pLayerName, uint32_t *pPropertyCount, VkExtensionProperties *pProperties)) \
 	X(vkEnumeratePhysicalDevices,               VkResult, (VkInstance instance, uint32_t *pPhysicalDeviceCount, VkPhysicalDevice *pPhysicalDevices)) \
 	X(vkGetDeviceProcAddr,                      void *,   (VkDevice device, const char *pName)) \
 	X(vkGetPhysicalDeviceMemoryProperties2,     void,     (VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties2 *pMemoryProperties)) \

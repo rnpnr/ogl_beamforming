@@ -53,7 +53,6 @@ typedef alignas(64) struct {
 static_assert(sizeof(VulkanQueue) == 64 && alignof(VulkanQueue) == 64,
               "VulkanQueue must be placed on its own cacheline");
 
-
 typedef struct {
 	VkInstance        handle;
 	VkDevice          device;
@@ -82,17 +81,34 @@ typedef struct {
 read_only global const char *vk_required_instance_extensions[] = {
 };
 
+#if OS_WINDOWS
+#define VK_OS_REQUIRED_DEVICE_EXTENSIONS_LIST \
+	X("VK_KHR_external_memory_win32") \
+	X("VK_KHR_external_semaphore_win32") \
+
+#else
+#define VK_OS_REQUIRED_DEVICE_EXTENSIONS_LIST \
+	X("VK_KHR_external_memory_fd") \
+	X("VK_KHR_external_semaphore_fd") \
+
+#endif
+
+#define VK_REQUIRED_DEVICE_EXTENSIONS_LIST \
+	X("VK_KHR_external_memory") \
+	X("VK_KHR_external_semaphore") \
+	VK_OS_REQUIRED_DEVICE_EXTENSIONS_LIST
+
+#define X(str) str,
 read_only global const char *vk_required_device_extensions[] = {
-	"VK_KHR_external_memory",
-	"VK_KHR_external_semaphore",
-	#if OS_WINDOWS
-	"VK_KHR_external_memory_win32",
-	"VK_KHR_external_semaphore_win32",
-	#else
-	"VK_KHR_external_memory_fd",
-	"VK_KHR_external_semaphore_fd",
-	#endif
+VK_REQUIRED_DEVICE_EXTENSIONS_LIST
 };
+#undef X
+
+#define X(str) sizeof(str) - 1,
+read_only global u32 vk_required_device_extension_name_lengths[] = {
+VK_REQUIRED_DEVICE_EXTENSIONS_LIST
+};
+#undef X
 
 global VulkanContext vulkan_context[1];
 
@@ -198,6 +214,49 @@ vk_load_physical_device(Arena arena, Stream *err)
 	vkGetPhysicalDeviceProperties2(vk->physical_device, dp);
 
 	stream_append_s8s(err, vulkan_info("selecting device: "), c_str_to_s8(dp->properties.deviceName), s8("\n"));
+
+	{
+		Arena scratch = arena;
+		u32 extension_count = 0;
+		vkEnumerateDeviceExtensionProperties(vk->physical_device, 0, &extension_count, 0);
+		VkExtensionProperties *extensions = push_array(&scratch, VkExtensionProperties, extension_count);
+		vkEnumerateDeviceExtensionProperties(vk->physical_device, 0, &extension_count, extensions);
+
+		s8 *ext_str8s = push_array(&scratch, s8, extension_count);
+		for (u32 index = 0; index < extension_count; index++)
+			ext_str8s[index] = c_str_to_s8(extensions[index].extensionName);
+
+		b8 *supported = push_array(&scratch, b8, countof(vk_required_device_extensions));
+		for (u32 index = 0; index < extension_count; index++) {
+			for EachElement(vk_required_device_extensions, it) {
+				s8 test = {
+					.data = (u8 *)vk_required_device_extensions[it],
+					.len  = vk_required_device_extension_name_lengths[it],
+				};
+				supported[it] |= s8_equal(test, ext_str8s[index]);
+			}
+		}
+
+		u32 supported_count = 0;
+		for EachElement(vk_required_device_extensions, it)
+		 supported_count += supported[it];
+
+		u32 missing_count = countof(vk_required_device_extensions) - supported_count;
+		if (missing_count) {
+			stream_append_s8s(err, vulkan_info("fatal error: missing required device extension"),
+			                  missing_count > 1 ? s8("s") : s8(""), s8(":\n"));
+			for EachElement(vk_required_device_extensions, it) {
+				if (!supported[it]) {
+					s8 name = {
+						.data = (u8 *)vk_required_device_extensions[it],
+						.len  = vk_required_device_extension_name_lengths[it],
+					};
+					stream_append_s8s(err, vulkan_info("    "), name, s8("\n"));
+				}
+			}
+			fatal(stream_to_s8(err));
+		}
+	}
 
 	VkPhysicalDeviceMemoryProperties2 *mp = push_struct(&arena, typeof(*mp));
 	mp->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
@@ -452,8 +511,8 @@ vk_load(OSLibrary vulkan_library_handle, Arena *memory, Stream *err)
 		fatal(stream_to_s8(err));
 	}
 
-	vulkan_context->entity_arena = sub_arena_end(memory, KB(32), KB(4));
-	vulkan_context->arena        = sub_arena_end(memory, KB(32), KB(4));
+	vulkan_context->entity_arena = sub_arena_end(memory, KB(64), KB(4));
+	vulkan_context->arena        = sub_arena_end(memory, KB(96), KB(4));
 
 	vk_load_instance();
 	vk_load_physical_device(vulkan_context->arena, err);
