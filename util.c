@@ -578,6 +578,15 @@ c_str_to_s8(char *cstr)
 	return result;
 }
 
+function b32
+s8_equal(s8 a, s8 b)
+{
+	b32 result = a.len == b.len;
+	for (iz i = 0; result && i < a.len; i++)
+		result = a.data[i] == b.data[i];
+	return result;
+}
+
 /* NOTE(rnp): returns < 0 if byte is not found */
 function iz
 s8_scan_backwards(s8 s, u8 byte)
