@@ -349,12 +349,16 @@ vk_load_queues(Arena *memory, Stream *err)
 	// NOTE(rnp): start by assigning queue families for each queue
 
 	/* NOTE(rnp): try for exclusive transfer queue */
-	for (u32 index = 0; index < queue_family_count; index++) {
-		if ((queues[index].queueFlags &  VK_QUEUE_TRANSFER_BIT) != 0 &&
-		    (queues[index].queueFlags & ~VK_QUEUE_TRANSFER_BIT) == 0)
-		{
-			queue_indices[VulkanQueueKind_Transfer] = (i32)index;
-			break;
+	{
+		u32 mask = VK_QUEUE_GRAPHICS_BIT|VK_QUEUE_COMPUTE_BIT|VK_QUEUE_TRANSFER_BIT;
+		u32 max_timestamp_bits = 0;
+		for (u32 index = 0; index < queue_family_count; index++) {
+			if ((queues[index].queueFlags & mask) == VK_QUEUE_TRANSFER_BIT) {
+				if (queues[index].timestampValidBits > max_timestamp_bits) {
+					max_timestamp_bits = queues[index].timestampValidBits;
+					queue_indices[VulkanQueueKind_Transfer] = (i32)index;
+				}
+			}
 		}
 	}
 
