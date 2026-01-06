@@ -658,7 +658,7 @@ beamformer_set_live_parameters(BeamformerLiveImagingParameters *new)
 	b32 result = 0;
 	if (check_shared_memory()) {
 		mem_copy(&g_beamformer_library_context.bp->live_imaging_parameters, new, sizeof(*new));
-		memory_write_barrier();
+		store_fence();
 		result = 1;
 	}
 	return result;

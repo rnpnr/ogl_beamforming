@@ -19,14 +19,40 @@ mem_copy(void *restrict dest, void *restrict src, uz n)
 {
 	u8 *s = src, *d = dest;
 	#ifdef __AVX512BW__
-	for (; n >= 64; n -= 64, s += 64, d += 64)
-		_mm512_storeu_epi8(d, _mm512_loadu_epi8(s));
-	if (n > 0) {
-		__mmask64 k = _cvtu64_mask64(_bzhi_u64(-1, n));
-		_mm512_mask_storeu_epi8(d, k, _mm512_maskz_loadu_epi8(k, s));
+	{
+		for (; n >= 64; n -= 64, s += 64, d += 64)
+			_mm512_storeu_epi8(d, _mm512_loadu_epi8(s));
+		if (n > 0) {
+			__mmask64 k = _cvtu64_mask64(_bzhi_u64(-1, n));
+			_mm512_mask_storeu_epi8(d, k, _mm512_maskz_loadu_epi8(k, s));
+		}
 	}
 	#else
-	for (; n; n--) *d++ = *s++;
+		for (; n; n--) *d++ = *s++;
+	#endif
+}
+
+/* IMPORTANT: this function may fault if dest, src, and n are not multiples of 64 */
+function void
+memory_copy_non_temporal(void *restrict dest, void *restrict src, uz n)
+{
+	assume(((u64)dest & 63) == 0);
+	assume(((u64)src  & 63) == 0);
+	assume(((u64)n    & 63) == 0);
+	uint8_t *s = src, *d = dest;
+
+	#if defined(__AVX512BW__)
+	{
+		for (; n >= 64; n -= 64, s += 64, d += 64)
+			_mm512_stream_si512((__m512i *)d, _mm512_stream_load_si512((__m512i *)s));
+	}
+	#elif defined(__AVX2__)
+	{
+		for (; n >= 32; n -= 32, s += 32, d += 32)
+			_mm256_stream_si256((__m256i *)d, _mm256_stream_load_si256((__m256i *)s));
+	}
+	#else
+		mem_copy(d, s, n);
 	#endif
 }
 

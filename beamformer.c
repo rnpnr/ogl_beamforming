@@ -1426,7 +1426,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		b32 nvidia = gl_parameters.vendor_id == GLVendor_NVIDIA;
 
 		rf->active_rf_size = (u32)round_up_to(rf_block_rf_size & 0xFFFFFFFFULL, 64);
-		if (rf->size < rf->active_rf_size)
+		if unlikely(rf->size < rf->active_rf_size)
 			beamformer_rf_buffer_allocate(rf, rf->active_rf_size, nvidia);
 
 		u32 slot = rf->insertion_index++ % countof(rf->compute_syncs);
@@ -1448,7 +1448,8 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		u8 *data = beamformer_shared_memory_scratch_arena(sm).beg;
 
 		if (nvidia) glNamedBufferSubData(rf->ssbo, slot * rf->active_rf_size, (i32)size, data);
-		else        mem_copy(rf->buffer + slot * rf->active_rf_size, data, size);
+		else        memory_copy_non_temporal(rf->buffer + slot * rf->active_rf_size, data, size);
+		store_fence();
 
 		os_shared_memory_region_unlock(ctx->shared_memory, sm->locks, (i32)scratch_lock);
 		post_sync_barrier(ctx->shared_memory, upload_lock, sm->locks);

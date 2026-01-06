@@ -23,14 +23,17 @@
   #define pack_struct(s) __pragma(pack(push, 1)) s __pragma(pack(pop))
   #define no_return      __declspec(noreturn)
 
-  #define debugbreak()  __debugbreak()
-  #define unreachable() __assume(0)
+  #define likely(x)      (x)
+  #define unlikely(x)    (x)
+
+  #define assume(x)      __assume(x)
+  #define debugbreak()   __debugbreak()
+  #define unreachable()  __assume(0)
 
   #if ARCH_ARM64
-    #define cpu_yield() __yield()
+    #define cpu_yield()   __yield()
+    #define store_fence() __dmb(0x0A) // 0x0A: ishst
   #endif
-
-  #define memory_write_barrier()         _WriteBarrier()
 
   #define atomic_add_u32(ptr, n)         _InterlockedExchangeAdd((volatile u32 *)(ptr), (n))
   #define atomic_add_u64(ptr, n)         _InterlockedExchangeAdd64((volatile u64 *)(ptr), (n))
@@ -61,16 +64,23 @@
   #define pack_struct(s) s __attribute__((packed))
   #define no_return        __attribute__((noreturn))
 
+  #define likely(x)        (__builtin_expect(!!(x), 1))
+  #define unlikely(x)      (__builtin_expect(!!(x), 0))
+
+  #if COMPILER_CLANG
+    #define assume(x)      __builtin_assume(x)
+  #else
+    #define assume(x)      __attribute__((assume(x)))
+  #endif
+  #define unreachable()    __builtin_unreachable()
   #if ARCH_ARM64
     /* TODO? debuggers just loop here forever and need a manual PC increment (step over) */
-    #define debugbreak() asm volatile ("brk 0xf000")
-    #define cpu_yield()  asm volatile ("yield")
+    #define debugbreak()   asm volatile ("brk 0xf000")
+    #define cpu_yield()    asm volatile ("yield")
+    #define store_fence()  asm volatile ("dmb ishst" ::: "memory")
   #else
-    #define debugbreak() asm volatile ("int3; nop")
+    #define debugbreak()   asm volatile ("int3; nop")
   #endif
-  #define unreachable() __builtin_unreachable()
-
-  #define memory_write_barrier()        asm volatile ("" ::: "memory")
 
   #define atomic_add_u64(ptr, n)        __atomic_fetch_add(ptr,  n, __ATOMIC_SEQ_CST)
   #define atomic_and_u64(ptr, n)        __atomic_and_fetch(ptr,  n, __ATOMIC_SEQ_CST)
@@ -212,6 +222,7 @@ typedef __m128i u32x4;
 #define store_i32x4(o, a)     _mm_storeu_si128((i32x4 *)o, a)
 #define sub_f32x4(a, b)       _mm_sub_ps(a, b)
 
-#define cpu_yield()           _mm_pause()
+#define cpu_yield             _mm_pause
+#define store_fence           _mm_sfence
 
 #endif

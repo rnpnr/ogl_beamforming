@@ -3,7 +3,7 @@
 !assets
 !external
 !generated
-!helpers
+!lib
 !shaders
 !tests
 !*.c
