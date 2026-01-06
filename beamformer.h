@@ -322,6 +322,10 @@ typedef struct {
 	u32             averaged_frame_index;
 	BeamformerFrame averaged_frames[2];
 
+	/* NOTE: circular buffer for high pass filter (20 frames) */
+	BeamformerFrame high_pass_buffer[20];
+	u32             high_pass_buffer_index;
+
 	FileWatchDirectoryList file_watch_list;
 	GLWorkerThreadContext  upload_worker;
 	GLWorkerThreadContext  compute_worker;

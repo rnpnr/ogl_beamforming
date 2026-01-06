@@ -85,20 +85,21 @@ typedef enum {
 } BeamformerShaderDASFlags;
 
 typedef enum {
-	BeamformerShaderKind_CudaDecode  = 0,
-	BeamformerShaderKind_CudaHilbert = 1,
-	BeamformerShaderKind_Decode      = 2,
-	BeamformerShaderKind_Filter      = 3,
-	BeamformerShaderKind_Demodulate  = 4,
-	BeamformerShaderKind_DAS         = 5,
-	BeamformerShaderKind_MinMax      = 6,
-	BeamformerShaderKind_Sum         = 7,
-	BeamformerShaderKind_Render3D    = 8,
+	BeamformerShaderKind_CudaDecode     = 0,
+	BeamformerShaderKind_CudaHilbert    = 1,
+	BeamformerShaderKind_Decode         = 2,
+	BeamformerShaderKind_Filter         = 3,
+	BeamformerShaderKind_Demodulate     = 4,
+	BeamformerShaderKind_DAS            = 5,
+	BeamformerShaderKind_MinMax         = 6,
+	BeamformerShaderKind_Sum            = 7,
+	BeamformerShaderKind_HighPassFilter = 8,
+	BeamformerShaderKind_Render3D       = 9,
 	BeamformerShaderKind_Count,
 
 	BeamformerShaderKind_ComputeFirst = BeamformerShaderKind_CudaDecode,
-	BeamformerShaderKind_ComputeLast  = BeamformerShaderKind_Sum,
-	BeamformerShaderKind_ComputeCount = 8,
+	BeamformerShaderKind_ComputeLast  = BeamformerShaderKind_HighPassFilter,
+	BeamformerShaderKind_ComputeCount = 9,
 	BeamformerShaderKind_RenderFirst  = BeamformerShaderKind_Render3D,
 	BeamformerShaderKind_RenderLast   = BeamformerShaderKind_Render3D,
 	BeamformerShaderKind_RenderCount  = 1,
@@ -365,6 +366,7 @@ read_only global s8 beamformer_shader_names[] = {
 	s8_comp("DAS"),
 	s8_comp("MinMax"),
 	s8_comp("Sum"),
+	s8_comp("HighPassFilter"),
 	s8_comp("Render3D"),
 };
 
@@ -374,6 +376,7 @@ read_only global BeamformerShaderKind beamformer_reloadable_shader_kinds[] = {
 	BeamformerShaderKind_DAS,
 	BeamformerShaderKind_MinMax,
 	BeamformerShaderKind_Sum,
+	BeamformerShaderKind_HighPassFilter,
 	BeamformerShaderKind_Render3D,
 };
 
@@ -383,6 +386,7 @@ read_only global s8 beamformer_reloadable_shader_files[] = {
 	s8_comp("das.glsl"),
 	s8_comp("min_max.glsl"),
 	s8_comp("sum.glsl"),
+	s8_comp("high_pass_filter.glsl"),
 	s8_comp("render_3d.frag.glsl"),
 };
 
@@ -396,6 +400,7 @@ read_only global i32 beamformer_shader_reloadable_index_by_shader[] = {
 	3,
 	4,
 	5,
+	6,
 };
 
 read_only global i32 beamformer_reloadable_compute_shader_info_indices[] = {
@@ -404,10 +409,11 @@ read_only global i32 beamformer_reloadable_compute_shader_info_indices[] = {
 	2,
 	3,
 	4,
+	5,
 };
 
 read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
-	5,
+	6,
 };
 
 read_only global s8 beamformer_shader_global_header_strings[] = {
@@ -467,12 +473,14 @@ read_only global s8 *beamformer_shader_flag_strings[] = {
 	0,
 	0,
 	0,
+	0,
 };
 
 read_only global u8 beamformer_shader_flag_strings_count[] = {
 	2,
 	3,
 	5,
+	0,
 	0,
 	0,
 	0,
@@ -484,6 +492,7 @@ read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){2, 0, 3, 4},
 	0,
 	0,
+	(i32 []){0},
 	0,
 };
 
@@ -493,6 +502,7 @@ read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	4,
 	0,
 	0,
+	1,
 	0,
 };
 
@@ -539,6 +549,7 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 	0,
 	0,
 	0,
+	0,
 };
 
 read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
@@ -548,12 +559,14 @@ read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
 	0x00000000UL,
 	0x00000000UL,
 	0x00000000UL,
+	0x00000000UL,
 };
 
 read_only global i32 beamformer_shader_bake_parameter_counts[] = {
 	9,
 	11,
 	13,
+	0,
 	0,
 	0,
 	0,

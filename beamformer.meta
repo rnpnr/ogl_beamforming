@@ -300,6 +300,10 @@
 
 	@Shader(min_max.glsl) MinMax
 	@Shader(sum.glsl) Sum
+	@Shader(high_pass_filter.glsl) HighPassFilter
+	{
+		@Enumeration(DataKind)
+	}
 }
 
 @ShaderGroup Render
