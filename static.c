@@ -195,10 +195,6 @@ function FILE_WATCH_CALLBACK_FN(reload_shader_indirect)
 		work->reload_shader = rsi->shader;
 		beamform_work_queue_push_commit(ctx->beamform_work_queue);
 		os_wake_waiters(&ctx->compute_worker.sync_variable);
-	} else {
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"static.c:192\",\"message\":\"Work queue push returned NULL\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-		// #endregion
 	}
 	return 1;
 }
@@ -279,22 +275,13 @@ worker_thread_sleep(GLWorkerThreadContext *ctx, BeamformerSharedMemory *sm)
 		if (atomic_cas_u32(&ctx->sync_variable, &expected, 1) ||
 		    atomic_load_u32(&sm->live_imaging_parameters.active))
 		{
-			// #region agent log
-			{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"static.c:282\",\"message\":\"worker_thread_sleep woke up\",\"data\":{\"sync_variable\":%d,\"active\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"I\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,expected,atomic_load_u32(&sm->live_imaging_parameters.active));fclose(f);}}
-			// #endregion
 			break;
 		}
 
 		/* TODO(rnp): clean this crap up; we shouldn't need two values to communicate this */
 		atomic_store_u32(&ctx->asleep, 1);
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"static.c:287\",\"message\":\"worker_thread_sleep waiting\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"I\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-		// #endregion
 		os_wait_on_value(&ctx->sync_variable, 1, (u32)-1);
 		atomic_store_u32(&ctx->asleep, 0);
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"static.c:288\",\"message\":\"worker_thread_sleep wait returned\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"I\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-		// #endregion
 	}
 }
 

@@ -762,15 +762,9 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 	};
 
 	BeamformerShaderKind shader = cp->pipeline.shaders[shader_slot];
-	// #region agent log
-	{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:763\",\"message\":\"load_compute_shader entry\",\"data\":{\"shader_slot\":%u,\"shader_kind\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"A\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,shader_slot,shader);fclose(f);}}
-	// #endregion
 
 	u32 program          = 0;
 	i32 reloadable_index = beamformer_shader_reloadable_index_by_shader[shader];
-	// #region agent log
-	{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:766\",\"message\":\"Shader reloadable check\",\"data\":{\"reloadable_index\":%d},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"A\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,reloadable_index);fclose(f);}}
-	// #endregion
 	if (reloadable_index != -1) {
 		BeamformerShaderKind base_shader = beamformer_reloadable_shader_kinds[reloadable_index];
 		s8 path;
@@ -839,16 +833,10 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 		/* TODO(rnp): instance name */
 		s8 shader_name = beamformer_shader_names[shader];
 		program = load_shader(arena, &shader_text, (u32 []){GL_COMPUTE_SHADER}, 1, shader_name);
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:805\",\"message\":\"Shader loaded\",\"data\":{\"program\":%u,\"shader_kind\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"A\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,program,shader);fclose(f);}}
-		// #endregion
 	}
 
 	glDeleteProgram(cp->programs[shader_slot]);
 	cp->programs[shader_slot] = program;
-	// #region agent log
-	{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:809\",\"message\":\"load_compute_shader exit\",\"data\":{\"final_program\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"A\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,program);fclose(f);}}
-	// #endregion
 }
 
 function void
@@ -1110,41 +1098,23 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 		aframe->acquisition_kind = frame->acquisition_kind;
 	}break;
 	case BeamformerShaderKind_HighPassFilter:{
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1112\",\"message\":\"HighPassFilter shader entry\",\"data\":{\"shader_slot\":%u,\"frame_dim\":[%d,%d,%d],\"gl_kind\":%u,\"ctx_buffer_index\":%u,\"ctx_ptr\":\"%p\"},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"A\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,shader_slot,frame->dim.x,frame->dim.y,frame->dim.z,frame->gl_kind,ctx->high_pass_buffer_index,(void*)ctx);fclose(f);}}
-		// #endregion
 		/* NOTE: Store current DAS output frame in circular buffer */
 		u32 buffer_index = ctx->high_pass_buffer_index % 20;
 		BeamformerFrame *buffer_frame = ctx->high_pass_buffer + buffer_index;
 
 		/* NOTE: Ensure buffer frame is compatible with current frame */
 		if (!beamformer_frame_compatible(buffer_frame, frame->dim, frame->gl_kind)) {
-			// #region agent log
-			{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1105\",\"message\":\"Allocating buffer frame\",\"data\":{\"buffer_index\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"E\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,buffer_index);fclose(f);}}
-			// #endregion
 			alloc_beamform_frame(buffer_frame, frame->dim, frame->gl_kind, s8("HighPassBuffer"), arena);
-			// #region agent log
-			{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1107\",\"message\":\"Buffer frame allocated\",\"data\":{\"texture\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"E\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,buffer_frame->texture);fclose(f);}}
-			// #endregion
 			/* NOTE: Initialize new buffer frame to zero */
 			glClearTexImage(buffer_frame->texture, 0, frame->gl_kind == GL_RG32F ? GL_RG : GL_RED,
 			                frame->gl_kind == GL_RG32F ? GL_FLOAT : GL_FLOAT, 0);
 		}
 
 		/* NOTE: Copy DAS output to circular buffer */
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1112\",\"message\":\"Before glCopyImageSubData\",\"data\":{\"frame_texture\":%u,\"buffer_texture\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"C\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,frame->texture,buffer_frame->texture);fclose(f);}}
-		// #endregion
 		glCopyImageSubData(frame->texture, GL_TEXTURE_3D, 0, 0, 0, 0,
 		                   buffer_frame->texture, GL_TEXTURE_3D, 0, 0, 0, 0,
 		                   frame->dim.x, frame->dim.y, frame->dim.z);
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1116\",\"message\":\"After glCopyImageSubData, before barrier\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"C\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-		// #endregion
 		glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1117\",\"message\":\"After memory barrier\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"C\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-		// #endregion
 
 		/* NOTE: Bind output texture (reuse current frame texture) */
 		GLenum gl_kind = cp->iq_pipeline ? GL_RG32F : GL_R32F;
@@ -1154,17 +1124,11 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 		/* NOTE: We need to bind them in order, starting from the oldest */
 		/* NOTE: The most recent frame is at buffer_index, oldest is at (buffer_index + 1) % 20 */
 		u32 start_index = (ctx->high_pass_buffer_index + 1) % 20;
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1125\",\"message\":\"Before binding textures\",\"data\":{\"start_index\":%u,\"buffer_index\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"B\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,start_index,ctx->high_pass_buffer_index);fclose(f);}}
-		// #endregion
 		for (u32 i = 0; i < 20; i++) {
 			u32 frame_idx = (start_index + i) % 20;
 			BeamformerFrame *input_frame = ctx->high_pass_buffer + frame_idx;
 			/* NOTE: Ensure frame is initialized before binding */
 			if (input_frame->texture == 0) {
-				// #region agent log
-				{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1130\",\"message\":\"Uninitialized texture detected\",\"data\":{\"i\":%u,\"frame_idx\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"B\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,i,frame_idx);fclose(f);}}
-				// #endregion
 				if (!beamformer_frame_compatible(input_frame, frame->dim, frame->gl_kind)) {
 					alloc_beamform_frame(input_frame, frame->dim, frame->gl_kind, s8("HighPassBuffer"), arena);
 					glClearTexImage(input_frame->texture, 0, gl_kind == GL_RG32F ? GL_RG : GL_RED,
@@ -1173,34 +1137,16 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 			}
 			glBindImageTexture(1 + i, input_frame->texture, 0, GL_TRUE, 0, GL_READ_ONLY, gl_kind);
 		}
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1138\",\"message\":\"After binding all textures\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"B\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-		// #endregion
 
 		/* NOTE: Dispatch compute shader */
 		u32 dispatch_x = (u32)ceil_f32((f32)frame->dim.x / DAS_LOCAL_SIZE_X);
 		u32 dispatch_y = (u32)ceil_f32((f32)frame->dim.y / DAS_LOCAL_SIZE_Y);
 		u32 dispatch_z = (u32)ceil_f32((f32)frame->dim.z / DAS_LOCAL_SIZE_Z);
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1141\",\"message\":\"Before glDispatchCompute\",\"data\":{\"dispatch\":[%u,%u,%u],\"program\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"D\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,dispatch_x,dispatch_y,dispatch_z,program);fclose(f);}}
-		// #endregion
 		glDispatchCompute(dispatch_x, dispatch_y, dispatch_z);
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1144\",\"message\":\"After glDispatchCompute, before barrier\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"D\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-		// #endregion
 		glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1145\",\"message\":\"After final barrier, HighPassFilter exit\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"D\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-		// #endregion
 
 		/* NOTE: Increment and wrap buffer index */
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1197\",\"message\":\"Before incrementing buffer_index\",\"data\":{\"current_index\":%u,\"ctx_ptr\":\"%p\"},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"G\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,ctx->high_pass_buffer_index,(void*)ctx);fclose(f);}}
-		// #endregion
 		ctx->high_pass_buffer_index = (ctx->high_pass_buffer_index + 1) % 20;
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1201\",\"message\":\"After incrementing buffer_index\",\"data\":{\"new_index\":%u,\"ctx_ptr\":\"%p\"},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"G\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,ctx->high_pass_buffer_index,(void*)ctx);fclose(f);}}
-		// #endregion
 	}break;
 	InvalidDefaultCase;
 	}
@@ -1337,9 +1283,6 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			                        work->compute_indirect_context.parameter_block, 1);
 		} /* FALLTHROUGH */
 		case BeamformerWorkKind_Compute:{
-			// #region agent log
-			{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1333\",\"message\":\"Compute work entry\",\"data\":{\"work_kind\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"F\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,work->kind);fclose(f);}}
-			// #endregion
 			DEBUG_DECL(glClearNamedBufferData(cs->ping_pong_ssbos[0], GL_RG32F, GL_RG, GL_FLOAT, 0);)
 			DEBUG_DECL(glClearNamedBufferData(cs->ping_pong_ssbos[1], GL_RG32F, GL_RG, GL_FLOAT, 0);)
 			DEBUG_DECL(glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);)
@@ -1411,46 +1354,22 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			}
 
 			b32 did_sum_shader = 0;
-			// #region agent log
-			{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1405\",\"message\":\"Starting shader loop\",\"data\":{\"shader_count\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"F\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,pipeline->shader_count);fclose(f);}}
-			// #endregion
 			for (u32 i = 1; i < pipeline->shader_count; i++) {
-				// #region agent log
-				{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1406\",\"message\":\"Processing shader in loop\",\"data\":{\"i\":%u,\"shader_kind\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"F\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,i,pipeline->shaders[i]);fclose(f);}}
-				// #endregion
 				did_sum_shader |= pipeline->shaders[i] == BeamformerShaderKind_Sum;
 				glBeginQuery(GL_TIME_ELAPSED, cc->shader_timer_ids[i]);
 				do_compute_shader(ctx, cp, frame, pipeline->shaders[i], i, pipeline->parameters + i, *arena);
 				glEndQuery(GL_TIME_ELAPSED);
-				// #region agent log
-				{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1410\",\"message\":\"Shader completed in loop\",\"data\":{\"i\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"F\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,i);fclose(f);}}
-				// #endregion
 			}
-			// #region agent log
-			{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1411\",\"message\":\"Shader loop completed, before query retrieval\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"F\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-			// #endregion
 
 			/* NOTE(rnp): the first of these blocks until work completes */
 			for (u32 i = 0; i < pipeline->shader_count; i++) {
-				// #region agent log
-				{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1413\",\"message\":\"Before glGetQueryObjectui64v\",\"data\":{\"i\":%u,\"shader_kind\":%u},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"F\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,i,pipeline->shaders[i]);fclose(f);}}
-				// #endregion
 				ComputeTimingInfo info = {0};
 				info.kind   = ComputeTimingInfoKind_Shader;
 				info.shader = pipeline->shaders[i];
 				glGetQueryObjectui64v(cc->shader_timer_ids[i], GL_QUERY_RESULT, &info.timer_count);
-				// #region agent log
-				{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1418\",\"message\":\"After glGetQueryObjectui64v\",\"data\":{\"i\":%u,\"timer_count\":%llu},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"F\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,i,(unsigned long long)info.timer_count);fclose(f);}}
-				// #endregion
 				push_compute_timing_info(ctx->compute_timing_table, info);
 			}
-			// #region agent log
-			{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1420\",\"message\":\"All queries retrieved, after timing loop\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"F\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-			// #endregion
 			cs->processing_progress = 1;
-			// #region agent log
-			{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1422\",\"message\":\"Setting ready_to_present\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"F\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-			// #endregion
 
 			frame->ready_to_present = 1;
 			if (did_sum_shader) {
@@ -1467,27 +1386,15 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			                         (ComputeTimingInfo){.kind = ComputeTimingInfoKind_ComputeFrameEnd});
 
 			end_renderdoc_capture(gl_context);
-			// #region agent log
-			{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1437\",\"message\":\"Compute work completed, before commit\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"F\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-			// #endregion
 		}break;
 		InvalidDefaultCase;
 		}
 
 		if (can_commit) {
-			// #region agent log
-			{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1441\",\"message\":\"Committing work, before next pop\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"F\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-			// #endregion
 			beamform_work_queue_pop_commit(q);
 			work = beamform_work_queue_pop(q);
-			// #region agent log
-			{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1443\",\"message\":\"After work pop\",\"data\":{\"work\":%p},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"F\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,(void*)work);fclose(f);}}
-			// #endregion
 		}
 	}
-	// #region agent log
-	{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1445\",\"message\":\"complete_queue exit\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"F\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-	// #endregion
 }
 
 function void
@@ -1556,17 +1463,8 @@ DEBUG_EXPORT BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute)
 {
 	BeamformerCtx *ctx         = (BeamformerCtx *)user_context;
 	BeamformerSharedMemory *sm = ctx->shared_memory.region;
-	// #region agent log
-	{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1559\",\"message\":\"beamformer_complete_compute entry\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-	// #endregion
 	complete_queue(ctx, &sm->external_work_queue, arena, gl_context);
-	// #region agent log
-	{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1560\",\"message\":\"After external queue, before internal queue\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-	// #endregion
 	complete_queue(ctx, ctx->beamform_work_queue, arena, gl_context);
-	// #region agent log
-	{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1561\",\"message\":\"beamformer_complete_compute exit\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-	// #endregion
 }
 
 function void
@@ -1599,15 +1497,9 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 	BeamformerSharedMemoryLockKind upload_lock  = BeamformerSharedMemoryLockKind_UploadRF;
 
 	u64 rf_block_rf_size;
-	// #region agent log
-	{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1593\",\"message\":\"Checking upload lock and rf_size\",\"data\":{\"upload_lock\":%u,\"rf_block_rf_size\":%llu},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,atomic_load_u32(sm->locks + upload_lock),(unsigned long long)atomic_load_u64(&sm->rf_block_rf_size));fclose(f);}}
-	// #endregion
 	if (atomic_load_u32(sm->locks + upload_lock) &&
 	    (rf_block_rf_size = atomic_swap_u64(&sm->rf_block_rf_size, 0)))
 	{
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1595\",\"message\":\"Upload condition met, processing upload\",\"data\":{\"rf_block_rf_size\":%llu},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,(unsigned long long)rf_block_rf_size);fclose(f);}}
-		// #endregion
 		os_shared_memory_region_lock(ctx->shared_memory, sm->locks, (i32)scratch_lock, (u32)-1);
 
 		BeamformerRFBuffer       *rf = ctx->rf_buffer;
@@ -1626,13 +1518,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		/* NOTE(rnp): if the rest of the code is functioning then the first
 		 * time the compute thread processes an upload it must have gone
 		 * through this path. therefore it is safe to spin until it gets processed */
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1620\",\"message\":\"Before spin_wait for upload_sync\",\"data\":{\"slot\":%u,\"upload_sync\":%llu},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,slot,(unsigned long long)atomic_load_u64(rf->upload_syncs + slot));fclose(f);}}
-		// #endregion
 		spin_wait(atomic_load_u64(rf->upload_syncs + slot));
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1621\",\"message\":\"After spin_wait for upload_sync\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-		// #endregion
 
 		if (atomic_load_u64(rf->compute_syncs + slot)) {
 			GLenum sync_result = glClientWaitSync(rf->compute_syncs[slot], 0, 1000000000);
@@ -1657,13 +1543,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		atomic_store_u64(rf->upload_syncs  + slot, glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
 		atomic_store_u64(rf->compute_syncs + slot, 0);
 
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1633\",\"message\":\"Before os_wake_waiters\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-		// #endregion
 		os_wake_waiters(ctx->compute_worker_sync);
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1634\",\"message\":\"After os_wake_waiters, beamformer_rf_upload exit\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"H\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-		// #endregion
 
 		ComputeTimingInfo info = {.kind = ComputeTimingInfoKind_RF_Data};
 		glGetQueryObjectui64v(rf->data_timestamp_query, GL_QUERY_RESULT, &info.timer_count);
@@ -1692,19 +1572,10 @@ DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 	}
 
 	BeamformerSharedMemory *sm = ctx->shared_memory.region;
-	// #region agent log
-	{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1696\",\"message\":\"beamformer_frame_step checking locks\",\"data\":{\"upload_lock\":%u,\"dispatch_lock\":%u,\"rf_block_rf_size\":%llu},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"I\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000,atomic_load_u32(sm->locks + BeamformerSharedMemoryLockKind_UploadRF),atomic_load_u32(sm->locks + BeamformerSharedMemoryLockKind_DispatchCompute),(unsigned long long)atomic_load_u64(&sm->rf_block_rf_size));fclose(f);}}
-	// #endregion
 	if (atomic_load_u32(sm->locks + BeamformerSharedMemoryLockKind_UploadRF)) {
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1697\",\"message\":\"Waking upload worker\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"I\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-		// #endregion
 		os_wake_waiters(&ctx->upload_worker.sync_variable);
 	}
 	if (atomic_load_u32(sm->locks + BeamformerSharedMemoryLockKind_DispatchCompute)) {
-		// #region agent log
-		{FILE*f=fopen(".cursor\\debug.log","a");if(f){fprintf(f,"{\"id\":\"log_%llu\",\"timestamp\":%llu,\"location\":\"beamformer.c:1699\",\"message\":\"Waking compute worker\",\"data\":{},\"sessionId\":\"debug-session\",\"runId\":\"run1\",\"hypothesisId\":\"I\"}\n",(unsigned long long)time(0)*1000,(unsigned long long)time(0)*1000);fclose(f);}}
-		// #endregion
 		os_wake_waiters(&ctx->compute_worker.sync_variable);
 	}
 
