@@ -51,6 +51,21 @@ memory_copy_non_temporal(void *restrict dest, void *restrict src, uz n)
 		for (; n >= 32; n -= 32, s += 32, d += 32)
 			_mm256_stream_si256((__m256i *)d, _mm256_stream_load_si256((__m256i *)s));
 	}
+	#elif ARCH_ARM64 && !COMPILER_MSVC
+	{
+		asm volatile (
+			"cbz  %2, 2f\n"
+			"1: ldnp q0, q1, [%1]\n"
+			"subs %2, %2, #32\n"
+			"add  %1, %1, #32\n"
+			"stnp q0, q1, [%0]\n"
+			"add  %0, %0, #32\n"
+			"b.ne 1b\n"
+			"2:"
+			:  "+r"(d), "+r"(s), "+r"(n)
+			:: "memory", "v0", "v1"
+		);
+	}
 	#else
 		mem_copy(d, s, n);
 	#endif
