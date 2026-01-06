@@ -202,15 +202,6 @@ usage(char *argv0)
 	    argv0);
 }
 
-function b32
-s8_equal(s8 a, s8 b)
-{
-	b32 result = a.len == b.len;
-	for (iz i = 0; result && i < a.len; i++)
-		result &= a.data[i] == b.data[i];
-	return result;
-}
-
 function Options
 parse_argv(i32 argc, char *argv[])
 {
