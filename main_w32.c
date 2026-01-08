@@ -122,7 +122,9 @@ main(void)
 	os_w32_context.io_completion_handle = CreateIoCompletionPort(INVALID_FILE, 0, 0, 0);
 
 	BeamformerInput *input     = push_struct(&program_memory, BeamformerInput);
-	input->memory              = program_memory;
+	input->memory              = program_memory.beg;
+	input->memory_size         = program_memory.end - program_memory.beg;
+	input->timer_frequency     = os_w32_context.timer_frequency;
 	input->executable_reloaded = 1;
 	beamformer_init(input);
 
@@ -136,16 +138,18 @@ main(void)
 
 		Vector2 new_mouse = GetMousePosition();
 		u64 now = os_get_timer_counter();
-		input->last_mouse = input->mouse;
-		input->mouse      = (v2){{new_mouse.x, new_mouse.y}};
-		input->dt         = (f64)(now - last_time) / (f64)os_w32_context.timer_frequency;
-		last_time         = now;
+		input->last_mouse_x = input->mouse_x;
+		input->last_mouse_y = input->mouse_y;
+		input->mouse_x      = new_mouse.x;
+		input->mouse_y      = new_mouse.y;
+		input->timer_ticks  = now - last_time;
+		last_time           = now;
 
 		beamformer_frame_step(input);
 
 		input->executable_reloaded = 0;
 	}
 
-	beamformer_invalidate_shared_memory(program_memory);
-	beamformer_debug_ui_deinit(program_memory);
+	beamformer_invalidate_shared_memory(program_memory.beg);
+	beamformer_debug_ui_deinit(program_memory.beg);
 }

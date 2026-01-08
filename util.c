@@ -85,12 +85,27 @@ memory_scan_backwards(void *memory, u8 byte, iz n)
 	return result;
 }
 
+function Arena
+arena_from_memory(void *memory, u64 size)
+{
+	Arena result;
+	result.beg = memory;
+	result.end = result.beg + size;
+	return result;
+}
+
+function void *
+align_pointer_up(void *p, uz alignment)
+{
+	uz padding = -(uintptr_t)p & (alignment - 1);
+	void *result = (u8 *)p + padding;
+	return result;
+}
+
 function void *
 arena_aligned_start(Arena a, uz alignment)
 {
-	uz padding = -(uintptr_t)a.beg & (alignment - 1);
-	u8 *result = a.beg + padding;
-	return result;
+	return align_pointer_up(a.beg, alignment);
 }
 
 #define arena_capacity(a, t) arena_capacity_(a, sizeof(t), alignof(t))

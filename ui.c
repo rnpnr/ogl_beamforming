@@ -3542,7 +3542,7 @@ ui_button_interaction(BeamformerUI *ui, Variable *button)
 }
 
 function void
-ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll)
+ui_begin_interact(BeamformerUI *ui, v2 mouse, b32 scroll)
 {
 	Interaction hot = ui->hot_interaction;
 	if (hot.kind != InteractionKind_None) {
@@ -3560,7 +3560,7 @@ ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll)
 					hot.kind = InteractionKind_Drag;
 				} else {
 					hot.kind = InteractionKind_Text;
-					begin_text_input(&ui->text_input_state, hot.rect, hot.var, input->mouse);
+					begin_text_input(&ui->text_input_state, hot.rect, hot.var, mouse);
 				}
 				ui_widget_bring_to_front(&ui->floating_widget_sentinal, hot.var);
 			}break;
@@ -3597,7 +3597,7 @@ ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll)
 						case RulerState_Start:{
 							hot.kind = InteractionKind_Ruler;
 							v2 r_max = v2_add(hot.rect.pos, hot.rect.size);
-							v2 p = screen_point_to_world_2d(input->mouse, hot.rect.pos, r_max,
+							v2 p = screen_point_to_world_2d(mouse, hot.rect.pos, r_max,
 							                                XZ(bv->min_coordinate),
 							                                XZ(bv->max_coordinate));
 							bv->ruler.start = p;
@@ -3625,7 +3625,7 @@ ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll)
 					Variable *w = add_floating_view(ui, &ui->arena, VT_UI_TEXT_BOX,
 					                                hot.rect.pos, hot.var, 0);
 					w->view.rect = hot.rect;
-					begin_text_input(&ui->text_input_state, hot.rect, w, input->mouse);
+					begin_text_input(&ui->text_input_state, hot.rect, w, mouse);
 				} else {
 					hot.kind = InteractionKind_Drag;
 				}
@@ -3646,7 +3646,7 @@ ui_begin_interact(BeamformerUI *ui, BeamformerInput *input, b32 scroll)
 			HideCursor();
 			DisableCursor();
 			/* wtf raylib */
-			SetMousePosition((i32)input->mouse.x, (i32)input->mouse.y);
+			SetMousePosition((i32)mouse.x, (i32)mouse.y);
 		}
 	} else {
 		ui->interaction.kind = InteractionKind_Nop;
@@ -3813,6 +3813,8 @@ ui_sticky_interaction_check_end(BeamformerUI *ui, v2 mouse)
 function void
 ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 {
+	v2 input_mouse = {{input->mouse_x, input->mouse_y}};
+	v2 last_mouse  = {{input->last_mouse_x, input->last_mouse_y}};
 	Interaction *it = &ui->interaction;
 	if (it->kind == InteractionKind_None || interaction_is_sticky(*it)) {
 		ui->hot_interaction = ui->next_interaction;
@@ -3822,8 +3824,8 @@ ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 		b32 wheel_moved         = GetMouseWheelMoveV().y != 0;
 		if (mouse_right_pressed || mouse_left_pressed || wheel_moved) {
 			if (it->kind != InteractionKind_None)
-				ui_sticky_interaction_check_end(ui, input->mouse);
-			ui_begin_interact(ui, input, wheel_moved);
+				ui_sticky_interaction_check_end(ui, input_mouse);
+			ui_begin_interact(ui, input_mouse, wheel_moved);
 		}
 	}
 
@@ -3832,34 +3834,34 @@ ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 	case InteractionKind_None:{}break;
 	case InteractionKind_Text:{
 		if (update_text_input(&ui->text_input_state, it->var))
-			ui_end_interact(ui, input->mouse);
+			ui_end_interact(ui, input_mouse);
 	}break;
 	case InteractionKind_Ruler:{
 		assert(it->var->type == VT_BEAMFORMER_FRAME_VIEW);
 		BeamformerFrameView *bv = it->var->generic;
 		v2 r_max = v2_add(it->rect.pos, it->rect.size);
-		v2 mouse = clamp_v2_rect(input->mouse, it->rect);
+		v2 mouse = clamp_v2_rect(input_mouse, it->rect);
 		bv->ruler.end = screen_point_to_world_2d(mouse, it->rect.pos, r_max,
 		                                         XZ(bv->min_coordinate),
 		                                         XZ(bv->max_coordinate));
 	}break;
 	case InteractionKind_Drag:{
 		if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
-			ui_end_interact(ui, input->mouse);
+			ui_end_interact(ui, input_mouse);
 		} else {
 			v2 ws     = window_rect.size;
-			v2 dMouse = v2_sub(input->mouse, input->last_mouse);
+			v2 dMouse = v2_sub(input_mouse, last_mouse);
 
 			switch (it->var->type) {
 			case VT_BEAMFORMER_VARIABLE:{
 				BeamformerVariable *bv = &it->var->beamformer_variable;
 				/* TODO(rnp): vertical sliders? */
-				f32 mouse_frac = CLAMP01((input->mouse.x - it->rect.pos.x) / it->rect.size.w);
+				f32 mouse_frac = CLAMP01((input_mouse.x - it->rect.pos.x) / it->rect.size.w);
 				*bv->store     = bv->limits.x + mouse_frac * (bv->limits.y - bv->limits.x);
 			}break;
 			case VT_X_PLANE_SHIFT:{
 				assert(it->var->parent && it->var->parent->type == VT_BEAMFORMER_FRAME_VIEW);
-				v2 mouse = clamp_v2_rect(input->mouse, it->rect);
+				v2 mouse = clamp_v2_rect(input_mouse, it->rect);
 				XPlaneShift *xp = &it->var->x_plane_shift;
 				ray mouse_ray = ray_for_x_plane_view(ui, it->var->parent->generic,
 				                                     normalized_p_in_rect(it->rect, mouse, 0));
@@ -3906,7 +3908,7 @@ ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 				ui_live_control_update(ui, it->var->parent);
 		}
 	} break;
-	default:{ ui_end_interact(ui, input->mouse); }break;
+	default:{ ui_end_interact(ui, input_mouse); }break;
 	}
 
 	ui->next_interaction = (Interaction){.kind = InteractionKind_None};
@@ -4037,10 +4039,11 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 	update_frame_views(ui, window_rect);
 
 	BeginDrawing();
+		v2 mouse = {{input->mouse_x, input->mouse_y}};
 		glClearNamedFramebufferfv(0, GL_COLOR, 0, BG_COLOUR.E);
 		glClearNamedFramebufferfv(0, GL_DEPTH, 0, (f32 []){1});
 
-		draw_ui_regions(ui, window_rect, input->mouse);
-		draw_floating_widgets(ui, window_rect, input->mouse);
+		draw_ui_regions(ui, window_rect, mouse);
+		draw_floating_widgets(ui, window_rect, mouse);
 	EndDrawing();
 }

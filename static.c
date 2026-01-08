@@ -333,7 +333,7 @@ function OS_THREAD_ENTRY_POINT_FN(beamformer_upload_entry_point)
 function void
 beamformer_init(BeamformerInput *input)
 {
-	Arena  memory        = input->memory;
+	Arena  memory        = arena_from_memory(input->memory, input->memory_size);
 	Arena  compute_arena = sub_arena_end(&memory, MB(2), KB(4));
 	Arena  upload_arena  = sub_arena_end(&memory, KB(4), KB(4));
 	Arena  ui_arena      = sub_arena_end(&memory, MB(2), KB(4));
@@ -582,7 +582,7 @@ beamformer_init(BeamformerInput *input)
 }
 
 function void
-beamformer_invalidate_shared_memory(Arena memory)
+beamformer_invalidate_shared_memory(void *memory)
 {
 	/* NOTE(rnp): work around pebkac when the beamformer is closed while we are doing live
 	 * imaging. if the verasonics is blocked in an external function (calling the library

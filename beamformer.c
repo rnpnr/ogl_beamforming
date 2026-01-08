@@ -1474,7 +1474,8 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 {
 	BeamformerCtx *ctx = BeamformerContextMemory(input->memory);
-	dt_for_frame = input->dt;
+
+	dt_for_frame = (f64)(input->timer_ticks) / input->timer_frequency;
 
 	if (IsWindowResized()) {
 		ctx->window_size.h = GetScreenHeight();

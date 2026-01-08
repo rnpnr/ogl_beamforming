@@ -316,7 +316,7 @@ typedef struct {
 	DEBUG_DECL(renderdoc_start_frame_capture_fn *start_frame_capture;)
 	DEBUG_DECL(renderdoc_end_frame_capture_fn   *end_frame_capture;)
 } BeamformerCtx;
-#define BeamformerContextMemory(a) (BeamformerCtx *)arena_aligned_start(a, alignof(BeamformerCtx))
+#define BeamformerContextMemory(m) (BeamformerCtx *)align_pointer_up((m), alignof(BeamformerCtx));
 
 typedef struct ShaderReloadContext ShaderReloadContext;
 struct ShaderReloadContext {
@@ -336,8 +336,5 @@ typedef BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload_fn);
 #define BEAMFORMER_RELOAD_SHADER_FN(name) b32 name(s8 path, ShaderReloadContext *src, \
                                                    Arena arena, s8 shader_name)
 typedef BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader_fn);
-
-#define BEAMFORMER_DEBUG_UI_DEINIT_FN(name) void name(Arena memory)
-typedef BEAMFORMER_DEBUG_UI_DEINIT_FN(beamformer_debug_ui_deinit_fn);
 
 #endif /* BEAMFORMER_INTERNAL_H */
