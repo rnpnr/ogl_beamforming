@@ -4,6 +4,8 @@
 EXPORT i32 NvOptimusEnablement = 1;
 EXPORT i32 AmdPowerXpressRequestHighPerformance = 1;
 
+#include "beamformer_internal.h"
+
 #ifndef _DEBUG
 
 #include "beamformer.c"

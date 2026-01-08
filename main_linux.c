@@ -5,6 +5,7 @@
 #error This file is only meant to be compiled for Linux
 #endif
 
+#include "util.h"
 #include "beamformer.h"
 
 #include "os_linux.c"

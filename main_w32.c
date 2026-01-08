@@ -17,6 +17,7 @@
 #error This file is only meant to be compiled for Win32
 #endif
 
+#include "util.h"
 #include "beamformer.h"
 
 #include "os_win32.c"

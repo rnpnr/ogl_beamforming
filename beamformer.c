@@ -22,7 +22,7 @@
  * [ ]: bug: reinit cuda on hot-reload
  */
 
-#include "beamformer.h"
+#include "beamformer_internal.h"
 
 global f32 dt_for_frame;
 
