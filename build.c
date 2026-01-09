@@ -776,7 +776,7 @@ build_beamformer_as_library(Arena arena, CommandList cc)
 	iz libs_count = is_w32 ? countof(libs) : 0;
 	cmd_append(&arena, &cc, "-D_BEAMFORMER_DLL");
 	b32 result = build_shared_library(arena, cc, "beamformer", library,
-	                                  libs, libs_count, arg_list(char *, "beamformer.c"));
+	                                  libs, libs_count, arg_list(char *, "beamformer_core.c"));
 	return result;
 }
 

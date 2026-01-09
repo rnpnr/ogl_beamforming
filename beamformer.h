@@ -19,7 +19,7 @@
  *
  * BEAMFORMER_DEBUG
  *   Compile the beamformer with handling for hot reloading at runtime.
- *   This requires compiling `beamformer.c` as a dynamic library which the
+ *   This requires compiling `beamformer_core.c` as a dynamic library which the
  *   platform is required to load at runtime.
  *   IMPORTANT: When the platform wants to reload the library at runtime it
  *   MUST NOT unload the old library immediately; the beamformer may still

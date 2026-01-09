@@ -48,7 +48,7 @@ os_gl_proc_address(char *name)
 	return wglGetProcAddress(name);
 }
 
-#include "static.c"
+#include "beamformer.c"
 
 W32(b32)    FreeLibrary(u64);
 W32(void *) GetModuleHandleA(c8 *);

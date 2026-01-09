@@ -38,7 +38,7 @@ os_gl_proc_address(char *name)
 	return glfwGetProcAddress(name);
 }
 
-#include "static.c"
+#include "beamformer.c"
 
 #include <dlfcn.h>
 
