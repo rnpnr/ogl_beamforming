@@ -6,13 +6,11 @@
 #endif
 
 #ifndef BEAMFORMER_DEBUG
-  #define BEAMFORMER_IMPORT function
-  #define BEAMFORMER_EXPORT function
+  #define BEAMFORMER_IMPORT static
+  #define BEAMFORMER_EXPORT static
 #endif
 
-#include "util.h"
-#include "beamformer.h"
-
+#include "beamformer.c"
 #include "os_linux.c"
 
 #define OS_DEBUG_LIB_NAME      "./beamformer.so"
@@ -23,52 +21,178 @@
 
 #define OS_RENDERDOC_SONAME    "librenderdoc.so"
 
-/* TODO(rnp): what do if not X11? */
-iptr glfwGetGLXContext(iptr);
-function iptr
-os_get_native_gl_context(iptr window)
-{
-	return glfwGetGLXContext(window);
-}
-
-iptr glfwGetProcAddress(char *);
-function iptr
-os_gl_proc_address(char *name)
-{
-	return glfwGetProcAddress(name);
-}
-
-#include "beamformer.c"
-
 #include <dlfcn.h>
 
-BEAMFORMER_IMPORT BEAMFORMER_OS_ADD_FILE_WATCH_FN(os_add_file_watch)
+typedef enum {
+	OSLinux_FileWatchKindPlatform,
+	OSLinux_FileWatchKindUser,
+} OSLinux_FileWatchKind;
+
+typedef struct {
+	OSLinux_FileWatchKind kind;
+	u64                   hash;
+	u64                   update_time;
+	void *                user_context;
+} OSLinux_FileWatch;
+
+typedef struct {
+	u64  hash;
+	iptr handle;
+	s8   name;
+
+	OSLinux_FileWatch * data;
+	iz                  count;
+	iz                  capacity;
+} OSLinux_FileWatchDirectory;
+DA_STRUCT(OSLinux_FileWatchDirectory, OSLinux_FileWatchDirectory);
+
+typedef struct {
+	Arena         arena;
+	i32           arena_lock;
+
+	i32           inotify_handle;
+
+	OSLinux_FileWatchDirectoryList file_watch_list;
+
+	OSSystemInfo system_info;
+} OSLinux_Context;
+global OSLinux_Context os_linux_context;
+
+BEAMFORMER_IMPORT OSSystemInfo *
+os_get_system_info(void)
+{
+	return &os_linux_context.system_info;
+}
+
+BEAMFORMER_IMPORT OSThread
+os_create_thread(const char *name, void *user_context, os_thread_entry_point_fn *fn)
+{
+	pthread_t thread;
+	pthread_create(&thread, 0, (void *)fn, (void *)user_context);
+
+	if (name) {
+		char buffer[16];
+		s8 name_str = c_str_to_s8((char *)name);
+		u64  length = (u64)CLAMP(name_str.len, 0, countof(buffer) - 1);
+		mem_copy(buffer, (char *)name, length);
+		buffer[length] = 0;
+		pthread_setname_np(thread, buffer);
+	}
+
+	OSThread result = {(u64)thread};
+	return result;
+}
+
+BEAMFORMER_IMPORT OSBarrier
+os_barrier_alloc(u32 count)
+{
+	OSBarrier result = {0};
+	DeferLoop(take_lock(&os_linux_context.arena_lock, -1), release_lock(&os_linux_context.arena_lock))
+	{
+		pthread_barrier_t *barrier = push_struct(&os_linux_context.arena, pthread_barrier_t);
+		pthread_barrier_init(barrier, 0, count);
+		result.value[0] = (u64)barrier;
+	}
+	return result;
+}
+
+BEAMFORMER_IMPORT void
+os_barrier_enter(OSBarrier barrier)
+{
+	pthread_barrier_t *b = (pthread_barrier_t *)barrier.value[0];
+	if (b) pthread_barrier_wait(b);
+}
+
+BEAMFORMER_IMPORT void
+os_console_log(u8 *data, i64 length)
+{
+	os_write_file(STDERR_FILENO, data, length);
+}
+
+BEAMFORMER_IMPORT void
+os_fatal(u8 *data, i64 length)
+{
+	os_write_file(STDERR_FILENO, data, length);
+	os_exit(1);
+	unreachable();
+}
+
+BEAMFORMER_IMPORT void *
+os_lookup_symbol(OSLibrary library, const char *symbol)
+{
+	void *result = 0;
+	if ValidHandle(library) result = dlsym((void *)library.value[0], symbol);
+	return result;
+}
+
+function void *
+allocate_shared_memory(char *name, iz requested_capacity, u64 *capacity)
+{
+	u64 rounded_capacity = round_up_to(requested_capacity, os_linux_context.system_info.page_size);
+	void *result = 0;
+	i32 fd = shm_open(name, O_CREAT|O_RDWR, S_IRUSR|S_IWUSR);
+	if (fd > 0 && ftruncate(fd, rounded_capacity) != -1) {
+		void *new = mmap(0, rounded_capacity, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+		if (new != MAP_FAILED) {
+			*capacity = rounded_capacity;
+			result    = new;
+		}
+	}
+	if (fd > 0) close(fd);
+	return result;
+}
+
+function OSLinux_FileWatchDirectory *
+os_lookup_file_watch_directory(OSLinux_FileWatchDirectoryList *ctx, u64 hash)
+{
+	OSLinux_FileWatchDirectory *result = 0;
+	for (iz i = 0; !result && i < ctx->count; i++)
+		if (ctx->data[i].hash == hash)
+			result = ctx->data + i;
+	return result;
+}
+
+function void
+os_linux_add_file_watch(s8 path, void *user_context, OSLinux_FileWatchKind kind)
+{
+	s8 directory  = path;
+	directory.len = s8_scan_backwards(path, '/');
+	assert(directory.len > 0);
+
+	OSLinux_FileWatchDirectoryList *fwctx = &os_linux_context.file_watch_list;
+
+	u64 hash = u64_hash_from_s8(directory);
+	OSLinux_FileWatchDirectory *dir = os_lookup_file_watch_directory(fwctx, hash);
+	if (!dir) {
+		assert(path.data[directory.len] == '/');
+		dir = da_push(&os_linux_context.arena, fwctx);
+		dir->hash   = hash;
+		dir->name   = push_s8(&os_linux_context.arena, directory);
+		u32 mask    = IN_MOVED_TO|IN_CLOSE_WRITE;
+		dir->handle = inotify_add_watch(os_linux_context.inotify_handle, (c8 *)dir->name.data, mask);
+	}
+
+	OSLinux_FileWatch *fw = da_push(&os_linux_context.arena, dir);
+	fw->user_context = user_context;
+	fw->hash         = u64_hash_from_s8(s8_cut_head(path, dir->name.len + 1));
+	fw->kind         = kind;
+}
+
+BEAMFORMER_IMPORT void
+os_add_file_watch(const char *path, int64_t path_length, void *user_context)
 {
 	s8 path_str = {.data = (u8 *)path, .len = path_length};
 	os_linux_add_file_watch(path_str, user_context, OSLinux_FileWatchKindUser);
 }
 
-BEAMFORMER_IMPORT BEAMFORMER_OS_LOOKUP_SYMBOL_FN(os_lookup_symbol)
-{
-	void *result = 0;
-	if ValidHandle(library) {
-		result = dlsym((void *)library.value[0], symbol);
-		if (!result && error) {
-			stream_append_s8s(error, s8("os_lookup_symbol(\""), c_str_to_s8(symbol), s8("\"): "),
-			                  c_str_to_s8(dlerror()), s8("\n"));
-		}
-	}
-	return result;
-}
-
-function BeamformerLibraryHandle
+function OSLibrary
 load_library(char *name, char *temp_name, u32 flags)
 {
 	if (temp_name && os_copy_file(name, temp_name))
 		name = temp_name;
 
-	BeamformerLibraryHandle result = {(u64)dlopen(name, flags)};
-	if (result.value[0] == 0) result = BeamformerInvalidHandle;
+	OSLibrary result = {(u64)dlopen(name, flags)};
+	if (result.value[0] == 0) result.value[0] = OSInvalidHandleValue;
 
 	if (temp_name) unlink(temp_name);
 
@@ -79,11 +203,11 @@ load_library(char *name, char *temp_name, u32 flags)
 function void
 debug_library_reload(BeamformerInput *input)
 {
-	local_persist BeamformerLibraryHandle beamformer_library_handle = BeamformerInvalidHandle;
-	BeamformerLibraryHandle new_handle = load_library(OS_DEBUG_LIB_NAME, OS_DEBUG_LIB_TEMP_NAME, RTLD_NOW|RTLD_LOCAL);
+	local_persist OSLibrary beamformer_library_handle = {OSInvalidHandleValue};
+	OSLibrary new_handle = load_library(OS_DEBUG_LIB_NAME, OS_DEBUG_LIB_TEMP_NAME, RTLD_NOW|RTLD_LOCAL);
 
-	if (!ValidHandle(beamformer_library_handle) && !ValidHandle(new_handle))
-		os_fatal(s8("[os] failed to load: " OS_DEBUG_LIB_NAME "\n"));
+	if (InvalidHandle(beamformer_library_handle) && InvalidHandle(new_handle))
+		fatal(s8("[os] failed to load: " OS_DEBUG_LIB_NAME "\n"));
 
 	if ValidHandle(new_handle) {
 		beamformer_debug_hot_reload(new_handle, input);
@@ -107,10 +231,10 @@ load_platform_libraries(BeamformerInput *input)
 	input->cuda_library_handle = load_library(OS_CUDA_LIB_NAME, OS_CUDA_LIB_TEMP_NAME, RTLD_NOW|RTLD_LOCAL);
 
 	#if BEAMFORMER_RENDERDOC_HOOKS
-	local_persist BeamformerLibraryHandle renderdoc_handle = BeamformerInvalidHandle;
+	local_persist OSLibrary renderdoc_handle = {OSInvalidHandleValue};
 	renderdoc_handle = load_library(OS_RENDERDOC_SONAME, 0, RTLD_NOW|RTLD_LOCAL|RTLD_NOLOAD);
 	if ValidHandle(renderdoc_handle) {
-		renderdoc_get_api_fn *get_api = os_lookup_symbol(renderdoc_handle, "RENDERDOC_GetAPI", 0);
+		renderdoc_get_api_fn *get_api = os_lookup_symbol(renderdoc_handle, "RENDERDOC_GetAPI");
 		if (get_api) {
 			RenderDocAPI *api = 0;
 			if (get_api(10600, (void **)&api)) {
@@ -172,18 +296,26 @@ dispatch_file_watch_events(BeamformerInput *input, u64 current_time)
 extern i32
 main(void)
 {
-	os_common_init();
+	os_linux_context.system_info.timer_frequency         = os_get_timer_frequency();
+	os_linux_context.system_info.logical_processor_count = (u32)get_nprocs();
+	os_linux_context.system_info.page_size               = (u32)getpagesize();
+	os_linux_context.system_info.path_separator_byte     = '/';
 
 	Arena program_memory = os_alloc_arena(MB(16) + KB(16));
 
 	os_linux_context.arena = sub_arena(&program_memory, KB(16), KB(4));
 	os_linux_context.inotify_handle = inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
 
+	BeamformerInput *input = push_struct(&program_memory, BeamformerInput);
+	input->memory          = program_memory.beg;
+	input->memory_size     = program_memory.end - program_memory.beg;
+	input->shared_memory   = allocate_shared_memory(OS_SHARED_MEMORY_NAME, BEAMFORMER_SHARED_MEMORY_SIZE,
+	                                                &input->shared_memory_size);
+	if (input->shared_memory) {
+		input->shared_memory_name        = s8(OS_SHARED_MEMORY_NAME).data;
+		input->shared_memory_name_length = s8(OS_SHARED_MEMORY_NAME).len;
+	}
 
-	BeamformerInput *input     = push_struct(&program_memory, BeamformerInput);
-	input->memory              = program_memory.beg;
-	input->memory_size         = program_memory.end - program_memory.beg;
-	input->timer_frequency     = os_get_timer_frequency();
 	input->event_queue[input->event_count++] = (BeamformerInputEvent){
 		.kind = BeamformerInputEventKind_ExecutableReload,
 	};
@@ -197,7 +329,7 @@ main(void)
 	fds[0].events = POLLIN;
 
 	u64 last_time = os_get_timer_counter();
-	while (!WindowShouldClose()) {
+	while (!WindowShouldClose() && !beamformer_should_close(input)) {
 		u64 now = os_get_timer_counter();
 
 		poll(fds, countof(fds), 0);
@@ -217,8 +349,7 @@ main(void)
 		input->event_count  = 0;
 	}
 
-	beamformer_invalidate_shared_memory(program_memory.beg);
-	beamformer_debug_ui_deinit(program_memory.beg);
+	beamformer_terminate(input);
 
 	/* NOTE: make sure this will get cleaned up after external
 	 * programs release their references */

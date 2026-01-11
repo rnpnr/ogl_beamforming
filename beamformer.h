@@ -63,23 +63,52 @@
 
 ///////////////////
 // REQUIRED OS API
-#define BeamformerInvalidHandle (BeamformerLibraryHandle){-1}
-typedef struct { uint64_t value[1]; } BeamformerLibraryHandle;
+#define OSInvalidHandleValue ((u64)-1)
+typedef struct { uint64_t value[1]; } OSBarrier;
+typedef struct { uint64_t value[1]; } OSHandle;
+typedef struct { uint64_t value[1]; } OSLibrary;
+typedef struct { uint64_t value[1]; } OSThread;
+typedef struct { uint64_t value[1]; } OSW32Semaphore;
 
-#define BEAMFORMER_OS_ADD_FILE_WATCH_FN(name) void name(char *path, int64_t path_length, void *user_context)
-BEAMFORMER_IMPORT BEAMFORMER_OS_ADD_FILE_WATCH_FN(os_add_file_watch);
+typedef uint64_t os_thread_entry_point_fn(void *user_context);
 
-#define BEAMFORMER_OS_LOOKUP_SYMBOL_FN(name) void *name(BeamformerLibraryHandle library, char *symbol, Stream *error)
-BEAMFORMER_IMPORT BEAMFORMER_OS_LOOKUP_SYMBOL_FN(os_lookup_symbol);
+typedef struct {
+	uint64_t timer_frequency;
 
-function void os_barrier_wait(Barrier);
-function iptr os_error_handle(void);
-function s8   os_path_separator(void);
-function OS_READ_WHOLE_FILE_FN(os_read_whole_file);
-function OS_SHARED_MEMORY_LOCK_REGION_FN(os_shared_memory_region_lock);
-function OS_SHARED_MEMORY_UNLOCK_REGION_FN(os_shared_memory_region_unlock);
-function OS_WAKE_WAITERS_FN(os_wake_waiters);
-function OS_WRITE_FILE_FN(os_write_file);
+	uint32_t logical_processor_count;
+	uint32_t page_size;
+
+	uint8_t  path_separator_byte;
+} OSSystemInfo;
+
+BEAMFORMER_IMPORT OSSystemInfo * os_get_system_info(void);
+
+BEAMFORMER_IMPORT OSThread       os_create_thread(const char *name, void *user_context, os_thread_entry_point_fn *fn);
+BEAMFORMER_IMPORT OSBarrier      os_barrier_alloc(uint32_t thread_count);
+BEAMFORMER_IMPORT void           os_barrier_enter(OSBarrier);
+
+BEAMFORMER_IMPORT void           os_add_file_watch(const char *path, int64_t path_length, void *user_context);
+BEAMFORMER_IMPORT int64_t        os_read_entire_file(const char *file, void *buffer, int64_t buffer_capacity);
+
+BEAMFORMER_IMPORT void *         os_lookup_symbol(OSLibrary library, const char *symbol);
+
+/* NOTE(rnp): memory watch timed waiting functions. (-1) is an infinite timeout. the beamformer
+ * will use these with the intention of yielding the thread back to the OS. */
+BEAMFORMER_IMPORT uint32_t       os_wait_on_address(int32_t *lock, int32_t current, uint32_t timeout_ms);
+BEAMFORMER_IMPORT void           os_wake_all_waiters(int32_t *lock);
+
+// NOTE(rnp): eventually logging will just be done internally
+BEAMFORMER_IMPORT void           os_console_log(uint8_t *data, int64_t length);
+BEAMFORMER_IMPORT void           os_fatal(uint8_t *data, int64_t length);
+
+/* NOTE(rnp): this functionality is only needed on win32 to provide cross process
+ * synchronization. While posix has equivalent functionality there is no reason to
+ * use it over a value located in shared memory. */
+#if defined(_WIN32)
+BEAMFORMER_IMPORT OSW32Semaphore os_w32_create_semaphore(const char *name, int32_t initial_count, int32_t maximum_count);
+BEAMFORMER_IMPORT uint32_t       os_w32_semaphore_wait(OSW32Semaphore, uint32_t timeout_ms);
+BEAMFORMER_IMPORT void           os_w32_semaphore_release(OSW32Semaphore, int32_t count);
+#endif
 
 //////////////////////////////
 // BEAMFORMER APPLICATION API
@@ -108,11 +137,24 @@ typedef struct {
 } BeamformerInputEvent;
 
 typedef struct {
+	/* NOTE(rnp): besides vulkan library code the beamformer will not allocate memory on its
+	 * own. Recommended minimum size is 16MB. If shared memory is not provided it is recommended
+	 * to increase this to at least 1GB to help facilitate loading of external data files (not yet
+	 * implemented). */
 	void *      memory;
 	uint64_t    memory_size;
 
+	/* NOTE(rnp): beamformer will use this to communicate with external processes. While it
+	 * it won't be required in the future it is currently the only way to load data.
+	 * Recommended size is 2-4GB. Currently this size will also limit the size of any data
+	 * another process wishes to export. The name is required for listing in the UI so that
+	 * users of external processes can open the region on their end. */
+	void *      shared_memory;
+	uint64_t    shared_memory_size;
+	uint8_t *   shared_memory_name;
+	uint32_t    shared_memory_name_length;
+
 	uint64_t    timer_ticks;
-	uint64_t    timer_frequency;
 
 	float       mouse_x;
 	float       mouse_y;
@@ -126,7 +168,7 @@ typedef struct {
 	/* NOTE(rnp): the beamformer is not allowed to dynamically load libraries
 	 * itself. Libraries are optional and the beamformer will not use features
 	 * from libraries which have not been provided. */
-	BeamformerLibraryHandle cuda_library_handle;
+	OSLibrary cuda_library_handle;
 
 	#if BEAMFORMER_RENDERDOC_HOOKS
 	void *renderdoc_start_frame_capture;
@@ -136,16 +178,25 @@ typedef struct {
 
 BEAMFORMER_EXPORT void beamformer_init(BeamformerInput *);
 
-#define BEAMFORMER_FRAME_STEP_FN(name) void name(BeamformerInput *input)
-typedef BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step_fn);
+/* NOTE(rnp): while the platform can also decide to terminate the beamformer,
+ * the beamformer itself may indicate that it wants to terminate. If the
+ * beamformer itself decides to terminate it is unnecessary to call
+ * `beamformer_terminate()` but it will act as a NOP if you do. */
+BEAMFORMER_EXPORT uint32_t beamformer_should_close(BeamformerInput *);
 
-#define BEAMFORMER_DEBUG_UI_DEINIT_FN(name) void name(void *memory)
-typedef BEAMFORMER_DEBUG_UI_DEINIT_FN(beamformer_debug_ui_deinit_fn);
+/* IMPORTANT(rnp): since the beamformer may be interacting with external hardware
+ * it is critical that the platform calls this when it wishes to terminate the
+ * beamformer. Otherwise the external hardware may be left in a bad state and require
+ * a reboot. The beamformer will not waste time releasing resources unless it was
+ * compiled with BEAMFORMER_DEBUG enabled (useful for address sanitizer). */
+BEAMFORMER_EXPORT void beamformer_terminate(BeamformerInput *);
 
-function void beamformer_invalidate_shared_memory(void *memory);
+#if !BEAMFORMER_DEBUG
+BEAMFORMER_EXPORT void beamformer_frame_step(BeamformerInput *);
+#endif
 
 #if BEAMFORMER_DEBUG
-BEAMFORMER_EXPORT void beamformer_debug_hot_reload(BeamformerLibraryHandle, BeamformerInput *);
+BEAMFORMER_EXPORT void beamformer_debug_hot_reload(OSLibrary new_library, BeamformerInput *);
 #endif
 
 #endif /*BEAMFORMER_H */

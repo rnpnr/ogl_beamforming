@@ -2,9 +2,9 @@
 #ifndef BEAMFORMER_INTERNAL_H
 #define BEAMFORMER_INTERNAL_H
 
-#include "util.h"
-
 #include "beamformer.h"
+
+#include "util.h"
 #include "opengl.h"
 
 #include "generated/beamformer.meta.c"
@@ -15,8 +15,11 @@
 
 #include "threads.c"
 #include "util_gl.c"
+#include "util_os.c"
 
 #define beamformer_info(s) s8("[info] " s "\n")
+
+#define os_path_separator() (s8){.data = &os_get_system_info()->path_separator_byte, .len = 1}
 
 ///////////////////////////////
 // NOTE: CUDA Library Bindings
@@ -251,10 +254,10 @@ typedef struct {
 } ComputeTimingTable;
 
 typedef struct {
-	BeamformerRFBuffer *rf_buffer;
-	SharedMemoryRegion *shared_memory;
-	ComputeTimingTable *compute_timing_table;
-	i32                *compute_worker_sync;
+	BeamformerRFBuffer *     rf_buffer;
+	BeamformerSharedMemory * shared_memory;
+	ComputeTimingTable *     compute_timing_table;
+	i32                *     compute_worker_sync;
 } BeamformerUploadThreadContext;
 
 struct BeamformerFrame {
@@ -281,6 +284,26 @@ struct BeamformerFrame {
 };
 
 typedef struct {
+	OSThread handle;
+
+	Arena arena;
+	iptr  window_handle;
+	iptr  gl_context;
+	iptr  user_context;
+	i32   sync_variable;
+	b32   awake;
+} GLWorkerThreadContext;
+
+typedef enum {
+	BeamformerState_Uninitialized = 0,
+	BeamformerState_Running,
+	BeamformerState_ShouldClose,
+	BeamformerState_Terminated,
+} BeamformerState;
+
+typedef struct {
+	BeamformerState state;
+
 	iv2 window_size;
 
 	Arena  arena;
@@ -301,7 +324,7 @@ typedef struct {
 	ComputeShaderStats *compute_shader_stats;
 	ComputeTimingTable *compute_timing_table;
 
-	SharedMemoryRegion shared_memory;
+	BeamformerSharedMemory *shared_memory;
 
 	BeamformerFrame beamform_frames[BeamformerMaxSavedFrames];
 	BeamformerFrame *latest_frame;
@@ -343,5 +366,8 @@ typedef BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute_fn);
 
 #define BEAMFORMER_RF_UPLOAD_FN(name) void name(BeamformerUploadThreadContext *ctx)
 typedef BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload_fn);
+
+#define BEAMFORMER_DEBUG_UI_DEINIT_FN(name) void name(BeamformerCtx *ctx)
+typedef BEAMFORMER_DEBUG_UI_DEINIT_FN(beamformer_debug_ui_deinit_fn);
 
 #endif /* BEAMFORMER_INTERNAL_H */

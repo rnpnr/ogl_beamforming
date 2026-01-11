@@ -1,7 +1,12 @@
 /* See LICENSE for license details. */
 #include "../compiler.h"
 
+#define BEAMFORMER_IMPORT static
+
+#include "../beamformer.h"
+
 #include "../util.h"
+
 #include "../generated/beamformer.meta.c"
 #include "../beamformer_parameters.h"
 #include "ogl_beamformer_lib_base.h"
@@ -17,10 +22,10 @@ W32(iptr) OpenFileMappingA(u32, b32, c8 *);
 #error Unsupported Platform
 #endif
 
+#include "../util_os.c"
 #include "../beamformer_shared_memory.c"
 
 global struct {
-	SharedMemoryRegion      shared_memory;
 	BeamformerSharedMemory *bp;
 	i32                     timeout_ms;
 	BeamformerLibErrorKind  last_error;
@@ -28,21 +33,14 @@ global struct {
 
 #if OS_LINUX
 
-function b32
-os_reserve_region_locks(iptr os_context, u32 count)
-{
-	b32 result = count <= BeamformerMaxParameterBlockSlots;
-	return result;
-}
-
-function SharedMemoryRegion
+function void *
 os_open_shared_memory_area(char *name)
 {
-	SharedMemoryRegion result = {0};
+	void *result = 0;
 	i32 fd = shm_open(name, O_RDWR, S_IRUSR|S_IWUSR);
 	if (fd > 0) {
 		void *new = mmap(0, BEAMFORMER_SHARED_MEMORY_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
-		if (new != MAP_FAILED) result.region = new;
+		if (new != MAP_FAILED) result = new;
 		close(fd);
 	}
 	return result;
@@ -50,60 +48,47 @@ os_open_shared_memory_area(char *name)
 
 #elif OS_WINDOWS
 
+W32(b32) UnmapViewOfFile(void *);
+
 function b32
-os_reserve_region_locks(iptr os_context, u32 count)
+os_reserve_region_locks(void)
 {
-	local_persist iptr semaphores[(u32)BeamformerSharedMemoryLockKind_Count + (u32)BeamformerMaxParameterBlockSlots];
-	w32_shared_memory_context *ctx = (typeof(ctx))os_context;
+	u8 buffer[1024];
+	Stream sb = {.data = buffer, .cap = countof(buffer)};
+	stream_append_s8(&sb, s8(OS_SHARED_MEMORY_NAME "_lock_"));
 
-	b32 result = count <= BeamformerMaxParameterBlockSlots;
-	if (result) {
-		count += BeamformerSharedMemoryLockKind_Count;
-		if (count > ctx->reserved_count) {
-			u8 buffer[1024];
-			Stream sb = {.data = buffer, .cap = countof(buffer)};
-			stream_append_s8(&sb, s8(OS_SHARED_MEMORY_NAME "_lock_"));
-
-			u32 new_reserved_count;
-			for (new_reserved_count = ctx->reserved_count;
-			     new_reserved_count < count && result;
-			     new_reserved_count++)
-			{
-				Stream lb = sb;
-				stream_append_u64(&lb, new_reserved_count);
-				stream_append_byte(&lb, 0);
-				semaphores[new_reserved_count] = CreateSemaphoreA(0, 1, 1, (c8 *)lb.data);
-				result &= semaphores[new_reserved_count] != INVALID_FILE;
-			}
-
-			if (result) {
-				ctx->semaphores     = semaphores;
-				ctx->reserved_count = count;
-			} else {
-				for (u32 j = ctx->reserved_count; j < new_reserved_count; j++)
-					CloseHandle(semaphores[j]);
-			}
-		} else if (count < ctx->reserved_count) {
-			for (u32 i = ctx->reserved_count; i > count;)
-				CloseHandle(semaphores[--i]);
-			ctx->reserved_count = count;
-		}
+	i32 start_index    = sb.widx;
+	u32 reserved_count = 0;
+	for EachElement(os_w32_shared_memory_semaphores, it) {
+		stream_reset(&sb, start_index);
+		stream_append_u64(&sb, it);
+		stream_append_byte(&sb, 0);
+		os_w32_shared_memory_semaphores[it] = os_w32_create_semaphore((c8 *)sb.data, 1, 1);
+		if InvalidHandle(os_w32_shared_memory_semaphores[it])
+			break;
+		reserved_count++;
 	}
+
+	b32 result = reserved_count == countof(os_w32_shared_memory_semaphores);
+	if (!result) {
+		for (u32 i = 0; i < reserved_count; i++)
+			CloseHandle(os_w32_shared_memory_semaphores[i].value[0]);
+	}
+
 	return result;
 }
 
-function SharedMemoryRegion
+function void *
 os_open_shared_memory_area(char *name)
 {
-	local_persist w32_shared_memory_context ctx = {0};
-	SharedMemoryRegion result = {0};
 	iptr h = OpenFileMappingA(FILE_MAP_ALL_ACCESS, 0, name);
+	void *result = 0;
 	if (h != INVALID_FILE) {
 		void *new = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, BEAMFORMER_SHARED_MEMORY_SIZE);
-		if (new && os_reserve_region_locks((iptr)&ctx, 1)) {
-			result.region     = new;
-			result.os_context = (iptr)&ctx;
-		}
+		if (new && os_reserve_region_locks())
+			result = new;
+		if (new && !result)
+			UnmapViewOfFile(new);
 		CloseHandle(h);
 	}
 	return result;
@@ -123,12 +108,11 @@ lib_error_check(b32 condition, BeamformerLibErrorKind error_kind)
 function b32
 check_shared_memory(void)
 {
-	if (!g_beamformer_library_context.shared_memory.region) {
-		g_beamformer_library_context.shared_memory = os_open_shared_memory_area(OS_SHARED_MEMORY_NAME);
-		if (lib_error_check(g_beamformer_library_context.shared_memory.region != 0, BF_LIB_ERR_KIND_SHARED_MEMORY)) {
-			u32 version = ((BeamformerSharedMemory *)g_beamformer_library_context.shared_memory.region)->version;
-			if (lib_error_check(version == BEAMFORMER_SHARED_MEMORY_VERSION, BF_LIB_ERR_KIND_VERSION_MISMATCH))
-				g_beamformer_library_context.bp = g_beamformer_library_context.shared_memory.region;
+	if (!g_beamformer_library_context.bp) {
+		g_beamformer_library_context.bp = os_open_shared_memory_area(OS_SHARED_MEMORY_NAME);
+		if (lib_error_check(g_beamformer_library_context.bp != 0, BF_LIB_ERR_KIND_SHARED_MEMORY)) {
+			u32 version = g_beamformer_library_context.bp->version;
+			lib_error_check(version == BEAMFORMER_SHARED_MEMORY_VERSION, BF_LIB_ERR_KIND_VERSION_MISMATCH);
 		}
 	}
 
@@ -160,9 +144,7 @@ try_push_work_queue(void)
 function b32
 lib_try_lock(i32 lock, i32 timeout_ms)
 {
-	b32 result = os_shared_memory_region_lock(&g_beamformer_library_context.shared_memory,
-	                                          g_beamformer_library_context.bp->locks,
-	                                          lock, (u32)timeout_ms);
+	b32 result = beamformer_shared_memory_take_lock(g_beamformer_library_context.bp, lock, (u32)timeout_ms);
 	lib_error_check(result, BF_LIB_ERR_KIND_SYNC_VARIABLE);
 	return result;
 }
@@ -170,8 +152,7 @@ lib_try_lock(i32 lock, i32 timeout_ms)
 function void
 lib_release_lock(i32 lock)
 {
-	os_shared_memory_region_unlock(&g_beamformer_library_context.shared_memory,
-	                               g_beamformer_library_context.bp->locks, (i32)lock);
+	beamformer_shared_memory_release_lock(g_beamformer_library_context.bp, lock);
 }
 
 u32
@@ -214,13 +195,9 @@ beamformer_reserve_parameter_blocks(uint32_t count)
 {
 	b32 result = 0;
 	if (check_shared_memory() &&
-	    lib_error_check(os_reserve_region_locks(g_beamformer_library_context.shared_memory.os_context, count),
-	                    BF_LIB_ERR_KIND_PARAMETER_BLOCK_OVERFLOW))
+	    lib_error_check(count <= BeamformerMaxParameterBlockSlots, BF_LIB_ERR_KIND_PARAMETER_BLOCK_OVERFLOW))
 	{
-		u32 old_count = g_beamformer_library_context.bp->reserved_parameter_blocks;
 		g_beamformer_library_context.bp->reserved_parameter_blocks = count;
-		for (u32 i = old_count; i < count; i++)
-			zero_struct(beamformer_parameter_block(g_beamformer_library_context.bp, i));
 		result = 1;
 	}
 	return result;
@@ -364,8 +341,7 @@ function void
 beamformer_flush_commands(void)
 {
 	i32 lock = BeamformerSharedMemoryLockKind_DispatchCompute;
-	os_shared_memory_region_lock(&g_beamformer_library_context.shared_memory,
-	                             g_beamformer_library_context.bp->locks, lock, 0);
+	beamformer_shared_memory_take_lock(g_beamformer_library_context.bp, lock, 0);
 }
 
 #define BEAMFORMER_UPLOAD_FNS \

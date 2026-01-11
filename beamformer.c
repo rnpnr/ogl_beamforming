@@ -1,14 +1,16 @@
 /* See LICENSE for license details. */
 
+#include "beamformer_internal.h"
+
 /* NOTE(rnp): magic variables to force discrete GPU usage on laptops with multiple devices */
 EXPORT i32 NvOptimusEnablement = 1;
 EXPORT i32 AmdPowerXpressRequestHighPerformance = 1;
 
-#include "beamformer_internal.h"
-
 #if !BEAMFORMER_DEBUG
 #include "beamformer_core.c"
 #else
+
+typedef void beamformer_frame_step_fn(BeamformerInput *);
 
 #define BEAMFORMER_DEBUG_ENTRY_POINTS \
 	X(beamformer_debug_ui_deinit)  \
@@ -21,10 +23,9 @@ BEAMFORMER_DEBUG_ENTRY_POINTS
 #undef X
 
 BEAMFORMER_EXPORT void
-beamformer_debug_hot_reload(BeamformerLibraryHandle library, BeamformerInput *input)
+beamformer_debug_hot_reload(OSLibrary library, BeamformerInput *input)
 {
 	BeamformerCtx *ctx = BeamformerContextMemory(input->memory);
-	Stream err = ctx->error_stream;
 
 	// TODO(rnp): this will deadlock if live imaging is active
 	/* NOTE(rnp): spin until compute thread finishes its work (we will probably
@@ -32,29 +33,60 @@ beamformer_debug_hot_reload(BeamformerLibraryHandle library, BeamformerInput *in
 	spin_wait(atomic_load_u32(&ctx->upload_worker.awake));
 	spin_wait(atomic_load_u32(&ctx->compute_worker.awake));
 
-	#define X(name) name = os_lookup_symbol(library, #name, &err);
+	#define X(name) name = os_lookup_symbol(library, #name);
 	BEAMFORMER_DEBUG_ENTRY_POINTS
 	#undef X
 
-	stream_append_s8(&err, s8("reloaded main executable\n"));
-	os_write_file(os_error_handle(), stream_to_s8(&err));
+	s8 info = beamformer_info("reloaded main executable");
+	os_console_log(info.data, info.len);
 }
 
 #endif /* BEAMFORMER_DEBUG */
+
+function no_return void
+fatal(s8 message)
+{
+	os_fatal(message.data, message.len);
+	unreachable();
+}
+
+// TODO(rnp): none of this belongs here, but will be removed
+// once vulkan migration is complete
+#define GLFW_VISIBLE 0x00020004
+void   glfwWindowHint(i32, i32);
+iptr   glfwCreateWindow(i32, i32, char *, iptr, iptr);
+void   glfwMakeContextCurrent(iptr);
+iptr   glfwGetGLXContext(iptr);
+iptr   glfwGetWGLContext(iptr);
+void * glfwGetProcAddress(char *);
+
+#if OS_WINDOWS
+function iptr
+os_get_native_gl_context(iptr window)
+{
+	return glfwGetWGLContext(window);
+}
+#else
+function iptr
+os_get_native_gl_context(iptr window)
+{
+	return glfwGetGLXContext(window);
+}
+#endif
 
 function void
 gl_debug_logger(u32 src, u32 type, u32 id, u32 lvl, i32 len, const char *msg, const void *userctx)
 {
 	Stream *e = (Stream *)userctx;
 	stream_append_s8s(e, s8("[OpenGL] "), (s8){.len = len, .data = (u8 *)msg}, s8("\n"));
-	os_write_file(os_error_handle(), stream_to_s8(e));
+	os_console_log(e->data, e->widx);
 	stream_reset(e, 0);
 }
 
 function void
 load_gl(Stream *err)
 {
-	#define X(name, ret, params) name = (name##_fn *)os_gl_proc_address(#name);
+	#define X(name, ret, params) name = (name##_fn *)glfwGetProcAddress(#name);
 	OGLProcedureList
 	#undef X
 
@@ -63,7 +95,7 @@ load_gl(Stream *err)
 		char *vendor = (char *)glGetString(GL_VENDOR);
 		if (!vendor) {
 			stream_append_s8(err, s8("Failed to determine GL Vendor\n"));
-			os_fatal(stream_to_s8(err));
+			fatal(stream_to_s8(err));
 		}
 		/* TODO(rnp): str prefix of */
 		switch (vendor[0]) {
@@ -76,7 +108,7 @@ load_gl(Stream *err)
 		case 'M': gl_parameters.vendor_id = GLVendor_ARM;    break;
 		default:
 			stream_append_s8s(err, s8("Unknown GL Vendor: "), c_str_to_s8(vendor), s8("\n"));
-			os_fatal(stream_to_s8(err));
+			fatal(stream_to_s8(err));
 		}
 
 		#define X(glname, name, suffix) glGetIntegerv(GL_##glname, &gl_parameters.name);
@@ -111,7 +143,7 @@ load_gl(Stream *err)
 		GL_PARAMETERS
 		#undef X
 		stream_append_s8(err, s8("-----------------------\n"));
-		os_write_file(os_error_handle(), stream_to_s8(err));
+		os_console_log(err->data, err->widx);
 	}
 #endif
 
@@ -127,26 +159,26 @@ load_gl(Stream *err)
 		OGLProcedureList
 		#undef X
 
-		if (err->widx) os_fatal(stream_to_s8(err));
+		if (err->widx) fatal(stream_to_s8(err));
 	}
 }
 
 function void
-beamformer_load_cuda_library(BeamformerCtx *ctx, BeamformerLibraryHandle cuda, Arena arena)
+beamformer_load_cuda_library(BeamformerCtx *ctx, OSLibrary cuda, Arena arena)
 {
 	/* TODO(rnp): (25.10.30) registering the rf buffer with CUDA is currently
 	 * causing a major performance regression. for now we are disabling its use
 	 * altogether. it will be reenabled once the issue can be fixed */
-	b32 result = 0 && gl_parameters.vendor_id == GLVendor_NVIDIA && cuda.value[0] != BeamformerInvalidHandle.value[0];
+	b32 result = 0 && gl_parameters.vendor_id == GLVendor_NVIDIA && ValidHandle(cuda);
 	if (result) {
 		Stream err = arena_stream(arena);
 
 		stream_append_s8(&err, beamformer_info("loading CUDA library functions"));
-		#define X(name, symname) cuda_## name = os_lookup_symbol(cuda, symname, &err);
+		#define X(name, symname) cuda_## name = os_lookup_symbol(cuda, symname);
 		CUDALibraryProcedureList
 		#undef X
 
-		os_write_file(os_error_handle(), stream_to_s8(&err));
+		os_console_log(err.data, err.widx);
 	}
 
 	#define X(name, symname) if (!cuda_## name) cuda_## name = cuda_ ## name ## _stub;
@@ -189,11 +221,6 @@ render_model_from_arrays(f32 *vertices, f32 *normals, i32 vertices_size, u16 *in
 	return result;
 }
 
-#define GLFW_VISIBLE 0x00020004
-void glfwWindowHint(i32, i32);
-iptr glfwCreateWindow(i32, i32, char *, iptr, iptr);
-void glfwMakeContextCurrent(iptr);
-
 function void
 worker_thread_sleep(GLWorkerThreadContext *ctx, BeamformerSharedMemory *sm)
 {
@@ -207,14 +234,14 @@ worker_thread_sleep(GLWorkerThreadContext *ctx, BeamformerSharedMemory *sm)
 
 		/* TODO(rnp): clean this crap up; we shouldn't need two values to communicate this */
 		atomic_store_u32(&ctx->awake, 0);
-		os_wait_on_value(&ctx->sync_variable, 1, (u32)-1);
+		os_wait_on_address(&ctx->sync_variable, 1, (u32)-1);
 		atomic_store_u32(&ctx->awake, 1);
 	}
 }
 
 function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 {
-	GLWorkerThreadContext *ctx = (GLWorkerThreadContext *)_ctx;
+	GLWorkerThreadContext *ctx = user_context;
 
 	glfwMakeContextCurrent(ctx->window_handle);
 	ctx->gl_context = os_get_native_gl_context(ctx->window_handle);
@@ -224,7 +251,7 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 	                beamformer->compute_context.shader_timer_ids);
 
 	for (;;) {
-		worker_thread_sleep(ctx, beamformer->shared_memory.region);
+		worker_thread_sleep(ctx, beamformer->shared_memory);
 		asan_poison_region(ctx->arena.beg, ctx->arena.end - ctx->arena.beg);
 		beamformer_complete_compute(ctx->user_context, &ctx->arena, ctx->gl_context);
 	}
@@ -236,7 +263,7 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 
 function OS_THREAD_ENTRY_POINT_FN(beamformer_upload_entry_point)
 {
-	GLWorkerThreadContext *ctx = (GLWorkerThreadContext *)_ctx;
+	GLWorkerThreadContext *ctx = user_context;
 	glfwMakeContextCurrent(ctx->window_handle);
 	ctx->gl_context = os_get_native_gl_context(ctx->window_handle);
 
@@ -246,7 +273,7 @@ function OS_THREAD_ENTRY_POINT_FN(beamformer_upload_entry_point)
 	glQueryCounter(up->rf_buffer->data_timestamp_query, GL_TIMESTAMP);
 
 	for (;;) {
-		worker_thread_sleep(ctx, up->shared_memory->region);
+		worker_thread_sleep(ctx, up->shared_memory);
 		beamformer_rf_upload(up);
 	}
 
@@ -292,17 +319,38 @@ beamformer_init(BeamformerInput *input)
 	ctx->compute_shader_stats = push_struct(&memory, ComputeShaderStats);
 	ctx->compute_timing_table = push_struct(&memory, ComputeTimingTable);
 
+	ctx->shared_memory = input->shared_memory;
+	if (!ctx->shared_memory) fatal(s8("Get more ram lol\n"));
+	zero_struct(ctx->shared_memory);
+
+	ctx->shared_memory->version = BEAMFORMER_SHARED_MEMORY_VERSION;
+	ctx->shared_memory->reserved_parameter_blocks = 1;
+
 	/* TODO(rnp): I'm not sure if its a good idea to pre-reserve a bunch of semaphores
 	 * on w32 but thats what we are doing for now */
-	u32 lock_count = (u32)BeamformerSharedMemoryLockKind_Count + (u32)BeamformerMaxParameterBlockSlots;
-	ctx->shared_memory = os_create_shared_memory_area(&memory, OS_SHARED_MEMORY_NAME, lock_count,
-	                                                  BEAMFORMER_SHARED_MEMORY_SIZE);
-	BeamformerSharedMemory *sm = ctx->shared_memory.region;
-	if (!sm) os_fatal(s8("Get more ram lol\n"));
-	mem_clear(sm, 0, sizeof(*sm));
+	#if OS_WINDOWS
+	{
+		Stream sb = arena_stream(memory);
+		stream_append(&sb, input->shared_memory_name, input->shared_memory_name_length);
+		stream_append_s8(&sb, s8("_lock_"));
+		i32 start_index = sb.widx;
+		for EachElement(os_w32_shared_memory_semaphores, it) {
+			stream_reset(&sb, start_index);
+			stream_append_u64(&sb, it);
+			stream_append_byte(&sb, 0);
+			os_w32_shared_memory_semaphores[it] = os_w32_create_semaphore((c8 *)sb.data, 1, 1);
+			if InvalidHandle(os_w32_shared_memory_semaphores[it])
+				fatal(beamformer_info("init: failed to create w32 shared memory semaphore\n"));
 
-	sm->version = BEAMFORMER_SHARED_MEMORY_VERSION;
-	sm->reserved_parameter_blocks = 1;
+			/* NOTE(rnp): hacky garbage because CreateSemaphore will just open an existing
+			 * semaphore without any indication. Sometimes the other side of the shared memory
+			 * will provide incorrect parameters or will otherwise fail and its faster to
+			 * restart this program than to get that application to release the semaphores */
+			/* TODO(rnp): figure out something more robust */
+			os_w32_semaphore_release(os_w32_shared_memory_semaphores[it], 1);
+		}
+	}
+	#endif
 
 	BeamformerComputeContext *cs = &ctx->compute_context;
 
@@ -310,19 +358,17 @@ beamformer_init(BeamformerInput *input)
 	/* TODO(rnp): we should lock this down after we have something working */
 	worker->user_context  = (iptr)ctx;
 	worker->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
-	worker->handle        = os_create_thread((iptr)worker, compute_worker_thread_entry_point);
-	os_set_thread_name(worker->handle, s8("[compute]"));
+	worker->handle        = os_create_thread("[compute]", worker, compute_worker_thread_entry_point);
 
 	GLWorkerThreadContext         *upload = &ctx->upload_worker;
 	BeamformerUploadThreadContext *upctx  = push_struct(&memory, typeof(*upctx));
 	upload->user_context = (iptr)upctx;
 	upctx->rf_buffer     = &cs->rf_buffer;
-	upctx->shared_memory = &ctx->shared_memory;
+	upctx->shared_memory = ctx->shared_memory;
 	upctx->compute_timing_table = ctx->compute_timing_table;
 	upctx->compute_worker_sync  = &ctx->compute_worker.sync_variable;
 	upload->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
-	upload->handle        = os_create_thread((iptr)upload, beamformer_upload_entry_point);
-	os_set_thread_name(upload->handle, s8("[upload]"));
+	upload->handle        = os_create_thread("[upload]", upload, beamformer_upload_entry_point);
 
 	glfwMakeContextCurrent(raylib_window_handle);
 
@@ -339,7 +385,7 @@ beamformer_init(BeamformerInput *input)
 		for EachElement(beamformer_reloadable_compute_shader_info_indices, it) {
 			i32   index = beamformer_reloadable_compute_shader_info_indices[it];
 			Arena temp  = scratch;
-			s8 file = push_s8_from_parts(&temp, s8(OS_PATH_SEPARATOR), s8("shaders"),
+			s8 file = push_s8_from_parts(&temp, os_path_separator(), s8("shaders"),
 			                             beamformer_reloadable_shader_files[index]);
 			BeamformerFileReloadContext *frc = push_struct(&memory, typeof(*frc));
 			frc->kind                = BeamformerFileReloadKind_ComputeShader;
@@ -507,10 +553,11 @@ beamformer_init(BeamformerInput *input)
 
 	memory.end = scratch.end;
 	ctx->arena = memory;
+	ctx->state = BeamformerState_Running;
 }
 
-function void
-beamformer_invalidate_shared_memory(void *memory)
+BEAMFORMER_EXPORT void
+beamformer_terminate(BeamformerInput *input)
 {
 	/* NOTE(rnp): work around pebkac when the beamformer is closed while we are doing live
 	 * imaging. if the verasonics is blocked in an external function (calling the library
@@ -519,14 +566,31 @@ beamformer_invalidate_shared_memory(void *memory)
 	 * into an error state and release dispatch lock so that future calls will error instead
 	 * of blocking.
 	 */
-	BeamformerCtx *ctx = BeamformerContextMemory(memory);
-	BeamformerSharedMemory *sm = ctx->shared_memory.region;
-	BeamformerSharedMemoryLockKind lock = BeamformerSharedMemoryLockKind_DispatchCompute;
-	atomic_store_u32(&sm->invalid, 1);
-	atomic_store_u32(&sm->external_work_queue.ridx, sm->external_work_queue.widx);
-	DEBUG_DECL(if (sm->locks[lock])) {
-		os_shared_memory_region_unlock(&ctx->shared_memory, sm->locks, (i32)lock);
-	}
+	BeamformerCtx *          ctx = BeamformerContextMemory(input->memory);
+	BeamformerSharedMemory * sm  = input->shared_memory;
+	if (ctx->state != BeamformerState_Terminated) {
+		if (sm) {
+			BeamformerSharedMemoryLockKind lock = BeamformerSharedMemoryLockKind_DispatchCompute;
+			atomic_store_u32(&sm->invalid, 1);
+			atomic_store_u32(&sm->external_work_queue.ridx, sm->external_work_queue.widx);
+			DEBUG_DECL(if (sm->locks[lock])) {
+				beamformer_shared_memory_release_lock(sm, (i32)lock);
+			}
 
-	atomic_or_u32(&sm->live_imaging_dirty_flags, BeamformerLiveImagingDirtyFlags_StopImaging);
+			atomic_or_u32(&sm->live_imaging_dirty_flags, BeamformerLiveImagingDirtyFlags_StopImaging);
+		}
+
+		beamformer_debug_ui_deinit(ctx);
+
+		ctx->state = BeamformerState_Terminated;
+	}
+}
+
+BEAMFORMER_EXPORT u32
+beamformer_should_close(BeamformerInput *input)
+{
+	BeamformerCtx * ctx = BeamformerContextMemory(input->memory);
+	if (ctx->state == BeamformerState_ShouldClose)
+		beamformer_terminate(input);
+	return ctx->state == BeamformerState_Terminated;
 }

@@ -432,8 +432,8 @@ struct BeamformerUI {
 
 	FrameViewRenderContext *frame_view_render_context;
 
-	SharedMemoryRegion  shared_memory;
-	BeamformerCtx      *beamformer_context;
+	BeamformerSharedMemory * shared_memory;
+	BeamformerCtx *          beamformer_context;
 };
 
 typedef enum {
@@ -1413,8 +1413,7 @@ add_compute_stats_view(BeamformerUI *ui, Variable *parent, Arena *arena, Beamfor
 function Variable *
 add_live_controls_view(BeamformerUI *ui, Variable *parent, Arena *arena)
 {
-	BeamformerSharedMemory *sm = ui->shared_memory.region;
-	BeamformerLiveImagingParameters *lip = &sm->live_imaging_parameters;
+	BeamformerLiveImagingParameters *lip = &ui->shared_memory->live_imaging_parameters;
 	/* TODO(rnp): this can be closable once we have a way of opening new views */
 	Variable *result = add_ui_view(ui, parent, &ui->arena, s8("Live Controls"), 0, 1, 0);
 	result->view.child = add_variable(ui, result, &ui->arena, s8(""), 0,
@@ -1559,8 +1558,7 @@ x_plane_position(BeamformerUI *ui)
 function v3
 offset_x_plane_position(BeamformerUI *ui, BeamformerFrameView *view, BeamformerViewPlaneTag tag)
 {
-	BeamformerSharedMemory          *sm = ui->shared_memory.region;
-	BeamformerLiveImagingParameters *li = &sm->live_imaging_parameters;
+	BeamformerLiveImagingParameters *li = &ui->shared_memory->live_imaging_parameters;
 	m4 x_rotation = m4_rotation_about_y(x_plane_rotation_for_view_plane(view, tag));
 	v3 Z = x_rotation.c[2].xyz;
 	v3 offset = v3_scale(Z, li->image_plane_offsets[tag]);
@@ -2835,8 +2833,7 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 function v2
 draw_live_controls_view(BeamformerUI *ui, Variable *var, Rect r, v2 mouse, Arena arena)
 {
-	BeamformerSharedMemory          *sm  = ui->shared_memory.region;
-	BeamformerLiveImagingParameters *lip = &sm->live_imaging_parameters;
+	BeamformerLiveImagingParameters *lip = &ui->shared_memory->live_imaging_parameters;
 	BeamformerLiveControlsView      *lv  = var->generic;
 
 	TextSpec text_spec = {.font = &ui->font, .colour = FG_COLOUR, .flags = TF_LIMITED};
@@ -3116,8 +3113,7 @@ draw_ui_view(BeamformerUI *ui, Variable *ui_view, Rect r, v2 mouse, TextSpec tex
 	case VT_LIVE_CONTROLS_VIEW:{
 		if (view->rect.size.h - r.size.h < 0)
 			r.pos.y += 0.5f * (r.size.h - view->rect.size.h);
-		BeamformerSharedMemory *sm = ui->shared_memory.region;
-		if (sm->live_imaging_parameters.active)
+		if (ui->shared_memory->live_imaging_parameters.active)
 			size = draw_live_controls_view(ui, var, r, mouse, ui->arena);
 	}break;
 	InvalidDefaultCase;
@@ -3700,9 +3696,8 @@ function void
 ui_live_control_update(BeamformerUI *ui, Variable *controls)
 {
 	assert(controls->type == VT_LIVE_CONTROLS_VIEW);
-	BeamformerSharedMemory *sm = ui->shared_memory.region;
 	BeamformerLiveControlsView *lv = controls->generic;
-	atomic_or_u32(&sm->live_imaging_dirty_flags, lv->active_field_flag);
+	atomic_or_u32(&ui->shared_memory->live_imaging_dirty_flags, lv->active_field_flag);
 }
 
 function void
@@ -3727,8 +3722,8 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 			f32 delta = v3_dot(Z, v3_sub(xp->end_point, xp->start_point));
 			xp->start_point = xp->end_point;
 
-			BeamformerSharedMemory          *sm = ui->shared_memory.region;
-			BeamformerLiveImagingParameters *li = &sm->live_imaging_parameters;
+			BeamformerSharedMemory *          sm = ui->shared_memory;
+			BeamformerLiveImagingParameters * li = &sm->live_imaging_parameters;
 			li->image_plane_offsets[plane] += delta;
 			atomic_or_u32(&sm->live_imaging_dirty_flags, BeamformerLiveImagingDirtyFlags_ImagePlaneOffsets);
 		}break;
@@ -3995,12 +3990,12 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 	u32 selected_block = ui->selected_parameter_block % BeamformerMaxParameterBlockSlots;
 	u32 selected_mask  = 1 << selected_block;
 	if (ctx->ui_dirty_parameter_blocks & selected_mask) {
-		BeamformerParameterBlock *pb = beamformer_parameter_block_lock(&ctx->shared_memory, selected_block, 0);
+		BeamformerParameterBlock *pb = beamformer_parameter_block_lock(ui->shared_memory, selected_block, 0);
 		if (pb) {
 			mem_copy(&ui->params, &pb->parameters_ui, sizeof(ui->params));
 			ui->flush_params = 0;
 			atomic_and_u32(&ctx->ui_dirty_parameter_blocks, ~selected_mask);
-			beamformer_parameter_block_unlock(&ctx->shared_memory, selected_block);
+			beamformer_parameter_block_unlock(ui->shared_memory, selected_block);
 		}
 	}
 
@@ -4012,13 +4007,13 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 	if (ui->flush_params) {
 		validate_ui_parameters(&ui->params);
 		if (ctx->latest_frame) {
-			BeamformerParameterBlock *pb = beamformer_parameter_block_lock(&ctx->shared_memory, selected_block, 0);
+			BeamformerParameterBlock *pb = beamformer_parameter_block_lock(ui->shared_memory, selected_block, 0);
 			if (pb) {
 				ui->flush_params = 0;
 				mem_copy(&pb->parameters_ui, &ui->params, sizeof(ui->params));
-				mark_parameter_block_region_dirty(ctx->shared_memory.region, selected_block,
+				mark_parameter_block_region_dirty(ui->shared_memory, selected_block,
 				                                  BeamformerParameterBlockRegion_Parameters);
-				beamformer_parameter_block_unlock(&ctx->shared_memory, selected_block);
+				beamformer_parameter_block_unlock(ui->shared_memory, selected_block);
 
 				beamformer_queue_compute(ctx, frame_to_draw, selected_block);
 			}

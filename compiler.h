@@ -60,4 +60,13 @@
   #define ARCH_ARM64 0
 #endif
 
+/* NOTE: glibc devs are actually buffoons who never write any real code. even the most
+ * basic headers like stdint.h will pull in every other header in libc and most
+ * useful functions are hidden behind this dogshit macro gaurd */
+#if OS_LINUX
+  #ifndef _GNU_SOURCE
+    #define _GNU_SOURCE
+  #endif
+#endif
+
 #endif /* COMPILER_H */

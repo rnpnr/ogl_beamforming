@@ -22,11 +22,11 @@ thread_context_barrier_wait(void *broadcast, u64 broadcast_size, u64 broadcast_l
 	if (broadcast && lane_index() == broadcast_lane_index)
 		mem_copy(ctx->lane_context.broadcast_memory, broadcast, broadcast_size_clamped);
 
-	os_barrier_wait(ctx->lane_context.barrier);
+	os_barrier_enter(ctx->lane_context.barrier);
 
 	if (broadcast && lane_index() != broadcast_lane_index)
 		mem_copy(broadcast, ctx->lane_context.broadcast_memory, broadcast_size_clamped);
 
 	if (broadcast)
-		os_barrier_wait(ctx->lane_context.barrier);
+		os_barrier_enter(ctx->lane_context.barrier);
 }

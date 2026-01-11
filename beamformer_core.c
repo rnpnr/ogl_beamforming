@@ -22,6 +22,12 @@
  * [ ]: bug: reinit cuda on hot-reload
  */
 
+#include "compiler.h"
+
+#if defined(BEAMFORMER_DEBUG) && !defined(BEAMFORMER_EXPORT) && OS_WINDOWS
+  #define BEAMFORMER_EXPORT __declspec(dllexport)
+#endif
+
 #include "beamformer_internal.h"
 
 global f32 dt_for_frame;
@@ -78,7 +84,7 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 	assert(block < countof(cc->compute_plans));
 	BeamformerComputePlan *result = cc->compute_plans[block];
 
-	assert(!arena && result);
+	assert(result || arena);
 
 	if (!result) {
 		result = SLLPopFreelist(cc->compute_plan_freelist);
@@ -284,7 +290,7 @@ alloc_shader_storage(BeamformerCtx *ctx, u32 decoded_data_size, Arena arena)
 	 * decode should just take the texture as a parameter. Third, none of these dimensions
 	 * need to be pre-known by the library unless its allocating GPU memory which it shouldn't
 	 * need to do. For now grab out of parameter block 0 but it is not correct */
-	BeamformerParameterBlock *pb = beamformer_parameter_block(ctx->shared_memory.region, 0);
+	BeamformerParameterBlock *pb = beamformer_parameter_block(ctx->shared_memory, 0);
 	/* NOTE(rnp): these are stubs when CUDA isn't supported */
 	cuda_register_buffers(cc->ping_pong_ssbos, countof(cc->ping_pong_ssbos), cc->rf_buffer.ssbo);
 	u32 decoded_data_dimension[3] = {pb->parameters.sample_count, pb->parameters.channel_count, pb->parameters.acquisition_count};
@@ -794,11 +800,10 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 			stream_append_s8(&shader_stream, beamformer_shader_data[reloadable_index]);
 			shader_text = arena_stream_commit(&arena, &shader_stream);
 		} else {
-			shader_text  = arena_stream_commit(&arena, &shader_stream);
-			s8 file_text = os_read_whole_file(&arena, (c8 *)path.data);
-
-			assert(shader_text.data + shader_text.len == file_text.data);
-			shader_text.len += file_text.len;
+			shader_text = arena_stream_commit(&arena, &shader_stream);
+			i64 length = os_read_entire_file((c8 *)path.data, arena.beg, arena_capacity(&arena, u8));
+			shader_text.len += length;
+			arena_commit(&arena, length);
 		}
 
 		/* TODO(rnp): instance name */
@@ -813,7 +818,7 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 function void
 beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 block, Arena arena)
 {
-	BeamformerParameterBlock *pb = beamformer_parameter_block_lock(&ctx->shared_memory, block, -1);
+	BeamformerParameterBlock *pb = beamformer_parameter_block_lock(ctx->shared_memory, block, -1);
 	for EachBit(pb->dirty_regions, region) {
 		switch (region) {
 		case BeamformerParameterBlockRegion_ComputePipeline:
@@ -886,7 +891,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 		}break;
 		}
 	}
-	beamformer_parameter_block_unlock(&ctx->shared_memory, block);
+	beamformer_parameter_block_unlock(ctx->shared_memory, block);
 }
 
 function void
@@ -1090,9 +1095,9 @@ shader_text_with_header(s8 header, s8 filepath, b32 has_file, BeamformerShaderKi
 	} else {
 		result = arena_stream_commit(arena, &sb);
 		if (has_file) {
-			s8 file = os_read_whole_file(arena, (c8 *)filepath.data);
-			assert(file.data == result.data + result.len);
-			result.len += file.len;
+			i64 length = os_read_entire_file((c8 *)filepath.data, arena->beg, arena_capacity(arena, u8));
+			result.len += length;
+			arena_commit(arena, length);
 		}
 	}
 
@@ -1135,8 +1140,8 @@ beamformer_reload_shader(BeamformerCtx *ctx, BeamformerShaderReloadContext *src,
 function void
 complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_context)
 {
-	BeamformerComputeContext *cs = &ctx->compute_context;
-	BeamformerSharedMemory   *sm = ctx->shared_memory.region;
+	BeamformerComputeContext * cs = &ctx->compute_context;
+	BeamformerSharedMemory *   sm = ctx->shared_memory;
 
 	BeamformWork *work = beamform_work_queue_pop(q);
 	while (work) {
@@ -1144,8 +1149,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 		switch (work->kind) {
 		case BeamformerWorkKind_ExportBuffer:{
 			/* TODO(rnp): better way of handling DispatchCompute barrier */
-			post_sync_barrier(&ctx->shared_memory, BeamformerSharedMemoryLockKind_DispatchCompute, sm->locks);
-			os_shared_memory_region_lock(&ctx->shared_memory, sm->locks, (i32)work->lock, (u32)-1);
+			post_sync_barrier(ctx->shared_memory, BeamformerSharedMemoryLockKind_DispatchCompute);
+			beamformer_shared_memory_take_lock(ctx->shared_memory, (i32)work->lock, (u32)-1);
 			BeamformerExportContext *ec = &work->export_context;
 			switch (ec->kind) {
 			case BeamformerExportKind_BeamformedData:{
@@ -1171,8 +1176,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			}break;
 			InvalidDefaultCase;
 			}
-			os_shared_memory_region_unlock(&ctx->shared_memory, sm->locks, (i32)work->lock);
-			post_sync_barrier(&ctx->shared_memory, BeamformerSharedMemoryLockKind_ExportSync, sm->locks);
+			beamformer_shared_memory_release_lock(ctx->shared_memory, work->lock);
+			post_sync_barrier(ctx->shared_memory, BeamformerSharedMemoryLockKind_ExportSync);
 		}break;
 		case BeamformerWorkKind_CreateFilter:{
 			/* TODO(rnp): this should probably get deleted and moved to lazy loading */
@@ -1201,7 +1206,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 				atomic_store_u32(&ctx->ui_dirty_parameter_blocks, (u32)(ctx->beamform_work_queue != q) << block);
 			}
 
-			post_sync_barrier(&ctx->shared_memory, work->lock, sm->locks);
+			post_sync_barrier(ctx->shared_memory, work->lock);
 
 			u32 dirty_programs = atomic_swap_u32(&cp->dirty_programs, 0);
 			static_assert(ISPOWEROF2(BeamformerMaxComputeShaderStages),
@@ -1366,7 +1371,7 @@ coalesce_timing_table(ComputeTimingTable *t, ComputeShaderStats *stats)
 DEBUG_EXPORT BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute)
 {
 	BeamformerCtx *ctx         = (BeamformerCtx *)user_context;
-	BeamformerSharedMemory *sm = ctx->shared_memory.region;
+	BeamformerSharedMemory *sm = ctx->shared_memory;
 	complete_queue(ctx, &sm->external_work_queue, arena, gl_context);
 	complete_queue(ctx, ctx->beamform_work_queue, arena, gl_context);
 }
@@ -1395,7 +1400,7 @@ beamformer_rf_buffer_allocate(BeamformerRFBuffer *rf, u32 rf_size, b32 nvidia)
 
 DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 {
-	BeamformerSharedMemory *sm                  = ctx->shared_memory->region;
+	BeamformerSharedMemory *sm                  = ctx->shared_memory;
 	BeamformerSharedMemoryLockKind scratch_lock = BeamformerSharedMemoryLockKind_ScratchSpace;
 	BeamformerSharedMemoryLockKind upload_lock  = BeamformerSharedMemoryLockKind_UploadRF;
 
@@ -1403,7 +1408,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 	if (atomic_load_u32(sm->locks + upload_lock) &&
 	    (rf_block_rf_size = atomic_swap_u64(&sm->rf_block_rf_size, 0)))
 	{
-		os_shared_memory_region_lock(ctx->shared_memory, sm->locks, (i32)scratch_lock, (u32)-1);
+		beamformer_shared_memory_take_lock(ctx->shared_memory, (i32)scratch_lock, (u32)-1);
 
 		BeamformerRFBuffer       *rf = ctx->rf_buffer;
 		BeamformerParameterBlock *b  = beamformer_parameter_block(sm, (u32)(rf_block_rf_size >> 32ULL));
@@ -1438,8 +1443,8 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		else        memory_copy_non_temporal(rf->buffer + slot * rf->active_rf_size, data, size);
 		store_fence();
 
-		os_shared_memory_region_unlock(ctx->shared_memory, sm->locks, (i32)scratch_lock);
-		post_sync_barrier(ctx->shared_memory, upload_lock, sm->locks);
+		beamformer_shared_memory_release_lock(ctx->shared_memory, (i32)scratch_lock);
+		post_sync_barrier(ctx->shared_memory, upload_lock);
 
 		if (!nvidia)
 			glFlushMappedNamedBufferRange(rf->ssbo, slot * rf->active_rf_size, (i32)rf->active_rf_size);
@@ -1447,7 +1452,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		atomic_store_u64(rf->upload_syncs  + slot, glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
 		atomic_store_u64(rf->compute_syncs + slot, 0);
 
-		os_wake_waiters(ctx->compute_worker_sync);
+		os_wake_all_waiters(ctx->compute_worker_sync);
 
 		ComputeTimingInfo info = {.kind = ComputeTimingInfoKind_RF_Data};
 		glGetQueryObjectui64v(rf->data_timestamp_query, GL_QUERY_RESULT, &info.timer_count);
@@ -1459,17 +1464,16 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 function void
 beamformer_queue_compute(BeamformerCtx *ctx, BeamformerFrame *frame, u32 parameter_block)
 {
-	BeamformerSharedMemory *sm = ctx->shared_memory.region;
+	BeamformerSharedMemory *sm = ctx->shared_memory;
 	BeamformerSharedMemoryLockKind dispatch_lock = BeamformerSharedMemoryLockKind_DispatchCompute;
-	if (!sm->live_imaging_parameters.active &&
-	    os_shared_memory_region_lock(&ctx->shared_memory, sm->locks, (i32)dispatch_lock, 0))
+	if (!sm->live_imaging_parameters.active && beamformer_shared_memory_take_lock(sm, (i32)dispatch_lock, 0))
 	{
 		BeamformWork *work = beamform_work_queue_push(ctx->beamform_work_queue);
 		BeamformerViewPlaneTag tag = frame ? frame->view_plane_tag : 0;
 		if (fill_frame_compute_work(ctx, work, tag, parameter_block, 0))
 			beamform_work_queue_push_commit(ctx->beamform_work_queue);
 	}
-	os_wake_waiters(&ctx->compute_worker.sync_variable);
+	os_wake_all_waiters(&ctx->compute_worker.sync_variable);
 }
 
 #include "ui.c"
@@ -1500,7 +1504,7 @@ beamformer_process_input_events(BeamformerCtx *ctx, BeamformerInput *input,
 				beamformer_reload_shader(ctx, src, ctx->arena, beamformer_shader_names[kind]);
 			}break;
 			case BeamformerFileReloadKind_ComputeShader:{
-				BeamformerSharedMemory *sm = ctx->shared_memory.region;
+				BeamformerSharedMemory *sm = ctx->shared_memory;
 				u32 reserved_blocks = sm->reserved_parameter_blocks;
 
 				for (u32 block = 0; block < reserved_blocks; block++) {
@@ -1524,11 +1528,12 @@ beamformer_process_input_events(BeamformerCtx *ctx, BeamformerInput *input,
 	}
 }
 
-DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
+BEAMFORMER_EXPORT void
+beamformer_frame_step(BeamformerInput *input)
 {
 	BeamformerCtx *ctx = BeamformerContextMemory(input->memory);
 
-	dt_for_frame = (f64)(input->timer_ticks) / input->timer_frequency;
+	dt_for_frame = (f64)(input->timer_ticks) / os_get_system_info()->timer_frequency;
 
 	if (IsWindowResized()) {
 		ctx->window_size.h = GetScreenHeight();
@@ -1539,11 +1544,11 @@ DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 
 	beamformer_process_input_events(ctx, input, input->event_queue, input->event_count);
 
-	BeamformerSharedMemory *sm = ctx->shared_memory.region;
+	BeamformerSharedMemory *sm = ctx->shared_memory;
 	if (atomic_load_u32(sm->locks + BeamformerSharedMemoryLockKind_UploadRF))
-		os_wake_waiters(&ctx->upload_worker.sync_variable);
+		os_wake_all_waiters(&ctx->upload_worker.sync_variable);
 	if (atomic_load_u32(sm->locks + BeamformerSharedMemoryLockKind_DispatchCompute))
-		os_wake_waiters(&ctx->compute_worker.sync_variable);
+		os_wake_all_waiters(&ctx->compute_worker.sync_variable);
 
 	BeamformerFrame        *frame = ctx->latest_frame;
 	BeamformerViewPlaneTag  tag   = frame? frame->view_plane_tag : 0;
@@ -1551,12 +1556,3 @@ DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 
 	ctx->frame_view_render_context.updated = 0;
 }
-
-/* NOTE(rnp): functions defined in these shouldn't be visible to the whole program */
-#if _DEBUG
-  #if OS_LINUX
-    #include "os_linux.c"
-  #elif OS_WINDOWS
-    #include "os_win32.c"
-  #endif
-#endif

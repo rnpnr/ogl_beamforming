@@ -4,14 +4,6 @@
 
 #include "compiler.h"
 
-/* NOTE: glibc devs are actually buffoons who never write any real code
- * the following headers include a bunch of other headers which need this crap defined first */
-#if OS_LINUX
-  #ifndef _GNU_SOURCE
-    #define _GNU_SOURCE
-  #endif
-#endif
-
 #include <stddef.h>
 #include <stdint.h>
 
@@ -313,35 +305,27 @@ typedef struct {
 	b32   errors;
 } Stream;
 
-#define INVALID_FILE   (-1)
-#define InvalidHandle  (Handle){(u64)(-1)}
-#define ValidHandle(h) ((h).value[0] != InvalidHandle.value[0])
+#define INVALID_FILE       (-1)
+
+#ifndef OSInvalidHandleValue
+  #define OSInvalidHandleValue ((u64)-1)
+  typedef struct { u64 value[1]; } OSBarrier;
+  typedef struct { u64 value[1]; } OSHandle;
+  typedef struct { u64 value[1]; } OSLibrary;
+  typedef struct { u64 value[1]; } OSThread;
+  typedef struct { u64 value[1]; } OSW32Semaphore;
+#endif
+
+#define ValidHandle(h)     ((h).value[0] != OSInvalidHandleValue)
+#define InvalidHandle(h)   ((h).value[0] == OSInvalidHandleValue)
 
 typedef struct OS OS;
 
 typedef struct {
-	Arena arena;
-	iptr  handle;
-	iptr  window_handle;
-	iptr  gl_context;
-	iptr  user_context;
-	i32   sync_variable;
-	b32   awake;
-} GLWorkerThreadContext;
-
-typedef struct {
-	void *region;
-	iptr  os_context;
-} SharedMemoryRegion;
-
-typedef struct { u64 value[1]; } Barrier;
-typedef struct { u64 value[1]; } Handle;
-
-typedef struct {
-	u64      index;
-	u64      count;
-	Barrier  barrier;
-	u64     *broadcast_memory;
+	u64        index;
+	u64        count;
+	OSBarrier  barrier;
+	u64 *      broadcast_memory;
 } LaneContext;
 
 typedef struct {
@@ -351,35 +335,14 @@ typedef struct {
 	LaneContext lane_context;
 } ThreadContext;
 
-#define OS_ALLOC_ARENA_FN(name) Arena name(iz capacity)
-typedef OS_ALLOC_ARENA_FN(os_alloc_arena_fn);
-
-#define OS_WAKE_WORKER_FN(name) void name(GLWorkerThreadContext *ctx)
-typedef OS_WAKE_WORKER_FN(os_wake_worker_fn);
-
-#define OS_READ_WHOLE_FILE_FN(name) s8 name(Arena *arena, char *file)
-typedef OS_READ_WHOLE_FILE_FN(os_read_whole_file_fn);
-
-#define OS_WAIT_ON_VALUE_FN(name) b32 name(i32 *value, i32 current, u32 timeout_ms)
-typedef OS_WAIT_ON_VALUE_FN(os_wait_on_value_fn);
-
-#define OS_WAKE_WAITERS_FN(name) void name(i32 *sync)
-typedef OS_WAKE_WAITERS_FN(os_wake_waiters_fn);
+#define OS_ALLOC_ARENA_FN(name)        Arena name(iz capacity)
+#define OS_READ_ENTIRE_FILE_FN(name)   i64   name(const char *file, void *buffer, i64 buffer_capacity)
+#define OS_WAIT_ON_ADDRESS_FN(name)    b32   name(i32 *value, i32 current, u32 timeout_ms)
+#define OS_WAKE_ALL_WAITERS_FN(name)   void  name(i32 *sync)
+#define OS_THREAD_ENTRY_POINT_FN(name) u64   name(void *user_context)
 
 #define OS_WRITE_NEW_FILE_FN(name) b32 name(char *fname, s8 raw)
 typedef OS_WRITE_NEW_FILE_FN(os_write_new_file_fn);
-
-#define OS_WRITE_FILE_FN(name) b32 name(iptr file, s8 raw)
-typedef OS_WRITE_FILE_FN(os_write_file_fn);
-
-#define OS_THREAD_ENTRY_POINT_FN(name) iptr name(iptr _ctx)
-typedef OS_THREAD_ENTRY_POINT_FN(os_thread_entry_point_fn);
-
-#define OS_SHARED_MEMORY_LOCK_REGION_FN(name) b32 name(SharedMemoryRegion *sm, i32 *locks, i32 lock_index, u32 timeout_ms)
-typedef OS_SHARED_MEMORY_LOCK_REGION_FN(os_shared_memory_region_lock_fn);
-
-#define OS_SHARED_MEMORY_UNLOCK_REGION_FN(name) void name(SharedMemoryRegion *sm, i32 *locks, i32 lock_index)
-typedef OS_SHARED_MEMORY_UNLOCK_REGION_FN(os_shared_memory_region_unlock_fn);
 
 #define RENDERDOC_GET_API_FN(name) b32 name(u32 version, void **out_api)
 typedef RENDERDOC_GET_API_FN(renderdoc_get_api_fn);
@@ -394,11 +357,6 @@ typedef alignas(16) u8 RenderDocAPI[216];
 #define RENDERDOC_API_FN_ADDR(a, offset) (*(iptr *)((*a) + offset))
 #define RENDERDOC_START_FRAME_CAPTURE(a) (renderdoc_start_frame_capture_fn *)RENDERDOC_API_FN_ADDR(a, 152)
 #define RENDERDOC_END_FRAME_CAPTURE(a)   (renderdoc_end_frame_capture_fn *)  RENDERDOC_API_FN_ADDR(a, 168)
-
-typedef struct {
-	u32 logical_processor_count;
-	u32 page_size;
-} OS_SystemInfo;
 
 #define LABEL_GL_OBJECT(type, id, s) {s8 _s = (s); glObjectLabel(type, id, (i32)_s.len, (c8 *)_s.data);}
 

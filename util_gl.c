@@ -18,7 +18,7 @@ compile_shader(Arena a, u32 type, s8 shader, s8 name)
 		glGetShaderInfoLog(sid, len, &out_len, (char *)(buf.data + buf.widx));
 		stream_commit(&buf, out_len);
 		glDeleteShader(sid);
-		os_write_file(os_error_handle(), stream_to_s8(&buf));
+		os_console_log(buf.data, buf.widx);
 
 		sid = 0;
 	}
@@ -42,7 +42,7 @@ link_program(Arena a, u32 *shader_ids, i32 shader_id_count)
 		glGetProgramInfoLog(result, buf.cap - buf.widx, &len, (c8 *)(buf.data + buf.widx));
 		stream_reset(&buf, len);
 		stream_append_byte(&buf, '\n');
-		os_write_file(os_error_handle(), stream_to_s8(&buf));
+		os_console_log(buf.data, buf.widx);
 		glDeleteProgram(result);
 		result = 0;
 	}

@@ -8,6 +8,7 @@
  * [ ]: msvc build doesn't detect out of date files correctly
  * [ ]: seperate dwarf debug info
  */
+
 #include "util.h"
 
 #include <stdarg.h>
@@ -47,6 +48,8 @@ global char *g_argv0;
 #define is_clang   COMPILER_CLANG
 #define is_gcc     COMPILER_GCC
 #define is_msvc    COMPILER_MSVC
+
+#define BEAMFORMER_IMPORT function
 
 #if OS_LINUX
 
@@ -170,6 +173,15 @@ build_fatal_(char *format, ...)
 	build_log_base(BuildLogKind_Error, format, ap);
 	va_end(ap);
 	os_exit(1);
+}
+
+function s8
+read_entire_file(const char *file, Arena *arena)
+{
+	s8 result  = {0};
+	result.len = os_read_entire_file(file, arena->beg, arena_capacity(arena, u8));
+	if (result.len) result.data = arena_commit(arena, result.len);
+	return result;
 }
 
 function b32
@@ -1411,7 +1423,7 @@ meta_entry_extract_scope(MetaEntry *base, iz entry_count)
 function MetaEntryStack
 meta_entry_stack_from_file(Arena *arena, char *file)
 {
-	MetaParser     parser = {.p.s = os_read_whole_file(arena, file)};
+	MetaParser     parser = {.p.s = read_entire_file(file, arena)};
 	MetaEntryStack result = {.raw = parser.p.s};
 
 	compiler_file = file;
@@ -2593,7 +2605,7 @@ metagen_run_emit(MetaprogramContext *m, MetaContext *ctx, MetaEmitOperationList 
 		case MetaEmitOperationKind_FileBytes:{
 			Arena scratch = m->scratch;
 			s8 filename = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), ctx->directory, op->string);
-			s8 file     = os_read_whole_file(&scratch, (c8 *)filename.data);
+			s8 file     = read_entire_file((c8 *)filename.data, &scratch);
 			m->indentation_level++;
 			metagen_push_byte_array(m, file);
 			m->indentation_level--;
@@ -2834,7 +2846,7 @@ meta_push_shader_bake(MetaprogramContext *m, MetaContext *ctx)
 			Arena scratch = m->scratch;
 			s8 filename = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), s8("shaders"),
 			                                 ctx->base_shaders.data[shader].file);
-			s8 file = os_read_whole_file(&scratch, (c8 *)filename.data);
+			s8 file = read_entire_file((c8 *)filename.data, &scratch);
 			metagen_push_byte_array(m, file);
 		} meta_end_scope(m, s8("};\n"));
 	}
@@ -3322,8 +3334,8 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 
 	build_log_generate("Library Header");
 
-	s8 parameters_header = os_read_whole_file(&arena, "beamformer_parameters.h");
-	s8 base_header       = os_read_whole_file(&arena, "lib/ogl_beamformer_lib_base.h");
+	s8 parameters_header = read_entire_file("beamformer_parameters.h", &arena);
+	s8 base_header       = read_entire_file("lib/ogl_beamformer_lib_base.h", &arena);
 
 	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
 
@@ -3524,8 +3536,6 @@ metagen_file_direct(Arena arena, char *filename)
 i32
 main(i32 argc, char *argv[])
 {
-	os_common_init();
-
 	u64 start_time = os_get_timer_counter();
 	g_argv0 = argv[0];
 

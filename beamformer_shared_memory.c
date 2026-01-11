@@ -213,6 +213,34 @@ beamform_work_queue_push_commit(BeamformWorkQueue *q)
 	atomic_add_u64(&q->queue, 1);
 }
 
+#if OS_WINDOWS
+// NOTE(rnp): junk needed on w32 to watch a value across processes while yielding
+// control back to the kernel. There are user level CPU instructions that allow
+// this so why w32 can't do it in kernel mode sounds like shitty design to me.
+DEBUG_IMPORT OSW32Semaphore os_w32_shared_memory_semaphores[countof(((BeamformerSharedMemory *)0)->locks)];
+#endif
+
+function b32
+beamformer_shared_memory_take_lock(BeamformerSharedMemory *sm, i32 lock, u32 timeout_ms)
+{
+#if OS_WINDOWS
+	b32 result = os_w32_semaphore_wait(os_w32_shared_memory_semaphores[lock], timeout_ms);
+	if (result) atomic_store_u32(sm->locks + lock, 1);
+#else
+	b32 result = take_lock(sm->locks + lock, timeout_ms);
+#endif
+	return result;
+}
+
+function void
+beamformer_shared_memory_release_lock(BeamformerSharedMemory *sm, i32 lock)
+{
+	release_lock(sm->locks + lock);
+#if OS_WINDOWS
+	os_w32_semaphore_release(os_w32_shared_memory_semaphores[lock], 1);
+#endif
+}
+
 function BeamformerParameterBlock *
 beamformer_parameter_block(BeamformerSharedMemory *sm, u32 block)
 {
@@ -229,22 +257,20 @@ beamformer_parameter_block_dirty(BeamformerSharedMemory *sm, u32 block)
 }
 
 function BeamformerParameterBlock *
-beamformer_parameter_block_lock(SharedMemoryRegion *sm, u32 block, i32 timeout_ms)
+beamformer_parameter_block_lock(BeamformerSharedMemory *sm, u32 block, i32 timeout_ms)
 {
 	assert(block < BeamformerMaxParameterBlockSlots);
-	BeamformerSharedMemory   *b      = sm->region;
 	BeamformerParameterBlock *result = 0;
-	if (os_shared_memory_region_lock(sm, b->locks, BeamformerSharedMemoryLockKind_Count + (i32)block, (u32)timeout_ms))
-		result = beamformer_parameter_block(sm->region, block);
+	if (beamformer_shared_memory_take_lock(sm, BeamformerSharedMemoryLockKind_Count + block, (u32)timeout_ms))
+		result = beamformer_parameter_block(sm, block);
 	return result;
 }
 
 function void
-beamformer_parameter_block_unlock(SharedMemoryRegion *sm, u32 block)
+beamformer_parameter_block_unlock(BeamformerSharedMemory *sm, u32 block)
 {
 	assert(block < BeamformerMaxParameterBlockSlots);
-	BeamformerSharedMemory *b = sm->region;
-	os_shared_memory_region_unlock(sm, b->locks, BeamformerSharedMemoryLockKind_Count + (i32)block);
+	beamformer_shared_memory_release_lock(sm, BeamformerSharedMemoryLockKind_Count + block);
 }
 
 function Arena
@@ -265,11 +291,11 @@ mark_parameter_block_region_dirty(BeamformerSharedMemory *sm, u32 block, Beamfor
 }
 
 function void
-post_sync_barrier(SharedMemoryRegion *sm, BeamformerSharedMemoryLockKind lock, i32 *locks)
+post_sync_barrier(BeamformerSharedMemory *sm, BeamformerSharedMemoryLockKind lock)
 {
 	/* NOTE(rnp): debug: here it is not a bug to release the lock if it
 	 * isn't held but elswhere it is */
-	DEBUG_DECL(if (locks[lock])) {
-		os_shared_memory_region_unlock(sm, locks, (i32)lock);
+	DEBUG_DECL(if (sm->locks[lock])) {
+		beamformer_shared_memory_release_lock(sm, lock);
 	}
 }

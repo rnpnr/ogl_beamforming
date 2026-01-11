@@ -58,14 +58,6 @@ typedef struct {
 } w32_file_notify_info;
 
 typedef struct {
-	u32 reserved1;
-	u32 reserved2;
-	u64 Reserved3[2];
-	u32 reserved4;
-	u32 reserved5;
-} w32_synchronization_barrier;
-
-typedef struct {
 	u16  architecture;
 	u16  _pad1;
 	u32  page_size;
@@ -109,9 +101,7 @@ W32(iptr)   CreateFileA(c8 *, u32, u32, void *, u32, u32, void *);
 W32(iptr)   CreateFileMappingA(iptr, void *, u32, u32, u32, c8 *);
 W32(iptr)   CreateIoCompletionPort(iptr, iptr, uptr, u32);
 W32(iptr)   CreateSemaphoreA(iptr, i32, i32, c8 *);
-W32(iptr)   CreateThread(iptr, uz, iptr, iptr, u32, u32 *);
 W32(b32)    DeleteFileA(c8 *);
-W32(b32)    EnterSynchronizationBarrier(w32_synchronization_barrier *, u32);
 W32(void)   ExitProcess(i32);
 W32(i32)    GetFileAttributesA(c8 *);
 W32(b32)    GetFileInformationByHandle(iptr, void *);
@@ -119,67 +109,24 @@ W32(i32)    GetLastError(void);
 W32(b32)    GetQueuedCompletionStatus(iptr, u32 *, uptr *, w32_overlapped **, u32);
 W32(iptr)   GetStdHandle(i32);
 W32(void)   GetSystemInfo(w32_system_info *);
-W32(b32)    InitializeSynchronizationBarrier(w32_synchronization_barrier *, i32, i32);
 W32(void *) MapViewOfFile(iptr, u32, u32, u32, u64);
 W32(b32)    QueryPerformanceCounter(u64 *);
 W32(b32)    QueryPerformanceFrequency(u64 *);
 W32(b32)    ReadDirectoryChangesW(iptr, u8 *, u32, b32, u32, u32 *, void *, void *);
 W32(b32)    ReadFile(iptr, u8 *, i32, i32 *, void *);
 W32(b32)    ReleaseSemaphore(iptr, i32, i32 *);
-W32(i32)    SetThreadDescription(iptr, u16 *);
 W32(u32)    WaitForSingleObject(iptr, u32);
 W32(b32)    WaitOnAddress(void *, void *, uz, u32);
 W32(i32)    WakeByAddressAll(void *);
-W32(iptr)   wglGetProcAddress(c8 *);
 W32(b32)    WriteFile(iptr, u8 *, i32, i32 *, void *);
 W32(void *) VirtualAlloc(u8 *, iz, u32, u32);
 
-enum {OSW32_FileWatchDirectoryBufferSize = KB(4)};
-typedef enum {
-	OSW32_FileWatchKindPlatform,
-	OSW32_FileWatchKindUser,
-} OSW32_FileWatchKind;
-
-typedef struct {
-	OSW32_FileWatchKind kind;
-	u64                 hash;
-	u64                 update_time;
-	void *              user_context;
-} OSW32_FileWatch;
-
-typedef struct {
-	u64  hash;
-	iptr handle;
-	s8   name;
-
-	OSW32_FileWatch *data;
-	iz               count;
-	iz               capacity;
-
-	w32_overlapped          overlapped;
-  w32_io_completion_event event;
-
-	void *buffer;
-} OSW32_FileWatchDirectory;
-DA_STRUCT(OSW32_FileWatchDirectory, OSW32_FileWatchDirectory);
-
-typedef struct {
-	Arena         arena;
-	i32           arena_lock;
-	iptr          error_handle;
-	iptr          io_completion_handle;
-	u64           timer_frequency;
-	OS_SystemInfo system_info;
-
-	OSW32_FileWatchDirectoryList file_watch_list;
-} OSW32_Context;
-global OSW32_Context os_w32_context;
-
-function OS_WRITE_FILE_FN(os_write_file)
+function b32
+os_write_file(iptr file, void *data, i64 length)
 {
 	i32 wlen = 0;
-	if (raw.len > 0 && raw.len <= (iz)U32_MAX) WriteFile(file, raw.data, (i32)raw.len, &wlen, 0);
-	return raw.len == wlen;
+	if (length > 0 && length <= (i64)U32_MAX) WriteFile(file, data, (i32)length, &wlen, 0);
+	return length == wlen;
 }
 
 function no_return void
@@ -189,30 +136,11 @@ os_exit(i32 code)
 	unreachable();
 }
 
-function no_return void
-os_fatal(s8 msg)
-{
-	os_write_file(GetStdHandle(STD_ERROR_HANDLE), msg);
-	os_exit(1);
-	unreachable();
-}
-
-function iptr
-os_error_handle(void)
-{
-	return os_w32_context.error_handle;
-}
-
-function s8
-os_path_separator(void)
-{
-	return s8("\\");
-}
-
 function u64
 os_get_timer_frequency(void)
 {
-	u64 result = os_w32_context.timer_frequency;
+	u64 result;
+	QueryPerformanceFrequency(&result);
 	return result;
 }
 
@@ -224,51 +152,40 @@ os_get_timer_counter(void)
 	return result;
 }
 
-function void
-os_common_init(void)
+function u32
+os_get_page_size(void)
 {
 	w32_system_info info = {0};
 	GetSystemInfo(&info);
-
-	os_w32_context.system_info.page_size = info.page_size;
-	os_w32_context.system_info.logical_processor_count = info.number_of_processors;
-
-	QueryPerformanceFrequency(&os_w32_context.timer_frequency);
-}
-
-function iz
-os_round_up_to_page_size(iz value)
-{
-	iz result = round_up_to(value, os_w32_context.system_info.page_size);
+	u32 result = info.page_size;
 	return result;
 }
 
 function OS_ALLOC_ARENA_FN(os_alloc_arena)
 {
 	Arena result = {0};
-	capacity   = os_round_up_to_page_size(capacity);
+	capacity   = round_up_to(capacity, os_get_page_size());
 	result.beg = VirtualAlloc(0, capacity, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
-	if (!result.beg)
-		os_fatal(s8("os_alloc_arena: couldn't allocate memory\n"));
-	result.end = result.beg + capacity;
-	asan_poison_region(result.beg, result.end - result.beg);
+	if (result.beg) {
+		result.end = result.beg + capacity;
+		asan_poison_region(result.beg, result.end - result.beg);
+	}
 	return result;
 }
 
-function OS_READ_WHOLE_FILE_FN(os_read_whole_file)
+BEAMFORMER_IMPORT OS_READ_ENTIRE_FILE_FN(os_read_entire_file)
 {
-	s8 result = s8("");
-
+	i64 result = 0;
 	w32_file_info fileinfo;
-	iptr h = CreateFileA(file, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
+	iptr h = CreateFileA((c8 *)file, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
 	if (h >= 0 && GetFileInformationByHandle(h, &fileinfo)) {
 		iz filesize  = (iz)fileinfo.nFileSizeHigh << 32;
 		filesize    |= (iz)fileinfo.nFileSizeLow;
-		if (filesize <= (iz)U32_MAX) {
-			result = s8_alloc(arena, filesize);
+		if (buffer_capacity >= filesize) {
+			result = filesize;
 			i32 rlen;
-			if (!ReadFile(h, result.data, (i32)result.len, &rlen, 0) || rlen != result.len)
-				result = s8("");
+			if (!ReadFile(h, buffer, (i32)filesize, &rlen, 0) || rlen != filesize)
+				result = 0;
 		}
 	}
 	if (h >= 0) CloseHandle(h);
@@ -282,11 +199,10 @@ function OS_WRITE_NEW_FILE_FN(os_write_new_file)
 	iptr h = CreateFileA(fname, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, 0);
 	if (h >= 0) {
 		while (raw.len > 0) {
-			s8 chunk  = raw;
-			chunk.len = MIN(chunk.len, (iz)GB(2));
-			result    = os_write_file(h, chunk);
+			i64 length = MIN(raw.len, (iz)GB(2));
+			result     = os_write_file(h, raw.data, length);
 			if (!result) break;
-			raw = s8_cut_head(raw, chunk.len);
+			raw = s8_cut_head(raw, length);
 		}
 		CloseHandle(h);
 	}
@@ -300,102 +216,18 @@ os_file_exists(char *path)
 	return result;
 }
 
-function SharedMemoryRegion
-os_create_shared_memory_area(Arena *arena, char *name, u32 lock_count, iz requested_capacity)
-{
-	iz capacity = os_round_up_to_page_size(requested_capacity);
-	assert(capacity <= (iz)U32_MAX);
-	SharedMemoryRegion result = {0};
-	iptr h = CreateFileMappingA(-1, 0, PAGE_READWRITE, 0, (u32)capacity, name);
-	if (h != INVALID_FILE) {
-		void *new = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, (u32)capacity);
-		if (new) {
-			w32_shared_memory_context *ctx = push_struct(arena, typeof(*ctx));
-			ctx->semaphores     = push_array(arena, typeof(*ctx->semaphores), lock_count);
-			ctx->reserved_count = lock_count;
-			result.os_context   = (iptr)ctx;
-			result.region       = new;
-
-			Stream sb = arena_stream(*arena);
-			stream_append_s8s(&sb, c_str_to_s8(name), s8("_lock_"));
-			for (u32 i = 0; i < lock_count; i++) {
-				Stream lb = sb;
-				stream_append_u64(&lb, i);
-				stream_append_byte(&lb, 0);
-				ctx->semaphores[i] = CreateSemaphoreA(0, 1, 1, (c8 *)lb.data);
-				if (ctx->semaphores[i] == INVALID_FILE)
-					os_fatal(s8("os_create_shared_memory_area: failed to create semaphore\n"));
-
-				/* NOTE(rnp): hacky garbage because CreateSemaphore will just open an existing
-				 * semaphore without any indication. Sometimes the other side of the shared memory
-				 * will provide incorrect parameters or will otherwise fail and its faster to
-				 * restart this program than to get that application to release the semaphores */
-				/* TODO(rnp): figure out something more robust */
-				ReleaseSemaphore(ctx->semaphores[i], 1, 0);
-			}
-		}
-	}
-	return result;
-}
-
 function b32
 os_copy_file(char *name, char *new)
 {
 	return CopyFileA(name, new, 0);
 }
 
-function OSW32_FileWatchDirectory *
-os_lookup_file_watch_directory(OSW32_FileWatchDirectoryList *ctx, u64 hash)
-{
-	OSW32_FileWatchDirectory *result = 0;
-	for (iz i = 0; !result && i < ctx->count; i++)
-		if (ctx->data[i].hash == hash)
-			result = ctx->data + i;
-	return result;
-}
-
-function void
-os_w32_add_file_watch(s8 path, void *user_context, OSW32_FileWatchKind kind)
-{
-	s8 directory  = path;
-	directory.len = s8_scan_backwards(path, '\\');
-	assert(directory.len > 0);
-
-	OSW32_FileWatchDirectoryList *fwctx = &os_w32_context.file_watch_list;
-
-	u64 hash = u64_hash_from_s8(directory);
-	OSW32_FileWatchDirectory *dir = os_lookup_file_watch_directory(fwctx, hash);
-	if (!dir) {
-		assert(path.data[directory.len] == '\\');
-
-		dir = da_push(&os_w32_context.arena, fwctx);
-		dir->hash   = hash;
-		dir->name   = push_s8(&os_w32_context.arena, directory);
-		dir->handle = CreateFileA((c8 *)dir->name.data, GENERIC_READ, FILE_SHARE_READ, 0,
-		                          OPEN_EXISTING,
-		                          FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OVERLAPPED, 0);
-
-		dir->event.tag     = W32IOEvent_FileWatch;
-		dir->event.context = (iptr)dir;
-		CreateIoCompletionPort(dir->handle, os_w32_context.io_completion_handle, (uptr)&dir->event, 0);
-
-		dir->buffer = arena_alloc(&os_w32_context.arena, .size = OSW32_FileWatchDirectoryBufferSize);
-		ReadDirectoryChangesW(dir->handle, dir->buffer, OSW32_FileWatchDirectoryBufferSize, 0,
-		                      FILE_NOTIFY_CHANGE_LAST_WRITE, 0, &dir->overlapped, 0);
-	}
-
-	OSW32_FileWatch *fw = da_push(&os_w32_context.arena, dir);
-	fw->user_context = user_context;
-	fw->hash         = u64_hash_from_s8(s8_cut_head(path, dir->name.len + 1));
-	fw->kind         = kind;
-}
-
-function OS_WAIT_ON_VALUE_FN(os_wait_on_value)
+BEAMFORMER_IMPORT OS_WAIT_ON_ADDRESS_FN(os_wait_on_address)
 {
 	return WaitOnAddress(value, &current, sizeof(*value), timeout_ms);
 }
 
-function OS_WAKE_WAITERS_FN(os_wake_waiters)
+BEAMFORMER_IMPORT OS_WAKE_ALL_WAITERS_FN(os_wake_all_waiters)
 {
 	if (sync) {
 		atomic_store_u32(sync, 0);
@@ -403,84 +235,22 @@ function OS_WAKE_WAITERS_FN(os_wake_waiters)
 	}
 }
 
-function b32
-os_take_lock(i32 *lock, i32 timeout_ms)
+BEAMFORMER_IMPORT OSW32Semaphore
+os_w32_create_semaphore(const char *name, i32 initial_count, i32 maximum_count)
 {
-	b32 result = 0;
-	for (;;) {
-		i32 current = 0;
-		if (atomic_cas_u32(lock, &current, 1))
-			result = 1;
-		if (result || !timeout_ms || (!os_wait_on_value(lock, current, (u32)timeout_ms) && timeout_ms != -1))
-			break;
-	}
+	OSW32Semaphore result = {(u64)CreateSemaphoreA(0, initial_count, maximum_count, (c8 *)name)};
 	return result;
 }
 
-function void
-os_release_lock(i32 *lock)
+BEAMFORMER_IMPORT u32
+os_w32_semaphore_wait(OSW32Semaphore handle, u32 timeout_ms)
 {
-	assert(atomic_load_u32(lock));
-	atomic_store_u32(lock, 0);
-	os_wake_waiters(lock);
-}
-
-function OS_SHARED_MEMORY_LOCK_REGION_FN(os_shared_memory_region_lock)
-{
-	w32_shared_memory_context *ctx = (typeof(ctx))sm->os_context;
-	b32 result = !WaitForSingleObject(ctx->semaphores[lock_index], timeout_ms);
-	if (result) atomic_store_u32(locks + lock_index, 1);
+	b32 result = !WaitForSingleObject(handle.value[0], timeout_ms);
 	return result;
 }
 
-function OS_SHARED_MEMORY_UNLOCK_REGION_FN(os_shared_memory_region_unlock)
+BEAMFORMER_IMPORT void
+os_w32_semaphore_release(OSW32Semaphore handle, i32 count)
 {
-	w32_shared_memory_context *ctx = (typeof(ctx))sm->os_context;
-	os_release_lock(locks + lock_index);
-	ReleaseSemaphore(ctx->semaphores[lock_index], 1, 0);
-}
-
-function OS_SystemInfo *
-os_get_system_info(void)
-{
-	return &os_w32_context.system_info;
-}
-
-function Barrier
-os_barrier_alloc(u32 count)
-{
-	Barrier result = {0};
-	DeferLoop(os_take_lock(&os_w32_context.arena_lock, -1),
-	          os_release_lock(&os_w32_context.arena_lock))
-	{
-		w32_synchronization_barrier *barrier = push_struct(&os_w32_context.arena, w32_synchronization_barrier);
-		InitializeSynchronizationBarrier(barrier, (i32)count, -1);
-		result.value[0] = (u64)barrier;
-	}
-	return result;
-}
-
-function void
-os_barrier_wait(Barrier barrier)
-{
-	w32_synchronization_barrier *b = (w32_synchronization_barrier *)barrier.value[0];
-	if (b) EnterSynchronizationBarrier(b, 0);
-}
-
-function iptr
-os_create_thread(iptr user_context, os_thread_entry_point_fn *fn)
-{
-	iptr result = CreateThread(0, 0, (iptr)fn, user_context, 0, 0);
-	return result;
-}
-
-function void
-os_set_thread_name(iptr thread, s8 name)
-{
-	DeferLoop(os_take_lock(&os_w32_context.arena_lock, -1),
-	          os_release_lock(&os_w32_context.arena_lock))
-	{
-		Arena arena = os_w32_context.arena;
-		SetThreadDescription(thread, s8_to_s16(&arena, name).data);
-	}
+	ReleaseSemaphore(handle.value[0], count, 0);
 }
