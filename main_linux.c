@@ -128,7 +128,7 @@ os_lookup_symbol(OSLibrary library, const char *symbol)
 function void *
 allocate_shared_memory(char *name, iz requested_capacity, u64 *capacity)
 {
-	u64 rounded_capacity = round_up_to(requested_capacity, os_linux_context.system_info.page_size);
+	u64 rounded_capacity = round_up_to(requested_capacity, ARCH_X64? KB(4) : os_linux_context.system_info.page_size);
 	void *result = 0;
 	i32 fd = shm_open(name, O_CREAT|O_RDWR, S_IRUSR|S_IWUSR);
 	if (fd > 0 && ftruncate(fd, rounded_capacity) != -1) {
@@ -297,8 +297,8 @@ extern i32
 main(void)
 {
 	os_linux_context.system_info.timer_frequency         = os_get_timer_frequency();
-	os_linux_context.system_info.logical_processor_count = (u32)get_nprocs();
-	os_linux_context.system_info.page_size               = (u32)getpagesize();
+	os_linux_context.system_info.logical_processor_count = os_number_of_processors();
+	os_linux_context.system_info.page_size               = ARCH_X64? KB(4) : getauxval(AT_PAGESZ);
 	os_linux_context.system_info.path_separator_byte     = '/';
 
 	Arena program_memory = os_alloc_arena(MB(16) + KB(16));

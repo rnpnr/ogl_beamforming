@@ -15,6 +15,7 @@
 #include <linux/futex.h>
 #include <poll.h>
 #include <pthread.h>
+#include <sys/auxv.h>
 #include <sys/inotify.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -56,10 +57,22 @@ os_get_timer_counter(void)
 	return result;
 }
 
+function u64
+os_number_of_processors(void)
+{
+	u64 set[128 / sizeof(u64)] = {0};
+	syscall(SYS_sched_getaffinity, 0, sizeof(set), set);
+
+	u64 result = 0;
+	for EachElement(set, it)
+		result += popcount_u64(set[it]);
+	return result > 0 ? result : 1;
+}
+
 function OS_ALLOC_ARENA_FN(os_alloc_arena)
 {
 	Arena result = {0};
-	capacity     = round_up_to(capacity, getpagesize());
+	capacity     = round_up_to(capacity, ARCH_X64? KB(4) : getauxval(AT_PAGESZ));
 	void *memory = mmap(0, (uz)capacity, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
 	if (memory != MAP_FAILED) {
 		result.beg = memory;
