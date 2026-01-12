@@ -118,23 +118,12 @@
 
 #if COMPILER_MSVC
 
-function force_inline u32
-clz_u32(u32 a)
+function force_inline u64
+clz_u64(u64 a)
 {
-	u32 result = 32, index;
+	u64 result = 64, index;
 	if (a) {
-		_BitScanReverse(&index, a);
-		result = index;
-	}
-	return result;
-}
-
-function force_inline u32
-ctz_u32(u32 a)
-{
-	u32 result = 32, index;
-	if (a) {
-		_BitScanForward(&index, a);
+		_BitScanReverse64(&index, a);
 		result = index;
 	}
 	return result;
@@ -153,19 +142,11 @@ ctz_u64(u64 a)
 
 #else /* !COMPILER_MSVC */
 
-function force_inline u32
-clz_u32(u32 a)
+function force_inline u64
+clz_u64(u32 a)
 {
-	u32 result = 32;
-	if (a) result = (u32)__builtin_clz(a);
-	return result;
-}
-
-function force_inline u32
-ctz_u32(u32 a)
-{
-	u32 result = 32;
-	if (a) result = (u32)__builtin_ctz(a);
+	u64 result = 64;
+	if (a) result = (u64)__builtin_clzll(a);
 	return result;
 }
 
