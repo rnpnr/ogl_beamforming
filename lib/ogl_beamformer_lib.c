@@ -604,8 +604,8 @@ beamformer_live_parameters_get_dirty_flag(void)
 {
 	i32 result = -1;
 	if (check_shared_memory()) {
-		u32 flag = ctz_u32(g_beamformer_library_context.bp->live_imaging_dirty_flags);
-		if (flag != 32) {
+		u32 flag = ctz_u64(g_beamformer_library_context.bp->live_imaging_dirty_flags);
+		if (flag != 64) {
 			atomic_and_u32(&g_beamformer_library_context.bp->live_imaging_dirty_flags, ~(1u << flag));
 			result = (i32)flag;
 		}
