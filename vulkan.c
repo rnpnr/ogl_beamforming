@@ -205,15 +205,13 @@ vk_load_physical_device(Arena arena, Stream *err)
 	if (!vk->physical_device)
 		fatal(vulkan_info("failed to find a suitable GPU\n"));
 
-	VkPhysicalDeviceProperties2 *dp = push_struct(&arena, typeof(*dp));
-	dp->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+	VkPhysicalDeviceProperties2            dp   = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+	VkPhysicalDeviceMaintenance3Properties dm3p = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES};
+	dp.pNext = &dm3p;
 
-	VkPhysicalDeviceMaintenance3Properties *dm3p = dp->pNext = push_struct(&arena, typeof(*dp));
-	dm3p->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES;
+	vkGetPhysicalDeviceProperties2(vk->physical_device, &dp);
 
-	vkGetPhysicalDeviceProperties2(vk->physical_device, dp);
-
-	stream_append_s8s(err, vulkan_info("selecting device: "), c_str_to_s8(dp->properties.deviceName), s8("\n"));
+	stream_append_s8s(err, vulkan_info("selecting device: "), c_str_to_s8(dp.properties.deviceName), s8("\n"));
 
 	{
 		Arena scratch = arena;
@@ -258,11 +256,10 @@ vk_load_physical_device(Arena arena, Stream *err)
 		}
 	}
 
-	VkPhysicalDeviceMemoryProperties2 *mp = push_struct(&arena, typeof(*mp));
-	mp->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
-	vkGetPhysicalDeviceMemoryProperties2(vk->physical_device, mp);
+	VkPhysicalDeviceMemoryProperties2 mp = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+	vkGetPhysicalDeviceMemoryProperties2(vk->physical_device, &mp);
 
-	VkPhysicalDeviceMemoryProperties *bmp = &mp->memoryProperties;
+	VkPhysicalDeviceMemoryProperties *bmp = &mp.memoryProperties;
 
 	// NOTE(rnp): vulkan spec says that highest performance memory types must
 	// come first. just take the first one found.
@@ -316,10 +313,18 @@ vk_load_physical_device(Arena arena, Stream *err)
 		vk->memory_info.memory_host_coherent[it] = (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
 	}
 
-	vk->memory_info.max_allocation_size    = dm3p->maxMemoryAllocationSize;
-	vk->memory_info.non_coherent_atom_size = dp->properties.limits.nonCoherentAtomSize;
+	vk->memory_info.max_allocation_size    = dm3p.maxMemoryAllocationSize;
+	vk->memory_info.non_coherent_atom_size = dp.properties.limits.nonCoherentAtomSize;
+	vk->gpu_info.vendor                    = dp.properties.vendorID;
 	vk->gpu_info.gpu_heap_size             = bmp->memoryHeaps[vk->memory_info.gpu_heap_index].size;
-	vk->gpu_info.timestamp_period_ns       = dp->properties.limits.timestampPeriod;
+	vk->gpu_info.timestamp_period_ns       = dp.properties.limits.timestampPeriod;
+	vk->gpu_info.max_image_dimension_2D    = dp.properties.limits.maxImageDimension2D;
+	vk->gpu_info.max_image_dimension_3D    = dp.properties.limits.maxImageDimension3D;
+	vk->gpu_info.max_msaa_samples          = round_down_power_of_two(dp.properties.limits.framebufferColorSampleCounts);
+	vk->gpu_info.max_compute_shared_memory_size = dp.properties.limits.maxComputeSharedMemorySize;
+
+	// IMPORTANT(rnp): memory must only be pushed at the end of the function
+	vk->gpu_info.name = push_s8(&vk->arena, c_str_to_s8(dp.properties.deviceName));
 }
 
 function void

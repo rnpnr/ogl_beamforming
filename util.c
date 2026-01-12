@@ -687,17 +687,18 @@ push_s8(Arena *a, s8 str)
 	return result;
 }
 
-function force_inline u32
-round_down_power_of_2(u32 a)
+/* NOTE(rnp): from Hacker's Delight */
+function force_inline u64
+round_down_power_of_two(u64 a)
 {
-	u32 result = 0x80000000UL >> clz_u32(a);
+	u64 result = 0x8000000000000000ULL >> clz_u64(a);
 	return result;
 }
 
-function force_inline u32
-round_up_power_of_2(u32 a)
+function force_inline u64
+round_up_power_of_two(u64 a)
 {
-	u32 result = 0x80000000UL >> (clz_u32(a - 1) - 1);
+	u64 result = 0x8000000000000000ULL >> (clz_u64(a - 1) - 1);
 	return result;
 }
 
