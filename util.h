@@ -124,9 +124,10 @@ typedef u64      uptr;
 #define Abs(a)           ((a) < 0 ? -(a) : (a))
 #define Sign(a)          ((a) < 0 ? -1 : 1)
 #define Between(x, a, b) ((x) >= (a) && (x) <= (b))
-#define Clamp(x, a, b)   ((x) < (a) ? (a) : (x) > (b) ? (b) : (x))
 #define Min(a, b)        ((a) < (b) ? (a) : (b))
 #define Max(a, b)        ((a) > (b) ? (a) : (b))
+#define Clamp(x, a, b)   ((x) < (a) ? (a) : (x) > (b) ? (b) : (x))
+#define Clamp01(x)       Clamp(x, 0, 1)
 #define IsPowerOfTwo(a)  (((a) & ((a) - 1)) == 0)
 
 #define ISDIGIT(c)       (BETWEEN((c), '0', '9'))
