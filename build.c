@@ -124,7 +124,8 @@ typedef struct {
 	b32   sanitize;
 	b32   tests;
 	b32   time;
-} Options;
+} Config;
+global Config config;
 
 #define BUILD_LOG_KINDS \
 	X(Error,    "\x1B[31m[ERROR]\x1B[0m    ") \
@@ -523,42 +524,41 @@ run_synchronous(Arena a, CommandList *command)
 	return os_wait_close_process(os_spawn_process(command, sb));
 }
 
-function CommandList
-cmd_base(Arena *a, Options *o)
+function void
+cmd_base(Arena *a, CommandList *c)
 {
-	CommandList result = {0};
-	cmd_append(a, &result, COMPILER);
+	Config *o = &config;
+
+	cmd_append(a, c, COMPILER);
 
 	if (!is_msvc) {
 		/* TODO(rnp): support cross compiling with clang */
-		if (!o->generic)     cmd_append(a, &result, "-march=native");
-		else if (is_amd64)   cmd_append(a, &result, "-march=x86-64-v3");
-		else if (is_aarch64) cmd_append(a, &result, "-march=armv8");
+		if (!o->generic)     cmd_append(a, c, "-march=native");
+		else if (is_amd64)   cmd_append(a, c, "-march=x86-64-v3");
+		else if (is_aarch64) cmd_append(a, c, "-march=armv8");
 	}
 
-	cmd_append(a, &result, COMMON_FLAGS, "-Iexternal/include");
-	if (o->debug) cmd_append(a, &result, DEBUG_FLAGS);
-	else          cmd_append(a, &result, OPTIMIZED_FLAGS);
+	cmd_append(a, c, COMMON_FLAGS);
+	if (o->debug) cmd_append(a, c, DEBUG_FLAGS);
+	else          cmd_append(a, c, OPTIMIZED_FLAGS);
 
 	/* NOTE: ancient gcc bug: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=80454 */
-	if (is_gcc) cmd_append(a, &result, "-Wno-missing-braces");
+	if (is_gcc) cmd_append(a, c, "-Wno-missing-braces");
 
-	if (!is_msvc) cmd_append(a, &result, "-fms-extensions");
+	if (!is_msvc) cmd_append(a, c, "-fms-extensions");
 
-	if (o->debug && is_unix) cmd_append(a, &result, "-gdwarf-4");
+	if (o->debug && is_unix) cmd_append(a, c, "-gdwarf-4");
 
 	/* NOTE(rnp): need to avoid w32-gcc for ci */
 	b32 sanitize = o->sanitize && !is_msvc && !(is_w32 && is_gcc);
 	if (sanitize) {
-		cmd_append(a, &result, "-fsanitize=address,undefined");
+		cmd_append(a, c, "-fsanitize=address,undefined");
 		/* NOTE(rnp): impossible to autodetect on GCC versions < 14 (ci has 13) */
-		cmd_append(a, &result, "-DASAN_ACTIVE=1");
+		cmd_append(a, c, "-DASAN_ACTIVE=1");
 	} else {
-		cmd_append(a, &result, "-DASAN_ACTIVE=0");
+		cmd_append(a, c, "-DASAN_ACTIVE=0");
 	}
 	if (!sanitize && o->sanitize) build_log_warning("santizers not supported with this compiler");
-
-	return result;
 }
 
 function void
@@ -573,8 +573,8 @@ check_rebuild_self(Arena arena, i32 argc, char *argv[])
 		if (!os_rename_file(binary, old_name))
 			build_fatal("failed to move: %s -> %s", binary, old_name);
 
-		Options options = {0};
-		CommandList c = cmd_base(&arena, &options);
+		CommandList c = {0};
+		cmd_base(&arena, &c);
 		cmd_append(&arena, &c, EXTRA_FLAGS);
 		if (!is_msvc) cmd_append(&arena, &c, "-Wno-unused-function");
 		cmd_append(&arena, &c, __FILE__, OUTPUT_EXE(binary));
@@ -610,33 +610,29 @@ usage(char *argv0)
 	os_exit(0);
 }
 
-function Options
-parse_options(i32 argc, char *argv[])
+function void
+parse_config(i32 argc, char *argv[])
 {
-	Options result = {0};
-
 	char *argv0 = shift(argv, argc);
 	while (argc > 0) {
 		char *arg = shift(argv, argc);
 		s8 str    = c_str_to_s8(arg);
 		if (s8_equal(str, s8("--bake-shaders"))) {
-			result.bake_shaders = 1;
+			config.bake_shaders = 1;
 		} else if (s8_equal(str, s8("--debug"))) {
-			result.debug = 1;
+			config.debug = 1;
 		} else if (s8_equal(str, s8("--generic"))) {
-			result.generic = 1;
+			config.generic = 1;
 		} else if (s8_equal(str, s8("--sanitize"))) {
-			result.sanitize = 1;
+			config.sanitize = 1;
 		} else if (s8_equal(str, s8("--tests"))) {
-			result.tests = 1;
+			config.tests = 1;
 		} else if (s8_equal(str, s8("--time"))) {
-			result.time = 1;
+			config.time = 1;
 		} else {
 			usage(argv0);
 		}
 	}
-
-	return result;
 }
 
 /* NOTE(rnp): produce pdbs on w32 */
@@ -726,18 +722,20 @@ build_static_library(Arena a, CommandList cc, char *name, char **deps, char **ou
 }
 
 function b32
-check_build_raylib(Arena a, CommandList cc, b32 shared)
+check_build_raylib(Arena a)
 {
-	b32 result = 1;
+	b32 result = 1, shared = config.debug;
 	char *libraylib = shared ? OS_SHARED_LINK_LIB("raylib") : OUTPUT_LIB(OS_STATIC_LIB("raylib"));
 	if (needs_rebuild(libraylib, "external/include/rlgl.h", "external/raylib")) {
 		git_submodule_update(a, "external/raylib");
 		os_copy_file("external/raylib/src/rlgl.h", "external/include/rlgl.h");
 
+		CommandList cc = {0};
+		cmd_base(&a, &cc);
 		if (is_unix) cmd_append(&a, &cc, "-D_GLFW_X11");
 		cmd_append(&a, &cc, "-DPLATFORM_DESKTOP_GLFW");
 		if (!is_msvc) cmd_append(&a, &cc, "-Wno-unused-but-set-variable");
-		cmd_append(&a, &cc, "-Iexternal/raylib/src", "-Iexternal/raylib/src/external/glfw/include");
+		cmd_append(&a, &cc, "-Iexternal/include", "-Iexternal/raylib/src", "-Iexternal/raylib/src/external/glfw/include");
 		#define RAYLIB_SOURCES \
 			X(rglfw)     \
 			X(rshapes)   \
@@ -764,8 +762,12 @@ check_build_raylib(Arena a, CommandList cc, b32 shared)
 }
 
 function b32
-build_helper_library(Arena arena, CommandList cc)
+build_helper_library(Arena arena)
 {
+	CommandList cc = {0};
+	cmd_base(&arena, &cc);
+	cmd_append(&arena, &cc, EXTRA_FLAGS);
+
 	/////////////
 	// library
 	char *library = OUTPUT(OS_SHARED_LIB("ogl_beamformer_lib"));
@@ -778,9 +780,55 @@ build_helper_library(Arena arena, CommandList cc)
 	return result;
 }
 
-function b32
-build_beamformer_as_library(Arena arena, CommandList cc)
+function void
+cmd_beamformer_base(Arena *a, CommandList *c)
 {
+	cmd_base(a, c);
+	cmd_append(a, c, "-Iexternal/include");
+	cmd_append(a, c, EXTRA_FLAGS);
+	cmd_append(a, c, config.bake_shaders? "-DBakeShaders=1" : "-DBakeShaders=0");
+	if (config.debug) cmd_append(a, c, "-DBEAMFORMER_DEBUG", "-DBEAMFORMER_RENDERDOC_HOOKS");
+}
+
+function b32
+build_beamformer_main(Arena arena)
+{
+	CommandList c = {0};
+	cmd_beamformer_base(&arena, &c);
+
+	cmd_append(&arena, &c, OS_MAIN, OUTPUT_EXE("ogl"));
+	cmd_pdb(&arena, &c, "ogl");
+	if (config.debug) {
+		if (!is_w32)  cmd_append(&arena, &c, "-Wl,--export-dynamic", "-Wl,-rpath,.");
+		if (!is_msvc) cmd_append(&arena, &c, "-L.");
+		cmd_append(&arena, &c, LINK_LIB("raylib"));
+	} else {
+		cmd_append(&arena, &c, OUTPUT(OS_STATIC_LIB("raylib")));
+	}
+	if (!is_msvc) cmd_append(&arena, &c, "-lm");
+	if (is_unix)  cmd_append(&arena, &c, "-lGL");
+	if (is_w32) {
+		cmd_append(&arena, &c, LINK_LIB("user32"), LINK_LIB("shell32"), LINK_LIB("gdi32"),
+		           LINK_LIB("opengl32"), LINK_LIB("winmm"), LINK_LIB("Synchronization"));
+		if (!is_msvc) cmd_append(&arena, &c, "-Wl,--out-implib," OUTPUT(OS_STATIC_LIB("main")));
+	}
+	cmd_append(&arena, &c, (void *)0);
+
+	return run_synchronous(arena, &c);
+}
+
+function b32
+build_beamformer_as_library(Arena arena)
+{
+	CommandList cc = {0};
+	cmd_beamformer_base(&arena, &cc);
+
+	if (is_msvc) {
+		build_static_library_from_objects(arena, OUTPUT_LIB(OS_STATIC_LIB("main")),
+		                                  arg_list(char *, "/def", "/name:ogl.exe"),
+		                                  arg_list(char *, OUTPUT(OBJECT("main_w32"))));
+	}
+
 	char *library = OS_SHARED_LIB("beamformer");
 	char *libs[]  = {!is_msvc? "-L." : "", LINK_LIB("raylib"), LINK_LIB("gdi32"),
 	                 LINK_LIB("shell32"), LINK_LIB("user32"), LINK_LIB("opengl32"),
@@ -793,8 +841,12 @@ build_beamformer_as_library(Arena arena, CommandList cc)
 }
 
 function b32
-build_tests(Arena arena, CommandList cc)
+build_tests(Arena arena)
 {
+	CommandList cc = {0};
+	cmd_base(&arena, &cc);
+	cmd_append(&arena, &cc, EXTRA_FLAGS);
+
 	#define TEST_PROGRAMS \
 		X("throughput", LINK_LIB("zstd"), W32_DECL(LINK_LIB("Synchronization")))
 
@@ -3556,62 +3608,27 @@ main(i32 argc, char *argv[])
 	result &= metagen_emit_helper_library_header(meta, arena);
 	result &= metagen_emit_matlab_code(meta, arena);
 
-	Options options = parse_options(argc, argv);
+	parse_config(argc, argv);
 
-	CommandList c = cmd_base(&arena, &options);
-	if (!check_build_raylib(arena, c, options.debug)) return 1;
-
-	/////////////////////////////////////
-	// extra flags (unusable for raylib)
-	cmd_append(&arena, &c, EXTRA_FLAGS);
+	if (!check_build_raylib(arena)) return 1;
 
 	/////////////////
 	// lib/tests
-	result &= build_helper_library(arena, c);
-	if (options.tests) result &= build_tests(arena, c);
+	result &= build_helper_library(arena);
+	if (config.tests) result &= build_tests(arena);
 
 	//////////////////
 	// static portion
-	cmd_append(&arena, &c, options.bake_shaders? "-DBakeShaders=1" : "-DBakeShaders=0");
-	if (options.debug) cmd_append(&arena, &c, "-DBEAMFORMER_DEBUG", "-DBEAMFORMER_RENDERDOC_HOOKS");
-
-	iz c_count = c.count;
-	cmd_append(&arena, &c, OS_MAIN, OUTPUT_EXE("ogl"));
-	cmd_pdb(&arena, &c, "ogl");
-	if (options.debug) {
-		if (!is_w32)  cmd_append(&arena, &c, "-Wl,--export-dynamic", "-Wl,-rpath,.");
-		if (!is_msvc) cmd_append(&arena, &c, "-L.");
-		cmd_append(&arena, &c, LINK_LIB("raylib"));
-	} else {
-		cmd_append(&arena, &c, OUTPUT(OS_STATIC_LIB("raylib")));
-	}
-	if (!is_msvc) cmd_append(&arena, &c, "-lm");
-	if (is_unix)  cmd_append(&arena, &c, "-lGL");
-	if (is_w32) {
-		cmd_append(&arena, &c, LINK_LIB("user32"), LINK_LIB("shell32"), LINK_LIB("gdi32"),
-		           LINK_LIB("opengl32"), LINK_LIB("winmm"), LINK_LIB("Synchronization"));
-		if (!is_msvc) cmd_append(&arena, &c, "-Wl,--out-implib," OUTPUT(OS_STATIC_LIB("main")));
-	}
-	cmd_append(&arena, &c, (void *)0);
-
-	result &= run_synchronous(arena, &c);
-	c.count = c_count;
+	result &= build_beamformer_main(arena);
 
 	/////////////////////////
 	// hot reloadable portion
 	//
 	// NOTE: this is built after main because on w32 we need to export
 	// gl function pointers for the reloadable portion to import
-	if (options.debug) {
-		if (is_msvc) {
-			build_static_library_from_objects(arena, OUTPUT_LIB(OS_STATIC_LIB("main")),
-			                                  arg_list(char *, "/def", "/name:ogl.exe"),
-			                                  arg_list(char *, OUTPUT(OBJECT("main_w32"))));
-		}
-		result &= build_beamformer_as_library(arena, c);
-	}
+	if (config.debug) result &= build_beamformer_as_library(arena);
 
-	if (options.time) {
+	if (config.time) {
 		f64 seconds = (f64)(os_get_timer_counter() - start_time) / (f64)os_get_timer_frequency();
 		build_log_info("took %0.03f [s]", seconds);
 	}
