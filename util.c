@@ -751,31 +751,53 @@ cut_rect_vertical(Rect rect, f32 at, Rect *top, Rect *bot)
 function IntegerConversion
 integer_from_s8(s8 raw)
 {
-	IntegerConversion result = {0};
+	read_only local_persist alignas(64) i8 lut[64] = {
+		 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, -1, -1, -1, -1, -1, -1,
+		-1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+		-1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	};
+
+	IntegerConversion result = {.unparsed = raw};
 
 	iz  i     = 0;
 	i64 scale = 1;
-	if (raw.len && raw.data[0] == '-') {
+	if (raw.len > 0 && raw.data[0] == '-') {
 		scale = -1;
 		i     =  1;
 	}
 
-	for (; i < raw.len; i++) {
-		i64 digit = (i64)raw.data[i] - '0';
-		if (BETWEEN(digit, 0, 9)) {
-			if (result.U64 > (U64_MAX - (u64)digit) / 10) {
-				result.result = IntegerConversionResult_OutOfRange;
-				result.U64    = U64_MAX;
-			} else {
-				result.U64 = 10 * result.U64 + (u64)digit;
-			}
-		} else {
-			break;
-		}
+	b32 hex = 0;
+	if (raw.len - i > 2 && raw.data[i] == '0' && (raw.data[1] == 'x' || raw.data[1] == 'X')) {
+		hex = 1;
+		i += 2;
 	}
+
+	#define integer_conversion_body(radix, clamp) do {\
+		for (; i < raw.len; i++) {\
+			i64 value = lut[Min((u8)(raw.data[i] - (u8)'0'), clamp)];\
+			if (value >= 0) {\
+				if (result.U64 > (U64_MAX - (u64)value) / radix) {\
+					result.result = IntegerConversionResult_OutOfRange;\
+					result.U64    = U64_MAX;\
+					return result;\
+				} else {\
+					result.U64 = radix * result.U64 + (u64)value;\
+				}\
+			} else {\
+				break;\
+			}\
+		}\
+	} while (0)
+
+	if (hex) integer_conversion_body(16u, 63u);
+	else     integer_conversion_body(10u, 15u);
+
+	#undef integer_conversion_body
+
 	result.unparsed = (s8){.len = raw.len - i, .data = raw.data + i};
 	result.result   = IntegerConversionResult_Success;
-	result.S64      = (i64)result.U64 * scale;
+	if (scale < 0) result.U64 = 0 - result.U64;
 
 	return result;
 }
