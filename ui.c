@@ -945,7 +945,7 @@ resize_frame_view(BeamformerFrameView *view, iv2 dim)
 	glCreateTextures(GL_TEXTURE_2D, 1, &view->texture);
 
 	view->texture_dim     = dim;
-	view->texture_mipmaps = (i32)ctz_u32((u32)Max(dim.x, dim.y)) + 1;
+	view->texture_mipmaps = (i32)ctz_u64((u64)Max(dim.x, dim.y)) + 1;
 	glTextureStorage2D(view->texture, view->texture_mipmaps, GL_RGBA8, dim.x, dim.y);
 
 	glGenerateTextureMipmap(view->texture);

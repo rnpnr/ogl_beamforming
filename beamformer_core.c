@@ -224,7 +224,7 @@ alloc_beamform_frame(BeamformerFrame *out, iv3 out_dim, GLenum gl_kind, s8 name,
 	/* NOTE: allocate storage for beamformed output data;
 	 * this is shared between compute and fragment shaders */
 	u32 max_dim = (u32)Max(out->dim.x, Max(out->dim.y, out->dim.z));
-	out->mips   = (i32)ctz_u32(round_up_power_of_2(max_dim)) + 1;
+	out->mips   = (i32)ctz_u64(round_up_power_of_two(max_dim)) + 1;
 
 	out->gl_kind = gl_kind;
 
@@ -443,7 +443,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	f32 time_offset = pb->parameters.time_offset;
 
 	// TODO(rnp): subgroup size
-	u32 subgroup_size = gl_parameters.vendor_id == GLVendor_NVIDIA ? 32 : 64;
+	u32 subgroup_size = vk_gpu_info()->vendor == GPUVendor_NVIDIA ? 32 : 64;
 
 	BeamformerDataKind data_kind = pb->pipeline.data_kind;
 	cp->pipeline.shader_count = 0;
