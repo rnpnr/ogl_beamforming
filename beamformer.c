@@ -93,78 +93,13 @@ load_gl(Stream *err)
 	OGLRequiredExtensionProcedureList
 	#undef X
 
-	/* NOTE: Gather information about the GPU */
-	{
-		char *vendor = (char *)glGetString(GL_VENDOR);
-		if (!vendor) {
-			stream_append_s8(err, s8("Failed to determine GL Vendor\n"));
-			fatal(stream_to_s8(err));
-		}
-		/* TODO(rnp): str prefix of */
-		switch (vendor[0]) {
-		case 'A': gl_parameters.vendor_id = GLVendor_AMD;    break;
-		case 'I': gl_parameters.vendor_id = GLVendor_Intel;  break;
-		case 'N': gl_parameters.vendor_id = GLVendor_NVIDIA; break;
-		/* NOTE(rnp): freedreno */
-		case 'f': gl_parameters.vendor_id = GLVendor_ARM;    break;
-		/* NOTE(rnp): Microsoft Corporation - weird win32 thing (microsoft is just using mesa for the driver) */
-		case 'M': gl_parameters.vendor_id = GLVendor_ARM;    break;
-		default:
-			stream_append_s8s(err, s8("Unknown GL Vendor: "), c_str_to_s8(vendor), s8("\n"));
-			fatal(stream_to_s8(err));
-		}
+	stream_reset(err, 0);
+	#define X(name, ret, params) if (!name) stream_append_s8(err, s8("missing required GL function: " #name "\n"));
+	OGLProcedureList
+	OGLRequiredExtensionProcedureList
+	#undef X
 
-		#define X(glname, name, suffix) glGetIntegerv(GL_##glname, &gl_parameters.name);
-		GL_PARAMETERS
-		#undef X
-	}
-
-#ifdef _DEBUG
-	{
-		s8 vendor = s8("vendor:");
-		i32 max_width = (i32)vendor.len;
-		#define X(glname, name, suffix) if (s8(#name).len > max_width) max_width = (i32)s8(#name ":").len;
-		GL_PARAMETERS
-		#undef X
-		max_width++;
-
-		stream_append_s8s(err, s8("---- GL Parameters ----\n"), vendor);
-		stream_pad(err, ' ', max_width - (i32)vendor.len);
-		switch (gl_parameters.vendor_id) {
-		case GLVendor_AMD:    stream_append_s8(err, s8("AMD"));    break;
-		case GLVendor_ARM:    stream_append_s8(err, s8("ARM"));    break;
-		case GLVendor_Intel:  stream_append_s8(err, s8("Intel"));  break;
-		case GLVendor_NVIDIA: stream_append_s8(err, s8("nVidia")); break;
-		}
-		stream_append_byte(err, '\n');
-
-		#define X(glname, name, suffix) \
-			stream_append_s8(err, s8(#name ":"));                     \
-			stream_pad(err, ' ', max_width - (i32)s8(#name ":").len); \
-			stream_append_i64(err, gl_parameters.name);               \
-			stream_append_s8(err, s8(suffix "\n"));
-		GL_PARAMETERS
-		#undef X
-		stream_append_s8(err, s8("-----------------------\n"));
-		os_console_log(err->data, err->widx);
-	}
-#endif
-
-	{
-		stream_reset(err, 0);
-		if (gl_parameters.max_ubo_size < (i32)sizeof(BeamformerParameters)) {
-			stream_append_s8(err, s8("GPU must support UBOs of at least "));
-			stream_append_i64(err, sizeof(BeamformerParameters));
-			stream_append_s8(err, s8(" bytes!\n"));
-		}
-
-		#define X(name, ret, params) if (!name) stream_append_s8(err, s8("missing required GL function: " #name "\n"));
-		OGLProcedureList
-		OGLRequiredExtensionProcedureList
-		#undef X
-
-		if (err->widx) fatal(stream_to_s8(err));
-	}
+	if (err->widx) fatal(stream_to_s8(err));
 }
 
 function void
@@ -173,7 +108,7 @@ beamformer_load_cuda_library(BeamformerCtx *ctx, OSLibrary cuda, Arena arena)
 	/* TODO(rnp): (25.10.30) registering the rf buffer with CUDA is currently
 	 * causing a major performance regression. for now we are disabling its use
 	 * altogether. it will be reenabled once the issue can be fixed */
-	b32 result = 0 && gl_parameters.vendor_id == GLVendor_NVIDIA && ValidHandle(cuda);
+	b32 result = 0 && vk_gpu_info()->vendor == GPUVendor_NVIDIA && ValidHandle(cuda);
 	if (result) {
 		Stream err = arena_stream(arena);
 
@@ -424,7 +359,7 @@ beamformer_init(BeamformerInput *input)
 	LABEL_GL_OBJECT(GL_FRAMEBUFFER, fvr->framebuffers[1], s8("Frame View Resolving Framebuffer"));
 
 	glCreateRenderbuffers(countof(fvr->renderbuffers), fvr->renderbuffers);
-	i32 msaa_samples = gl_parameters.vendor_id == GLVendor_ARM? 4 : 8;
+	u32 msaa_samples = vk_gpu_info()->max_msaa_samples;
 	glNamedRenderbufferStorageMultisample(fvr->renderbuffers[0], msaa_samples, GL_RGBA8,
 	                                      FRAME_VIEW_RENDER_TARGET_SIZE);
 	glNamedRenderbufferStorageMultisample(fvr->renderbuffers[1], msaa_samples, GL_DEPTH_COMPONENT24,
