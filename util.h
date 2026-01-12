@@ -123,6 +123,8 @@ typedef u64    uptr;
 
 #define Min(a, b)        ((a) < (b) ? (a) : (b))
 #define Max(a, b)        ((a) > (b) ? (a) : (b))
+#define Clamp(x, a, b)   ((x) < (a) ? (a) : (x) > (b) ? (b) : (x))
+#define Clamp01(x)       Clamp(x, 0, 1)
 
 #define ISDIGIT(c)       (BETWEEN((c), '0', '9'))
 #define ISUPPER(c)       (((c) & 0x20u) == 0)

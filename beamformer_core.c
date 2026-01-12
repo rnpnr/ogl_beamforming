@@ -211,9 +211,10 @@ function iv3
 make_valid_output_points(i32 points[3])
 {
 	iv3 result;
-	result.E[0] = CLAMP(points[0], 1, gl_parameters.max_3d_texture_dim);
-	result.E[1] = CLAMP(points[1], 1, gl_parameters.max_3d_texture_dim);
-	result.E[2] = CLAMP(points[2], 1, gl_parameters.max_3d_texture_dim);
+	i32 max_dimension_3D = vk_gpu_info()->max_image_dimension_3D;
+	result.E[0] = Clamp(points[0], 1, max_dimension_3D);
+	result.E[1] = Clamp(points[1], 1, max_dimension_3D);
+	result.E[2] = Clamp(points[2], 1, max_dimension_3D);
 	return result;
 }
 
@@ -225,7 +226,7 @@ alloc_beamform_frame(BeamformerFrame *out, iv3 out_dim, GLenum gl_kind, s8 name,
 	/* NOTE: allocate storage for beamformed output data;
 	 * this is shared between compute and fragment shaders */
 	u32 max_dim = (u32)MAX(out->dim.x, MAX(out->dim.y, out->dim.z));
-	out->mips   = (i32)ctz_u32(round_up_power_of_2(max_dim)) + 1;
+	out->mips   = (i32)ctz_u64(round_up_power_of_two(max_dim)) + 1;
 
 	out->gl_kind = gl_kind;
 
