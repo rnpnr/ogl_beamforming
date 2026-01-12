@@ -34,11 +34,27 @@ typedef struct {
 	VulkanHandle buffer;
 } GPUBuffer;
 
+typedef enum {
+	GPUVendor_AMD      = 0x1002,
+	GPUVendor_NVIDIA   = 0x10DE,
+	GPUVendor_Qualcomm = 0x5143,
+	GPUVendor_Intel    = 0x8086,
+} GPUVendor;
+
 typedef struct {
-	u64 gpu_heap_size;
-	u64 gpu_heap_used;
+	s8        name;
+	GPUVendor vendor;
 
 	f32 timestamp_period_ns;
+
+	u32 max_compute_shared_memory_size;
+	u32 max_msaa_samples;
+	u32 max_image_dimension_2D;
+	// NOTE(rnp): vulkan compute will output to a buffer so this won't be relevant
+	u32 max_image_dimension_3D;
+
+	u64 gpu_heap_size;
+	u64 gpu_heap_used;
 } GPUInfo;
 
 ///////////////////////////
