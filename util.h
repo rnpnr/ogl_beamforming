@@ -156,7 +156,9 @@
 #define MB(a)            ((u64)(a) << 20ULL)
 #define GB(a)            ((u64)(a) << 30ULL)
 
+#define I8_MAX           (0x0000007FL)
 #define I32_MAX          (0x7FFFFFFFL)
+#define U8_MAX           (0x000000FFUL)
 #define U16_MAX          (0x0000FFFFUL)
 #define U32_MAX          (0xFFFFFFFFUL)
 #define U64_MAX          (0xFFFFFFFFFFFFFFFFULL)
@@ -168,6 +170,7 @@
 
 typedef char      c8;
 typedef uint8_t   u8;
+typedef int8_t    i8;
 typedef int16_t   i16;
 typedef uint16_t  u16;
 typedef uint16_t  b16;
