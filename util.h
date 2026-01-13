@@ -313,7 +313,9 @@ typedef struct {
 	b32   errors;
 } Stream;
 
-#define INVALID_FILE (-1)
+#define INVALID_FILE   (-1)
+#define InvalidHandle  (Handle){(u64)(-1)}
+#define ValidHandle(h) ((h).value[0] != InvalidHandle.value[0])
 
 typedef struct OS OS;
 
@@ -324,17 +326,8 @@ typedef struct {
 	iptr  gl_context;
 	iptr  user_context;
 	i32   sync_variable;
-	b32   asleep;
+	b32   awake;
 } GLWorkerThreadContext;
-
-#define FILE_WATCH_CALLBACK_FN(name) b32 name(s8 path, iptr user_data, Arena arena)
-typedef FILE_WATCH_CALLBACK_FN(file_watch_callback);
-
-typedef struct {
-	iptr user_data;
-	u64  hash;
-	file_watch_callback *callback;
-} FileWatch;
 
 typedef struct {
 	void *region;
@@ -342,6 +335,7 @@ typedef struct {
 } SharedMemoryRegion;
 
 typedef struct { u64 value[1]; } Barrier;
+typedef struct { u64 value[1]; } Handle;
 
 typedef struct {
 	u64      index;
@@ -359,9 +353,6 @@ typedef struct {
 
 #define OS_ALLOC_ARENA_FN(name) Arena name(iz capacity)
 typedef OS_ALLOC_ARENA_FN(os_alloc_arena_fn);
-
-#define OS_ADD_FILE_WATCH_FN(name) void name(s8 path, file_watch_callback *callback, iptr user_data)
-typedef OS_ADD_FILE_WATCH_FN(os_add_file_watch_fn);
 
 #define OS_WAKE_WORKER_FN(name) void name(GLWorkerThreadContext *ctx)
 typedef OS_WAKE_WORKER_FN(os_wake_worker_fn);

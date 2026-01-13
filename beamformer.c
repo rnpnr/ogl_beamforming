@@ -39,7 +39,7 @@ global f32 dt_for_frame;
 #define MIN_MAX_MIPS_LEVEL_UNIFORM_LOC 1
 #define SUM_PRESCALE_UNIFORM_LOC       1
 
-#ifndef _DEBUG
+#if !BEAMFORMER_RENDERDOC_HOOKS
 #define start_renderdoc_capture(...)
 #define end_renderdoc_capture(...)
 #else
@@ -77,6 +77,9 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 {
 	assert(block < countof(cc->compute_plans));
 	BeamformerComputePlan *result = cc->compute_plans[block];
+
+	assert(!arena && result);
+
 	if (!result) {
 		result = SLLPopFreelist(cc->compute_plan_freelist);
 		if (result) zero_struct(result);
@@ -1098,14 +1101,17 @@ shader_text_with_header(s8 header, s8 filepath, b32 has_file, BeamformerShaderKi
 
 /* NOTE(rnp): currently this function is only handling rendering shaders.
  * look at load_compute_shader for compute shaders */
-DEBUG_EXPORT BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader)
+function void
+beamformer_reload_shader(BeamformerCtx *ctx, BeamformerShaderReloadContext *src, Arena arena, s8 shader_name)
 {
-	BeamformerCtx        *ctx  = src->beamformer_context;
-	BeamformerShaderKind  kind = beamformer_reloadable_shader_kinds[src->reloadable_info_index];
+	BeamformerShaderKind kind = beamformer_reloadable_shader_kinds[src->reloadable_info_index];
 	assert(kind == BeamformerShaderKind_Render3D);
 
+	s8 path = push_s8_from_parts(&arena, os_path_separator(), s8("shaders"),
+	                             beamformer_reloadable_shader_files[src->reloadable_info_index]);
+
 	i32 shader_count = 1;
-	ShaderReloadContext *link = src->link;
+	BeamformerShaderReloadContext *link = src->link;
 	while (link != src) { shader_count++; link = link->link; }
 
 	s8  *shader_texts = push_array(&arena, s8,  shader_count);
@@ -1124,8 +1130,6 @@ DEBUG_EXPORT BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader)
 	glDeleteProgram(*shader);
 	*shader = load_shader(arena, shader_texts, shader_types, shader_count, shader_name);
 	ctx->frame_view_render_context.updated = 1;
-
-	return 1;
 }
 
 function void
@@ -1138,23 +1142,6 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 	while (work) {
 		b32 can_commit = 1;
 		switch (work->kind) {
-		case BeamformerWorkKind_ReloadShader:{
-			u32 reserved_blocks = sm->reserved_parameter_blocks;
-			for (u32 block = 0; block < reserved_blocks; block++) {
-				BeamformerComputePlan *cp = beamformer_compute_plan_for_block(cs, block, arena);
-				for (u32 slot = 0; slot < cp->pipeline.shader_count; slot++) {
-					i32 shader_index = beamformer_shader_reloadable_index_by_shader[cp->pipeline.shaders[slot]];
-					if (beamformer_reloadable_shader_kinds[shader_index] == work->reload_shader)
-						cp->dirty_programs |= 1 << slot;
-				}
-			}
-
-			if (ctx->latest_frame && !sm->live_imaging_parameters.active) {
-				fill_frame_compute_work(ctx, work, ctx->latest_frame->view_plane_tag,
-				                        ctx->latest_frame->parameter_block, 0);
-				can_commit = 0;
-			}
-		}break;
 		case BeamformerWorkKind_ExportBuffer:{
 			/* TODO(rnp): better way of handling DispatchCompute barrier */
 			post_sync_barrier(&ctx->shared_memory, BeamformerSharedMemoryLockKind_DispatchCompute, sm->locks);
@@ -1469,7 +1456,73 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 	}
 }
 
+function void
+beamformer_queue_compute(BeamformerCtx *ctx, BeamformerFrame *frame, u32 parameter_block)
+{
+	BeamformerSharedMemory *sm = ctx->shared_memory.region;
+	BeamformerSharedMemoryLockKind dispatch_lock = BeamformerSharedMemoryLockKind_DispatchCompute;
+	if (!sm->live_imaging_parameters.active &&
+	    os_shared_memory_region_lock(&ctx->shared_memory, sm->locks, (i32)dispatch_lock, 0))
+	{
+		BeamformWork *work = beamform_work_queue_push(ctx->beamform_work_queue);
+		BeamformerViewPlaneTag tag = frame ? frame->view_plane_tag : 0;
+		if (fill_frame_compute_work(ctx, work, tag, parameter_block, 0))
+			beamform_work_queue_push_commit(ctx->beamform_work_queue);
+	}
+	os_wake_waiters(&ctx->compute_worker.sync_variable);
+}
+
 #include "ui.c"
+
+function void
+beamformer_process_input_events(BeamformerCtx *ctx, BeamformerInput *input,
+                                BeamformerInputEvent *events, u32 event_count)
+{
+	for (u32 index = 0; index < event_count; index++) {
+		BeamformerInputEvent *event = events + index;
+		switch (event->kind) {
+
+		case BeamformerInputEventKind_ExecutableReload:{
+			ui_init(ctx, ctx->ui_backing_store);
+
+			#if BEAMFORMER_RENDERDOC_HOOKS
+			start_frame_capture = input->renderdoc_start_frame_capture;
+			end_frame_capture   = input->renderdoc_end_frame_capture;
+			#endif
+		}break;
+
+		case BeamformerInputEventKind_FileEvent:{
+			BeamformerFileReloadContext *frc = event->file_watch_user_context;
+			switch (frc->kind) {
+			case BeamformerFileReloadKind_Shader:{
+				BeamformerShaderReloadContext *src = frc->shader_reload_context;
+				BeamformerShaderKind kind = beamformer_reloadable_shader_kinds[src->reloadable_info_index];
+				beamformer_reload_shader(ctx, src, ctx->arena, beamformer_shader_names[kind]);
+			}break;
+			case BeamformerFileReloadKind_ComputeShader:{
+				BeamformerSharedMemory *sm = ctx->shared_memory.region;
+				u32 reserved_blocks = sm->reserved_parameter_blocks;
+
+				for (u32 block = 0; block < reserved_blocks; block++) {
+					BeamformerComputePlan *cp = beamformer_compute_plan_for_block(&ctx->compute_context, block, 0);
+					for (u32 slot = 0; slot < cp->pipeline.shader_count; slot++) {
+						i32 shader_index = beamformer_shader_reloadable_index_by_shader[cp->pipeline.shaders[slot]];
+						if (beamformer_reloadable_shader_kinds[shader_index] == frc->compute_shader_kind)
+							atomic_or_u32(&cp->dirty_programs, 1 << slot);
+					}
+				}
+
+				if (ctx->latest_frame)
+					beamformer_queue_compute(ctx, ctx->latest_frame, ctx->latest_frame->parameter_block);
+			}break;
+			InvalidDefaultCase;
+			}
+		}break;
+
+		InvalidDefaultCase;
+		}
+	}
+}
 
 DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 {
@@ -1484,11 +1537,7 @@ DEBUG_EXPORT BEAMFORMER_FRAME_STEP_FN(beamformer_frame_step)
 
 	coalesce_timing_table(ctx->compute_timing_table, ctx->compute_shader_stats);
 
-	if (input->executable_reloaded) {
-		ui_init(ctx, ctx->ui_backing_store);
-		DEBUG_DECL(start_frame_capture = ctx->start_frame_capture);
-		DEBUG_DECL(end_frame_capture   = ctx->end_frame_capture);
-	}
+	beamformer_process_input_events(ctx, input, input->event_queue, input->event_count);
 
 	BeamformerSharedMemory *sm = ctx->shared_memory.region;
 	if (atomic_load_u32(sm->locks + BeamformerSharedMemoryLockKind_UploadRF))

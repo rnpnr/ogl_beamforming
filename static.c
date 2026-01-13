@@ -6,85 +6,41 @@ EXPORT i32 AmdPowerXpressRequestHighPerformance = 1;
 
 #include "beamformer_internal.h"
 
-#ifndef _DEBUG
-
+#if !BEAMFORMER_DEBUG
 #include "beamformer.c"
-#define debug_init(...)
-
 #else
 
-global void *debug_lib;
-
-#define DEBUG_ENTRY_POINTS \
+#define BEAMFORMER_DEBUG_ENTRY_POINTS \
 	X(beamformer_debug_ui_deinit)  \
 	X(beamformer_complete_compute) \
 	X(beamformer_frame_step)       \
-	X(beamformer_reload_shader)    \
-	X(beamformer_rf_upload)
+	X(beamformer_rf_upload)        \
 
 #define X(name) global name ##_fn *name;
-DEBUG_ENTRY_POINTS
+BEAMFORMER_DEBUG_ENTRY_POINTS
 #undef X
 
-struct debug_context {
-	BeamformerInput *input;
-	b32 *compute_worker_asleep;
-	b32 *upload_worker_asleep;
-};
-
-function FILE_WATCH_CALLBACK_FN(debug_reload)
+BEAMFORMER_EXPORT void
+beamformer_debug_hot_reload(BeamformerLibraryHandle library, BeamformerInput *input)
 {
-	struct debug_context *ctx = (struct debug_context *)user_data;
-	Stream err = arena_stream(arena);
+	BeamformerCtx *ctx = BeamformerContextMemory(input->memory);
+	Stream err = ctx->error_stream;
 
+	// TODO(rnp): this will deadlock if live imaging is active
 	/* NOTE(rnp): spin until compute thread finishes its work (we will probably
 	 * never reload while compute is in progress but just incase). */
-	spin_wait(!atomic_load_u32(ctx->compute_worker_asleep));
-	spin_wait(!atomic_load_u32(ctx->upload_worker_asleep));
+	spin_wait(atomic_load_u32(&ctx->upload_worker.awake));
+	spin_wait(atomic_load_u32(&ctx->compute_worker.awake));
 
-	os_unload_library(debug_lib);
-	debug_lib = os_load_library(OS_DEBUG_LIB_NAME, OS_DEBUG_LIB_TEMP_NAME, &err);
-
-	#define X(name) name = os_lookup_dynamic_symbol(debug_lib, #name, &err);
-	DEBUG_ENTRY_POINTS
+	#define X(name) name = os_lookup_symbol(library, #name, &err);
+	BEAMFORMER_DEBUG_ENTRY_POINTS
 	#undef X
 
-	stream_append_s8(&err, s8("Reloaded Main Executable\n"));
-	os_write_file(os_error_handle(), stream_to_s8(&err));
-
-	ctx->input->executable_reloaded = 1;
-
-	return 1;
-}
-
-function void
-debug_init(BeamformerCtx *ctx, BeamformerInput *input, Arena *arena)
-{
-	struct debug_context *dctx = push_struct(arena, struct debug_context);
-	dctx->input = input;
-	dctx->compute_worker_asleep = &ctx->compute_worker.asleep;
-	dctx->upload_worker_asleep  = &ctx->upload_worker.asleep;
-	os_add_file_watch(s8(OS_DEBUG_LIB_NAME), debug_reload, (iptr)dctx);
-	debug_reload(s8(""), (iptr)dctx, *arena);
-
-	Stream err = arena_stream(*arena);
-	void *rdoc = os_get_module(OS_RENDERDOC_SONAME, 0);
-	if (rdoc) {
-		renderdoc_get_api_fn *get_api = os_lookup_dynamic_symbol(rdoc, "RENDERDOC_GetAPI", &err);
-		if (get_api) {
-			RenderDocAPI *api = 0;
-			if (get_api(10600, (void **)&api)) {
-				ctx->start_frame_capture = RENDERDOC_START_FRAME_CAPTURE(api);
-				ctx->end_frame_capture   = RENDERDOC_END_FRAME_CAPTURE(api);
-				stream_append_s8(&err, s8("loaded: " OS_RENDERDOC_SONAME "\n"));
-			}
-		}
-	}
-
+	stream_append_s8(&err, s8("reloaded main executable\n"));
 	os_write_file(os_error_handle(), stream_to_s8(&err));
 }
 
-#endif /* _DEBUG */
+#endif /* BEAMFORMER_DEBUG */
 
 function void
 gl_debug_logger(u32 src, u32 type, u32 id, u32 lvl, i32 len, const char *msg, const void *userctx)
@@ -175,47 +131,18 @@ load_gl(Stream *err)
 	}
 }
 
-function FILE_WATCH_CALLBACK_FN(reload_shader)
+function void
+beamformer_load_cuda_library(BeamformerCtx *ctx, BeamformerLibraryHandle cuda, Arena arena)
 {
-	ShaderReloadContext  *ctx  = (typeof(ctx))user_data;
-	BeamformerShaderKind  kind = beamformer_reloadable_shader_kinds[ctx->reloadable_info_index];
-	return beamformer_reload_shader(path, ctx, arena, beamformer_shader_names[kind]);
-}
-
-typedef struct {
-	BeamformerCtx        *beamformer;
-	BeamformerShaderKind  shader;
-} BeamformerShaderReloadIndirectContext;
-
-function FILE_WATCH_CALLBACK_FN(reload_shader_indirect)
-{
-	BeamformerShaderReloadIndirectContext *rsi = (typeof(rsi))user_data;
-	BeamformerCtx *ctx = rsi->beamformer;
-	BeamformWork *work = beamform_work_queue_push(ctx->beamform_work_queue);
-	if (work) {
-		work->kind = BeamformerWorkKind_ReloadShader,
-		work->reload_shader = rsi->shader;
-		beamform_work_queue_push_commit(ctx->beamform_work_queue);
-		os_wake_waiters(&ctx->compute_worker.sync_variable);
-	}
-	return 1;
-}
-
-function FILE_WATCH_CALLBACK_FN(load_cuda_library)
-{
-	local_persist void *cuda_library_handle;
-
 	/* TODO(rnp): (25.10.30) registering the rf buffer with CUDA is currently
 	 * causing a major performance regression. for now we are disabling its use
 	 * altogether. it will be reenabled once the issue can be fixed */
-	b32 result = 0 && gl_parameters.vendor_id == GLVendor_NVIDIA && os_file_exists((c8 *)path.data);
+	b32 result = 0 && gl_parameters.vendor_id == GLVendor_NVIDIA && cuda.value[0] != BeamformerInvalidHandle.value[0];
 	if (result) {
 		Stream err = arena_stream(arena);
 
-		stream_append_s8(&err, s8("loading CUDA library: " OS_CUDA_LIB_NAME "\n"));
-		os_unload_library(cuda_library_handle);
-		cuda_library_handle = os_load_library((c8 *)path.data, OS_CUDA_LIB_TEMP_NAME, &err);
-		#define X(name, symname) cuda_## name = os_lookup_dynamic_symbol(cuda_library_handle, symname, &err);
+		stream_append_s8(&err, beamformer_info("loading CUDA library functions"));
+		#define X(name, symname) cuda_## name = os_lookup_symbol(cuda, symname, &err);
 		CUDALibraryProcedureList
 		#undef X
 
@@ -225,8 +152,6 @@ function FILE_WATCH_CALLBACK_FN(load_cuda_library)
 	#define X(name, symname) if (!cuda_## name) cuda_## name = cuda_ ## name ## _stub;
 	CUDALibraryProcedureList
 	#undef X
-
-	return result;
 }
 
 function BeamformerRenderModel
@@ -281,9 +206,9 @@ worker_thread_sleep(GLWorkerThreadContext *ctx, BeamformerSharedMemory *sm)
 		}
 
 		/* TODO(rnp): clean this crap up; we shouldn't need two values to communicate this */
-		atomic_store_u32(&ctx->asleep, 1);
+		atomic_store_u32(&ctx->awake, 0);
 		os_wait_on_value(&ctx->sync_variable, 1, (u32)-1);
-		atomic_store_u32(&ctx->asleep, 0);
+		atomic_store_u32(&ctx->awake, 1);
 	}
 }
 
@@ -330,7 +255,7 @@ function OS_THREAD_ENTRY_POINT_FN(beamformer_upload_entry_point)
 	return 0;
 }
 
-function void
+BEAMFORMER_EXPORT void
 beamformer_init(BeamformerInput *input)
 {
 	Arena  memory        = arena_from_memory(input->memory, input->memory_size);
@@ -346,14 +271,11 @@ beamformer_init(BeamformerInput *input)
 	ctx->window_size = (iv2){{1280, 840}};
 	ctx->error_stream = error;
 	ctx->ui_backing_store = ui_arena;
-	input->executable_reloaded = 1;
 
 	ctx->compute_worker.arena  = compute_arena;
-	ctx->compute_worker.asleep = 1;
 	ctx->upload_worker.arena   = upload_arena;
-	ctx->upload_worker.asleep  = 1;
 
-	debug_init(ctx, input, &memory);
+	beamformer_load_cuda_library(ctx, input->cuda_library_handle, memory);
 
 	SetConfigFlags(FLAG_VSYNC_HINT|FLAG_WINDOW_ALWAYS_RUN);
 	InitWindow(ctx->window_size.w, ctx->window_size.h, "OGL Beamformer");
@@ -400,12 +322,9 @@ beamformer_init(BeamformerInput *input)
 	upctx->compute_worker_sync  = &ctx->compute_worker.sync_variable;
 	upload->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
 	upload->handle        = os_create_thread((iptr)upload, beamformer_upload_entry_point);
-	os_set_thread_name(worker->handle, s8("[upload]"));
+	os_set_thread_name(upload->handle, s8("[upload]"));
 
 	glfwMakeContextCurrent(raylib_window_handle);
-
-	if (load_cuda_library(s8(OS_CUDA_LIB_NAME), 0, memory))
-		os_add_file_watch(s8(OS_CUDA_LIB_NAME), load_cuda_library, 0);
 
 	/* NOTE: set up OpenGL debug logging */
 	Stream *gl_error_stream = push_struct(&memory, Stream);
@@ -422,14 +341,11 @@ beamformer_init(BeamformerInput *input)
 			Arena temp  = scratch;
 			s8 file = push_s8_from_parts(&temp, s8(OS_PATH_SEPARATOR), s8("shaders"),
 			                             beamformer_reloadable_shader_files[index]);
-
-			BeamformerShaderReloadIndirectContext *rsi = push_struct(&memory, typeof(*rsi));
-			rsi->beamformer = ctx;
-			rsi->shader     = beamformer_reloadable_shader_kinds[index];
-			os_add_file_watch(file, reload_shader_indirect, (iptr)rsi);
-			reload_shader_indirect(file, (iptr)rsi, memory);
+			BeamformerFileReloadContext *frc = push_struct(&memory, typeof(*frc));
+			frc->kind                = BeamformerFileReloadKind_ComputeShader;
+			frc->compute_shader_kind = beamformer_reloadable_shader_kinds[index];
+			os_add_file_watch((char *)file.data, file.len, frc);
 		}
-		os_wake_waiters(&worker->sync_variable);
 	}
 
 	FrameViewRenderContext *fvr = &ctx->frame_view_render_context;
@@ -448,9 +364,9 @@ beamformer_init(BeamformerInput *input)
 	              "only a single render shader is currently handled");
 	i32 render_rsi_index = beamformer_reloadable_render_shader_info_indices[0];
 
-	Arena *arena = BakeShaders? &scratch : &memory;
-	ShaderReloadContext *render_3d = push_struct(arena, typeof(*render_3d));
-	render_3d->beamformer_context    = ctx;
+	// TODO(rnp): leaks when BakeShaders is true
+	Arena *arena = &memory;
+	BeamformerShaderReloadContext *render_3d = push_struct(arena, typeof(*render_3d));
 	render_3d->reloadable_info_index = render_rsi_index;
 	render_3d->gl_type = GL_FRAGMENT_SHADER;
 	render_3d->header  = s8(""
@@ -498,13 +414,25 @@ beamformer_init(BeamformerInput *input)
 	"\tgl_Position = u_projection * u_view * u_model * vec4(pos, 1);\n"
 	"}\n");
 
-	s8 render_file = {0};
-	if (!BakeShaders) {
-		render_file = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), s8("shaders"),
-		                                 beamformer_reloadable_shader_files[render_rsi_index]);
-		os_add_file_watch(render_file, reload_shader, (iptr)render_3d);
+	// TODO(rnp): this is probably not expected by the platform, refactor so that all
+	// needed context (eg. headers) are available outside of here and push initial load
+	// into ui_init
+	{
+		BeamformerFileReloadContext *frc = push_struct(&memory, typeof(*frc));
+		frc->kind                  = BeamformerFileReloadKind_Shader;
+		frc->shader_reload_context = render_3d;
+		input->event_queue[input->event_count++] = (BeamformerInputEvent){
+			.kind = BeamformerInputEventKind_FileEvent,
+			.file_watch_user_context = frc,
+		};
+
+		s8 render_file = {0};
+		if (!BakeShaders) {
+			render_file = push_s8_from_parts(&scratch, os_path_separator(), s8("shaders"),
+			                                 beamformer_reloadable_shader_files[render_rsi_index]);
+			os_add_file_watch((char *)render_file.data, render_file.len, frc);
+		}
 	}
-	reload_shader(render_file, (iptr)render_3d, memory);
 
 	f32 unit_cube_vertices[] = {
 		 0.5f,  0.5f, -0.5f,

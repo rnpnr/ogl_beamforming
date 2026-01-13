@@ -16,6 +16,8 @@
 #include "threads.c"
 #include "util_gl.c"
 
+#define beamformer_info(s) s8("[info] " s "\n")
+
 ///////////////////////////////
 // NOTE: CUDA Library Bindings
 
@@ -312,29 +314,34 @@ typedef struct {
 
 	GLWorkerThreadContext  upload_worker;
 	GLWorkerThreadContext  compute_worker;
-
-	DEBUG_DECL(renderdoc_start_frame_capture_fn *start_frame_capture;)
-	DEBUG_DECL(renderdoc_end_frame_capture_fn   *end_frame_capture;)
 } BeamformerCtx;
 #define BeamformerContextMemory(m) (BeamformerCtx *)align_pointer_up((m), alignof(BeamformerCtx));
 
-typedef struct ShaderReloadContext ShaderReloadContext;
-struct ShaderReloadContext {
-	BeamformerCtx       *beamformer_context;
-	ShaderReloadContext *link;
+typedef enum {
+	BeamformerFileReloadKind_Shader,
+	BeamformerFileReloadKind_ComputeShader,
+} BeamformerFileReloadKind;
+
+typedef struct BeamformerShaderReloadContext BeamformerShaderReloadContext;
+struct BeamformerShaderReloadContext {
+	BeamformerShaderReloadContext * link;
 	s8     header;
 	GLenum gl_type;
 	i32    reloadable_info_index;
 };
+
+typedef struct {
+	BeamformerFileReloadKind kind;
+	union {
+		BeamformerShaderReloadContext * shader_reload_context;
+		BeamformerShaderKind            compute_shader_kind;
+	};
+} BeamformerFileReloadContext;
 
 #define BEAMFORMER_COMPLETE_COMPUTE_FN(name) void name(iptr user_context, Arena *arena, iptr gl_context)
 typedef BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute_fn);
 
 #define BEAMFORMER_RF_UPLOAD_FN(name) void name(BeamformerUploadThreadContext *ctx)
 typedef BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload_fn);
-
-#define BEAMFORMER_RELOAD_SHADER_FN(name) b32 name(s8 path, ShaderReloadContext *src, \
-                                                   Arena arena, s8 shader_name)
-typedef BEAMFORMER_RELOAD_SHADER_FN(beamformer_reload_shader_fn);
 
 #endif /* BEAMFORMER_INTERNAL_H */

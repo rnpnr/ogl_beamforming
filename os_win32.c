@@ -113,17 +113,13 @@ W32(iptr)   CreateThread(iptr, uz, iptr, iptr, u32, u32 *);
 W32(b32)    DeleteFileA(c8 *);
 W32(b32)    EnterSynchronizationBarrier(w32_synchronization_barrier *, u32);
 W32(void)   ExitProcess(i32);
-W32(b32)    FreeLibrary(void *);
 W32(i32)    GetFileAttributesA(c8 *);
 W32(b32)    GetFileInformationByHandle(iptr, void *);
 W32(i32)    GetLastError(void);
-W32(void *) GetModuleHandleA(c8 *);
-W32(void *) GetProcAddress(void *, c8 *);
 W32(b32)    GetQueuedCompletionStatus(iptr, u32 *, uptr *, w32_overlapped **, u32);
 W32(iptr)   GetStdHandle(i32);
 W32(void)   GetSystemInfo(w32_system_info *);
 W32(b32)    InitializeSynchronizationBarrier(w32_synchronization_barrier *, i32, i32);
-W32(void *) LoadLibraryA(c8 *);
 W32(void *) MapViewOfFile(iptr, u32, u32, u32, u64);
 W32(b32)    QueryPerformanceCounter(u64 *);
 W32(b32)    QueryPerformanceFrequency(u64 *);
@@ -139,14 +135,26 @@ W32(b32)    WriteFile(iptr, u8 *, i32, i32 *, void *);
 W32(void *) VirtualAlloc(u8 *, iz, u32, u32);
 
 enum {OSW32_FileWatchDirectoryBufferSize = KB(4)};
-typedef struct {
-	u64        hash;
-	iptr       handle;
-	s8         name;
+typedef enum {
+	OSW32_FileWatchKindPlatform,
+	OSW32_FileWatchKindUser,
+} OSW32_FileWatchKind;
 
-	FileWatch *data;
-	iz         count;
-	iz         capacity;
+typedef struct {
+	OSW32_FileWatchKind kind;
+	u64                 hash;
+	u64                 update_time;
+	void *              user_context;
+} OSW32_FileWatch;
+
+typedef struct {
+	u64  hash;
+	iptr handle;
+	s8   name;
+
+	OSW32_FileWatch *data;
+	iz               count;
+	iz               capacity;
 
 	w32_overlapped          overlapped;
   w32_io_completion_event event;
@@ -166,20 +174,6 @@ typedef struct {
 	OSW32_FileWatchDirectoryList file_watch_list;
 } OSW32_Context;
 global OSW32_Context os_w32_context;
-
-#ifdef _DEBUG
-function void *
-os_get_module(char *name, Stream *e)
-{
-	void *result = GetModuleHandleA(name);
-	if (!result && e) {
-		stream_append_s8s(e, s8("os_get_module(\""), c_str_to_s8(name), s8("\"): "));
-		stream_append_i64(e, GetLastError());
-		stream_append_byte(e, '\n');
-	}
-	return result;
-}
-#endif
 
 function OS_WRITE_FILE_FN(os_write_file)
 {
@@ -350,47 +344,6 @@ os_copy_file(char *name, char *new)
 	return CopyFileA(name, new, 0);
 }
 
-function void *
-os_load_library(char *name, char *temp_name, Stream *e)
-{
-	if (temp_name && os_copy_file(name, temp_name))
-		name = temp_name;
-
-	void *result = LoadLibraryA(name);
-	if (!result && e) {
-		stream_append_s8s(e, s8("os_load_library(\""), c_str_to_s8(name), s8("\"): "));
-		stream_append_i64(e, GetLastError());
-		stream_append_byte(e, '\n');
-	}
-
-	if (temp_name)
-		DeleteFileA(temp_name);
-
-	return result;
-}
-
-function void *
-os_lookup_dynamic_symbol(void *h, char *name, Stream *e)
-{
-	void *result = 0;
-	if (h) {
-		result = GetProcAddress(h, name);
-		if (!result && e) {
-			stream_append_s8s(e, s8("os_lookup_dynamic_symbol(\""), c_str_to_s8(name),
-			                  s8("\"): "));
-			stream_append_i64(e, GetLastError());
-			stream_append_byte(e, '\n');
-		}
-	}
-	return result;
-}
-
-function void
-os_unload_library(void *h)
-{
-	FreeLibrary(h);
-}
-
 function OSW32_FileWatchDirectory *
 os_lookup_file_watch_directory(OSW32_FileWatchDirectoryList *ctx, u64 hash)
 {
@@ -401,7 +354,8 @@ os_lookup_file_watch_directory(OSW32_FileWatchDirectoryList *ctx, u64 hash)
 	return result;
 }
 
-function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
+function void
+os_w32_add_file_watch(s8 path, void *user_context, OSW32_FileWatchKind kind)
 {
 	s8 directory  = path;
 	directory.len = s8_scan_backwards(path, '\\');
@@ -430,10 +384,10 @@ function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
 		                      FILE_NOTIFY_CHANGE_LAST_WRITE, 0, &dir->overlapped, 0);
 	}
 
-	FileWatch *fw = da_push(&os_w32_context.arena, dir);
-	fw->user_data = user_data;
-	fw->callback  = callback;
-	fw->hash      = u64_hash_from_s8(s8_cut_head(path, dir->name.len + 1));
+	OSW32_FileWatch *fw = da_push(&os_w32_context.arena, dir);
+	fw->user_context = user_context;
+	fw->hash         = u64_hash_from_s8(s8_cut_head(path, dir->name.len + 1));
+	fw->kind         = kind;
 }
 
 function OS_WAIT_ON_VALUE_FN(os_wait_on_value)

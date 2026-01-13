@@ -7,7 +7,6 @@ typedef enum {
 	BeamformerWorkKind_Compute,
 	BeamformerWorkKind_ComputeIndirect,
 	BeamformerWorkKind_CreateFilter,
-	BeamformerWorkKind_ReloadShader,
 	BeamformerWorkKind_ExportBuffer,
 	BeamformerWorkKind_UploadBuffer,
 } BeamformerWorkKind;

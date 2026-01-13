@@ -3986,7 +3986,6 @@ function void
 draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_draw, BeamformerViewPlaneTag frame_plane)
 {
 	BeamformerUI *ui = ctx->ui;
-	BeamformerSharedMemory *sm = ctx->shared_memory.region;
 
 	ui->latest_plane[BeamformerViewPlaneTag_Count] = frame_to_draw;
 	ui->latest_plane[frame_plane]                  = frame_to_draw;
@@ -4021,16 +4020,7 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 				                                  BeamformerParameterBlockRegion_Parameters);
 				beamformer_parameter_block_unlock(&ctx->shared_memory, selected_block);
 
-				BeamformerSharedMemoryLockKind dispatch_lock = BeamformerSharedMemoryLockKind_DispatchCompute;
-				if (!sm->live_imaging_parameters.active &&
-				    os_shared_memory_region_lock(&ctx->shared_memory, sm->locks, (i32)dispatch_lock, 0))
-				{
-					BeamformWork *work = beamform_work_queue_push(ctx->beamform_work_queue);
-					BeamformerViewPlaneTag tag = frame_to_draw ? frame_to_draw->view_plane_tag : 0;
-					if (fill_frame_compute_work(ctx, work, tag, selected_block, 0))
-						beamform_work_queue_push_commit(ctx->beamform_work_queue);
-				}
-				os_wake_waiters(&ctx->compute_worker.sync_variable);
+				beamformer_queue_compute(ctx, frame_to_draw, selected_block);
 			}
 		}
 	}

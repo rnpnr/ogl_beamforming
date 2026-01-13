@@ -3563,6 +3563,8 @@ main(i32 argc, char *argv[])
 	//////////////////
 	// static portion
 	cmd_append(&arena, &c, options.bake_shaders? "-DBakeShaders=1" : "-DBakeShaders=0");
+	if (options.debug) cmd_append(&arena, &c, "-DBEAMFORMER_DEBUG", "-DBEAMFORMER_RENDERDOC_HOOKS");
+
 	iz c_count = c.count;
 	cmd_append(&arena, &c, OS_MAIN, OUTPUT_EXE("ogl"));
 	cmd_pdb(&arena, &c, "ogl");

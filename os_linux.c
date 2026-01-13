@@ -10,7 +10,6 @@
 
 #include "util.h"
 
-#include <dlfcn.h>
 #include <fcntl.h>
 #include <linux/futex.h>
 #include <poll.h>
@@ -22,14 +21,26 @@
 #include <sys/sysinfo.h>
 #include <unistd.h>
 
-typedef struct {
-	u64        hash;
-	iptr       handle;
-	s8         name;
+typedef enum {
+	OSLinux_FileWatchKindPlatform,
+	OSLinux_FileWatchKindUser,
+} OSLinux_FileWatchKind;
 
-	FileWatch *data;
-	iz         count;
-	iz         capacity;
+typedef struct {
+	OSLinux_FileWatchKind kind;
+	u64                   hash;
+	u64                   update_time;
+	void *                user_context;
+} OSLinux_FileWatch;
+
+typedef struct {
+	u64  hash;
+	iptr handle;
+	s8   name;
+
+	OSLinux_FileWatch * data;
+	iz                  count;
+	iz                  capacity;
 } OSLinux_FileWatchDirectory;
 DA_STRUCT(OSLinux_FileWatchDirectory, OSLinux_FileWatchDirectory);
 
@@ -42,19 +53,6 @@ typedef struct {
 	OSLinux_FileWatchDirectoryList file_watch_list;
 } OSLinux_Context;
 global OSLinux_Context os_linux_context;
-
-#ifdef _DEBUG
-function void *
-os_get_module(char *name, Stream *e)
-{
-	void *result = dlopen(name, RTLD_NOW|RTLD_LOCAL|RTLD_NOLOAD);
-	if (!result && e) {
-		stream_append_s8s(e, s8("os_get_module(\""), c_str_to_s8(name), s8("\"): "),
-		                  c_str_to_s8(dlerror()), s8("\n"));
-	}
-	return result;
-}
-#endif
 
 function OS_WRITE_FILE_FN(os_write_file)
 {
@@ -211,48 +209,6 @@ os_copy_file(char *name, char *new)
 	return result;
 }
 
-function void *
-os_load_library(char *name, char *temp_name, Stream *e)
-{
-	if (temp_name) {
-		if (os_copy_file(name, temp_name))
-			name = temp_name;
-	}
-
-	void *result = dlopen(name, RTLD_NOW|RTLD_LOCAL);
-	if (!result && e) {
-		stream_append_s8s(e, s8("os_load_library(\""), c_str_to_s8(name), s8("\"): "),
-		                  c_str_to_s8(dlerror()), s8("\n"));
-	}
-
-	if (temp_name)
-		unlink(temp_name);
-
-	return result;
-}
-
-function void *
-os_lookup_dynamic_symbol(void *h, char *name, Stream *e)
-{
-	void *result = 0;
-	if (h) {
-		result = dlsym(h, name);
-		if (!result && e) {
-			stream_append_s8s(e, s8("os_lookup_dynamic_symbol(\""), c_str_to_s8(name),
-			                  s8("\"): "), c_str_to_s8(dlerror()), s8("\n"));
-		}
-	}
-	return result;
-}
-
-function void
-os_unload_library(void *h)
-{
-	/* NOTE: glibc is buggy gnuware so we need to check this */
-	if (h)
-		dlclose(h);
-}
-
 function OSLinux_FileWatchDirectory *
 os_lookup_file_watch_directory(OSLinux_FileWatchDirectoryList *ctx, u64 hash)
 {
@@ -263,7 +219,8 @@ os_lookup_file_watch_directory(OSLinux_FileWatchDirectoryList *ctx, u64 hash)
 	return result;
 }
 
-function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
+function void
+os_linux_add_file_watch(s8 path, void *user_context, OSLinux_FileWatchKind kind)
 {
 	s8 directory  = path;
 	directory.len = s8_scan_backwards(path, '/');
@@ -282,10 +239,10 @@ function OS_ADD_FILE_WATCH_FN(os_add_file_watch)
 		dir->handle = inotify_add_watch(os_linux_context.inotify_handle, (c8 *)dir->name.data, mask);
 	}
 
-	FileWatch *fw = da_push(&os_linux_context.arena, dir);
-	fw->user_data = user_data;
-	fw->callback  = callback;
-	fw->hash      = u64_hash_from_s8(s8_cut_head(path, dir->name.len + 1));
+	OSLinux_FileWatch *fw = da_push(&os_linux_context.arena, dir);
+	fw->user_context = user_context;
+	fw->hash         = u64_hash_from_s8(s8_cut_head(path, dir->name.len + 1));
+	fw->kind         = kind;
 }
 
 function OS_WAIT_ON_VALUE_FN(os_wait_on_value)
