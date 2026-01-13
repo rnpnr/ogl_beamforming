@@ -524,6 +524,12 @@ run_synchronous(Arena a, CommandList *command)
 	return os_wait_close_process(os_spawn_process(command, sb));
 }
 
+function b32
+use_sanitization(void)
+{
+	return config.sanitize && !is_msvc && !(is_w32 && is_gcc);
+}
+
 function void
 cmd_base(Arena *a, CommandList *c)
 {
@@ -550,14 +556,8 @@ cmd_base(Arena *a, CommandList *c)
 	if (o->debug && is_unix) cmd_append(a, c, "-gdwarf-4");
 
 	/* NOTE(rnp): need to avoid w32-gcc for ci */
-	b32 sanitize = o->sanitize && !is_msvc && !(is_w32 && is_gcc);
-	if (sanitize) {
-		cmd_append(a, c, "-fsanitize=address,undefined");
-		/* NOTE(rnp): impossible to autodetect on GCC versions < 14 (ci has 13) */
-		cmd_append(a, c, "-DASAN_ACTIVE=1");
-	} else {
-		cmd_append(a, c, "-DASAN_ACTIVE=0");
-	}
+	b32 sanitize = use_sanitization();
+	if (sanitize) cmd_append(a, c, "-fsanitize=address,undefined");
 	if (!sanitize && o->sanitize) build_log_warning("santizers not supported with this compiler");
 }
 
@@ -788,6 +788,9 @@ cmd_beamformer_base(Arena *a, CommandList *c)
 	cmd_append(a, c, EXTRA_FLAGS);
 	cmd_append(a, c, config.bake_shaders? "-DBakeShaders=1" : "-DBakeShaders=0");
 	if (config.debug) cmd_append(a, c, "-DBEAMFORMER_DEBUG", "-DBEAMFORMER_RENDERDOC_HOOKS");
+
+	/* NOTE(rnp): impossible to autodetect on GCC versions < 14 (ci has 13) */
+	cmd_append(a, c, use_sanitization() ? "-DASAN_ACTIVE=1" : "-DASAN_ACTIVE=0");
 }
 
 function b32
@@ -3601,8 +3604,6 @@ main(i32 argc, char *argv[])
 
 	MetaContext *meta = metagen_load_context(&arena, "beamformer.meta");
 	if (!meta) return 1;
-
-	(void)meta_kind_base_c_types;
 
 	result &= metagen_emit_c_code(meta, arena);
 	result &= metagen_emit_helper_library_header(meta, arena);
