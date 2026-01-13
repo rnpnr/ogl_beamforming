@@ -101,6 +101,9 @@
 #define SIGN(x)          ((x) < 0? -1 : 1)
 #define swap(a, b)       do {typeof(a) __tmp = (a); (a) = (b); (b) = __tmp;} while(0)
 
+#define Min(a, b)        ((a) < (b) ? (a) : (b))
+#define Max(a, b)        ((a) > (b) ? (a) : (b))
+
 #define ISDIGIT(c)       (BETWEEN((c), '0', '9'))
 #define ISUPPER(c)       (((c) & 0x20u) == 0)
 #define TOLOWER(c)       (((c) | 0x20u))
