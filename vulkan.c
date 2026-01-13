@@ -508,7 +508,7 @@ vk_load_queues(Arena *memory, Stream *err)
 ///////////////////////
 // NOTE(rnp): User API
 
-DEBUG_EXPORT void
+DEBUG_IMPORT void
 vk_load(OSLibrary vulkan_library_handle, Arena *memory, Stream *err)
 {
 	#define X(name, ...) name = (name##_fn *)os_lookup_symbol(vulkan_library_handle, #name);
@@ -537,13 +537,13 @@ vk_load(OSLibrary vulkan_library_handle, Arena *memory, Stream *err)
 	}
 }
 
-DEBUG_EXPORT GPUInfo *
+DEBUG_IMPORT GPUInfo *
 vk_gpu_info(void)
 {
 	return &vulkan_context->gpu_info;
 }
 
-DEBUG_EXPORT void
+DEBUG_IMPORT void
 vk_buffer_release(GPUBuffer *b)
 {
 	VulkanContext *vk = vulkan_context;
@@ -567,7 +567,7 @@ vk_buffer_release(GPUBuffer *b)
 	zero_struct(b);
 }
 
-DEBUG_EXPORT void
+DEBUG_IMPORT void
 vk_buffer_allocate(GPUBuffer *b, iz size, GPUBufferCreateFlags flags, OSHandle *export, s8 label)
 {
 	vk_buffer_release(b);
@@ -652,7 +652,7 @@ vk_buffer_allocate(GPUBuffer *b, iz size, GPUBufferCreateFlags flags, OSHandle *
 	}
 }
 
-DEBUG_EXPORT b32
+DEBUG_IMPORT b32
 vk_buffer_needs_sync(GPUBuffer *b)
 {
 	b32 result = 0;
@@ -668,7 +668,7 @@ vk_buffer_needs_sync(GPUBuffer *b)
 	return result;
 }
 
-DEBUG_EXPORT u64
+DEBUG_IMPORT u64
 vk_round_up_to_sync_size(u64 size, u64 min)
 {
 	iz  round  = (iz)Max(min, vulkan_context->memory_info.non_coherent_atom_size);
@@ -676,7 +676,7 @@ vk_round_up_to_sync_size(u64 size, u64 min)
 	return result;
 }
 
-DEBUG_EXPORT void
+DEBUG_IMPORT void
 vk_buffer_range_upload(GPUBuffer *b, void *data, u64 offset, u64 size, b32 non_temporal)
 {
 	assert(ValidHandle(b->buffer));
@@ -714,7 +714,7 @@ vk_buffer_range_upload(GPUBuffer *b, void *data, u64 offset, u64 size, b32 non_t
 	}
 }
 
-DEBUG_EXPORT VulkanHandle
+DEBUG_IMPORT VulkanHandle
 vk_semaphore_create(OSHandle *export)
 {
 	VulkanContext *vk = vulkan_context;
