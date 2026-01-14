@@ -182,7 +182,7 @@ typedef struct {
 	u32 sample_count;
 	u32 channel_count;
 	u32 acquisition_count;
-	u32 das_shader_id;
+	u32 acquisition_kind;
 	f32 time_offset;
 	u8  single_focus;
 	u8  single_orientation;
@@ -213,7 +213,7 @@ typedef struct {
 	u32 sample_count;
 	u32 channel_count;
 	u32 acquisition_count;
-	u32 das_shader_id;
+	u32 acquisition_kind;
 	f32 time_offset;
 	u8  single_focus;
 	u8  single_orientation;
@@ -245,7 +245,7 @@ typedef struct {
 	u32 sample_count;
 	u32 channel_count;
 	u32 acquisition_count;
-	u32 das_shader_id;
+	u32 acquisition_kind;
 	f32 time_offset;
 	u8  single_focus;
 	u8  single_orientation;

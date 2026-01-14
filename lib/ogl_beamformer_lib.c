@@ -481,8 +481,11 @@ beamformer_push_simple_parameters_at(BeamformerSimpleParameters *bp, u32 block)
 		result &= beamformer_push_transmit_receive_orientations_at(bp->transmit_receive_orientations,
 		                                                           bp->acquisition_count, block);
 
-		if (bp->das_shader_id == BeamformerAcquisitionKind_UFORCES || bp->das_shader_id == BeamformerAcquisitionKind_UHERCULES)
+		if (bp->acquisition_kind == BeamformerAcquisitionKind_UFORCES ||
+		    bp->acquisition_kind == BeamformerAcquisitionKind_UHERCULES)
+		{
 			result &= beamformer_push_sparse_elements_at(bp->sparse_elements, bp->acquisition_count, block);
+		}
 
 		for (u32 stage = 0; stage < bp->compute_stages_count; stage++)
 			result &= beamformer_set_pipeline_stage_parameters_at(stage, bp->compute_stage_parameters[stage], block);

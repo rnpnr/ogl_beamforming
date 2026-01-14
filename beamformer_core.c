@@ -418,7 +418,7 @@ das_voxel_transform_matrix(BeamformerParameters *bp)
 	m4 S  = m4_scale(v3_div(extent, points));
 
 	m4 R;
-	switch (bp->das_shader_id) {
+	switch (bp->acquisition_kind) {
 	case BeamformerAcquisitionKind_FORCES:
 	case BeamformerAcquisitionKind_UFORCES:
 	case BeamformerAcquisitionKind_Flash:
@@ -659,7 +659,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			db->speed_of_sound         = pb->parameters.speed_of_sound;
 			db->time_offset            = time_offset;
 			db->f_number               = pb->parameters.f_number;
-			db->acquisition_kind       = pb->parameters.das_shader_id;
+			db->acquisition_kind       = pb->parameters.acquisition_kind;
 			db->sample_count           = sample_count;
 			db->channel_count          = pb->parameters.channel_count;
 			db->acquisition_count      = pb->parameters.acquisition_count;
@@ -673,7 +673,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			if (pb->parameters.coherency_weighting) sd->bake.flags |= BeamformerShaderDASFlags_CoherencyWeighting;
 			else                                    sd->bake.flags |= BeamformerShaderDASFlags_Fast;
 
-			u32 id = pb->parameters.das_shader_id;
+			u32 id = pb->parameters.acquisition_kind;
 			if (id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES)
 				sd->bake.flags |= BeamformerShaderDASFlags_Sparse;
 
@@ -844,7 +844,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			#undef X
 
 			cp->acquisition_count = pb->parameters.acquisition_count;
-			cp->acquisition_kind  = pb->parameters.das_shader_id;
+			cp->acquisition_kind  = pb->parameters.acquisition_kind;
 
 			u32 decoded_data_size = cp->rf_size;
 			if (ctx->compute_context.ping_pong_ssbo_size < decoded_data_size)

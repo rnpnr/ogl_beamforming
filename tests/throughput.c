@@ -182,7 +182,7 @@ beamformer_parameters_from_zemp_bp_v1(zemp_bp_v1 *zbp, BeamformerParameters *out
 	out->channel_count          = zbp->decoded_data_dim[1];
 	out->acquisition_count      = zbp->decoded_data_dim[2];
 	out->decode_mode            = (u8)zbp->decode_mode;
-	out->das_shader_id          = zbp->beamform_mode;
+	out->acquisition_kind       = zbp->beamform_mode;
 	out->time_offset            = zbp->time_offset;
 	out->sampling_frequency     = zbp->sampling_frequency;
 	out->demodulation_frequency = zbp->center_frequency;
@@ -352,8 +352,8 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	if (rx_rows) packed_tx_rx |= BeamformerRCAOrientation_Rows    << 0;
 	else         packed_tx_rx |= BeamformerRCAOrientation_Columns << 0;
 
-	if (bp.das_shader_id == BeamformerAcquisitionKind_HERCULES ||
-	    bp.das_shader_id == BeamformerAcquisitionKind_UHERCULES)
+	if (bp.acquisition_kind == BeamformerAcquisitionKind_HERCULES ||
+	    bp.acquisition_kind == BeamformerAcquisitionKind_UHERCULES)
 	{
 		bp.single_focus       = 1;
 		bp.single_orientation = 1;

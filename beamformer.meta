@@ -96,7 +96,7 @@
 	[sample_count                 U32]
 	[channel_count                U32]
 	[acquisition_count            U32]
-	[das_shader_id                U32]
+	[acquisition_kind             U32]
 	[time_offset                  F32]
 	[single_focus                  U8]
 	[single_orientation            U8]
