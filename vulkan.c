@@ -205,9 +205,9 @@ vk_load_physical_device(Arena arena, Stream *err)
 	if (!vk->physical_device)
 		fatal(vulkan_info("failed to find a suitable GPU\n"));
 
-	VkPhysicalDeviceProperties2            dp   = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
-	VkPhysicalDeviceMaintenance3Properties dm3p = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES};
-	dp.pNext = &dm3p;
+	VkPhysicalDeviceProperties2        dp   = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+	VkPhysicalDeviceVulkan11Properties v11p = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES};
+	dp.pNext= &v11p;
 
 	vkGetPhysicalDeviceProperties2(vk->physical_device, &dp);
 
@@ -313,7 +313,7 @@ vk_load_physical_device(Arena arena, Stream *err)
 		vk->memory_info.memory_host_coherent[it] = (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
 	}
 
-	vk->memory_info.max_allocation_size    = dm3p.maxMemoryAllocationSize;
+	vk->memory_info.max_allocation_size    = v11p.maxMemoryAllocationSize;
 	vk->memory_info.non_coherent_atom_size = dp.properties.limits.nonCoherentAtomSize;
 	vk->gpu_info.vendor                    = dp.properties.vendorID;
 	vk->gpu_info.gpu_heap_size             = bmp->memoryHeaps[vk->memory_info.gpu_heap_index].size;
@@ -321,6 +321,7 @@ vk_load_physical_device(Arena arena, Stream *err)
 	vk->gpu_info.max_image_dimension_2D    = dp.properties.limits.maxImageDimension2D;
 	vk->gpu_info.max_image_dimension_3D    = dp.properties.limits.maxImageDimension3D;
 	vk->gpu_info.max_msaa_samples          = round_down_power_of_two(dp.properties.limits.framebufferColorSampleCounts);
+	vk->gpu_info.subgroup_size             = v11p.subgroupSize;
 	vk->gpu_info.max_compute_shared_memory_size = dp.properties.limits.maxComputeSharedMemorySize;
 
 	// IMPORTANT(rnp): memory must only be pushed at the end of the function
