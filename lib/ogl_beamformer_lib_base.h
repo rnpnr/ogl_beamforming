@@ -43,8 +43,9 @@ BEAMFORMER_LIB_EXPORT const char *beamformer_error_string(BeamformerLibErrorKind
  *   - fill out a BeamformerSimpleParameters
  *     - filters need to be created with beamformer_create_filter, and the slot
  *       needs to be assigned in compute_stage_parameters
- *   - allocate a buffer with enough space for all Float32 or Float32Complex output points
- *   - pass the buffer along with the data and parameters to beamformer_beamform_data()
+ *   - (Optional) allocate a buffer with enough space for all Float32 or Float32Complex output points
+ *   - pass the data and parameters to beamformer_beamform_data()
+ *     - pass 0 for out_data if you do not need the beamformed data returned
  *   - if the function was unsuccessful you can check the error with beamformer_get_last_error()
  *     or beamformer_get_last_error_string()
  */
