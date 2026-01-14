@@ -5,7 +5,7 @@
  * [ ]: bug: we aren't inserting rf data between each frame
  */
 
-#define LIB_FN function
+#define BEAMFORMER_LIB_EXPORT function
 #include "ogl_beamformer_lib.c"
 
 #include <signal.h>
