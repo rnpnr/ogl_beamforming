@@ -109,7 +109,7 @@ lib_error_check_(b32 condition, BeamformerLibErrorKind error_kind)
 function b32
 check_shared_memory(void)
 {
-	if (!g_beamformer_library_context.bp) {
+	if unlikely(!g_beamformer_library_context.bp) {
 		g_beamformer_library_context.bp = os_open_shared_memory_area(OS_SHARED_MEMORY_NAME);
 		if (lib_error_check(g_beamformer_library_context.bp != 0, SharedMemory)) {
 			u32 version = g_beamformer_library_context.bp->version;
@@ -118,8 +118,8 @@ check_shared_memory(void)
 	}
 
 	b32 result = 0;
-	if (g_beamformer_library_context.bp)
-		result = lib_error_check(!g_beamformer_library_context.bp->invalid, InvalidAccess);
+	if likely(g_beamformer_library_context.bp)
+		result = lib_error_check(likely(!g_beamformer_library_context.bp->invalid), InvalidAccess);
 	return result;
 }
 
