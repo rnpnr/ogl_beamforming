@@ -8,27 +8,26 @@
 #endif
 
 #define BEAMFORMER_LIB_ERRORS \
-	X(NONE,                         0, "None") \
-	X(VERSION_MISMATCH,             1, "host-library version mismatch")                     \
-	X(INVALID_ACCESS,               2, "library in invalid state")                          \
-	X(PARAMETER_BLOCK_OVERFLOW,     3, "parameter block count overflow")                    \
-	X(PARAMETER_BLOCK_UNALLOCATED,  4, "push to unallocated parameter block")               \
-	X(COMPUTE_STAGE_OVERFLOW,       5, "compute stage overflow")                            \
-	X(INVALID_COMPUTE_STAGE,        6, "invalid compute shader stage")                      \
-	X(INVALID_START_SHADER,         7, "starting shader not Decode or Demodulate")          \
-	X(INVALID_DEMOD_DATA_KIND,      8, "data kind for demodulation not Int16 or Float")     \
-	X(INVALID_IMAGE_PLANE,          9, "invalid image plane")                               \
-	X(BUFFER_OVERFLOW,             10, "passed buffer size exceeds available space")        \
-	X(DATA_SIZE_MISMATCH,          11, "data size is less than specified from parameters")  \
-	X(WORK_QUEUE_FULL,             12, "work queue full")                                   \
-	X(EXPORT_SPACE_OVERFLOW,       13, "not enough space for data export")                  \
-	X(SHARED_MEMORY,               14, "failed to open shared memory region")               \
-	X(SYNC_VARIABLE,               15, "failed to acquire lock within timeout period")      \
-	X(INVALID_TIMEOUT,             16, "invalid timeout value")                             \
-	X(INVALID_FILTER_KIND,         17, "invalid filter kind")                               \
-	X(INVALID_SIMPLE_PARAMETERS,   18, "invalid simple parameters struct")
+	X(None,                          0, "None") \
+	X(VersionMismatch,               1, "host-library version mismatch")                     \
+	X(InvalidAccess,                 2, "library in invalid state")                          \
+	X(ParameterBlockOverflow,        3, "parameter block count overflow")                    \
+	X(ParameterBlockUnallocated,     4, "push to unallocated parameter block")               \
+	X(ComputeStageOverflow,          5, "compute stage overflow")                            \
+	X(InvalidComputeStage,           6, "invalid compute shader stage")                      \
+	X(InvalidStartShader,            7, "starting shader not Decode or Demodulate")          \
+	X(InvalidDemodulationDataKind,   8, "data kind for demodulation not Int16 or Float")     \
+	X(InvalidImagePlane,             9, "invalid image plane")                               \
+	X(BufferOverflow,               10, "passed buffer size exceeds available space")        \
+	X(DataSizeMismatch,             11, "data size doesn't match the size specified in parameters")  \
+	X(WorkQueueFull,                12, "work queue full")                                   \
+	X(ExportSpaceOverflow,          13, "not enough space for data export")                  \
+	X(SharedMemory,                 14, "failed to open shared memory region")               \
+	X(SyncVariable,                 15, "failed to acquire lock within timeout period")      \
+	X(InvalidFilterKind,            16, "invalid filter kind")                               \
+	X(InvalidSimpleParameters,      17, "invalid simple parameters struct")
 
-#define X(type, num, string) BF_LIB_ERR_KIND_ ##type = num,
+#define X(type, num, string) BeamformerLibErrorKind_##type = num,
 typedef enum {BEAMFORMER_LIB_ERRORS} BeamformerLibErrorKind;
 #undef X
 
@@ -57,10 +56,10 @@ LIB_FN uint32_t beamformer_beamform_data(BeamformerSimpleParameters *bp, void *d
  * timeout in the normal case and so passing a timeout parameter around
  * every where is cumbersome.
  *
- * timeout_ms: milliseconds in the range [-1, ...) (Default: 0)
+ * timeout_ms: milliseconds (Default: 0)
  *
  * IMPORTANT: timeout of -1 will block forever */
-LIB_FN uint32_t beamformer_set_global_timeout(int32_t timeout_ms);
+LIB_FN void beamformer_set_global_timeout(uint32_t timeout_ms);
 
 ///////////////////////////
 // NOTE: Advanced API

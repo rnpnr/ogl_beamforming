@@ -96,8 +96,9 @@ os_open_shared_memory_area(char *name)
 
 #endif
 
+#define lib_error_check(c, e) lib_error_check_(c, BeamformerLibErrorKind_##e)
 function b32
-lib_error_check(b32 condition, BeamformerLibErrorKind error_kind)
+lib_error_check_(b32 condition, BeamformerLibErrorKind error_kind)
 {
 	b32 result = condition;
 	if (!result) g_beamformer_library_context.last_error = error_kind;
@@ -110,15 +111,15 @@ check_shared_memory(void)
 {
 	if (!g_beamformer_library_context.bp) {
 		g_beamformer_library_context.bp = os_open_shared_memory_area(OS_SHARED_MEMORY_NAME);
-		if (lib_error_check(g_beamformer_library_context.bp != 0, BF_LIB_ERR_KIND_SHARED_MEMORY)) {
+		if (lib_error_check(g_beamformer_library_context.bp != 0, SharedMemory)) {
 			u32 version = g_beamformer_library_context.bp->version;
-			lib_error_check(version == BEAMFORMER_SHARED_MEMORY_VERSION, BF_LIB_ERR_KIND_VERSION_MISMATCH);
+			lib_error_check(version == BEAMFORMER_SHARED_MEMORY_VERSION, VersionMismatch);
 		}
 	}
 
 	b32 result = 0;
 	if (g_beamformer_library_context.bp)
-		result = lib_error_check(!g_beamformer_library_context.bp->invalid, BF_LIB_ERR_KIND_INVALID_ACCESS);
+		result = lib_error_check(!g_beamformer_library_context.bp->invalid, InvalidAccess);
 	return result;
 }
 
@@ -128,7 +129,7 @@ valid_parameter_block(u32 block)
 	b32 result = check_shared_memory();
 	if (result) {
 		result = lib_error_check(block < g_beamformer_library_context.bp->reserved_parameter_blocks,
-		                         BF_LIB_ERR_KIND_PARAMETER_BLOCK_UNALLOCATED);
+		                         ParameterBlockUnallocated);
 	}
 	return result;
 }
@@ -137,7 +138,7 @@ function BeamformWork *
 try_push_work_queue(void)
 {
 	BeamformWork *result = beamform_work_queue_push(&g_beamformer_library_context.bp->external_work_queue);
-	lib_error_check(result != 0, BF_LIB_ERR_KIND_WORK_QUEUE_FULL);
+	lib_error_check(result != 0, WorkQueueFull);
 	return result;
 }
 
@@ -145,7 +146,7 @@ function b32
 lib_try_lock(i32 lock, i32 timeout_ms)
 {
 	b32 result = beamformer_shared_memory_take_lock(g_beamformer_library_context.bp, lock, (u32)timeout_ms);
-	lib_error_check(result, BF_LIB_ERR_KIND_SYNC_VARIABLE);
+	lib_error_check(result, SyncVariable);
 	return result;
 }
 
@@ -182,12 +183,10 @@ beamformer_get_last_error_string(void)
 	return beamformer_error_string(beamformer_get_last_error());
 }
 
-b32
-beamformer_set_global_timeout(i32 timeout_ms)
+void
+beamformer_set_global_timeout(u32 timeout_ms)
 {
-	b32 result = lib_error_check(timeout_ms >= -1, BF_LIB_ERR_KIND_INVALID_TIMEOUT);
-	if (result) g_beamformer_library_context.timeout_ms = timeout_ms;
-	return result;
+	g_beamformer_library_context.timeout_ms = timeout_ms;
 }
 
 b32
@@ -195,7 +194,7 @@ beamformer_reserve_parameter_blocks(uint32_t count)
 {
 	b32 result = 0;
 	if (check_shared_memory() &&
-	    lib_error_check(count <= BeamformerMaxParameterBlockSlots, BF_LIB_ERR_KIND_PARAMETER_BLOCK_OVERFLOW))
+	    lib_error_check(count <= BeamformerMaxParameterBlockSlots, ParameterBlockOverflow))
 	{
 		g_beamformer_library_context.bp->reserved_parameter_blocks = count;
 		result = 1;
@@ -206,21 +205,21 @@ beamformer_reserve_parameter_blocks(uint32_t count)
 function b32
 validate_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data_kind)
 {
-	b32 result = lib_error_check(shader_count <= BeamformerMaxComputeShaderStages, BF_LIB_ERR_KIND_COMPUTE_STAGE_OVERFLOW);
+	b32 result = lib_error_check(shader_count <= BeamformerMaxComputeShaderStages, ComputeStageOverflow);
 	if (result) {
 		for (u32 i = 0; i < shader_count; i++)
 			result &= BETWEEN(shaders[i], BeamformerShaderKind_ComputeFirst, BeamformerShaderKind_ComputeLast);
 		if (!result) {
-			g_beamformer_library_context.last_error = BF_LIB_ERR_KIND_INVALID_COMPUTE_STAGE;
+			g_beamformer_library_context.last_error = BeamformerLibErrorKind_InvalidComputeStage;
 		} else if (shaders[0] != BeamformerShaderKind_Demodulate &&
 		           shaders[0] != BeamformerShaderKind_Decode)
 		{
-			g_beamformer_library_context.last_error = BF_LIB_ERR_KIND_INVALID_START_SHADER;
+			g_beamformer_library_context.last_error = BeamformerLibErrorKind_InvalidStartShader;
 			result = 0;
 		} else if (shaders[0] == BeamformerShaderKind_Demodulate &&
 		           !(data_kind == BeamformerDataKind_Int16 || data_kind == BeamformerDataKind_Float32))
 		{
-			g_beamformer_library_context.last_error = BF_LIB_ERR_KIND_INVALID_DEMOD_DATA_KIND;
+			g_beamformer_library_context.last_error = BeamformerLibErrorKind_InvalidDemodulationDataKind;
 			result = 0;
 		}
 	}
@@ -234,7 +233,7 @@ validate_simple_parameters(BeamformerSimpleParameters *bp)
 	if (result) {
 		result &= bp->channel_count <= BeamformerMaxChannelCount;
 		if (!result)
-			g_beamformer_library_context.last_error = BF_LIB_ERR_KIND_INVALID_SIMPLE_PARAMETERS;
+			g_beamformer_library_context.last_error = BeamformerLibErrorKind_InvalidSimpleParameters;
 	}
 	return result;
 }
@@ -324,7 +323,7 @@ beamformer_create_filter(BeamformerFilterKind kind, void *filter_parameters, u32
                          f32 sampling_frequency, b32 complex, u8 filter_slot, u8 parameter_block)
 {
 	b32 result = 0;
-	if (lib_error_check(kind >= 0 && kind < BeamformerFilterKind_Count, BF_LIB_ERR_KIND_INVALID_FILTER_KIND)) {
+	if (lib_error_check(kind >= 0 && kind < BeamformerFilterKind_Count, InvalidFilterKind)) {
 		BeamformerFilterParameters fp = {0};
 		/* NOTE(rnp): any parameter struct works as base offset */
 		filter_size = MIN(filter_size, sizeof(fp) - offsetof(BeamformerFilterParameters, kaiser));
@@ -353,7 +352,7 @@ beamformer_flush_commands(void)
 #define X(name, dtype, elements, region_name) \
 b32 beamformer_push_##name ##_at(dtype *data, u32 count, u32 block) { \
 	b32 result = 0; \
-	if (lib_error_check(count <= countof(((BeamformerParameterBlock *)0)->name), BF_LIB_ERR_KIND_BUFFER_OVERFLOW)) { \
+	if (lib_error_check(count <= countof(((BeamformerParameterBlock *)0)->name), BufferOverflow)) { \
 		result = parameter_block_region_upload(data, count * elements * sizeof(dtype), block, \
 		                                       BeamformerParameterBlockRegion_##region_name,  \
 		                                       offsetof(BeamformerParameterBlock, name),      \
@@ -384,8 +383,8 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 	u32 size     = bp->acquisition_count * bp->sample_count * bp->channel_count * beamformer_data_kind_byte_size[data_kind];
 	u32 raw_size = bp->raw_data_dimensions.x * bp->raw_data_dimensions.y * beamformer_data_kind_byte_size[data_kind];
 
-	if (lib_error_check(size <= arena_capacity(&scratch, u8), BF_LIB_ERR_KIND_BUFFER_OVERFLOW) &&
-	    lib_error_check(size <= data_size && data_size == raw_size, BF_LIB_ERR_KIND_DATA_SIZE_MISMATCH))
+	if (lib_error_check(size <= arena_capacity(&scratch, u8), BufferOverflow) &&
+	    lib_error_check(size <= data_size && data_size == raw_size, DataSizeMismatch))
 	{
 		if (lib_try_lock(BeamformerSharedMemoryLockKind_UploadRF, timeout_ms)) {
 			if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
@@ -431,8 +430,8 @@ beamformer_push_data_with_compute(void *data, u32 data_size, u32 image_plane_tag
 	b32 result = 0;
 	if (check_shared_memory()) {
 		u32 reserved_blocks = g_beamformer_library_context.bp->reserved_parameter_blocks;
-		if (lib_error_check(image_plane_tag < BeamformerViewPlaneTag_Count, BF_LIB_ERR_KIND_INVALID_IMAGE_PLANE) &&
-		    lib_error_check(parameter_slot < reserved_blocks, BF_LIB_ERR_KIND_PARAMETER_BLOCK_UNALLOCATED) &&
+		if (lib_error_check(image_plane_tag < BeamformerViewPlaneTag_Count, InvalidImagePlane) &&
+		    lib_error_check(parameter_slot < reserved_blocks, ParameterBlockUnallocated) &&
 		    beamformer_push_data_base(data, data_size, g_beamformer_library_context.timeout_ms, parameter_slot))
 		{
 			BeamformWork *work = try_push_work_queue();
@@ -575,7 +574,7 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 		if (complex) output_size *= 2;
 
 		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
-		if (result && lib_error_check(output_size <= arena_capacity(&scratch, u8), BF_LIB_ERR_KIND_EXPORT_SPACE_OVERFLOW)
+		if (result && lib_error_check(output_size <= arena_capacity(&scratch, u8), ExportSpaceOverflow)
 		    && beamformer_push_data_with_compute(data, data_size, 0, 0))
 		{
 			BeamformerExportContext export;
@@ -596,7 +595,7 @@ beamformer_compute_timings(BeamformerComputeStatsTable *output, i32 timeout_ms)
 	b32 result = 0;
 	if (check_shared_memory()) {
 		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
-		if (lib_error_check((iz)sizeof(*output) <= arena_capacity(&scratch, u8), BF_LIB_ERR_KIND_EXPORT_SPACE_OVERFLOW)) {
+		if (lib_error_check((iz)sizeof(*output) <= arena_capacity(&scratch, u8), ExportSpaceOverflow)) {
 			BeamformerExportContext export;
 			export.kind = BeamformerExportKind_Stats;
 			export.size = sizeof(*output);
