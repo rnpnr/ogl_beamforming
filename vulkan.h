@@ -13,6 +13,7 @@
 #define VK_MAX_EXTENSION_NAME_SIZE        256U
 #define VK_MAX_PHYSICAL_DEVICE_NAME_SIZE  256U
 #define VK_UUID_SIZE                      16U
+#define VK_LUID_SIZE                      8U
 #define VK_MAX_MEMORY_TYPES               32U
 #define VK_MAX_MEMORY_HEAPS               16U
 
@@ -83,6 +84,7 @@ typedef enum {
 	VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO              = 40,
 	VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO                 = 42,
 	VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO                    = 43,
+	VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES     = 50,
 	VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR                 = 1000001000,
 	VK_STRUCTURE_TYPE_PRESENT_INFO_KHR                          = 1000001001,
 	VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2              = 1000059001,
@@ -94,7 +96,6 @@ typedef enum {
 	VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO              = 1000077000,
 	VK_STRUCTURE_TYPE_SEMAPHORE_GET_WIN32_HANDLE_INFO_KHR       = 1000078003,
 	VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR                 = 1000079001,
-	VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES  = 1000168000,
 	VK_STRUCTURE_TYPE_MAX_ENUM                                  = 0x7FFFFFFF,
 } VkStructureType;
 
@@ -179,6 +180,12 @@ typedef enum VkPipelineStageFlagBits {
 typedef VkFlags VkPipelineStageFlags;
 
 typedef VkFlags VkDeviceCreateFlags;
+
+typedef enum {
+	VK_POINT_CLIPPING_BEHAVIOR_ALL_CLIP_PLANES       = 0,
+	VK_POINT_CLIPPING_BEHAVIOR_USER_CLIP_PLANES_ONLY = 1,
+	VK_POINT_CLIPPING_BEHAVIOR_MAX_ENUM              = 0x7FFFFFFF
+} VkPointClippingBehavior;
 
 typedef enum {
 	VK_SAMPLE_COUNT_1_BIT              = 0x00000001,
@@ -1228,6 +1235,22 @@ typedef enum {
 typedef VkFlags VkMemoryMapFlags;
 
 typedef enum {
+	VK_SUBGROUP_FEATURE_BASIC_BIT            = 0x00000001,
+	VK_SUBGROUP_FEATURE_VOTE_BIT             = 0x00000002,
+	VK_SUBGROUP_FEATURE_ARITHMETIC_BIT       = 0x00000004,
+	VK_SUBGROUP_FEATURE_BALLOT_BIT           = 0x00000008,
+	VK_SUBGROUP_FEATURE_SHUFFLE_BIT          = 0x00000010,
+	VK_SUBGROUP_FEATURE_SHUFFLE_RELATIVE_BIT = 0x00000020,
+	VK_SUBGROUP_FEATURE_CLUSTERED_BIT        = 0x00000040,
+	VK_SUBGROUP_FEATURE_QUAD_BIT             = 0x00000080,
+	VK_SUBGROUP_FEATURE_ROTATE_BIT           = 0x00000200,
+	VK_SUBGROUP_FEATURE_ROTATE_CLUSTERED_BIT = 0x00000400,
+	VK_SUBGROUP_FEATURE_PARTITIONED_BIT_NV   = 0x00000100,
+	VK_SUBGROUP_FEATURE_FLAG_BITS_MAX_ENUM   = 0x7FFFFFFF
+} VkSubgroupFeatureFlagBits;
+typedef VkFlags VkSubgroupFeatureFlags;
+
+typedef enum {
 	VK_MEMORY_ALLOCATE_DEVICE_MASK_BIT                   = 0x00000001,
 	VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT                = 0x00000002,
 	VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT = 0x00000004,
@@ -1485,11 +1508,24 @@ typedef struct {
 } VkPhysicalDeviceMemoryProperties2;
 
 typedef struct {
-	VkStructureType sType;
-	void *          pNext;
-	uint32_t        maxPerSetDescriptors;
-	VkDeviceSize    maxMemoryAllocationSize;
-} VkPhysicalDeviceMaintenance3Properties;
+	VkStructureType         sType;
+	void *                  pNext;
+	uint8_t                 deviceUUID[VK_UUID_SIZE];
+	uint8_t                 driverUUID[VK_UUID_SIZE];
+	uint8_t                 deviceLUID[VK_LUID_SIZE];
+	uint32_t                deviceNodeMask;
+	VkBool32                deviceLUIDValid;
+	uint32_t                subgroupSize;
+	VkShaderStageFlags      subgroupSupportedStages;
+	VkSubgroupFeatureFlags  subgroupSupportedOperations;
+	VkBool32                subgroupQuadOperationsInAllStages;
+	VkPointClippingBehavior pointClippingBehavior;
+	uint32_t                maxMultiviewViewCount;
+	uint32_t                maxMultiviewInstanceIndex;
+	VkBool32                protectedNoFault;
+	uint32_t                maxPerSetDescriptors;
+	VkDeviceSize            maxMemoryAllocationSize;
+} VkPhysicalDeviceVulkan11Properties;
 
 typedef struct {
 	uint32_t                         apiVersion;
