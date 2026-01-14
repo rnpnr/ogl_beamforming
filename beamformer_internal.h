@@ -48,7 +48,9 @@ typedef struct {
 	f32 timestamp_period_ns;
 
 	u32 max_compute_shared_memory_size;
-	u32 max_msaa_samples;
+	u16 max_msaa_samples;
+	u16 subgroup_size;
+
 	u32 max_image_dimension_2D;
 	// NOTE(rnp): vulkan compute will output to a buffer so this won't be relevant
 	u32 max_image_dimension_3D;
