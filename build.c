@@ -24,12 +24,14 @@ global char *g_argv0;
 #define OUTPUT(s) OUTDIR OS_PATH_SEPARATOR s
 
 #if COMPILER_MSVC
-  #define COMMON_FLAGS     "-nologo", "-std:c11", "-Fo:" OUTDIR "\\", "-Z7", "-Zo"
+  #define COMMON_CFLAGS    "-std:c11"
+  #define COMMON_FLAGS     "-nologo", "-Fo:" OUTDIR "\\", "-Z7", "-Zo"
   #define DEBUG_FLAGS      "-Od", "-D_DEBUG"
   #define OPTIMIZED_FLAGS  "-O2"
   #define EXTRA_FLAGS      ""
 #else
-  #define COMMON_FLAGS     "-std=c11", "-pipe", "-Wall"
+  #define COMMON_CFLAGS    "-std=c11"
+  #define COMMON_FLAGS     "-pipe", "-Wall"
   #define DEBUG_FLAGS      "-O0", "-D_DEBUG", "-Wno-unused-function"
   #define OPTIMIZED_FLAGS  "-O3"
   #define EXTRA_FLAGS_BASE "-Werror", "-Wextra", "-Wshadow", "-Wno-unused-parameter", \
@@ -87,12 +89,15 @@ global char *g_argv0;
 
 #if COMPILER_CLANG
   #define COMPILER     "clang"
+  #define CPP_COMPILER "clang++"
   #define PREPROCESSOR "clang", "-E", "-P"
 #elif COMPILER_MSVC
   #define COMPILER     "cl"
+  #define CPP_COMPILER "cl"
   #define PREPROCESSOR "cl", "/EP"
 #else
   #define COMPILER     "cc"
+  #define CPP_COMPILER "c++"
   #define PREPROCESSOR "cc", "-E", "-P"
 #endif
 
@@ -532,11 +537,11 @@ use_sanitization(void)
 }
 
 function void
-cmd_base(Arena *a, CommandList *c)
+cmd_base(Arena *a, CommandList *c, b32 cpp)
 {
 	Config *o = &config;
 
-	cmd_append(a, c, COMPILER);
+	cmd_append(a, c, cpp ? CPP_COMPILER : COMPILER);
 
 	if (!is_msvc) {
 		/* TODO(rnp): support cross compiling with clang */
@@ -545,6 +550,7 @@ cmd_base(Arena *a, CommandList *c)
 		else if (is_aarch64) cmd_append(a, c, "-march=armv8");
 	}
 
+	if (!cpp) cmd_append(a, c, COMMON_CFLAGS);
 	cmd_append(a, c, COMMON_FLAGS);
 	if (o->debug) cmd_append(a, c, DEBUG_FLAGS);
 	else          cmd_append(a, c, OPTIMIZED_FLAGS);
@@ -575,7 +581,7 @@ check_rebuild_self(Arena arena, i32 argc, char *argv[])
 			build_fatal("failed to move: %s -> %s", binary, old_name);
 
 		CommandList c = {0};
-		cmd_base(&arena, &c);
+		cmd_base(&arena, &c, 0);
 		cmd_append(&arena, &c, EXTRA_FLAGS);
 		if (!is_msvc) cmd_append(&arena, &c, "-Wno-unused-function");
 		cmd_append(&arena, &c, __FILE__, OUTPUT_EXE(binary));
@@ -723,7 +729,7 @@ build_static_library(Arena a, CommandList cc, char *name, char **deps, char **ou
 }
 
 function b32
-check_build_raylib(Arena a)
+build_raylib(Arena a)
 {
 	b32 result = 1, shared = config.debug;
 	char *libraylib = shared ? OS_SHARED_LINK_LIB("raylib") : OUTPUT_LIB(OS_STATIC_LIB("raylib"));
@@ -732,7 +738,7 @@ check_build_raylib(Arena a)
 		os_copy_file("external/raylib/src/rlgl.h", "external/include/rlgl.h");
 
 		CommandList cc = {0};
-		cmd_base(&a, &cc);
+		cmd_base(&a, &cc, 0);
 		if (is_unix) cmd_append(&a, &cc, "-D_GLFW_X11");
 		cmd_append(&a, &cc, "-DPLATFORM_DESKTOP_GLFW");
 		if (!is_msvc) cmd_append(&a, &cc, "-Wno-unused-but-set-variable");
@@ -763,10 +769,50 @@ check_build_raylib(Arena a)
 }
 
 function b32
+build_glslang(Arena a)
+{
+	b32 result = 1;
+	char *lib = OUTPUT_LIB(OS_STATIC_LIB("glslang"));
+	if (needs_rebuild(lib, "external/glslang")) {
+		git_submodule_update(a, "external/glslang");
+		os_copy_file("external/glslang/glslang/Include/glslang_c_interface.h", "external/include/glslang_c_interface.h");
+
+		CommandList cc = {0};
+		cmd_base(&a, &cc, 1);
+		cmd_append(&a, &cc, "-std=c++17", "-fno-rtti", "-fno-exceptions", "-Wno-unused-but-set-variable");
+		cmd_append(&a, &cc, "-Iexternal/glslang_local", "-Iexternal/glslang");
+
+		#if OS_WINDOWS
+		  #define GLSLANG_SOURCES_OS X(ossource, "glslang/glslang/OSDependent/Windows/")
+		#else
+		  #define GLSLANG_SOURCES_OS
+		#endif
+
+		#define GLSLANG_SOURCES_COMMON \
+			X(glslang,           "glslang_local/") \
+			X(spirv_c_interface, "glslang/SPIRV/CInterface/") \
+
+		#define GLSLANG_SOURCES \
+			GLSLANG_SOURCES_COMMON \
+			GLSLANG_SOURCES_OS \
+
+		#define X(name, extra) "external/" extra #name ".cpp",
+		char *srcs[] = {GLSLANG_SOURCES};
+		#undef X
+		#define X(name, ...) OUTPUT(OBJECT(#name)),
+		char *outs[] = {GLSLANG_SOURCES};
+		#undef X
+
+		result = build_static_library(a, cc, lib, srcs, outs, countof(srcs));
+	}
+	return result;
+}
+
+function b32
 build_helper_library(Arena arena)
 {
 	CommandList cc = {0};
-	cmd_base(&arena, &cc);
+	cmd_base(&arena, &cc, 0);
 	cmd_append(&arena, &cc, EXTRA_FLAGS);
 
 	/////////////
@@ -784,7 +830,7 @@ build_helper_library(Arena arena)
 function void
 cmd_beamformer_base(Arena *a, CommandList *c)
 {
-	cmd_base(a, c);
+	cmd_base(a, c, 0);
 	cmd_append(a, c, "-Iexternal/include");
 	cmd_append(a, c, EXTRA_FLAGS);
 	cmd_append(a, c, config.bake_shaders? "-DBakeShaders=1" : "-DBakeShaders=0");
@@ -848,7 +894,7 @@ function b32
 build_tests(Arena arena)
 {
 	CommandList cc = {0};
-	cmd_base(&arena, &cc);
+	cmd_base(&arena, &cc, 0);
 	cmd_append(&arena, &cc, EXTRA_FLAGS);
 
 	#define TEST_PROGRAMS \
@@ -3613,7 +3659,8 @@ main(i32 argc, char *argv[])
 
 	parse_config(argc, argv);
 
-	if (!check_build_raylib(arena)) return 1;
+	if (!build_raylib(arena))  return 1;
+	if (!build_glslang(arena)) return 1;
 
 	/////////////////
 	// lib/tests
