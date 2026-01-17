@@ -389,28 +389,16 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 		if (lib_try_lock(BeamformerSharedMemoryLockKind_UploadRF, timeout_ms)) {
 			if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
 				u32 channel_count      = bp->channel_count;
-				u32 out_channel_stride = beamformer_data_kind_element_count[data_kind] * bp->sample_count * bp->acquisition_count;
-				u32 in_channel_stride  = beamformer_data_kind_element_count[data_kind] * bp->raw_data_dimensions.x;
+				u32 out_channel_stride = beamformer_data_kind_byte_size[data_kind] * bp->sample_count * bp->acquisition_count;
+				u32 in_channel_stride  = beamformer_data_kind_byte_size[data_kind] * bp->raw_data_dimensions.x;
 
 				for (u32 channel = 0; channel < channel_count; channel++) {
 					u16 data_channel = (u16)b->channel_mapping[channel];
 					u32 out_off = out_channel_stride * channel;
 					u32 in_off  = in_channel_stride  * data_channel;
-					for (u32 sample = 0; sample < out_channel_stride; sample++, out_off++, in_off++) {
-						switch (data_kind) {
-						case BeamformerDataKind_Int16:
-						case BeamformerDataKind_Int16Complex:
-						{
-							((i16 *)scratch.beg)[out_off] = ((i16 *)data)[in_off];
-						}break;
-						case BeamformerDataKind_Float32:
-						case BeamformerDataKind_Float32Complex:
-						{
-							((f32 *)scratch.beg)[out_off] = ((f32 *)data)[in_off];
-						}break;
-						InvalidDefaultCase;
-						}
-					}
+					/* TODO(rnp): it would be better to do non temporal copy here, but we can't ensure
+					 * 64 byte boundaries. */
+					mem_copy(scratch.beg + out_off, (u8 *)data + in_off, out_channel_stride);
 				}
 
 				lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
