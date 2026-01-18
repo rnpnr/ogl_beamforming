@@ -537,7 +537,7 @@ use_sanitization(void)
 }
 
 function void
-cmd_base(Arena *a, CommandList *c, b32 cpp)
+cmd_base(Arena *a, CommandList *c, b32 cpp, b32 debug)
 {
 	Config *o = &config;
 
@@ -552,15 +552,15 @@ cmd_base(Arena *a, CommandList *c, b32 cpp)
 
 	if (!cpp) cmd_append(a, c, COMMON_CFLAGS);
 	cmd_append(a, c, COMMON_FLAGS);
-	if (o->debug) cmd_append(a, c, DEBUG_FLAGS);
-	else          cmd_append(a, c, OPTIMIZED_FLAGS);
+	if (debug) cmd_append(a, c, DEBUG_FLAGS);
+	else       cmd_append(a, c, OPTIMIZED_FLAGS);
 
 	/* NOTE: ancient gcc bug: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=80454 */
 	if (is_gcc) cmd_append(a, c, "-Wno-missing-braces");
 
 	if (!is_msvc) cmd_append(a, c, "-fms-extensions");
 
-	if (o->debug && is_unix) cmd_append(a, c, "-gdwarf-4");
+	if (debug && is_unix) cmd_append(a, c, "-gdwarf-4");
 
 	/* NOTE(rnp): need to avoid w32-gcc for ci */
 	b32 sanitize = use_sanitization();
@@ -581,7 +581,7 @@ check_rebuild_self(Arena arena, i32 argc, char *argv[])
 			build_fatal("failed to move: %s -> %s", binary, old_name);
 
 		CommandList c = {0};
-		cmd_base(&arena, &c, 0);
+		cmd_base(&arena, &c, 0, 0);
 		cmd_append(&arena, &c, EXTRA_FLAGS);
 		if (!is_msvc) cmd_append(&arena, &c, "-Wno-unused-function");
 		cmd_append(&arena, &c, __FILE__, OUTPUT_EXE(binary));
@@ -738,7 +738,7 @@ build_raylib(Arena a)
 		os_copy_file("external/raylib/src/rlgl.h", "external/include/rlgl.h");
 
 		CommandList cc = {0};
-		cmd_base(&a, &cc, 0);
+		cmd_base(&a, &cc, 0, config.debug);
 		if (is_unix) cmd_append(&a, &cc, "-D_GLFW_X11");
 		cmd_append(&a, &cc, "-DPLATFORM_DESKTOP_GLFW");
 		if (!is_msvc) cmd_append(&a, &cc, "-Wno-unused-but-set-variable");
@@ -773,12 +773,12 @@ build_glslang(Arena a)
 {
 	b32 result = 1;
 	char *lib = OUTPUT_LIB(OS_STATIC_LIB("glslang"));
-	if (needs_rebuild(lib, "external/glslang")) {
+	if (needs_rebuild(lib, "external/glslang", "external/glslang_local/glslang.cpp")) {
 		git_submodule_update(a, "external/glslang");
-		os_copy_file("external/glslang/glslang/Include/glslang_c_interface.h", "external/include/glslang_c_interface.h");
 
+		// NOTE(rnp): do not build this with debug symbols. The size explodes because c++
 		CommandList cc = {0};
-		cmd_base(&a, &cc, 1);
+		cmd_base(&a, &cc, 1, 0);
 		cmd_append(&a, &cc, "-std=c++17", "-fno-rtti", "-fno-exceptions", "-Wno-unused-but-set-variable");
 		cmd_append(&a, &cc, "-Iexternal/glslang_local", "-Iexternal/glslang");
 
@@ -812,7 +812,7 @@ function b32
 build_helper_library(Arena arena)
 {
 	CommandList cc = {0};
-	cmd_base(&arena, &cc, 0);
+	cmd_base(&arena, &cc, 0, 0);
 	cmd_append(&arena, &cc, EXTRA_FLAGS);
 
 	/////////////
@@ -830,7 +830,7 @@ build_helper_library(Arena arena)
 function void
 cmd_beamformer_base(Arena *a, CommandList *c)
 {
-	cmd_base(a, c, 0);
+	cmd_base(a, c, 0, config.debug);
 	cmd_append(a, c, "-Iexternal/include");
 	cmd_append(a, c, EXTRA_FLAGS);
 	cmd_append(a, c, config.bake_shaders? "-DBakeShaders=1" : "-DBakeShaders=0");
@@ -853,15 +853,23 @@ build_beamformer_main(Arena arena)
 		if (!is_msvc) cmd_append(&arena, &c, "-L.");
 		cmd_append(&arena, &c, LINK_LIB("raylib"));
 	} else {
+		if (!is_msvc) cmd_append(&arena, &c, "-flto");
 		cmd_append(&arena, &c, OUTPUT(OS_STATIC_LIB("raylib")));
 	}
+	// TODO(rnp): not sure how to do this. we don't want a runtime dependence on libc++
+	//cmd_append(&arena, &c, OUTPUT(OS_STATIC_LIB("glslang")), "-Wl,-Bstatic", "-lc++", "-Wl,-Bdynamic");
+	cmd_append(&arena, &c, OUTPUT(OS_STATIC_LIB("glslang")), "-Wl,-Bstatic", "-lstdc++", "-Wl,-Bdynamic");
+	//cmd_append(&arena, &c, OUTPUT(OS_STATIC_LIB("glslang")), "-lstdc++");
+
 	if (!is_msvc) cmd_append(&arena, &c, "-lm");
 	if (is_unix)  cmd_append(&arena, &c, "-lGL");
+
 	if (is_w32) {
 		cmd_append(&arena, &c, LINK_LIB("user32"), LINK_LIB("shell32"), LINK_LIB("gdi32"),
 		           LINK_LIB("opengl32"), LINK_LIB("winmm"), LINK_LIB("Synchronization"));
 		if (!is_msvc) cmd_append(&arena, &c, "-Wl,--out-implib," OUTPUT(OS_STATIC_LIB("main")));
 	}
+
 	cmd_append(&arena, &c, (void *)0);
 
 	return run_synchronous(arena, &c);
@@ -894,7 +902,7 @@ function b32
 build_tests(Arena arena)
 {
 	CommandList cc = {0};
-	cmd_base(&arena, &cc, 0);
+	cmd_base(&arena, &cc, 0, config.debug);
 	cmd_append(&arena, &cc, EXTRA_FLAGS);
 
 	#define TEST_PROGRAMS \
