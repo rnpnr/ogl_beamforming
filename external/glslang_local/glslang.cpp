@@ -46,6 +46,8 @@
 #include "glslang/MachineIndependent/preprocessor/PpTokens.cpp"
 #include "glslang/MachineIndependent/propagateNoContraction.cpp"
 #include "glslang/MachineIndependent/reflection.cpp"
+#include "glslang/ResourceLimits/ResourceLimits.cpp"
+#include "glslang/ResourceLimits/resource_limits_c.cpp"
 
 #if OS_WINDOWS
 // NOTE(rnp): includes windows.h: i.e. it needs its own TU
