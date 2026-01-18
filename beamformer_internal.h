@@ -21,12 +21,12 @@
 
 #define os_path_separator() (s8){.data = &os_system_info()->path_separator_byte, .len = 1}
 
+typedef struct { u64 value[1]; } VulkanHandle;
+
 typedef enum {
 	GPUBufferCreateFlags_HostWritable = 1 << 0,
 	GPUBufferCreateFlags_MemoryOnly   = 1 << 1,
 } GPUBufferCreateFlags;
-
-typedef struct { u64 value[1]; } VulkanHandle;
 
 typedef struct {
 	u64          gpu_pointer;
@@ -69,6 +69,13 @@ DEBUG_IMPORT void vk_buffer_allocate(GPUBuffer *, iz size, GPUBufferCreateFlags 
 DEBUG_IMPORT void vk_buffer_release(GPUBuffer *);
 DEBUG_IMPORT void vk_buffer_range_upload(GPUBuffer *, void *data, u64 offset, u64 size, b32 non_temporal);
 DEBUG_IMPORT u64  vk_round_up_to_sync_size(u64, u64 min);
+
+/* NOTE: Compute shaders do not have bindings. Data should be passed using push constants.
+ * In particular the push constants should contain pointers to gpu memory using the
+ * BufferDeviceAddress extension. */
+// TODO(rnp): change this to accept SPIR-V directly and accept BakeParameters as specialization data
+DEBUG_IMPORT VulkanHandle vk_compute_shader(s8 text, s8 name);
+DEBUG_IMPORT void         vk_compute_shader_release(VulkanHandle);
 
 // NOTE: temporary API
 DEBUG_IMPORT b32 vk_buffer_needs_sync(GPUBuffer *);
