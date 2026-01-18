@@ -192,7 +192,7 @@ typedef alignas(16) union {
 } u128;
 
 typedef struct { u8 *beg, *end; } Arena;
-typedef struct { Arena *arena; u8 *old_beg; } TempArena;
+typedef struct { Arena *arena, original_arena; } TempArena;
 
 typedef struct { iz len; u8 *data; } s8;
 #define s8(s) (s8){.len = countof(s) - 1, .data = (u8 *)s}

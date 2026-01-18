@@ -190,7 +190,7 @@ sub_arena_end(Arena *a, iz len, uz align)
 function TempArena
 begin_temp_arena(Arena *a)
 {
-	TempArena result = {.arena = a, .old_beg = a->beg};
+	TempArena result = {.arena = a, .original_arena = *a};
 	return result;
 }
 
@@ -199,8 +199,8 @@ end_temp_arena(TempArena ta)
 {
 	Arena *a = ta.arena;
 	if (a) {
-		assert(a->beg >= ta.old_beg);
-		a->beg = ta.old_beg;
+		assert(a->beg >= ta.original_arena.beg);
+		*a = ta.original_arena;
 	}
 }
 
