@@ -2164,6 +2164,7 @@ typedef struct {
 #define VkDeviceProcedureList \
 	X(vkAllocateMemory,             VkResult, (VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo, const VkAllocationCallbacks *pAllocator, VkDeviceMemory *pMemory)) \
 	X(vkCreateSemaphore,            VkResult, (VkDevice device, const VkSemaphoreCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkSemaphore *pSemaphore)) \
+	X(vkCreateShaderModule,         VkResult, (VkDevice device, const VkShaderModuleCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkShaderModule *pShaderModule)) \
 	X(vkDestroyBuffer,              void,     (VkDevice device, VkBuffer buffer, const VkAllocationCallbacks *pAllocator)) \
 	X(vkFlushMappedMemoryRanges,    VkResult, (VkDevice device, uint32_t memoryRangeCount, const VkMappedMemoryRange *pMemoryRanges)) \
 	X(vkFreeMemory,                 void,     (VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks *pAllocator)) \
