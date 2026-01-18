@@ -43,6 +43,7 @@ VK_HANDLE(VkPipelineCache);
 VK_HANDLE(VkPipelineLayout);
 VK_HANDLE(VkQueue);
 VK_HANDLE(VkRenderPass);
+VK_HANDLE(VkSampler);
 VK_HANDLE(VkSemaphore);
 VK_HANDLE(VkShaderModule);
 VK_HANDLE(VkSurfaceKHR);
@@ -147,7 +148,7 @@ typedef enum {
 } VkDeviceQueueCreateFlagBits;
 typedef VkFlags VkDeviceQueueCreateFlags;
 
-typedef enum VkPipelineStageFlagBits {
+typedef enum {
 	VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT                          = 0x00000001,
 	VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT                        = 0x00000002,
 	VK_PIPELINE_STAGE_VERTEX_INPUT_BIT                         = 0x00000004,
@@ -1066,10 +1067,45 @@ typedef VkFlags VkPipelineRasterizationStateCreateFlags;
 typedef VkFlags VkPipelineMultisampleStateCreateFlags;
 
 typedef enum {
+	VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT                 = 0x00000001,
+	VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT          = 0x00000002,
+	VK_DESCRIPTOR_SET_LAYOUT_CREATE_HOST_ONLY_POOL_BIT_EXT              = 0x00000004,
+	VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT           = 0x00000010,
+	VK_DESCRIPTOR_SET_LAYOUT_CREATE_EMBEDDED_IMMUTABLE_SAMPLERS_BIT_EXT = 0x00000020,
+	VK_DESCRIPTOR_SET_LAYOUT_CREATE_PER_STAGE_BIT_NV                    = 0x00000040,
+	VK_DESCRIPTOR_SET_LAYOUT_CREATE_INDIRECT_BINDABLE_BIT_NV            = 0x00000080,
+	VK_DESCRIPTOR_SET_LAYOUT_CREATE_FLAG_BITS_MAX_ENUM                  = 0x7FFFFFFF
+} VkDescriptorSetLayoutCreateFlagBits;
+typedef VkFlags VkDescriptorSetLayoutCreateFlags;
+
+typedef enum {
 	VK_ATTACHMENT_DESCRIPTION_MAY_ALIAS_BIT      = 0x00000001,
 	VK_ATTACHMENT_DESCRIPTION_FLAG_BITS_MAX_ENUM = 0x7FFFFFFF
 } VkAttachmentDescriptionFlagBits;
 typedef VkFlags VkAttachmentDescriptionFlags;
+
+typedef enum {
+	VK_DESCRIPTOR_TYPE_SAMPLER                               = 0,
+	VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER                = 1,
+	VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE                         = 2,
+	VK_DESCRIPTOR_TYPE_STORAGE_IMAGE                         = 3,
+	VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER                  = 4,
+	VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER                  = 5,
+	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER                        = 6,
+	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER                        = 7,
+	VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC                = 8,
+	VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC                = 9,
+	VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT                      = 10,
+	VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK                  = 1000138000,
+	VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR            = 1000150000,
+	VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV             = 1000165000,
+	VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM              = 1000440000,
+	VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM                = 1000440001,
+	VK_DESCRIPTOR_TYPE_TENSOR_ARM                            = 1000460000,
+	VK_DESCRIPTOR_TYPE_MUTABLE_EXT                           = 1000351000,
+	VK_DESCRIPTOR_TYPE_PARTITIONED_ACCELERATION_STRUCTURE_NV = 1000570000,
+	VK_DESCRIPTOR_TYPE_MAX_ENUM                              = 0x7FFFFFFF
+} VkDescriptorType;
 
 typedef enum {
 	VK_ATTACHMENT_LOAD_OP_LOAD      = 0,
@@ -2141,6 +2177,23 @@ typedef struct {
 	const VkClearValue * pClearValues;
 } VkRenderPassBeginInfo;
 
+typedef struct {
+	uint32_t           binding;
+	VkDescriptorType   descriptorType;
+	uint32_t           descriptorCount;
+	VkShaderStageFlags stageFlags;
+	const VkSampler *  pImmutableSamplers;
+} VkDescriptorSetLayoutBinding;
+
+typedef struct {
+	VkStructureType                      sType;
+	const void *                         pNext;
+	VkDescriptorSetLayoutCreateFlags     flags;
+	uint32_t                             bindingCount;
+	const VkDescriptorSetLayoutBinding * pBindings;
+} VkDescriptorSetLayoutCreateInfo;
+
+
 /* X(name, ret, params) */
 #define VkLoaderProcedureList \
 	X(vkGetInstanceProcAddr, void *, (VkInstance instance, const char *pName)) \
@@ -2163,9 +2216,14 @@ typedef struct {
 /* X(name, ret, params) */
 #define VkDeviceProcedureList \
 	X(vkAllocateMemory,             VkResult, (VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo, const VkAllocationCallbacks *pAllocator, VkDeviceMemory *pMemory)) \
+	X(vkCreateComputePipelines,     VkResult, (VkDevice device, VkPipelineCache pipelineCache, uint32_t createInfoCount, const VkComputePipelineCreateInfo *pCreateInfos, const VkAllocationCallbacks *pAllocator, VkPipeline *pPipelines)) \
+	X(vkCreatePipelineLayout,       VkResult, (VkDevice device, const VkPipelineLayoutCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkPipelineLayout *pPipelineLayout)) \
 	X(vkCreateSemaphore,            VkResult, (VkDevice device, const VkSemaphoreCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkSemaphore *pSemaphore)) \
 	X(vkCreateShaderModule,         VkResult, (VkDevice device, const VkShaderModuleCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkShaderModule *pShaderModule)) \
 	X(vkDestroyBuffer,              void,     (VkDevice device, VkBuffer buffer, const VkAllocationCallbacks *pAllocator)) \
+	X(vkDestroyPipeline,            void,     (VkDevice device, VkPipeline pipeline, const VkAllocationCallbacks *pAllocator)) \
+	X(vkDestroyPipelineLayout,      void,     (VkDevice device, VkPipelineLayout pipelineLayout, const VkAllocationCallbacks *pAllocator)) \
+	X(vkDestroyShaderModule,        void,     (VkDevice device, VkShaderModule shaderModule, const VkAllocationCallbacks *pAllocator)) \
 	X(vkFlushMappedMemoryRanges,    VkResult, (VkDevice device, uint32_t memoryRangeCount, const VkMappedMemoryRange *pMemoryRanges)) \
 	X(vkFreeMemory,                 void,     (VkDevice device, VkDeviceMemory memory, const VkAllocationCallbacks *pAllocator)) \
 	X(vkGetDeviceQueue,             void,     (VkDevice device, uint32_t queueFamilyIndex, uint32_t queueIndex, VkQueue *pQueue)) \
