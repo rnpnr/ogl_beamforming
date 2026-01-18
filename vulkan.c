@@ -1,7 +1,10 @@
 #include "beamformer_internal.h"
 #include "vulkan.h"
+#include "external/glslang/glslang/Include/glslang_c_interface.h"
+#include "external/glslang/glslang/Public/resource_limits_c.h"
 
-#define vulkan_info(s) s8("[vulkan] " s)
+#define glslang_info(s) s8("[glslang] " s)
+#define vulkan_info(s)  s8("[vulkan]  " s)
 
 typedef enum {
 	VulkanQueueKind_Graphics,
@@ -54,11 +57,16 @@ static_assert(sizeof(VulkanQueue) == 64 && alignof(VulkanQueue) == 64,
               "VulkanQueue must be placed on its own cacheline");
 
 typedef struct {
+	Arena             arena;
+	i32               arena_lock;
+
 	VkInstance        handle;
 	VkDevice          device;
 	VkPhysicalDevice  physical_device;
 
-	Arena             arena;
+	// NOTE(rnp): fallback module for when a compute shader fails to compile
+	VkShaderModule    default_compute_module;
+
 	GPUInfo           gpu_info;
 
 	struct {
@@ -134,6 +142,120 @@ vk_entity_release(VulkanEntity *entity)
 	{
 		SLLStackPush(vulkan_context->entity_freelist, entity);
 	}
+}
+
+#define glslang_log(a, ...) glslang_log_(a, arg_list(s8, __VA_ARGS__))
+function void
+glslang_log_(Arena arena, s8 *items, uz count)
+{
+	Stream sb = arena_stream(arena);
+	stream_append_s8(&sb, glslang_info(""));
+	stream_append_s8s_(&sb, items, count);
+	s8 log = s8_trim_trailing(stream_to_s8(&sb), '\n');
+	os_console_log(log.data, log.len);
+}
+
+function s8
+glsl_to_spirv(Arena *arena, u32 kind, s8 shader_text, s8 name)
+{
+	/* NOTE(rnp): glslang's garbage c interface doesn't expose internal usage of strings with length */
+	assert(shader_text.data[shader_text.len] == 0);
+
+	glslang_input_t input = {
+		.language                          = GLSLANG_SOURCE_GLSL,
+		.stage                             = kind,
+		.client                            = GLSLANG_CLIENT_VULKAN,
+		.client_version                    = GLSLANG_TARGET_VULKAN_1_4,
+		.target_language                   = GLSLANG_TARGET_SPV,
+		.target_language_version           = GLSLANG_TARGET_SPV_1_6,
+		.code                              = (c8 *)shader_text.data,
+		.default_version                   = 100,
+		.default_profile                   = GLSLANG_NO_PROFILE,
+		.force_default_version_and_profile = 0,
+		.forward_compatible                = 0,
+		.messages                          = GLSLANG_MSG_DEFAULT_BIT,
+		// TODO(rnp): fill this in based on the selected GPU. Then remove that junk from the library
+		.resource                          = glslang_default_resource(),
+	};
+	glslang_shader_t *shader = glslang_shader_create(&input);
+
+	s8 error = {0};
+	if (glslang_shader_preprocess(shader, &input)) {
+		if (!glslang_shader_parse(shader, &input))
+			error = s8("parsing failed");
+	} else {
+		error = s8("preprocessing failed");
+	}
+
+	if (error.len) {
+		glslang_log(*arena, name, s8(": "), error, s8("\n"),
+		            c_str_to_s8((c8 *)glslang_shader_get_info_log(shader)),
+		            c_str_to_s8((c8 *)glslang_shader_get_info_debug_log(shader)));
+		glslang_shader_delete(shader);
+		shader = 0;
+	}
+
+	s8 result = {0};
+	if (shader) {
+		glslang_program_t *program = glslang_program_create();
+		glslang_program_add_shader(program, shader);
+		i32 messages = GLSLANG_MSG_DEBUG_INFO_BIT|GLSLANG_MSG_SPV_RULES_BIT|GLSLANG_MSG_VULKAN_RULES_BIT;
+		if (glslang_program_link(program, messages)) {
+			glslang_spv_options_t options = {
+				.validate            = 1,
+				.generate_debug_info = 1,
+				.emit_nonsemantic_shader_debug_info = 1,
+				.emit_nonsemantic_shader_debug_source = 1,
+				//.disable_optimizer   = 1,
+			};
+
+			glslang_program_add_source_text(program, kind, (c8 *)shader_text.data, shader_text.len);
+			glslang_program_SPIRV_generate_with_options(program, kind, &options);
+
+			u32 words   = glslang_program_SPIRV_get_size(program);
+			result.data = (u8 *)push_array(arena, u32, words);
+			result.len  = words * sizeof(u32);
+			glslang_program_SPIRV_get(program, (u32 *)result.data);
+
+			s8 spirv_msg = c_str_to_s8((c8 *)glslang_program_SPIRV_get_messages(program));
+			if (spirv_msg.len) glslang_log(*arena, name, s8(": spirv info: "), spirv_msg);
+		} else {
+			glslang_log(*arena, name, s8(": shader linking failed\n"),
+			            c_str_to_s8((c8 *)glslang_program_get_info_log(program)),
+			            c_str_to_s8((c8 *)glslang_program_get_info_debug_log(program)));
+		}
+		glslang_shader_delete(shader);
+		glslang_program_delete(program);
+	}
+
+	return result;
+}
+
+function u32
+vk_shader_kind_to_glslang_shader_kind(u32 kind)
+{
+	u32 result = ctz_u64(kind);
+	return result;
+}
+
+function VkShaderModule
+vk_compile_shader_module(u32 kind, s8 shader, s8 name)
+{
+	VkShaderModule result = 0;
+
+	DeferLoop(take_lock(&vulkan_context->arena_lock, -1), release_lock(&vulkan_context->arena_lock))
+	{
+		Arena arena = vulkan_context->arena;
+		s8 spirv = glsl_to_spirv(&arena, vk_shader_kind_to_glslang_shader_kind(kind), shader, name);
+		VkShaderModuleCreateInfo create_info = {
+			.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+			.codeSize = (uz)spirv.len,
+			.pCode    = (u32 *)spirv.data,
+		};
+		if (spirv.len > 0) vkCreateShaderModule(vulkan_context->device, &create_info, 0, &result);
+	}
+
+	return result;
 }
 
 function void
@@ -529,6 +651,14 @@ vk_load(OSLibrary vulkan_library_handle, Arena *memory, Stream *err)
 	vk_load_queues(&vulkan_context->arena, err);
 
 	// TODO: setup compute pipeline
+	read_only local_persist s8 default_compute_shader = s8(""
+		"#version 430 core\n"
+		"void main() {}\n"
+		"\n");
+
+	vulkan_context->default_compute_module = vk_compile_shader_module(VK_SHADER_STAGE_COMPUTE_BIT,
+	                                                                  default_compute_shader,
+	                                                                  s8("error_compute_shader"));
 
 	// TODO: setup render pipeline
 
