@@ -51,18 +51,14 @@ typedef u64    uptr;
 
 #ifdef _DEBUG
   #define DEBUG_EXPORT EXPORT
-  #if OS_WINDOWS
-    #ifdef _BEAMFORMER_DLL
+  #ifdef _BEAMFORMER_DLL
+    #if OS_WINDOWS
       #define DEBUG_IMPORT __declspec(dllimport)
     #else
-      #define DEBUG_IMPORT __declspec(dllexport)
+      #define DEBUG_IMPORT extern
     #endif
   #else
-    #ifdef _BEAMFORMER_DLL
-      #define DEBUG_IMPORT extern
-    #else
-      #define DEBUG_IMPORT
-    #endif
+    #define DEBUG_IMPORT DEBUG_EXPORT
   #endif
   #define DEBUG_DECL(a) a
   #define assert(c) do { if (!(c)) debugbreak(); } while (0)
@@ -123,13 +119,15 @@ typedef u64    uptr;
 
 #define Min(a, b)        ((a) < (b) ? (a) : (b))
 #define Max(a, b)        ((a) > (b) ? (a) : (b))
+#define Between(x, a, b) ((x) >= (a) && (x) <= (b))
 #define Clamp(x, a, b)   ((x) < (a) ? (a) : (x) > (b) ? (b) : (x))
 #define Clamp01(x)       Clamp(x, 0, 1)
+#define IsPowerOfTwo(a)  (((a) & ((a) - 1)) == 0)
 
-#define ISDIGIT(c)       (BETWEEN((c), '0', '9'))
-#define ISUPPER(c)       (((c) & 0x20u) == 0)
-#define TOLOWER(c)       (((c) | 0x20u))
-#define TOUPPER(c)       (((c) & ~(0x20u)))
+#define IsDigit(c)       (Between((c), '0', '9'))
+#define IsUpper(c)       (((c) & 0x20u) == 0)
+#define ToLower(c)       (((c) | 0x20u))
+#define ToUpper(c)       (((c) & ~(0x20u)))
 
 #define f32_cmp(x, y)    (ABS((x) - (y)) <= F32_EPSILON * MAX(1.0f, MAX(ABS(x), ABS(y))))
 
@@ -357,18 +355,20 @@ typedef OS_WRITE_NEW_FILE_FN(os_write_new_file_fn);
 #define RENDERDOC_GET_API_FN(name) b32 name(u32 version, void **out_api)
 typedef RENDERDOC_GET_API_FN(renderdoc_get_api_fn);
 
-#define RENDERDOC_START_FRAME_CAPTURE_FN(name) void name(iptr gl_context, iptr window_handle)
+#define RENDERDOC_START_FRAME_CAPTURE_FN(name) void name(void *instance_handle, iptr window_handle)
 typedef RENDERDOC_START_FRAME_CAPTURE_FN(renderdoc_start_frame_capture_fn);
 
-#define RENDERDOC_END_FRAME_CAPTURE_FN(name) b32 name(iptr gl_context, iptr window_handle)
+#define RENDERDOC_END_FRAME_CAPTURE_FN(name) b32 name(void *instance_handle, iptr window_handle)
 typedef RENDERDOC_END_FRAME_CAPTURE_FN(renderdoc_end_frame_capture_fn);
 
-typedef alignas(16) u8 RenderDocAPI[216];
-#define RENDERDOC_API_FN_ADDR(a, offset) (*(iptr *)((*a) + offset))
-#define RENDERDOC_START_FRAME_CAPTURE(a) (renderdoc_start_frame_capture_fn *)RENDERDOC_API_FN_ADDR(a, 152)
-#define RENDERDOC_END_FRAME_CAPTURE(a)   (renderdoc_end_frame_capture_fn *)  RENDERDOC_API_FN_ADDR(a, 168)
+#define RENDERDOC_SET_CAPTURE_PATH_TEMPLATE_FN(name) void name(const char *template)
+typedef RENDERDOC_SET_CAPTURE_PATH_TEMPLATE_FN(renderdoc_set_capture_path_template_fn);
 
-#define LABEL_GL_OBJECT(type, id, s) {s8 _s = (s); glObjectLabel(type, id, (i32)_s.len, (c8 *)_s.data);}
+typedef alignas(16) u8 RenderDocAPI[216];
+#define RENDERDOC_API_FN_ADDR(a, offset)       (*(iptr *)((*a) + offset))
+#define RENDERDOC_START_FRAME_CAPTURE(a)       (renderdoc_start_frame_capture_fn *)       RENDERDOC_API_FN_ADDR(a, 152)
+#define RENDERDOC_END_FRAME_CAPTURE(a)         (renderdoc_end_frame_capture_fn *)         RENDERDOC_API_FN_ADDR(a, 168)
+#define RENDERDOC_SET_CAPTURE_PATH_TEMPLATE(a) (renderdoc_set_capture_path_template_fn *) RENDERDOC_API_FN_ADDR(a, 184)
 
 #include "util.c"
 #include "math.c"

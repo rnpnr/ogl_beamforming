@@ -28,16 +28,16 @@
 	#define apply_filter(iq, h) ((iq) * (h))
 #endif
 
-layout(std430, binding = 1) readonly restrict buffer buffer_1 {
-	DATA_TYPE in_data[];
+layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer Input {
+	DATA_TYPE values[];
 };
 
-layout(std430, binding = 2) writeonly restrict buffer buffer_2 {
-	OUT_DATA_TYPE out_data[];
+layout(std430, buffer_reference, buffer_reference_align = 64) restrict writeonly buffer Output {
+	OUT_DATA_TYPE values[];
 };
 
-layout(std430, binding = 3) readonly restrict buffer buffer_3 {
-	FILTER_TYPE filter_coefficients[FilterLength];
+layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer Filter {
+	FILTER_TYPE values[FilterLength];
 };
 
 vec2 complex_mul(vec2 a, vec2 b)
@@ -58,7 +58,7 @@ vec2 rotate_iq(vec2 iq, uint index)
 
 SAMPLE_TYPE sample_rf(uint index)
 {
-	SAMPLE_TYPE result = SAMPLE_TYPE_CAST(in_data[index]);
+	SAMPLE_TYPE result = SAMPLE_TYPE_CAST(Input(input_data).values[index]);
 	return result;
 }
 
@@ -80,6 +80,8 @@ void main()
 	/////////////////////////
 	// NOTE: sample caching
 	{
+		bool offset_wraps = (DecimationRate * gl_WorkGroupID.x * gl_WorkGroupSize.x) < (FilterLength - 1);
+
 		in_offset += DecimationRate * gl_WorkGroupID.x * gl_WorkGroupSize.x - (FilterLength - 1);
 
 		uint total_samples       = rf.length();
@@ -87,10 +89,10 @@ void main()
 		uint leftover_count      = total_samples % thread_count;
 		uint samples_this_thread = samples_per_thread + uint(thread_index < leftover_count);
 
-		const float scale = bool(ComplexFilter) ? 1 : sqrt(2);
+		const float scale = bool(ComplexFilter) ? 1 : sqrt(2.0f);
 		for (uint i = 0; i < samples_this_thread; i++) {
 			uint index = thread_count * i + thread_index;
-			if (gl_WorkGroupID.x == 0 && index < FilterLength - 1) {
+			if (offset_wraps && index < FilterLength - 1) {
 				rf[index] = SAMPLE_TYPE(0);
 			} else {
 				#if Demodulate
@@ -107,7 +109,7 @@ void main()
 		SAMPLE_TYPE result = SAMPLE_TYPE(0);
 		uint offset = DecimationRate * thread_index;
 		for (uint j = 0; j < FilterLength; j++)
-			result += apply_filter(rf[offset + j], filter_coefficients[j]);
-		out_data[out_offset] = RESULT_TYPE_CAST(result);
+			result += apply_filter(rf[offset + j], Filter(filter_coefficients).values[j]);
+		Output(output_data).values[out_offset] = RESULT_TYPE_CAST(result);
 	}
 }

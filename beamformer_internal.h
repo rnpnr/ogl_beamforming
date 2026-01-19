@@ -10,12 +10,8 @@
 #include "generated/beamformer.meta.c"
 #include "generated/beamformer_shaders.c"
 
-#include <raylib_extended.h>
-#include <rlgl.h>
-
-#include "threads.c"
-#include "util_gl.c"
-#include "util_os.c"
+#include "external/raylib/src/raylib.h"
+#include "external/raylib/src/rlgl.h"
 
 #define beamformer_info(s) s8("[info] " s "\n")
 
@@ -24,15 +20,62 @@
 typedef struct { u64 value[1]; } VulkanHandle;
 
 typedef enum {
-	GPUBufferCreateFlags_HostWritable = 1 << 0,
-	GPUBufferCreateFlags_MemoryOnly   = 1 << 1,
-} GPUBufferCreateFlags;
+	VulkanTimeline_Graphics,
+	VulkanTimeline_Compute,
+	VulkanTimeline_Transfer,
+	VulkanTimeline_Count,
+} VulkanTimeline;
+
+typedef enum {
+	VulkanShaderKind_Vertex,
+	VulkanShaderKind_Mesh,
+	VulkanShaderKind_Fragment,
+	VulkanShaderKind_Compute,
+	VulkanShaderKind_Count,
+} VulkanShaderKind;
+
+typedef enum {
+	VulkanImageUsage_None,
+	VulkanImageUsage_Colour,
+	VulkanImageUsage_DepthStencil,
+	VulkanImageUsage_Count,
+} VulkanImageUsage;
+
+typedef enum {
+	VulkanUsageFlag_ImageSampling       = 1 << 0,
+	VulkanUsageFlag_HostReadWrite       = 1 << 1, // NOTE: not valid on images
+	/* NOTE: uses:
+	 * - image-image copy operations
+	 * - buffer-buffer copy operations
+	 */
+	VulkanUsageFlag_TransferSource      = 1 << 2,
+	VulkanUsageFlag_TransferDestination = 1 << 3,
+} VulkanUsageFlags;
 
 typedef struct {
+	VulkanShaderKind kind;
+	s8               text;
+	s8               name;
+} VulkanPipelineCreateInfo;
+
+typedef struct {
+	VulkanHandle buffer;
 	u64          gpu_pointer;
 	i64          size;
-	VulkanHandle buffer;
+
+	// NOTE: only used for render models
+	u64          index_count;
 } GPUBuffer;
+
+typedef struct {
+	VulkanHandle image;
+	u32          width;
+	u32          height;
+	u32          samples;
+	u32          mip_map_levels;
+	// TODO(rnp): this is only here for importing from OpenGL, move it back into handle later
+	u64          memory_size;
+} GPUImage;
 
 typedef enum {
 	GPUVendor_AMD      = 0x1002,
@@ -59,28 +102,94 @@ typedef struct {
 	u64 gpu_heap_used;
 } GPUInfo;
 
+typedef struct {
+	i64               size;
+	VulkanUsageFlags  flags;
+
+	// NOTE(rnp): only required if buffer will be used on multiple timelines
+	VulkanTimeline   *timelines_used;
+	u32               timeline_count;
+
+	s8                label;
+} GPUBufferAllocateInfo;
+
+typedef struct {
+	GPUBuffer *gpu_buffer;
+	u64        offset;
+	u64        size;
+} GPUMemoryBarrierInfo;
+
+typedef struct {
+	GPUBuffer model;
+	u32       vertex_count;
+	u32       normals_offset;
+} RenderModel;
+
+#include "threads.c"
+#include "util_os.c"
+
 ///////////////////////////
 // NOTE: vulkan layer API
 DEBUG_IMPORT void vk_load(OSLibrary vulkan, Arena *memory, Stream *error);
 
 DEBUG_IMPORT GPUInfo *vk_gpu_info(void);
 
-DEBUG_IMPORT void vk_buffer_allocate(GPUBuffer *, iz size, GPUBufferCreateFlags flags, OSHandle *export, s8 label);
+DEBUG_IMPORT void vk_buffer_allocate(GPUBuffer *, GPUBufferAllocateInfo *info);
 DEBUG_IMPORT void vk_buffer_release(GPUBuffer *);
 DEBUG_IMPORT void vk_buffer_range_upload(GPUBuffer *, void *data, u64 offset, u64 size, b32 non_temporal);
+DEBUG_IMPORT void vk_buffer_range_download(void *output, GPUBuffer *, u64 source_offset, u64 size, b32 non_temporal);
 DEBUG_IMPORT u64  vk_round_up_to_sync_size(u64, u64 min);
 
-/* NOTE: Compute shaders do not have bindings. Data should be passed using push constants.
+// NOTE: images are 2D only, any other use case should just use a buffer and index in the shader
+DEBUG_IMPORT void vk_image_allocate(GPUImage *, u32 width, u32 height, u32 mips, u32 samples, VulkanImageUsage usage, VulkanUsageFlags flags, OSHandle *export);
+DEBUG_IMPORT void vk_image_release(GPUImage *);
+
+DEBUG_IMPORT void vk_render_model_allocate(GPUBuffer *, void *indices, u64 index_count, u64 model_size, s8 label);
+DEBUG_IMPORT void vk_render_model_range_upload(GPUBuffer *, void *data, u64 offset, u64 size, b32 non_temporal);
+DEBUG_IMPORT void vk_render_model_release(GPUBuffer *);
+
+/* NOTE: Pipelines do not have bindings. Data should be passed using push constants.
  * In particular the push constants should contain pointers to gpu memory using the
  * BufferDeviceAddress extension. */
 // TODO(rnp): change this to accept SPIR-V directly and accept BakeParameters as specialization data
-DEBUG_IMPORT VulkanHandle vk_compute_shader(s8 text, s8 name);
-DEBUG_IMPORT void         vk_compute_shader_release(VulkanHandle);
+DEBUG_IMPORT VulkanHandle vk_pipeline(VulkanPipelineCreateInfo *infos, u32 count, u32 push_constants_size);
+DEBUG_IMPORT b32          vk_pipeline_valid(VulkanHandle);
+DEBUG_IMPORT void         vk_pipeline_release(VulkanHandle);
 
-// NOTE: temporary API
 DEBUG_IMPORT b32 vk_buffer_needs_sync(GPUBuffer *);
 
-DEBUG_IMPORT VulkanHandle vk_semaphore_create(OSHandle *export);
+DEBUG_IMPORT VulkanHandle vk_create_semaphore(OSHandle *export);
+
+DEBUG_IMPORT b32          vk_host_wait_timeline(VulkanTimeline timeline, u64 value, u64 timeout_ns);
+DEBUG_IMPORT u64          vk_host_signal_timeline(VulkanTimeline timeline);
+
+DEBUG_IMPORT VulkanHandle vk_command_begin(VulkanTimeline timeline);
+DEBUG_IMPORT void         vk_command_bind_pipeline(VulkanHandle command, VulkanHandle pipeline);
+DEBUG_IMPORT void         vk_command_buffer_memory_barriers(VulkanHandle command, GPUMemoryBarrierInfo *barriers, u64 count);
+DEBUG_IMPORT void         vk_command_dispatch_compute(VulkanHandle command, uv3 dispatch);
+DEBUG_IMPORT void         vk_command_push_constants(VulkanHandle command, u32 offset, u32 size, void *values);
+DEBUG_IMPORT void         vk_command_timestamp(VulkanHandle command);
+DEBUG_IMPORT void         vk_command_wait_timeline(VulkanHandle command, VulkanTimeline timeline, u64 value);
+// NOTE: extra semaphores only exist for synchronization with OpenGL and will be removed in the future
+DEBUG_IMPORT u64          vk_command_end(VulkanHandle command, VulkanHandle wait_semaphore, VulkanHandle finished_semaphore);
+
+DEBUG_IMPORT void         vk_command_begin_rendering(VulkanHandle command, GPUImage *restrict colour, GPUImage *restrict depth, GPUImage *restrict resolve);
+DEBUG_IMPORT void         vk_command_draw(VulkanHandle command, GPUBuffer *model);
+DEBUG_IMPORT void         vk_command_scissor(VulkanHandle command, u32 width, u32 height, u32 x_offset, u32 y_offset);
+DEBUG_IMPORT void         vk_command_viewport(VulkanHandle command, f32 width, f32 height, f32 x_offset, f32 y_offset, f32 min_depth, f32 max_depth);
+DEBUG_IMPORT void         vk_command_end_rendering(VulkanHandle command);
+
+DEBUG_IMPORT void         vk_command_copy_buffer(VulkanHandle command, GPUBuffer *restrict destination, GPUBuffer *restrict source, u64 source_offset, i64 size);
+
+// NOTE: returns array of valid timestamps + 1, first element is the count.
+//       Calling thread may stall until results available.
+DEBUG_IMPORT u64 *        vk_command_read_timestamps(VulkanTimeline timeline, Arena *arena);
+
+#if BEAMFORMER_RENDERDOC_HOOKS
+DEBUG_IMPORT void *       vk_renderdoc_instance_handle(void);
+#else
+#define vk_renderdoc_instance_handle() ((void *)0)
+#endif
 
 ///////////////////////////////
 // NOTE: CUDA Library Bindings
@@ -119,87 +228,34 @@ CUDALibraryProcedureList
 /////////////////////////////////////
 // NOTE: Core Beamformer Definitions
 
-/* TODO(rnp): this should be a UBO */
-#define FRAME_VIEW_MODEL_MATRIX_LOC   0
-#define FRAME_VIEW_VIEW_MATRIX_LOC    1
-#define FRAME_VIEW_PROJ_MATRIX_LOC    2
-#define FRAME_VIEW_DYNAMIC_RANGE_LOC  3
-#define FRAME_VIEW_THRESHOLD_LOC      4
-#define FRAME_VIEW_GAMMA_LOC          5
-#define FRAME_VIEW_LOG_SCALE_LOC      6
-#define FRAME_VIEW_BB_COLOUR_LOC      7
-#define FRAME_VIEW_BB_FRACTION_LOC    8
-#define FRAME_VIEW_SOLID_BB_LOC      10
-
-#define FRAME_VIEW_BB_COLOUR   0.92, 0.88, 0.78, 1.0
-#define FRAME_VIEW_BB_FRACTION 0.007f
-
-#define FRAME_VIEW_RENDER_TARGET_SIZE 1024, 1024
-
-typedef struct {
-	u32 shader;
-	u32 framebuffers[2];  /* [0] -> multisample target, [1] -> normal target for resolving */
-	u32 renderbuffers[2]; /* only used for 3D views, size is fixed */
-	b32 updated;
-} FrameViewRenderContext;
-
 #include "beamformer_parameters.h"
 #include "beamformer_shared_memory.c"
 
 typedef struct {
-	iptr elements_offset;
-	i32  elements;
-	u32  buffer;
-	u32  vao;
-} BeamformerRenderModel;
-
-typedef struct {
 	BeamformerFilterParameters parameters;
-	f32 time_delay;
-	i32 length;
-	u32 ssbo;
+	f32                        time_delay;
+	i32                        length;
+	GPUBuffer                  buffer;
 } BeamformerFilter;
 
-/* X(name, type, gltype) */
-#define BEAMFORMER_DAS_UBO_PARAM_LIST \
-	X(voxel_transform,        m4,  mat4) \
-	X(xdc_transform,          m4,  mat4) \
-	X(xdc_element_pitch,      v2,  vec2)
-
-typedef alignas(16) struct {
-	#define X(name, type, ...) type name;
-	BEAMFORMER_DAS_UBO_PARAM_LIST
-	#undef X
-	float _pad[2];
-} BeamformerDASUBO;
-static_assert((sizeof(BeamformerDASUBO) & 15) == 0, "UBO size must be a multiple of 16");
-
-/* TODO(rnp): need 1 UBO per filter slot */
-#define BEAMFORMER_COMPUTE_UBO_LIST \
-	X(DAS,        BeamformerDASUBO,    das)
-
-#define X(k, ...) BeamformerComputeUBOKind_##k,
-typedef enum {BEAMFORMER_COMPUTE_UBO_LIST BeamformerComputeUBOKind_Count} BeamformerComputeUBOKind;
-#undef X
-
-// X(kind, gl_kind, texture_format, pixel_type)
-#define BEAMFORMER_COMPUTE_TEXTURE_LIST \
-	X(FocalVectors,                GL_RG32F, GL_RG,          GL_FLOAT) \
-	X(SparseElements,              GL_R16I,  GL_RED_INTEGER, GL_SHORT) \
-	X(TransmitReceiveOrientations, GL_R8I,   GL_RED_INTEGER, GL_BYTE)
-
-#define BEAMFORMER_COMPUTE_TEXTURE_LIST_FULL \
-	BEAMFORMER_COMPUTE_TEXTURE_LIST \
-	X(Hadamard,       GL_R32F)
+// X(kind, format, elements)
+#define BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST \
+	X(Hadamard,                    f32, BeamformerMaxChannelCount * BeamformerMaxChannelCount) \
+	X(FocalVectors,                v2,  BeamformerMaxChannelCount) \
+	X(SparseElements,              i16, BeamformerMaxChannelCount) \
+	X(TransmitReceiveOrientations, u16, BeamformerMaxChannelCount) \
 
 typedef enum {
-	#define X(k, ...) BeamformerComputeTextureKind_##k,
-	BEAMFORMER_COMPUTE_TEXTURE_LIST_FULL
+	#define X(k, ...) BeamformerComputeArrayParameterKind_##k,
+	BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST
 	#undef X
-	BeamformerComputeTextureKind_Count
-} BeamformerComputeTextureKind;
-static_assert((BeamformerComputeTextureKind_Count - 1) == BeamformerComputeTextureKind_Hadamard,
-              "BeamformerComputeTextureKind_Hadamard must be end of TextureKinds");
+	BeamformerComputeArrayParameterKind_Count
+} BeamformerComputeArrayParameterKind;
+
+// NOTE(rnp): only used to calculate offsets, never used directly
+#define X(name, type, elements) alignas(64) type name[elements];
+typedef struct {BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST} BeamformerComputeArrayParameters;
+#undef X
 
 typedef struct {
 	uv3 layout;
@@ -211,7 +267,7 @@ typedef struct BeamformerComputePlan BeamformerComputePlan;
 struct BeamformerComputePlan {
 	BeamformerComputePipeline pipeline;
 
-	u32 programs[BeamformerMaxComputeShaderStages];
+	VulkanHandle vulkan_pipelines[BeamformerMaxComputeShaderStages];
 
 	u32 dirty_programs;
 
@@ -227,14 +283,15 @@ struct BeamformerComputePlan {
 	iv3 output_points;
 	i32 average_frames;
 
-	u32 textures[BeamformerComputeTextureKind_Count];
-	u32 ubos[BeamformerComputeUBOKind_Count];
+	// TODO(rnp): specialization constants
+	v2  xdc_element_pitch;
+	m4  xdc_transform;
+	// TODO(rnp): probably just compute this everytime
+	m4  das_voxel_transform;
+
+	GPUBuffer array_parameters;
 
 	BeamformerFilter filters[BeamformerFilterSlots];
-
-	#define X(k, type, name) type name ##_ubo_data;
-	BEAMFORMER_COMPUTE_UBO_LIST
-	#undef X
 
 	u128 shader_hashes[BeamformerMaxComputeShaderStages];
 	BeamformerShaderDescriptor shader_descriptors[BeamformerMaxComputeShaderStages];
@@ -243,48 +300,18 @@ struct BeamformerComputePlan {
 };
 
 typedef struct {
-	// NOTE(rnp): w32 doesn't transfer ownership of these when they are imported
-	// into the driver. For now just store them here, this code won't be around for long
-	OSHandle     upload_semaphores_handles[BeamformerMaxRawDataFramesInFlight];
-	VulkanHandle vk_upload_semaphores[BeamformerMaxRawDataFramesInFlight];
-	u32          gl_upload_semaphores[BeamformerMaxRawDataFramesInFlight];
-
-	GLsync       compute_syncs[BeamformerMaxRawDataFramesInFlight];
-
-	u64          uploaded_data_indices[BeamformerMaxRawDataFramesInFlight];
+	u64 upload_complete_values[BeamformerMaxRawDataFramesInFlight];
+	u64 compute_complete_values[BeamformerMaxRawDataFramesInFlight];
 
 	GPUBuffer buffer;
-	OSHandle  export_handle;
-
-	u32 ssbo, memory_object;
 
 	u32 active_rf_size;
-	u32 data_timestamp_query;
+
+	u64 timestamp;
 
 	u64 insertion_index;
 	u64 compute_index;
 } BeamformerRFBuffer;
-
-typedef struct {
-	BeamformerRFBuffer rf_buffer;
-
-	BeamformerComputePlan *compute_plans[BeamformerMaxParameterBlockSlots];
-	BeamformerComputePlan *compute_plan_freelist;
-
-	/* NOTE(rnp): two interstage ssbos are allocated so that they may be used to
-	 * ping pong data between compute stages */
-	u32 ping_pong_ssbos[2];
-	u32 last_output_ssbo_index;
-
-	u32 ping_pong_ssbo_size;
-
-	f32 processing_progress;
-	b32 processing_compute;
-
-	u32 shader_timer_ids[BeamformerMaxComputeShaderStages];
-
-	BeamformerRenderModel unit_cube_model;
-} BeamformerComputeContext;
 
 typedef struct {
 	BeamformerComputeStatsTable table;
@@ -309,7 +336,11 @@ typedef struct {
 	u64 timer_count;
 	ComputeTimingInfoKind kind;
 	union {
-		BeamformerShaderKind shader;
+		struct {
+			static_assert(BeamformerShaderKind_Count <= U16_MAX, "");
+			u16 shader;
+			u16 shader_slot;
+		};
 	};
 } ComputeTimingInfo;
 
@@ -317,6 +348,10 @@ typedef struct {
 	u32 write_index;
 	u32 read_index;
 	b32 compute_frame_active;
+
+	u32                  in_flight_shader_count;
+	BeamformerShaderKind in_flight_shader_ids[BeamformerMaxComputeShaderStages];
+
 	ComputeTimingInfo buffer[4096];
 } ComputeTimingTable;
 
@@ -327,35 +362,55 @@ typedef struct {
 	i32                *     compute_worker_sync;
 } BeamformerUploadThreadContext;
 
-struct BeamformerFrame {
-	u32 texture;
-	b32 ready_to_present;
+typedef struct {
+	u64 buffer_offset;
+	u64 timeline_valid_value;
 
-	iv3 dim;
-	i32 mips;
-
-	/* NOTE: for use when displaying either prebeamformed frames or on the current frame
-	 * when we intend to recompute on the next frame */
+	iv3 points;
 	v3  min_coordinate;
 	v3  max_coordinate;
 
-	// metadata
-	GLenum                    gl_kind;
 	u32                       id;
 	u32                       compound_count;
-	u32                       parameter_block;
+	BeamformerDataKind        data_kind;
 	BeamformerAcquisitionKind acquisition_kind;
 	BeamformerViewPlaneTag    view_plane_tag;
+} BeamformerFrame;
 
-	BeamformerFrame *next;
-};
+/* NOTE(rnp): backing storage for beamformed frames. The amount of backlog frames
+* is dependant on the currently requested output size. */
+typedef struct {
+	GPUBuffer   buffer[1];
+
+	u64         next_offset;
+	u64         counter;
+
+	BeamformerFrame frames[BeamformerMaxBacklogFrames];
+} BeamformerFrameBacklog;
+
+typedef struct {
+	BeamformerRFBuffer rf_buffer;
+
+	BeamformerComputePlan *compute_plans[BeamformerMaxParameterBlockSlots];
+	BeamformerComputePlan *compute_plan_freelist;
+
+	VulkanHandle compute_internal_pipelines[BeamformerShaderKind_ComputeInternalCount];
+
+	/* NOTE(rnp): used to ping pong data between compute stages.
+	 * Half the buffer will be used for reading and the other for writing. */
+	GPUBuffer ping_pong_buffer;
+	u32 ping_pong_input_index;
+
+	f32 processing_progress;
+	b32 processing_compute;
+
+	BeamformerFrameBacklog backlog;
+} BeamformerComputeContext;
 
 typedef struct {
 	OSThread handle;
 
 	Arena arena;
-	iptr  window_handle;
-	iptr  gl_context;
 	iptr  user_context;
 	i32   sync_variable;
 	b32   awake;
@@ -380,25 +435,14 @@ typedef struct {
 
 	u64    frame_timestamp;
 
-	BeamformerComputeContext compute_context;
-
-	/* TODO(rnp): ideally this would go in the UI but its hard to manage with the UI
-	 * destroying itself on hot-reload */
-	FrameViewRenderContext frame_view_render_context;
-
 	Stream error_stream;
-
-	BeamformWorkQueue *beamform_work_queue;
-
-	ComputeShaderStats *compute_shader_stats;
-	ComputeTimingTable *compute_timing_table;
 
 	BeamformerSharedMemory *shared_memory;
 
-	BeamformerFrame beamform_frames[BeamformerMaxSavedFrames];
 	BeamformerFrame *latest_frame;
-	u32 next_render_frame_index;
-	u32 display_frame_index;
+
+	// TODO(rnp): track elsewhere
+	b32 render_shader_updated;
 
 	/* NOTE: this will only be used when we are averaging */
 	u32             averaged_frame_index;
@@ -406,31 +450,47 @@ typedef struct {
 
 	GLWorkerThreadContext  upload_worker;
 	GLWorkerThreadContext  compute_worker;
+
+	BeamformerComputeContext compute_context;
+
+	ComputeShaderStats compute_shader_stats[1];
+	ComputeTimingTable compute_timing_table[1];
+
+	BeamformWorkQueue  beamform_work_queue[1];
 } BeamformerCtx;
 #define BeamformerContextMemory(m) (BeamformerCtx *)align_pointer_up((m), alignof(BeamformerCtx));
 
 typedef enum {
-	BeamformerFileReloadKind_Shader,
+	BeamformerFileReloadKind_ComputeInternalShader,
 	BeamformerFileReloadKind_ComputeShader,
+	BeamformerFileReloadKind_RenderShader,
 } BeamformerFileReloadKind;
 
-typedef struct BeamformerShaderReloadContext BeamformerShaderReloadContext;
-struct BeamformerShaderReloadContext {
-	BeamformerShaderReloadContext * link;
-	s8     header;
-	GLenum gl_type;
-	i32    reloadable_info_index;
-};
+typedef struct {
+	BeamformerShaderKind shader;
+	VulkanHandle *       pipeline;
+} BeamformerShaderReloadData;
+
+typedef struct {
+	BeamformerShaderKind  shader;
+	VulkanShaderKind      shader_kind;
+
+	// NOTE(rnp): based on BakeShaders compile time value
+	s8                    filename_or_data;
+
+	BeamformerShaderDescriptor *shader_descriptor;
+
+	uv3 layout;
+} BeamformerShaderReloadInfo;
 
 typedef struct {
 	BeamformerFileReloadKind kind;
 	union {
-		BeamformerShaderReloadContext * shader_reload_context;
-		BeamformerShaderKind            compute_shader_kind;
+		BeamformerShaderReloadData shader_reload;
 	};
 } BeamformerFileReloadContext;
 
-#define BEAMFORMER_COMPLETE_COMPUTE_FN(name) void name(iptr user_context, Arena *arena, iptr gl_context)
+#define BEAMFORMER_COMPLETE_COMPUTE_FN(name) void name(BeamformerCtx *ctx, Arena *arena)
 typedef BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute_fn);
 
 #define BEAMFORMER_RF_UPLOAD_FN(name) void name(BeamformerUploadThreadContext *ctx)

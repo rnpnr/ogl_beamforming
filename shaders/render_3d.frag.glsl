@@ -1,4 +1,15 @@
 /* See LICENSE for license details. */
+layout(location = 0) in  vec3 normal;
+layout(location = 1) in  vec3 texture_coordinate;
+layout(location = 0) out vec4 out_colour;
+
+layout(std430, buffer_reference, buffer_reference_align = 64) readonly buffer InputVec2 {
+	vec2 values[];
+};
+
+layout(std430, buffer_reference, buffer_reference_align = 64) readonly buffer InputFloat {
+	float values[];
+};
 
 /* input:  h [0,360] | s,v [0, 1] *
  * output: rgb [0,1]              */
@@ -20,28 +31,47 @@ float sdf_wire_box_outside(vec3 p, vec3 b, float e)
 	return result;
 }
 
+uint32_t input_index(vec3 uv)
+{
+	uv *= vec3(input_size_x - 1, input_size_y - 1, input_size_z - 1);
+	uint32_t result = input_size_y * input_size_x * uint32_t(uv.z) +
+	                                 input_size_x * uint32_t(uv.y) +
+	                                                uint32_t(uv.x);
+	result = min(result, input_size_z * input_size_y * input_size_x - 1);
+	return result;
+}
+
 void main()
 {
-	float smp = length(texture(u_texture, texture_coordinate).xy);
-	float threshold_val = pow(10.0f, u_threshold / 20.0f);
-	smp = clamp(smp, 0.0f, threshold_val);
-	smp = smp / threshold_val;
-	smp = pow(smp, u_gamma);
+	float data = 0;
+	// NOTE(rnp): for the x-plane view we sometimes want one plane to render without data
+	if (input_data != 0) {
+		uint32_t index = input_index(texture_coordinate);
+		switch (data_kind) {
+		case DataKind_Float32:{        data = length(InputFloat(input_data).values[index]); }break;
+		case DataKind_Float32Complex:{ data = length(InputVec2(input_data).values[index]);  }break;
+		}
+	}
+
+	float threshold_value = pow(10.0f, threshold / 20.0f);
+	data = clamp(data, 0.0f, threshold_value);
+	data = data / threshold_value;
+	data = pow(data, gamma);
 
 	//float t = test_texture_coordinate.y;
 	//smp = smp * smoothstep(-0.4, 1.1, t) * u_gain;
 
-	if (u_log_scale) {
-		smp = 20 * log(smp) / log(10);
-		smp = clamp(smp, -u_db_cutoff, 0) / -u_db_cutoff;
-		smp = 1 - smp;
+	if (db_cutoff > 0) {
+		data = 20 * log(data) / log(10);
+		data = clamp(data, -db_cutoff, 0) / -db_cutoff;
+		data = 1 - data;
 	}
 
-	vec3  p = 2.0f * test_texture_coordinate - 1.0f;
-	float t = clamp(sdf_wire_box_outside(p, vec3(1.0f), u_bb_fraction) / u_bb_fraction, 0, 1);
+	vec3  p = 2.0f * texture_coordinate - 1.0f;
+	float t = clamp(sdf_wire_box_outside(p, vec3(1.0f), bounding_box_fraction) /  bounding_box_fraction, 0, 1);
 
-	out_colour = vec4(t * vec3(smp) + (1 - t) * u_bb_colour.xyz, 1);
-	if (u_solid_bb) out_colour = u_bb_colour;
+	out_colour = vec4(t * vec3(data) + (1 - t) * bounding_box_colour.xyz, 1);
+	//if (u_solid_bb) out_colour = u_bb_colour;
 
 	//out_colour = vec4(textureQueryLod(u_texture, texture_coordinate).y, 0, 0, 1);
 	//out_colour = vec4(abs(normal), 1);

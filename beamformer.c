@@ -52,29 +52,9 @@ fatal(s8 message)
 
 #include "vulkan.c"
 
-// TODO(rnp): none of this belongs here, but will be removed
+// TODO(rnp): this doesn't belong here, but will be removed
 // once vulkan migration is complete
-#define GLFW_VISIBLE 0x00020004
-void   glfwWindowHint(i32, i32);
-iptr   glfwCreateWindow(i32, i32, char *, iptr, iptr);
-void   glfwMakeContextCurrent(iptr);
-iptr   glfwGetGLXContext(iptr);
-iptr   glfwGetWGLContext(iptr);
 void * glfwGetProcAddress(char *);
-
-#if OS_WINDOWS
-function iptr
-os_get_native_gl_context(iptr window)
-{
-	return glfwGetWGLContext(window);
-}
-#else
-function iptr
-os_get_native_gl_context(iptr window)
-{
-	return glfwGetGLXContext(window);
-}
-#endif
 
 function void
 gl_debug_logger(u32 src, u32 type, u32 id, u32 lvl, i32 len, const char *msg, const void *userctx)
@@ -96,7 +76,12 @@ load_gl(Stream *err)
 	stream_reset(err, 0);
 	#define X(name, ret, params) if (!name) stream_append_s8(err, s8("missing required GL function: " #name "\n"));
 	OGLProcedureList
-	OGLRequiredExtensionProcedureList
+	OGLRequiredExtensionProcedureListBase
+	#if OS_WINDOWS
+	  OGLRequiredExtensionProcedureListW32
+	#else
+	  OGLRequiredExtensionProcedureListLinux
+	#endif
 	#undef X
 
 	if (err->widx) fatal(stream_to_s8(err));
@@ -125,41 +110,6 @@ beamformer_load_cuda_library(BeamformerCtx *ctx, OSLibrary cuda, Arena arena)
 	#undef X
 }
 
-function BeamformerRenderModel
-render_model_from_arrays(f32 *vertices, f32 *normals, i32 vertices_size, u16 *indices, i32 index_count)
-{
-	BeamformerRenderModel result = {0};
-
-	i32 buffer_size    = vertices_size * 2 + index_count * (i32)sizeof(u16);
-	i32 indices_offset = vertices_size * 2;
-	i32 indices_size   = index_count * (i32)sizeof(u16);
-
-	result.elements        = index_count;
-	result.elements_offset = indices_offset;
-
-	glCreateBuffers(1, &result.buffer);
-	glNamedBufferStorage(result.buffer, buffer_size, 0, GL_DYNAMIC_STORAGE_BIT);
-	glNamedBufferSubData(result.buffer, 0,              vertices_size, vertices);
-	glNamedBufferSubData(result.buffer, vertices_size,  vertices_size, normals);
-	glNamedBufferSubData(result.buffer, indices_offset, indices_size,  indices);
-
-	glCreateVertexArrays(1, &result.vao);
-	glVertexArrayVertexBuffer(result.vao, 0, result.buffer, 0,             3 * sizeof(f32));
-	glVertexArrayVertexBuffer(result.vao, 1, result.buffer, vertices_size, 3 * sizeof(f32));
-	glVertexArrayElementBuffer(result.vao, result.buffer);
-
-	glEnableVertexArrayAttrib(result.vao, 0);
-	glEnableVertexArrayAttrib(result.vao, 1);
-
-	glVertexArrayAttribFormat(result.vao, 0, 3, GL_FLOAT, 0, 0);
-	glVertexArrayAttribFormat(result.vao, 1, 3, GL_FLOAT, 0, (u32)vertices_size);
-
-	glVertexArrayAttribBinding(result.vao, 0, 0);
-	glVertexArrayAttribBinding(result.vao, 1, 0);
-
-	return result;
-}
-
 function void
 worker_thread_sleep(GLWorkerThreadContext *ctx, BeamformerSharedMemory *sm)
 {
@@ -182,17 +132,12 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 {
 	GLWorkerThreadContext *ctx = user_context;
 
-	glfwMakeContextCurrent(ctx->window_handle);
-	ctx->gl_context = os_get_native_gl_context(ctx->window_handle);
-
 	BeamformerCtx *beamformer = (BeamformerCtx *)ctx->user_context;
-	glCreateQueries(GL_TIME_ELAPSED, countof(beamformer->compute_context.shader_timer_ids),
-	                beamformer->compute_context.shader_timer_ids);
 
 	for (;;) {
 		worker_thread_sleep(ctx, beamformer->shared_memory);
 		asan_poison_region(ctx->arena.beg, ctx->arena.end - ctx->arena.beg);
-		beamformer_complete_compute(ctx->user_context, &ctx->arena, ctx->gl_context);
+		beamformer_complete_compute(beamformer, &ctx->arena);
 	}
 
 	unreachable();
@@ -202,31 +147,8 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 
 function OS_THREAD_ENTRY_POINT_FN(beamformer_upload_entry_point)
 {
-	GLWorkerThreadContext *ctx = user_context;
-	glfwMakeContextCurrent(ctx->window_handle);
-	ctx->gl_context = os_get_native_gl_context(ctx->window_handle);
-
-	BeamformerUploadThreadContext *up = (typeof(up))ctx->user_context;
-	BeamformerRFBuffer            *rf = up->rf_buffer;
-	glCreateQueries(GL_TIMESTAMP, 1, &rf->data_timestamp_query);
-	/* NOTE(rnp): start this here so we don't have to worry about it being started or not */
-	glQueryCounter(rf->data_timestamp_query, GL_TIMESTAMP);
-
-	glGenSemaphoresEXT(countof(rf->gl_upload_semaphores), rf->gl_upload_semaphores);
-	for EachElement(rf->vk_upload_semaphores, it) {
-		OSHandle export = {0};
-		rf->vk_upload_semaphores[it] = vk_semaphore_create(rf->upload_semaphores_handles + it);
-
-		if (OS_WINDOWS) {
-			glImportSemaphoreWin32HandleEXT(rf->gl_upload_semaphores[it], GL_HANDLE_TYPE_OPAQUE_WIN32_EXT,
-			                                 (void *)export.value[0]);
-			// NOTE(rnp): w32 does not transfer ownership from handle back to driver
-			rf->upload_semaphores_handles[it] = export;
-		} else {
-			glImportSemaphoreFdEXT(rf->gl_upload_semaphores[it], GL_HANDLE_TYPE_OPAQUE_FD_EXT, export.value[0]);
-			rf->upload_semaphores_handles[it].value[0] = OSInvalidHandleValue;
-		}
-	}
+	GLWorkerThreadContext         *ctx = user_context;
+	BeamformerUploadThreadContext *up  = (typeof(up))ctx->user_context;
 
 	for (;;) {
 		worker_thread_sleep(ctx, up->shared_memory);
@@ -260,6 +182,45 @@ beamformer_init(BeamformerInput *input)
 
 	vk_load(input->vulkan_library_handle, &memory, &ctx->error_stream);
 
+	BeamformerComputeContext *cs = &ctx->compute_context;
+
+	// NOTE(rnp): allocate beamformed image ring buffer
+	{
+		u64 gpu_heap_size = vk_gpu_info()->gpu_heap_size;
+		u64 trial_sizes[] = {
+			GB(4),
+			GB(2),
+			GB(1) + MB(512),
+			GB(1),
+		};
+
+		u32 base_index = 0;
+		for EachElement(trial_sizes, it) {
+			if (gpu_heap_size >= 2 * trial_sizes[it])
+				break;
+			base_index++;
+		}
+
+		for (u32 i = base_index; i < countof(trial_sizes); i++) {
+			// TODO(rnp): it may be better to download data from this using the transfer queue
+			VulkanTimeline timelines[] = {VulkanTimeline_Compute, VulkanTimeline_Graphics};
+			GPUBufferAllocateInfo allocate_info = {
+				.size            = trial_sizes[i],
+				.flags           = VulkanUsageFlag_TransferSource|VulkanUsageFlag_HostReadWrite,
+				.timeline_count  = countof(timelines),
+				.timelines_used  = timelines,
+				.label           = s8("BeaformedData"),
+			};
+			vk_buffer_allocate(cs->backlog.buffer, &allocate_info);
+			if (cs->backlog.buffer->size > 0)
+				break;
+		}
+		if (cs->backlog.buffer->size == 0) {
+			// NOTE(rnp): if this becomes an issue we may be able to get by in some other way
+			fatal(s8("Failed to allocate space for beamformed data\n"));
+		}
+	}
+
 	beamformer_load_cuda_library(ctx, input->cuda_library_handle, memory);
 
 	SetConfigFlags(FLAG_VSYNC_HINT|FLAG_WINDOW_ALWAYS_RUN);
@@ -268,14 +229,7 @@ beamformer_init(BeamformerInput *input)
 	SetWindowState(FLAG_WINDOW_RESIZABLE);
 	SetWindowMinSize(840, ctx->window_size.h);
 
-	glfwWindowHint(GLFW_VISIBLE, 0);
-	iptr raylib_window_handle = (iptr)GetPlatformWindowHandle();
-
 	load_gl(&ctx->error_stream);
-
-	ctx->beamform_work_queue  = push_struct(&memory, BeamformWorkQueue);
-	ctx->compute_shader_stats = push_struct(&memory, ComputeShaderStats);
-	ctx->compute_timing_table = push_struct(&memory, ComputeTimingTable);
 
 	ctx->shared_memory = input->shared_memory;
 	if (!ctx->shared_memory) fatal(s8("Get more ram lol\n"));
@@ -283,6 +237,7 @@ beamformer_init(BeamformerInput *input)
 
 	ctx->shared_memory->version = BEAMFORMER_SHARED_MEMORY_VERSION;
 	ctx->shared_memory->reserved_parameter_blocks = 1;
+	ctx->shared_memory->max_beamformed_data_size = cs->backlog.buffer->size;
 
 	/* TODO(rnp): I'm not sure if its a good idea to pre-reserve a bunch of semaphores
 	 * on w32 but thats what we are doing for now */
@@ -310,14 +265,10 @@ beamformer_init(BeamformerInput *input)
 	}
 	#endif
 
-	BeamformerComputeContext *cs = &ctx->compute_context;
-	cs->rf_buffer.export_handle  = (OSHandle){OSInvalidHandleValue};
-
 	GLWorkerThreadContext *worker = &ctx->compute_worker;
 	/* TODO(rnp): we should lock this down after we have something working */
-	worker->user_context  = (iptr)ctx;
-	worker->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
-	worker->handle        = os_create_thread("[compute]", worker, compute_worker_thread_entry_point);
+	worker->user_context = (iptr)ctx;
+	worker->handle       = os_create_thread("[compute]", worker, compute_worker_thread_entry_point);
 
 	GLWorkerThreadContext         *upload = &ctx->upload_worker;
 	BeamformerUploadThreadContext *upctx  = push_struct(&memory, typeof(*upctx));
@@ -326,10 +277,7 @@ beamformer_init(BeamformerInput *input)
 	upctx->shared_memory = ctx->shared_memory;
 	upctx->compute_timing_table = ctx->compute_timing_table;
 	upctx->compute_worker_sync  = &ctx->compute_worker.sync_variable;
-	upload->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
-	upload->handle        = os_create_thread("[upload]", upload, beamformer_upload_entry_point);
-
-	glfwMakeContextCurrent(raylib_window_handle);
+	upload->handle = os_create_thread("[upload]", upload, beamformer_upload_entry_point);
 
 	/* NOTE: set up OpenGL debug logging */
 	Stream *gl_error_stream = push_struct(&memory, Stream);
@@ -345,170 +293,36 @@ beamformer_init(BeamformerInput *input)
 			i32   index = beamformer_reloadable_compute_shader_info_indices[it];
 			Arena temp  = scratch;
 			s8 file = push_s8_from_parts(&temp, os_path_separator(), s8("shaders"),
-			                             beamformer_reloadable_shader_files[index]);
+			                             beamformer_reloadable_shader_files[index][0]);
 			BeamformerFileReloadContext *frc = push_struct(&memory, typeof(*frc));
-			frc->kind                = BeamformerFileReloadKind_ComputeShader;
-			frc->compute_shader_kind = beamformer_reloadable_shader_kinds[index];
+			frc->kind                 = BeamformerFileReloadKind_ComputeShader;
+			frc->shader_reload.shader = beamformer_reloadable_shader_kinds[index];
+			os_add_file_watch((char *)file.data, file.len, frc);
+		}
+
+		for EachElement(beamformer_reloadable_compute_helpers_shader_info_indices, it) {
+			i32   index = beamformer_reloadable_compute_helpers_shader_info_indices[it];
+			Arena temp  = scratch;
+			s8 file = push_s8_from_parts(&temp, os_path_separator(), s8("shaders"),
+			                             beamformer_reloadable_shader_files[index][0]);
+			BeamformerFileReloadContext *frc = push_struct(&memory, typeof(*frc));
+			frc->kind                 = BeamformerFileReloadKind_ComputeShader;
+			frc->shader_reload.shader = beamformer_reloadable_shader_kinds[index];
+			os_add_file_watch((char *)file.data, file.len, frc);
+		}
+
+		for EachElement(beamformer_reloadable_compute_internal_shader_info_indices, it) {
+			i32   index = beamformer_reloadable_compute_internal_shader_info_indices[it];
+			Arena temp  = scratch;
+			s8 file = push_s8_from_parts(&temp, os_path_separator(), s8("shaders"),
+			                             beamformer_reloadable_shader_files[index][0]);
+			BeamformerFileReloadContext *frc = push_struct(&memory, typeof(*frc));
+			frc->kind                   = BeamformerFileReloadKind_ComputeInternalShader;
+			frc->shader_reload.shader   = beamformer_reloadable_shader_kinds[index];
+			frc->shader_reload.pipeline = cs->compute_internal_pipelines + it;
 			os_add_file_watch((char *)file.data, file.len, frc);
 		}
 	}
-
-	FrameViewRenderContext *fvr = &ctx->frame_view_render_context;
-	glCreateFramebuffers(countof(fvr->framebuffers), fvr->framebuffers);
-	LABEL_GL_OBJECT(GL_FRAMEBUFFER, fvr->framebuffers[0], s8("Frame View Framebuffer"));
-	LABEL_GL_OBJECT(GL_FRAMEBUFFER, fvr->framebuffers[1], s8("Frame View Resolving Framebuffer"));
-
-	glCreateRenderbuffers(countof(fvr->renderbuffers), fvr->renderbuffers);
-	u32 msaa_samples = vk_gpu_info()->max_msaa_samples;
-	glNamedRenderbufferStorageMultisample(fvr->renderbuffers[0], msaa_samples, GL_RGBA8,
-	                                      FRAME_VIEW_RENDER_TARGET_SIZE);
-	glNamedRenderbufferStorageMultisample(fvr->renderbuffers[1], msaa_samples, GL_DEPTH_COMPONENT24,
-	                                      FRAME_VIEW_RENDER_TARGET_SIZE);
-
-	static_assert(countof(beamformer_reloadable_render_shader_info_indices) == 1,
-	              "only a single render shader is currently handled");
-	i32 render_rsi_index = beamformer_reloadable_render_shader_info_indices[0];
-
-	// TODO(rnp): leaks when BakeShaders is true
-	Arena *arena = &memory;
-	BeamformerShaderReloadContext *render_3d = push_struct(arena, typeof(*render_3d));
-	render_3d->reloadable_info_index = render_rsi_index;
-	render_3d->gl_type = GL_FRAGMENT_SHADER;
-	render_3d->header  = s8(""
-	"layout(location = 0) in  vec3 normal;\n"
-	"layout(location = 1) in  vec3 texture_coordinate;\n\n"
-	"layout(location = 2) in  vec3 test_texture_coordinate;\n\n"
-	"layout(location = 0) out vec4 out_colour;\n\n"
-	"layout(location = " str(FRAME_VIEW_DYNAMIC_RANGE_LOC) ") uniform float u_db_cutoff = 60;\n"
-	"layout(location = " str(FRAME_VIEW_THRESHOLD_LOC)     ") uniform float u_threshold = 40;\n"
-	"layout(location = " str(FRAME_VIEW_GAMMA_LOC)         ") uniform float u_gamma     = 1;\n"
-	"layout(location = " str(FRAME_VIEW_LOG_SCALE_LOC)     ") uniform bool  u_log_scale;\n"
-	"layout(location = " str(FRAME_VIEW_BB_COLOUR_LOC)     ") uniform vec4  u_bb_colour   = vec4(" str(FRAME_VIEW_BB_COLOUR) ");\n"
-	"layout(location = " str(FRAME_VIEW_BB_FRACTION_LOC)   ") uniform float u_bb_fraction = " str(FRAME_VIEW_BB_FRACTION) ";\n"
-	"layout(location = " str(FRAME_VIEW_SOLID_BB_LOC)      ") uniform bool  u_solid_bb;\n"
-	"\n"
-	"layout(binding = 0) uniform sampler3D u_texture;\n");
-
-	render_3d->link = push_struct(arena, typeof(*render_3d));
-	render_3d->link->reloadable_info_index = -1;
-	render_3d->link->gl_type = GL_VERTEX_SHADER;
-	render_3d->link->link    = render_3d;
-	render_3d->link->header  = s8(""
-	"layout(location = 0) in vec3 v_position;\n"
-	"layout(location = 1) in vec3 v_normal;\n"
-	"\n"
-	"layout(location = 0) out vec3 f_normal;\n"
-	"layout(location = 1) out vec3 f_texture_coordinate;\n"
-	"layout(location = 2) out vec3 f_orig_texture_coordinate;\n"
-	"\n"
-	"layout(location = " str(FRAME_VIEW_MODEL_MATRIX_LOC)  ") uniform mat4  u_model;\n"
-	"layout(location = " str(FRAME_VIEW_VIEW_MATRIX_LOC)   ") uniform mat4  u_view;\n"
-	"layout(location = " str(FRAME_VIEW_PROJ_MATRIX_LOC)   ") uniform mat4  u_projection;\n"
-	"\n"
-	"\n"
-	"void main()\n"
-	"{\n"
-	"\tvec3 pos = v_position;\n"
-	"\tf_orig_texture_coordinate = (2 * v_position + 1) / 2;\n"
-	//"\tif (v_position.y == -1) pos.x = clamp(v_position.x, -u_clip_fraction, u_clip_fraction);\n"
-	"\tvec3 tex_coord = (2 * pos + 1) / 2;\n"
-	"\tf_texture_coordinate = tex_coord.xzy;\n"
-	//"\tf_texture_coordinate = u_swizzle? tex_coord.xzy : tex_coord;\n"
-	//"\tf_normal    = normalize(mat3(u_model) * v_normal);\n"
-	"\tf_normal    = v_normal;\n"
-	"\tgl_Position = u_projection * u_view * u_model * vec4(pos, 1);\n"
-	"}\n");
-
-	// TODO(rnp): this is probably not expected by the platform, refactor so that all
-	// needed context (eg. headers) are available outside of here and push initial load
-	// into ui_init
-	{
-		BeamformerFileReloadContext *frc = push_struct(&memory, typeof(*frc));
-		frc->kind                  = BeamformerFileReloadKind_Shader;
-		frc->shader_reload_context = render_3d;
-		input->event_queue[input->event_count++] = (BeamformerInputEvent){
-			.kind = BeamformerInputEventKind_FileEvent,
-			.file_watch_user_context = frc,
-		};
-
-		s8 render_file = {0};
-		if (!BakeShaders) {
-			render_file = push_s8_from_parts(&scratch, os_path_separator(), s8("shaders"),
-			                                 beamformer_reloadable_shader_files[render_rsi_index]);
-			os_add_file_watch((char *)render_file.data, render_file.len, frc);
-		}
-	}
-
-	f32 unit_cube_vertices[] = {
-		 0.5f,  0.5f, -0.5f,
-		 0.5f,  0.5f, -0.5f,
-		 0.5f,  0.5f, -0.5f,
-		 0.5f, -0.5f, -0.5f,
-		 0.5f, -0.5f, -0.5f,
-		 0.5f, -0.5f, -0.5f,
-		 0.5f,  0.5f,  0.5f,
-		 0.5f,  0.5f,  0.5f,
-		 0.5f,  0.5f,  0.5f,
-		 0.5f, -0.5f,  0.5f,
-		 0.5f, -0.5f,  0.5f,
-		 0.5f, -0.5f,  0.5f,
-		-0.5f,  0.5f, -0.5f,
-		-0.5f,  0.5f, -0.5f,
-		-0.5f,  0.5f, -0.5f,
-		-0.5f, -0.5f, -0.5f,
-		-0.5f, -0.5f, -0.5f,
-		-0.5f, -0.5f, -0.5f,
-		-0.5f,  0.5f,  0.5f,
-		-0.5f,  0.5f,  0.5f,
-		-0.5f,  0.5f,  0.5f,
-		-0.5f, -0.5f,  0.5f,
-		-0.5f, -0.5f,  0.5f,
-		-0.5f, -0.5f,  0.5f
-	};
-	f32 unit_cube_normals[] = {
-		 0.0f,  0.0f, -1.0f,
-		 0.0f,  1.0f,  0.0f,
-		 1.0f,  0.0f,  0.0f,
-		 0.0f,  0.0f, -1.0f,
-		 0.0f, -1.0f,  0.0f,
-		 1.0f,  0.0f,  0.0f,
-		 0.0f,  0.0f,  1.0f,
-		 0.0f,  1.0f,  0.0f,
-		 1.0f,  0.0f,  0.0f,
-		 0.0f,  0.0f,  1.0f,
-		 0.0f, -1.0f,  0.0f,
-		 1.0f,  0.0f,  0.0f,
-		 0.0f,  0.0f, -1.0f,
-		 0.0f,  1.0f,  0.0f,
-		-1.0f,  0.0f,  0.0f,
-		 0.0f,  0.0f, -1.0f,
-		 0.0f, -1.0f,  0.0f,
-		-1.0f,  0.0f,  0.0f,
-		 0.0f,  0.0f,  1.0f,
-		 0.0f,  1.0f,  0.0f,
-		-1.0f,  0.0f,  0.0f,
-		 0.0f,  0.0f,  1.0f,
-		 0.0f, -1.0f,  0.0f,
-		-1.0f,  0.0f,  0.0f
-	};
-	u16 unit_cube_indices[] = {
-		1,  13, 19,
-		1,  19, 7,
-		9,  6,  18,
-		9,  18, 21,
-		23, 20, 14,
-		23, 14, 17,
-		16, 4,  10,
-		16, 10, 22,
-		5,  2,  8,
-		5,  8,  11,
-		15, 12, 0,
-		15, 0,  3
-	};
-
-	cs->unit_cube_model = render_model_from_arrays(unit_cube_vertices, unit_cube_normals,
-	                                               sizeof(unit_cube_vertices),
-	                                               unit_cube_indices, countof(unit_cube_indices));
 
 	memory.end = scratch.end;
 	ctx->arena = memory;

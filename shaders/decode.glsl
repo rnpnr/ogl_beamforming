@@ -9,57 +9,42 @@
  */
 
 #if   DataKind == DataKind_Float32
-	#define INPUT_DATA_TYPE      float
-	#define SAMPLE_DATA_TYPE     float
-	#define SAMPLE_TYPE_CAST(x)  (x)
+  #define INPUT_DATA_TYPE  float
+  #define SAMPLE_DATA_TYPE float
 #elif DataKind == DataKind_Float32Complex
-	#define INPUT_DATA_TYPE      vec2
-	#define SAMPLE_DATA_TYPE     vec2
-	#define SAMPLE_TYPE_CAST(x)  (x)
+  #define INPUT_DATA_TYPE  vec2
+  #define SAMPLE_DATA_TYPE vec2
 #elif DataKind == DataKind_Int16Complex
-	#define INPUT_DATA_TYPE      int
-	#define SAMPLE_DATA_TYPE     vec2
-	#define SAMPLE_TYPE_CAST(x)  vec2(((x) << 16) >> 16, (x) >> 16)
+  #define INPUT_DATA_TYPE  i16vec2
+  #define SAMPLE_DATA_TYPE vec2
 #elif DataKind == DataKind_Int16
-	#define INPUT_DATA_TYPE      int
-	#define RF_SAMPLES_PER_INDEX 2
-	#if DilateOutput
-		#define SAMPLE_DATA_TYPE    vec4
-		#define SAMPLE_TYPE_CAST(x) vec4(((x) << 16) >> 16, 0, (x) >> 16, 0)
-	#else
-		#define SAMPLE_DATA_TYPE    vec2
-		#define SAMPLE_TYPE_CAST(x) vec2(((x) << 16) >> 16, (x) >> 16)
-		#define OUTPUT_SAMPLES_PER_INDEX 2
-	#endif
+  #define INPUT_DATA_TYPE  int16_t
+  #define SAMPLE_DATA_TYPE float
 #else
-	#error unsupported data kind for Decode
+  #error unsupported data kind for Decode
 #endif
 
-#ifndef OUTPUT_SAMPLES_PER_INDEX
-	#define OUTPUT_SAMPLES_PER_INDEX 1
-#endif
+// TODO(rnp): fix DilateOutput
 
-#ifndef RF_SAMPLES_PER_INDEX
-	#define RF_SAMPLES_PER_INDEX 1
-#endif
-
-layout(std430, binding = 1) readonly restrict buffer buffer_1 {
-	INPUT_DATA_TYPE rf_data[];
+layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer RF {
+	INPUT_DATA_TYPE values[];
 };
 
-layout(std430, binding = 2) writeonly restrict buffer buffer_2 {
-	INPUT_DATA_TYPE out_rf_data[];
+layout(std430, buffer_reference, buffer_reference_align = 64) restrict writeonly buffer OutputRF {
+	INPUT_DATA_TYPE values[];
 };
 
-layout(std430, binding = 3) writeonly restrict buffer buffer_3 {
-	SAMPLE_DATA_TYPE out_data[];
+layout(std430, buffer_reference, buffer_reference_align = 64) restrict writeonly buffer Output {
+	SAMPLE_DATA_TYPE values[];
 };
 
-layout(r32f, binding = 0) readonly restrict uniform image2D  hadamard;
+layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer Hadamard {
+	float values[];
+};
 
 SAMPLE_DATA_TYPE sample_rf_data(uint index)
 {
-	SAMPLE_DATA_TYPE result = SAMPLE_TYPE_CAST(rf_data[index]);
+	SAMPLE_DATA_TYPE result = SAMPLE_DATA_TYPE(RF(rf_buffer).values[index]);
 	return result;
 }
 
@@ -67,7 +52,7 @@ SAMPLE_DATA_TYPE sample_rf_data(uint index)
 shared INPUT_DATA_TYPE rf[gl_WorkGroupSize.x * TransmitCount];
 void run_decode_large(void)
 {
-	uint time_sample = gl_GlobalInvocationID.x * RF_SAMPLES_PER_INDEX;
+	uint time_sample = gl_GlobalInvocationID.x;
 	uint channel     = gl_GlobalInvocationID.y;
 	uint transmit    = gl_GlobalInvocationID.z * ToProcess;
 
@@ -78,12 +63,11 @@ void run_decode_large(void)
 	uint leftover_samples    = rf.length() % thread_count;
 	uint samples_this_thread = samples_per_thread + uint(thread_index < leftover_samples);
 
-	uint rf_offset = (InputChannelStride * channel / RF_SAMPLES_PER_INDEX +
-	                  TransmitCount * gl_WorkGroupID.x * gl_WorkGroupSize.x);
+	uint rf_offset = InputChannelStride * channel + TransmitCount * gl_WorkGroupID.x * gl_WorkGroupSize.x;
 
 	for (uint i = 0; i < samples_this_thread; i++) {
 		uint index = i * thread_count + thread_index;
-		rf[index] = rf_data[rf_offset + index];
+		rf[index] = RF(rf_buffer).values[rf_offset + index];
 	}
 
 	barrier();
@@ -94,9 +78,9 @@ void run_decode_large(void)
 			result[i] = SAMPLE_DATA_TYPE(0);
 
 		for (int j = 0; j < TransmitCount; j++) {
-			SAMPLE_DATA_TYPE s = SAMPLE_TYPE_CAST(rf[gl_LocalInvocationID.x * TransmitCount + j]);
+			SAMPLE_DATA_TYPE s = SAMPLE_DATA_TYPE(rf[gl_LocalInvocationID.x * TransmitCount + j]);
 			for (uint i = 0; i < ToProcess; i++)
-				result[i] += imageLoad(hadamard, ivec2(j, transmit + i)).x * s;
+				result[i] += s * Hadamard(hadamard_buffer).values[TransmitCount * j + (i + transmit)];
 		}
 
 		for (uint i = 0; i < ToProcess; i++)
@@ -112,30 +96,30 @@ void run_decode_large(void)
 
 		for (uint i = 0; i < ToProcess; i++, out_off += OutputTransmitStride)
 			if (TransmitCount % (gl_WorkGroupSize.z * ToProcess) == 0 || transmit + i < TransmitCount)
-				out_data[out_off / OUTPUT_SAMPLES_PER_INDEX] = result[i];
+				Output(output_buffer).values[out_off] = result[i];
 	}
 }
 #endif
 
 void run_decode_small(void)
 {
-	uint time_sample = gl_GlobalInvocationID.x * RF_SAMPLES_PER_INDEX;
+	uint time_sample = gl_GlobalInvocationID.x;
 	uint channel     = gl_GlobalInvocationID.y;
-	uint rf_offset   = (InputChannelStride * channel + TransmitCount * time_sample) / RF_SAMPLES_PER_INDEX;
+	uint rf_offset   = InputChannelStride * channel + TransmitCount * time_sample;
 
 	if (time_sample < OutputTransmitStride) {
 		INPUT_DATA_TYPE rf[TransmitCount];
 		for (int j = 0; j < TransmitCount; j++)
-			rf[j] = rf_data[rf_offset + j];
+			rf[j] = RF(rf_buffer).values[rf_offset + j];
 
 		SAMPLE_DATA_TYPE result[TransmitCount];
 		for (int j = 0; j < TransmitCount; j++)
 			result[j] = SAMPLE_DATA_TYPE(0);
 
 		for (int i = 0; i < TransmitCount; i++) {
-			SAMPLE_DATA_TYPE s = SAMPLE_TYPE_CAST(rf[i]);
+			SAMPLE_DATA_TYPE s = SAMPLE_DATA_TYPE(rf[i]);
 			for (int j = 0; j < TransmitCount; j++) {
-				result[j] += imageLoad(hadamard, ivec2(i, j)).x * s;
+				result[j] += s * Hadamard(hadamard_buffer).values[TransmitCount * i + j];
 			}
 		}
 
@@ -145,7 +129,7 @@ void run_decode_small(void)
 		uint out_off = OutputChannelStride  * channel +
 		               OutputSampleStride   * time_sample;
 		for (int i = 0; i < TransmitCount; i++, out_off += OutputTransmitStride)
-			out_data[out_off / OUTPUT_SAMPLES_PER_INDEX] = result[i];
+			Output(output_buffer).values[out_off] = result[i];
 	}
 }
 
@@ -153,40 +137,40 @@ void main()
 {
 	switch (DecodeMode) {
 	case DecodeMode_None:{
-		uint time_sample = gl_GlobalInvocationID.x * RF_SAMPLES_PER_INDEX;
+		uint time_sample = gl_GlobalInvocationID.x;
 		uint channel     = gl_GlobalInvocationID.y;
 		uint transmit    = gl_GlobalInvocationID.z;
 
 		if (time_sample < OutputTransmitStride) {
-			uint in_off = (InputChannelStride  * channel +
-			               InputTransmitStride * transmit +
-			               InputSampleStride   * time_sample) / RF_SAMPLES_PER_INDEX;
+			uint in_off = InputChannelStride  * channel +
+			              InputTransmitStride * transmit +
+			              InputSampleStride   * time_sample;
 
-			uint out_off = (OutputChannelStride  * channel +
-			                OutputTransmitStride * transmit +
-			                OutputSampleStride   * time_sample) / OUTPUT_SAMPLES_PER_INDEX;
+			uint out_off = OutputChannelStride  * channel +
+			               OutputTransmitStride * transmit +
+			               OutputSampleStride   * time_sample;
 
-			out_data[out_off] = sample_rf_data(in_off);
+			Output(output_buffer).values[out_off] = sample_rf_data(in_off);
 		}
 	}break;
 	case DecodeMode_Hadamard:{
-		if (u_first_pass) {
-			uint time_sample = gl_GlobalInvocationID.x * RF_SAMPLES_PER_INDEX;
+		if (first_pass) {
+			uint time_sample = gl_GlobalInvocationID.x;
 			uint channel     = gl_GlobalInvocationID.y;
 			uint transmit    = gl_GlobalInvocationID.z * ToProcess;
 			if (time_sample < InputTransmitStride) {
-				uint out_off = (InputChannelStride * channel + TransmitCount * time_sample) / RF_SAMPLES_PER_INDEX;
-				uint in_off  = (InputChannelStride * channel + InputSampleStride  * time_sample);
+				uint out_off = InputChannelStride * channel + TransmitCount     * time_sample;
+				uint in_off  = InputChannelStride * channel + InputSampleStride * time_sample;
 				#if UseSharedMemory
 					in_off  += InputTransmitStride * transmit;
 					out_off += transmit;
 					for (uint i = 0; i < ToProcess; i++, in_off += InputTransmitStride) {
 						if (transmit + i < TransmitCount)
-							out_rf_data[out_off + i] = rf_data[in_off / RF_SAMPLES_PER_INDEX];
+							OutputRF(output_rf_buffer).values[out_off + i] = RF(rf_buffer).values[in_off];
 					}
 				#else
 					for (uint i = 0; i < TransmitCount; i++, in_off += InputTransmitStride)
-						out_rf_data[out_off + i] = rf_data[in_off / RF_SAMPLES_PER_INDEX];
+						OutputRF(output_rf_buffer).values[out_off + i] = RF(rf_buffer).values[in_off];
 				#endif
 			}
 		} else {

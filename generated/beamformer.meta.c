@@ -77,31 +77,38 @@ typedef enum {
 } BeamformerShaderFilterFlags;
 
 typedef enum {
-	BeamformerShaderDASFlags_Fast               = (1 << 0),
-	BeamformerShaderDASFlags_Sparse             = (1 << 1),
-	BeamformerShaderDASFlags_CoherencyWeighting = (1 << 2),
-	BeamformerShaderDASFlags_SingleFocus        = (1 << 3),
-	BeamformerShaderDASFlags_SingleOrientation  = (1 << 4),
+	BeamformerShaderDASFlags_Sparse             = (1 << 0),
+	BeamformerShaderDASFlags_CoherencyWeighting = (1 << 1),
+	BeamformerShaderDASFlags_SingleFocus        = (1 << 2),
+	BeamformerShaderDASFlags_SingleOrientation  = (1 << 3),
 } BeamformerShaderDASFlags;
 
 typedef enum {
-	BeamformerShaderKind_CudaDecode  = 0,
-	BeamformerShaderKind_CudaHilbert = 1,
-	BeamformerShaderKind_Decode      = 2,
-	BeamformerShaderKind_Filter      = 3,
-	BeamformerShaderKind_Demodulate  = 4,
-	BeamformerShaderKind_DAS         = 5,
-	BeamformerShaderKind_MinMax      = 6,
-	BeamformerShaderKind_Sum         = 7,
-	BeamformerShaderKind_Render3D    = 8,
+	BeamformerShaderKind_CudaDecode         = 0,
+	BeamformerShaderKind_CudaHilbert        = 1,
+	BeamformerShaderKind_Decode             = 2,
+	BeamformerShaderKind_Filter             = 3,
+	BeamformerShaderKind_Demodulate         = 4,
+	BeamformerShaderKind_DAS                = 5,
+	BeamformerShaderKind_Sum                = 6,
+	BeamformerShaderKind_MinMax             = 7,
+	BeamformerShaderKind_CoherencyWeighting = 8,
+	BeamformerShaderKind_BufferClear        = 9,
+	BeamformerShaderKind_RenderBeamformed   = 10,
 	BeamformerShaderKind_Count,
 
-	BeamformerShaderKind_ComputeFirst = BeamformerShaderKind_CudaDecode,
-	BeamformerShaderKind_ComputeLast  = BeamformerShaderKind_Sum,
-	BeamformerShaderKind_ComputeCount = 8,
-	BeamformerShaderKind_RenderFirst  = BeamformerShaderKind_Render3D,
-	BeamformerShaderKind_RenderLast   = BeamformerShaderKind_Render3D,
-	BeamformerShaderKind_RenderCount  = 1,
+	BeamformerShaderKind_ComputeFirst         = BeamformerShaderKind_CudaDecode,
+	BeamformerShaderKind_ComputeLast          = BeamformerShaderKind_MinMax,
+	BeamformerShaderKind_ComputeCount         = 8,
+	BeamformerShaderKind_ComputeHelpersFirst  = BeamformerShaderKind_CoherencyWeighting,
+	BeamformerShaderKind_ComputeHelpersLast   = BeamformerShaderKind_CoherencyWeighting,
+	BeamformerShaderKind_ComputeHelpersCount  = 1,
+	BeamformerShaderKind_ComputeInternalFirst = BeamformerShaderKind_BufferClear,
+	BeamformerShaderKind_ComputeInternalLast  = BeamformerShaderKind_BufferClear,
+	BeamformerShaderKind_ComputeInternalCount = 1,
+	BeamformerShaderKind_RenderFirst          = BeamformerShaderKind_RenderBeamformed,
+	BeamformerShaderKind_RenderLast           = BeamformerShaderKind_RenderBeamformed,
+	BeamformerShaderKind_RenderCount          = 1,
 } BeamformerShaderKind;
 
 typedef struct {
@@ -145,6 +152,76 @@ typedef struct {
 	f32 time_offset;
 	f32 transmit_angle;
 } BeamformerShaderDASBakeParameters;
+
+typedef struct {
+	u64 hadamard_buffer;
+	u64 rf_buffer;
+	u64 output_buffer;
+	u64 output_rf_buffer;
+	b32 first_pass;
+} BeamformerShaderDecodePushConstants;
+
+typedef struct {
+	u64 input_data;
+	u64 output_data;
+	u64 filter_coefficients;
+} BeamformerShaderFilterPushConstants;
+
+typedef struct {
+	m4  voxel_transform;
+	m4  xdc_transform;
+	v2  xdc_element_pitch;
+	u64 rf_data;
+	u64 output_data;
+	u64 incoherent_output;
+	u64 focal_vectors;
+	u64 sparse_elements;
+	u64 transmit_receive_orientations;
+	u32 output_size_x;
+	u32 output_size_y;
+	u32 output_size_z;
+	u32 cycle_t;
+	i32 channel_t;
+} BeamformerShaderDASPushConstants;
+
+typedef struct {
+	u64 output_data;
+	u64 input_data;
+	u32 image_elements;
+	f32 scale;
+} BeamformerShaderSumPushConstants;
+
+typedef struct {
+	u64 left_side_buffer;
+	u64 right_side_buffer;
+	u32 elements;
+	f32 scale;
+	u32 output_size_x;
+	u32 output_size_y;
+	u32 output_size_z;
+} BeamformerShaderCoherencyWeightingPushConstants;
+
+typedef struct {
+	u64 data;
+	u32 clear_word;
+	u32 words;
+} BeamformerShaderBufferClearPushConstants;
+
+typedef struct {
+	m4  mvp_matrix;
+	u64 positions;
+	u64 normals;
+	v4  bounding_box_colour;
+	f32 bounding_box_fraction;
+	f32 db_cutoff;
+	f32 threshold;
+	f32 gamma;
+	u64 input_data;
+	u32 input_size_x;
+	u32 input_size_y;
+	u32 input_size_z;
+	u32 data_kind;
+} BeamformerShaderRenderBeamformedPushConstants;
 
 typedef struct {
 	union {
@@ -363,27 +440,33 @@ read_only global s8 beamformer_shader_names[] = {
 	s8_comp("Filter"),
 	s8_comp("Demodulate"),
 	s8_comp("DAS"),
-	s8_comp("MinMax"),
 	s8_comp("Sum"),
-	s8_comp("Render3D"),
+	s8_comp("MinMax"),
+	s8_comp("CoherencyWeighting"),
+	s8_comp("BufferClear"),
+	s8_comp("RenderBeamformed"),
 };
 
 read_only global BeamformerShaderKind beamformer_reloadable_shader_kinds[] = {
 	BeamformerShaderKind_Decode,
 	BeamformerShaderKind_Filter,
 	BeamformerShaderKind_DAS,
-	BeamformerShaderKind_MinMax,
 	BeamformerShaderKind_Sum,
-	BeamformerShaderKind_Render3D,
+	BeamformerShaderKind_MinMax,
+	BeamformerShaderKind_CoherencyWeighting,
+	BeamformerShaderKind_BufferClear,
+	BeamformerShaderKind_RenderBeamformed,
 };
 
-read_only global s8 beamformer_reloadable_shader_files[] = {
-	s8_comp("decode.glsl"),
-	s8_comp("filter.glsl"),
-	s8_comp("das.glsl"),
-	s8_comp("min_max.glsl"),
-	s8_comp("sum.glsl"),
-	s8_comp("render_3d.frag.glsl"),
+read_only global s8 *beamformer_reloadable_shader_files[] = {
+	(s8 []){s8_comp("decode.glsl")},
+	(s8 []){s8_comp("filter.glsl")},
+	(s8 []){s8_comp("das.glsl")},
+	(s8 []){s8_comp("sum.glsl")},
+	(s8 []){s8_comp("min_max.glsl")},
+	(s8 []){s8_comp("coherency_weighting.glsl")},
+	(s8 []){s8_comp("buffer_clear.glsl")},
+	(s8 []){s8_comp("render_3d.vert.glsl"), s8_comp("render_3d.frag.glsl")},
 };
 
 read_only global i32 beamformer_shader_reloadable_index_by_shader[] = {
@@ -396,6 +479,8 @@ read_only global i32 beamformer_shader_reloadable_index_by_shader[] = {
 	3,
 	4,
 	5,
+	6,
+	7,
 };
 
 read_only global i32 beamformer_reloadable_compute_shader_info_indices[] = {
@@ -406,8 +491,16 @@ read_only global i32 beamformer_reloadable_compute_shader_info_indices[] = {
 	4,
 };
 
-read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
+read_only global i32 beamformer_reloadable_compute_helpers_shader_info_indices[] = {
 	5,
+};
+
+read_only global i32 beamformer_reloadable_compute_internal_shader_info_indices[] = {
+	6,
+};
+
+read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
+	7,
 };
 
 read_only global s8 beamformer_shader_global_header_strings[] = {
@@ -458,7 +551,6 @@ read_only global s8 *beamformer_shader_flag_strings[] = {
 		s8_comp("Demodulate"),
 	},
 	(s8 []){
-		s8_comp("Fast"),
 		s8_comp("Sparse"),
 		s8_comp("CoherencyWeighting"),
 		s8_comp("SingleFocus"),
@@ -467,33 +559,63 @@ read_only global s8 *beamformer_shader_flag_strings[] = {
 	0,
 	0,
 	0,
+	0,
+	0,
 };
 
 read_only global u8 beamformer_shader_flag_strings_count[] = {
 	2,
 	3,
-	5,
+	4,
 	0,
 	0,
 	0,
+	0,
+	0,
+};
+
+read_only global b8 beamformer_shader_has_primitive[] = {
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	1,
+};
+
+read_only global b8 beamformer_shader_primitive_is_vertex[] = {
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	1,
 };
 
 read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){0, 1},
 	(i32 []){0},
 	(i32 []){2, 0, 3, 4},
+	(i32 []){0},
 	0,
+	(i32 []){0},
 	0,
-	0,
+	(i32 []){0},
 };
 
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	2,
 	1,
 	4,
+	1,
 	0,
+	1,
 	0,
-	0,
+	1,
 };
 
 read_only global s8 *beamformer_shader_bake_parameter_names[] = {
@@ -539,12 +661,16 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 	0,
 	0,
 	0,
+	0,
+	0,
 };
 
 read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
 	0x00000000UL,
 	0x00000600UL,
 	0x00001fc0UL,
+	0x00000000UL,
+	0x00000000UL,
 	0x00000000UL,
 	0x00000000UL,
 	0x00000000UL,
@@ -557,5 +683,163 @@ read_only global i32 beamformer_shader_bake_parameter_counts[] = {
 	0,
 	0,
 	0,
+	0,
+	0,
+};
+
+read_only global s8 *beamformer_shader_push_constant_vk_types[] = {
+	(s8 []){
+		s8_comp("uint64_t"),
+		s8_comp("uint64_t"),
+		s8_comp("uint64_t"),
+		s8_comp("uint64_t"),
+		s8_comp("bool"),
+	},
+	(s8 []){
+		s8_comp("uint64_t"),
+		s8_comp("uint64_t"),
+		s8_comp("uint64_t"),
+	},
+	(s8 []){
+		s8_comp("mat4"),
+		s8_comp("mat4"),
+		s8_comp("vec2"),
+		s8_comp("uint64_t"),
+		s8_comp("uint64_t"),
+		s8_comp("uint64_t"),
+		s8_comp("uint64_t"),
+		s8_comp("uint64_t"),
+		s8_comp("uint64_t"),
+		s8_comp("uint32_t"),
+		s8_comp("uint32_t"),
+		s8_comp("uint32_t"),
+		s8_comp("uint32_t"),
+		s8_comp("int32_t"),
+	},
+	(s8 []){
+		s8_comp("uint64_t"),
+		s8_comp("uint64_t"),
+		s8_comp("uint32_t"),
+		s8_comp("float"),
+	},
+	0,
+	(s8 []){
+		s8_comp("uint64_t"),
+		s8_comp("uint64_t"),
+		s8_comp("uint32_t"),
+		s8_comp("float"),
+		s8_comp("uint32_t"),
+		s8_comp("uint32_t"),
+		s8_comp("uint32_t"),
+	},
+	(s8 []){
+		s8_comp("uint64_t"),
+		s8_comp("uint32_t"),
+		s8_comp("uint32_t"),
+	},
+	(s8 []){
+		s8_comp("mat4"),
+		s8_comp("uint64_t"),
+		s8_comp("uint64_t"),
+		s8_comp("vec4"),
+		s8_comp("float"),
+		s8_comp("float"),
+		s8_comp("float"),
+		s8_comp("float"),
+		s8_comp("uint64_t"),
+		s8_comp("uint32_t"),
+		s8_comp("uint32_t"),
+		s8_comp("uint32_t"),
+		s8_comp("uint32_t"),
+	},
+};
+
+read_only global s8 *beamformer_shader_push_constant_names[] = {
+	(s8 []){
+		s8_comp("hadamard_buffer"),
+		s8_comp("rf_buffer"),
+		s8_comp("output_buffer"),
+		s8_comp("output_rf_buffer"),
+		s8_comp("first_pass"),
+	},
+	(s8 []){
+		s8_comp("input_data"),
+		s8_comp("output_data"),
+		s8_comp("filter_coefficients"),
+	},
+	(s8 []){
+		s8_comp("voxel_transform"),
+		s8_comp("xdc_transform"),
+		s8_comp("xdc_element_pitch"),
+		s8_comp("rf_data"),
+		s8_comp("output_data"),
+		s8_comp("incoherent_output"),
+		s8_comp("focal_vectors"),
+		s8_comp("sparse_elements"),
+		s8_comp("transmit_receive_orientations"),
+		s8_comp("output_size_x"),
+		s8_comp("output_size_y"),
+		s8_comp("output_size_z"),
+		s8_comp("cycle_t"),
+		s8_comp("channel_t"),
+	},
+	(s8 []){
+		s8_comp("output_data"),
+		s8_comp("input_data"),
+		s8_comp("image_elements"),
+		s8_comp("scale"),
+	},
+	0,
+	(s8 []){
+		s8_comp("left_side_buffer"),
+		s8_comp("right_side_buffer"),
+		s8_comp("elements"),
+		s8_comp("scale"),
+		s8_comp("output_size_x"),
+		s8_comp("output_size_y"),
+		s8_comp("output_size_z"),
+	},
+	(s8 []){
+		s8_comp("data"),
+		s8_comp("clear_word"),
+		s8_comp("words"),
+	},
+	(s8 []){
+		s8_comp("mvp_matrix"),
+		s8_comp("positions"),
+		s8_comp("normals"),
+		s8_comp("bounding_box_colour"),
+		s8_comp("bounding_box_fraction"),
+		s8_comp("db_cutoff"),
+		s8_comp("threshold"),
+		s8_comp("gamma"),
+		s8_comp("input_data"),
+		s8_comp("input_size_x"),
+		s8_comp("input_size_y"),
+		s8_comp("input_size_z"),
+		s8_comp("data_kind"),
+	},
+};
+
+read_only global u8 beamformer_shader_push_constant_counts[] = {
+	5,
+	3,
+	14,
+	4,
+	0,
+	7,
+	3,
+	13,
+};
+
+read_only global u8 beamformer_shader_push_constant_sizes[] = {
+	sizeof(BeamformerShaderDecodePushConstants),
+	sizeof(BeamformerShaderFilterPushConstants),
+	sizeof(BeamformerShaderDASPushConstants),
+	sizeof(BeamformerShaderSumPushConstants),
+	0,
+	sizeof(BeamformerShaderCoherencyWeightingPushConstants),
+	sizeof(BeamformerShaderBufferClearPushConstants),
+	sizeof(BeamformerShaderRenderBeamformedPushConstants),
 };
 

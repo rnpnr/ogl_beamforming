@@ -5,7 +5,7 @@
   #pragma GCC diagnostic ignored "-Woverride-init"
 #endif
 
-#define zero_struct(s) mem_clear(s, 0, sizeof(*s))
+#define zero_struct(s) mem_clear((s), 0, sizeof(*(s)))
 function void *
 mem_clear(void *restrict p_, u8 c, iz size)
 {
@@ -592,14 +592,6 @@ function iz
 s8_scan_backwards(s8 s, u8 byte)
 {
 	iz result = (u8 *)memory_scan_backwards(s.data, byte, s.len) - s.data;
-	return result;
-}
-
-function s8
-s8_trim_trailing(s8 s, u8 byte)
-{
-	s8 result = s;
-	while (result.len >= 1 && result.data[result.len - 1] == byte) result.len--;
 	return result;
 }
 

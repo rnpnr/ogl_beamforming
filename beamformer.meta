@@ -246,12 +246,23 @@
 			@BakeInt(ToProcess            to_process            )
 			@BakeInt(TransmitCount        transmit_count        )
 		}
+
+		@PushConstants
+		{
+			[uint64_t U64 hadamard_buffer ]
+			[uint64_t U64 rf_buffer       ]
+			[uint64_t U64 output_buffer   ]
+			[uint64_t U64 output_rf_buffer]
+			[bool     B32 first_pass      ]
+		}
 	}
 
 	@Shader(filter.glsl) Filter
 	{
 		@Enumeration(DataKind)
 		@Flags([ComplexFilter OutputFloats])
+
+		@ShaderAlias Demodulate
 
 		@Bake
 		{
@@ -268,7 +279,12 @@
 			@BakeFloat(SamplingFrequency     sampling_frequency    )
 		}
 
-		@SubShader Demodulate
+		@PushConstants
+		{
+			[uint64_t U64 input_data         ]
+			[uint64_t U64 output_data        ]
+			[uint64_t U64 filter_coefficients]
+		}
 	}
 
 	@Shader(das.glsl) DAS
@@ -277,7 +293,7 @@
 		@Enumeration(DataKind)
 		@Enumeration(InterpolationMode)
 		@Enumeration(RCAOrientation)
-		@Flags([Fast Sparse CoherencyWeighting SingleFocus SingleOrientation])
+		@Flags([Sparse CoherencyWeighting SingleFocus SingleOrientation])
 
 		@Bake
 		{
@@ -296,15 +312,103 @@
 			@BakeFloat(TimeOffset            time_offset           )
 			@BakeFloat(TransmitAngle         transmit_angle        )
 		}
+
+		@PushConstants
+		{
+			[mat4     M4  voxel_transform              ]
+			[mat4     M4  xdc_transform                ]
+			[vec2     V2  xdc_element_pitch            ]
+			[uint64_t U64 rf_data                      ]
+			[uint64_t U64 output_data                  ]
+			[uint64_t U64 incoherent_output            ]
+			[uint64_t U64 focal_vectors                ]
+			[uint64_t U64 sparse_elements              ]
+			[uint64_t U64 transmit_receive_orientations]
+			[uint32_t U32 output_size_x                ]
+			[uint32_t U32 output_size_y                ]
+			[uint32_t U32 output_size_z                ]
+			[uint32_t U32 cycle_t                      ]
+			[int32_t  S32 channel_t                    ]
+		}
+	}
+
+	@Shader(sum.glsl) Sum
+	{
+		@Enumeration(DataKind)
+		@PushConstants
+		{
+			[uint64_t U64 output_data   ]
+			[uint64_t U64 input_data    ]
+			[uint32_t U32 image_elements]
+			[float    F32 scale         ]
+		}
 	}
 
 	@Shader(min_max.glsl) MinMax
-	@Shader(sum.glsl) Sum
+}
+
+// NOTE: shaders which need to be baked into the beamforming pipeline
+// but should not be visible to the external interface
+@ShaderGroup ComputeHelpers
+{
+	@Shader(coherency_weighting.glsl) CoherencyWeighting
+	{
+		@Enumeration(DataKind)
+
+		@PushConstants
+		{
+			[uint64_t U64 left_side_buffer ]
+			[uint64_t U64 right_side_buffer]
+			[uint32_t U32 elements         ]
+			[float    F32 scale            ]
+			[uint32_t U32 output_size_x    ]
+			[uint32_t U32 output_size_y    ]
+			[uint32_t U32 output_size_z    ]
+		}
+	}
+}
+
+// NOTE: general compute shaders which do not need baking
+@ShaderGroup ComputeInternal
+{
+	@Shader(buffer_clear.glsl) BufferClear
+	{
+		@PushConstants
+		{
+			[uint64_t U64 data      ]
+			[uint32_t U32 clear_word]
+			[uint32_t U32 words     ]
+		}
+	}
 }
 
 @ShaderGroup Render
 {
-	@Shader(render_3d.frag.glsl) Render3D
+	@RenderShader RenderBeamformed
+	{
+		@Enumeration(DataKind)
+
+		@VertexShader(render_3d.vert.glsl)
+		@FragmentShader(render_3d.frag.glsl)
+
+		@PushConstants
+		{
+			[mat4     M4  mvp_matrix           ]
+			[uint64_t U64 positions            ]
+			[uint64_t U64 normals              ]
+
+			[vec4     V4  bounding_box_colour  ]
+			[float    F32 bounding_box_fraction]
+			[float    F32 db_cutoff            ]
+			[float    F32 threshold            ]
+			[float    F32 gamma                ]
+			[uint64_t U64 input_data           ]
+			[uint32_t U32 input_size_x         ]
+			[uint32_t U32 input_size_y         ]
+			[uint32_t U32 input_size_z         ]
+			[uint32_t U32 data_kind            ]
+		}
+	}
 }
 
 /////////////////

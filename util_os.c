@@ -24,3 +24,21 @@ release_lock(i32 *lock)
 	atomic_store_u32(lock, 0);
 	os_wake_all_waiters(lock);
 }
+
+#if BEAMFORMER_RENDERDOC_HOOKS
+function void
+load_renderdoc_functions(BeamformerInput *input, OSLibrary rdoc)
+{
+	if ValidHandle(rdoc) {
+		renderdoc_get_api_fn *get_api = os_lookup_symbol(rdoc, "RENDERDOC_GetAPI");
+		if (get_api) {
+			RenderDocAPI *api = 0;
+			if (get_api(10600, (void **)&api)) {
+				input->renderdoc_start_frame_capture            = RENDERDOC_START_FRAME_CAPTURE(api);
+				input->renderdoc_end_frame_capture              = RENDERDOC_END_FRAME_CAPTURE(api);
+				input->renderdoc_set_capture_file_path_template = RENDERDOC_SET_CAPTURE_PATH_TEMPLATE(api);
+			}
+		}
+	}
+}
+#endif

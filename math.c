@@ -143,20 +143,6 @@ subrange_n_from_n_m_count(u64 n, u64 n_count, u64 m)
 	return result;
 }
 
-function b32
-iv2_equal(iv2 a, iv2 b)
-{
-	b32 result = a.x == b.x && a.y == b.y;
-	return result;
-}
-
-function b32
-iv3_equal(iv3 a, iv3 b)
-{
-	b32 result = a.x == b.x && a.y == b.y && a.z == b.z;
-	return result;
-}
-
 function v2
 clamp_v2_rect(v2 v, Rect r)
 {
@@ -522,12 +508,12 @@ function m4
 perspective_projection(f32 n, f32 f, f32 fov, f32 aspect)
 {
 	m4 result;
-	f32 t = tan_f32(fov / 2.0f);
+	f32 t = n * tan_f32(fov / 2.0f);
 	f32 r = t * aspect;
 	f32 a = -(f + n) / (f - n);
 	f32 b = -2 * f * n / (f - n);
-	result.c[0] = (v4){{1 / r, 0,     0,  0}};
-	result.c[1] = (v4){{0,     1 / t, 0,  0}};
+	result.c[0] = (v4){{n / r, 0,     0,  0}};
+	result.c[1] = (v4){{0,     n / t, 0,  0}};
 	result.c[2] = (v4){{0,     0,     a, -1}};
 	result.c[3] = (v4){{0,     0,     b,  0}};
 	return result;
