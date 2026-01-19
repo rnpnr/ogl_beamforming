@@ -1,48 +1,64 @@
 /* See LICENSE for license details. */
 #if   DataKind == DataKind_Float32
-  #define SAMPLE_TYPE           float
-  #define TEXTURE_KIND          r32f
-  #define RESULT_TYPE_CAST(a)   (a).x
-  #define OUTPUT_TYPE_CAST(a)   vec4((a).x, 0, 0, 0)
-  #if !Fast
-    #define RESULT_TYPE         vec2
-    #define RESULT_LAST_INDEX   1
+  #if CoherencyWeighting
+    #define RESULT_TYPE               vec2
+    #define RESULT_COHERENT_CAST(a)   (a).x
+    #define RESULT_INCOHERENT_CAST(a) (a).y
   #endif
+  #define SAMPLE_TYPE float
 #elif DataKind == DataKind_Float32Complex
-  #define SAMPLE_TYPE           vec2
-  #define TEXTURE_KIND          rg32f
-  #define RESULT_TYPE_CAST(a)   (a).xy
-  #define OUTPUT_TYPE_CAST(a)   vec4((a).xy, 0, 0)
-  #if !Fast
-    #define RESULT_TYPE         vec3
-    #define RESULT_LAST_INDEX   2
+  #if CoherencyWeighting
+    #define RESULT_TYPE               vec3
+    #define RESULT_COHERENT_CAST(a)   (a).xy
+    #define RESULT_INCOHERENT_CAST(a) (a).z
   #endif
+  #define SAMPLE_TYPE vec2
 #else
   #error DataKind unsupported for DAS
 #endif
-
-layout(std430, binding = 1) readonly restrict buffer buffer_1 {
-	SAMPLE_TYPE rf_data[];
-};
 
 #ifndef RESULT_TYPE
   #define RESULT_TYPE SAMPLE_TYPE
 #endif
 
-#if Fast
-  #define RESULT_STORE(a, length_a) RESULT_TYPE(a)
-	layout(TEXTURE_KIND, binding = 0)           restrict uniform image3D  u_out_data_tex;
-#else
-  #define RESULT_STORE(a, length_a) RESULT_TYPE(a, length_a)
-	layout(TEXTURE_KIND, binding = 0) writeonly restrict uniform image3D  u_out_data_tex;
+#ifndef RESULT_COHERENT_CAST
+  #define RESULT_COHERENT_CAST(a) (a)
 #endif
 
-layout(r16i,  binding = 1) readonly  restrict uniform iimage1D sparse_elements;
-layout(rg32f, binding = 2) readonly  restrict uniform image1D  focal_vectors;
-layout(r8i,   binding = 3) readonly  restrict uniform iimage1D transmit_receive_orientations;
+#if CoherencyWeighting
+  #define RESULT_STORE(a) RESULT_TYPE(RESULT_COHERENT_CAST(a), length(a))
+#else
+  #define RESULT_STORE(a) (a)
+#endif
+
+layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer RF {
+	SAMPLE_TYPE values[];
+};
+
+layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer SparseElements {
+	int16_t values[];
+};
+
+layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer TransmitReceiveOrientations {
+	uint16_t values[];
+};
+
+layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer FocalVectors {
+	vec2 values[];
+};
+
+layout(std430, buffer_reference, buffer_reference_align = 64) restrict buffer Output {
+	SAMPLE_TYPE values[];
+};
+
+layout(std430, buffer_reference, buffer_reference_align = 64) restrict buffer IncoherentOutput {
+	float values[];
+};
 
 #define RX_ORIENTATION(tx_rx) (((tx_rx) >> 0) & 0x0F)
 #define TX_ORIENTATION(tx_rx) (((tx_rx) >> 4) & 0x0F)
+//#define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
+//#define TX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 4, 4)
 
 #define C_SPLINE 0.5
 
@@ -70,10 +86,10 @@ SAMPLE_TYPE cubic(const int base_index, const float t)
 	);
 
 	SAMPLE_TYPE samples[4] = {
-		rf_data[base_index + 0],
-		rf_data[base_index + 1],
-		rf_data[base_index + 2],
-		rf_data[base_index + 3],
+		RF(rf_data).values[base_index + 0],
+		RF(rf_data).values[base_index + 1],
+		RF(rf_data).values[base_index + 2],
+		RF(rf_data).values[base_index + 3],
 	};
 
 	vec4        S  = vec4(t * t * t, t * t, t, 1);
@@ -98,13 +114,13 @@ SAMPLE_TYPE sample_rf(const int rf_offset, const float index)
 	switch (InterpolationMode) {
 	case InterpolationMode_Nearest:{
 		if (int(index) >= 0 && int(round(index)) < SampleCount)
-			result = rotate_iq(rf_data[rf_offset + int(round(index))], index / SamplingFrequency);
+			result = rotate_iq(RF(rf_data).values[rf_offset + int(round(index))], index / SamplingFrequency);
 	}break;
 	case InterpolationMode_Linear:{
 		if (int(index) >= 0 && int(index) < SampleCount - 1) {
 			float tk, t = modf(index, tk);
 			int n = rf_offset + int(tk);
-			result = (1 - t) * rf_data[n] + t * rf_data[n + 1];
+			result = (1 - t) * RF(rf_data).values[n] + t * RF(rf_data).values[n + 1];
 			result = rotate_iq(result, index / SamplingFrequency);
 		}
 	}break;
@@ -122,6 +138,12 @@ float sample_index(const float distance)
 {
 	float  time = distance / SpeedOfSound + TimeOffset;
 	return time * SamplingFrequency;
+}
+
+uint32_t output_index(uint32_t x, uint32_t y, uint32_t z)
+{
+	uint32_t result = output_size_x * output_size_y * z + output_size_x * y + x;
+	return result;
 }
 
 float apodize(const float arg)
@@ -158,19 +180,21 @@ float cylindrical_wave_transmit_distance(const vec3 point, const float focal_dep
 	return distance(rca_plane_projection(point, tx_rows), f);
 }
 
-int tx_rx_orientation_for_acquisition(const int acquisition)
+uint16_t tx_rx_orientation_for_acquisition(const int16_t acquisition)
 {
-	int result = bool(SingleOrientation) ? TransmitReceiveOrientation : imageLoad(transmit_receive_orientations, acquisition).x;
+	uint16_t result = bool(SingleOrientation) ? uint16_t(TransmitReceiveOrientation)
+	                                          : TransmitReceiveOrientations(transmit_receive_orientations).values[acquisition];
 	return result;
 }
 
-vec2 focal_vector_for_acquisition(const int acquisition)
+vec2 focal_vector_for_acquisition(const int16_t acquisition)
 {
-	vec2 result = bool(SingleFocus) ? vec2(TransmitAngle, FocusDepth) : imageLoad(focal_vectors, acquisition).xy;
+	vec2 result = bool(SingleFocus) ? vec2(TransmitAngle, FocusDepth)
+	                                : FocalVectors(focal_vectors).values[acquisition];
 	return result;
 }
 
-float rca_transmit_distance(const vec3 world_point, const vec2 focal_vector, const int transmit_receive_orientation)
+float rca_transmit_distance(const vec3 world_point, const vec2 focal_vector, const uint16_t transmit_receive_orientation)
 {
 	float result = 0;
 	if (TX_ORIENTATION(transmit_receive_orientation) != RCAOrientation_None) {
@@ -189,13 +213,13 @@ float rca_transmit_distance(const vec3 world_point, const vec2 focal_vector, con
 
 RESULT_TYPE RCA(const vec3 world_point)
 {
-	const int acquisition_start = bool(Fast)? u_channel     : 0;
-	const int acquisition_end   = bool(Fast)? u_channel + 1 : AcquisitionCount;
+	const int16_t acquisition_start = int16_t(channel_t);
+	const int16_t acquisition_end   = int16_t(channel_t + 1);
 	RESULT_TYPE result = RESULT_TYPE(0);
-	for (int acquisition = acquisition_start; acquisition < acquisition_end; acquisition++) {
-		const int  tx_rx_orientation = tx_rx_orientation_for_acquisition(acquisition);
-		const bool rx_rows           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows;
-		const vec2 focal_vector      = focal_vector_for_acquisition(acquisition);
+	for (int16_t acquisition = acquisition_start; acquisition < acquisition_end; acquisition++) {
+		const uint16_t tx_rx_orientation = tx_rx_orientation_for_acquisition(acquisition);
+		const bool     rx_rows           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows;
+		const vec2     focal_vector      = focal_vector_for_acquisition(acquisition);
 		vec2  xdc_world_point   = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
 		float transmit_distance = rca_transmit_distance(world_point, focal_vector, tx_rx_orientation);
 
@@ -209,7 +233,7 @@ RESULT_TYPE RCA(const vec3 world_point)
 			if (a_arg < 0.5f) {
 				float       sidx  = sample_index(transmit_distance + length(receive_vector));
 				SAMPLE_TYPE value = apodize(a_arg) * sample_rf(rf_offset, sidx);
-				result += RESULT_STORE(value, length(value));
+				result += RESULT_STORE(value);
 			}
 			rf_offset += SampleCount * AcquisitionCount;
 		}
@@ -219,10 +243,10 @@ RESULT_TYPE RCA(const vec3 world_point)
 
 RESULT_TYPE HERCULES(const vec3 world_point)
 {
-	const int tx_rx_orientation  = tx_rx_orientation_for_acquisition(0);
-	const bool rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
-	const vec2 focal_vector      = focal_vector_for_acquisition(0);
-	const vec3 xdc_world_point   = (xdc_transform * vec4(world_point, 1)).xyz;
+	const uint16_t tx_rx_orientation = tx_rx_orientation_for_acquisition(int16_t(0));
+	const bool     rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
+	const vec2     focal_vector      = focal_vector_for_acquisition(int16_t(0));
+	const vec3     xdc_world_point   = (xdc_transform * vec4(world_point, 1)).xyz;
 
 	const float transmit_index   = sample_index(rca_transmit_distance(world_point, focal_vector, tx_rx_orientation));
 	const float z_delta_squared  = xdc_world_point.z * xdc_world_point.z;
@@ -231,11 +255,7 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 	const float apodization_test = 0.25f / (f_number_over_z * f_number_over_z);
 
 	RESULT_TYPE result = RESULT_TYPE(0);
-	#if Fast
-	const int rx_channel = u_channel;
-	#else
-	for (int rx_channel = 0; rx_channel < ChannelCount; rx_channel++)
-	#endif
+	const int rx_channel = channel_t;
 	{
 		int rf_offset   = rx_channel * SampleCount * AcquisitionCount + Sparse * SampleCount;
 		rf_offset      -= int(InterpolationMode == InterpolationMode_Cubic);
@@ -249,7 +269,8 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 		else         element_receive_delta_squared.y *= element_receive_delta_squared.y;
 
 		for (int transmit = Sparse; transmit < AcquisitionCount; transmit++) {
-			int tx_channel = bool(Sparse) ? imageLoad(sparse_elements, transmit - Sparse).x : transmit;
+			int tx_channel = bool(Sparse) ? SparseElements(sparse_elements).values[transmit - Sparse]
+			                              : transmit;
 
 			if (rx_cols) element_receive_delta_squared.y  = xy_world_point.y - tx_channel * xdc_element_pitch.y;
 			else         element_receive_delta_squared.x  = xy_world_point.x - tx_channel * xdc_element_pitch.x;
@@ -265,7 +286,7 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 
 				float index = transmit_index + sqrt(z_delta_squared + element_delta_squared) * SamplingFrequency / SpeedOfSound;
 				SAMPLE_TYPE value = apodization * sample_rf(rf_offset, index);
-				result += RESULT_STORE(value, length(value));
+				result += RESULT_STORE(value);
 			}
 
 			rf_offset += SampleCount;
@@ -276,8 +297,8 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 
 RESULT_TYPE FORCES(const vec3 xdc_world_point)
 {
-	const int rx_channel_start = bool(Fast)? u_channel     : 0;
-	const int rx_channel_end   = bool(Fast)? u_channel + 1 : ChannelCount;
+	const int16_t rx_channel_start = int16_t(channel_t);
+	const int16_t rx_channel_end   = int16_t(channel_t + 1);
 
 	RESULT_TYPE result = RESULT_TYPE(0);
 
@@ -285,7 +306,7 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;
 	float transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
 
-	for (int rx_channel = rx_channel_start; rx_channel < rx_channel_end; rx_channel++) {
+	for (int16_t rx_channel = rx_channel_start; rx_channel < rx_channel_end; rx_channel++) {
 		float receive_x_delta = xdc_world_point.x - rx_channel * xdc_element_pitch.x;
 		float a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
 
@@ -296,12 +317,13 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 			float receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
 			float apodization   = apodize(a_arg);
 			for (int transmit = Sparse; transmit < AcquisitionCount; transmit++) {
-				int   tx_channel       = bool(Sparse) ? imageLoad(sparse_elements, transmit - Sparse).x : transmit;
+				int tx_channel = bool(Sparse) ? SparseElements(sparse_elements).values[transmit - Sparse]
+				                              : transmit;
 				float transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_channel;
 				float transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
 
 				SAMPLE_TYPE value = apodization * sample_rf(rf_offset, receive_index + transmit_index);
-				result    += RESULT_STORE(value, length(value));
+				result    += RESULT_STORE(value);
 				rf_offset += SampleCount;
 			}
 		}
@@ -311,15 +333,17 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 
 void main()
 {
-	ivec3 out_voxel    = ivec3(gl_GlobalInvocationID);
-	vec3  image_points = vec3(imageSize(u_out_data_tex)) - 1.0f;
-	if (!all(lessThan(out_voxel, imageSize(u_out_data_tex))))
+	uvec3 out_voxel = gl_GlobalInvocationID;
+	if (!all(lessThan(out_voxel, uvec3(output_size_x, output_size_y, output_size_z))))
 		return;
 
-	vec3 point       = vec3(out_voxel) / max(vec3(1.0f), image_points);
-	vec3 world_point = (voxel_transform * vec4(point, 1)).xyz;
+	vec3 image_points = vec3(output_size_x, output_size_y, output_size_z) - 1.0f;
+	vec3 point        = vec3(out_voxel) / max(vec3(1.0f), image_points);
+	vec3 world_point  = (voxel_transform * vec4(point, 1)).xyz;
 
-	RESULT_TYPE sum;
+	uint32_t out_index = output_index(out_voxel.x, out_voxel.y, out_voxel.z);
+
+	RESULT_TYPE sum = RESULT_TYPE(0);
 	switch (AcquisitionKind) {
 	case AcquisitionKind_FORCES:
 	case AcquisitionKind_UFORCES:
@@ -340,15 +364,9 @@ void main()
 	}break;
 	}
 
-	#if Fast
-		sum += RESULT_TYPE_CAST(imageLoad(u_out_data_tex, out_voxel));
-	#endif
-
 	#if CoherencyWeighting
-		/* TODO(rnp): scale such that brightness remains ~constant */
-		float denominator = sum[RESULT_LAST_INDEX] + float(sum[RESULT_LAST_INDEX] == 0);
-		RESULT_TYPE_CAST(sum) *= RESULT_TYPE_CAST(sum) / denominator;
+	IncoherentOutput(incoherent_output).values[out_index] += RESULT_INCOHERENT_CAST(sum);
 	#endif
 
-	imageStore(u_out_data_tex, out_voxel, OUTPUT_TYPE_CAST(sum));
+	Output(output_data).values[out_index] += RESULT_COHERENT_CAST(sum);
 }
