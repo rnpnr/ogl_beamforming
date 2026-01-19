@@ -733,9 +733,8 @@ build_raylib(Arena a)
 {
 	b32 result = 1, shared = config.debug;
 	char *libraylib = shared ? OS_SHARED_LINK_LIB("raylib") : OUTPUT_LIB(OS_STATIC_LIB("raylib"));
-	if (needs_rebuild(libraylib, "external/include/rlgl.h", "external/raylib")) {
+	if (needs_rebuild(libraylib, "external/raylib")) {
 		git_submodule_update(a, "external/raylib");
-		os_copy_file("external/raylib/src/rlgl.h", "external/include/rlgl.h");
 
 		CommandList cc = {0};
 		cmd_base(&a, &cc, 0, config.debug);
@@ -744,16 +743,17 @@ build_raylib(Arena a)
 		if (!is_msvc) cmd_append(&a, &cc, "-Wno-unused-but-set-variable");
 		cmd_append(&a, &cc, "-Iexternal/include", "-Iexternal/raylib/src", "-Iexternal/raylib/src/external/glfw/include");
 		#define RAYLIB_SOURCES \
+			X(rcore)     \
 			X(rglfw)     \
 			X(rshapes)   \
 			X(rtext)     \
 			X(rtextures) \
 			X(utils)
 		#define X(name) "external/raylib/src/" #name ".c",
-		char *srcs[] = {"external/rcore_extended.c", RAYLIB_SOURCES};
+		char *srcs[] = {RAYLIB_SOURCES};
 		#undef X
 		#define X(name) OUTPUT(OBJECT(#name)),
-		char *outs[] = {OUTPUT(OBJECT("rcore_extended")), RAYLIB_SOURCES};
+		char *outs[] = {RAYLIB_SOURCES};
 		#undef X
 
 		if (shared) {
@@ -1026,24 +1026,25 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 }
 
 #define META_ENTRY_KIND_LIST \
-	X(Invalid)      \
-	X(Array)        \
-	X(Bake)         \
-	X(BakeInt)      \
-	X(BakeFloat)    \
-	X(BeginScope)   \
-	X(Emit)         \
-	X(Embed)        \
-	X(EndScope)     \
-	X(Enumeration)  \
-	X(Expand)       \
-	X(Flags)        \
-	X(MUnion)       \
-	X(String)       \
-	X(Shader)       \
-	X(ShaderGroup)  \
-	X(SubShader)    \
-	X(Table)
+	X(Invalid)       \
+	X(Array)         \
+	X(Bake)          \
+	X(BakeInt)       \
+	X(BakeFloat)     \
+	X(BeginScope)    \
+	X(Emit)          \
+	X(Embed)         \
+	X(EndScope)      \
+	X(Enumeration)   \
+	X(Expand)        \
+	X(Flags)         \
+	X(MUnion)        \
+	X(PushConstants) \
+	X(String)        \
+	X(Shader)        \
+	X(ShaderGroup)   \
+	X(SubShader)     \
+	X(Table)         \
 
 typedef enum {
 	#define X(k, ...) MetaEntryKind_## k,
@@ -1079,9 +1080,14 @@ typedef enum {
 	X(S32, i32, int32_t,  int32,   4,  1) \
 	X(S16, i16, int16_t,  int16,   2,  1) \
 	X(S8,  i8,  int8_t,   int8,    1,  1) \
+	X(B64, b64, uint64_t, uint64,  8,  1) \
+	X(B32, b32, uint32_t, uint32,  4,  1) \
+	X(B16, b16, uint16_t, uint16,  2,  1) \
+	X(B8,  b8,  uint8_t,  uint8,   1,  1) \
+	X(U64, u64, uint64_t, uint64,  8,  1) \
 	X(U32, u32, uint32_t, uint32,  4,  1) \
 	X(U16, u16, uint16_t, uint16,  2,  1) \
-	X(U8,  u8,  uint8_t,  uint8,   1,  1)
+	X(U8,  u8,  uint8_t,  uint8,   1,  1) \
 
 typedef enum {
 	#define X(k, ...) MetaKind_## k,
@@ -1126,6 +1132,7 @@ read_only global s8 meta_kind_c_types[] = {
 	#undef X
 };
 
+#define META_CURRENT_LOCATION (MetaLocation){__LINE__, 0}
 typedef struct { u32 line, column; } MetaLocation;
 
 #define META_ENTRY_ARGUMENT_KIND_LIST \
@@ -1652,6 +1659,7 @@ typedef struct {
 	MetaIDList                shader_enumeration_ids;
 	MetaShaderBakeParameters *bake_parameters;
 	u32                       name_id;
+	u32                       push_constants_id;
 	u32                       flag_list_id;
 	i32                       base_shader_id;
 } MetaShader;
@@ -1784,6 +1792,8 @@ typedef struct {
 
 	s8_list                      table_names;
 	MetaTableList                tables;
+
+	MetaTableList                push_constant_tables;
 
 	s8_list                      munion_namespaces;
 	MetaMUnionList               munions;
@@ -1921,6 +1931,47 @@ meta_commit_shader_flag(MetaContext *ctx, u32 flag_list_id, s8 flag, MetaEntry *
 }
 
 function iz
+meta_fill_table(MetaContext *ctx, MetaEntry *e, iz entry_count, MetaTable *t)
+{
+	MetaEntryScope scope = meta_entry_extract_scope(e, entry_count);
+
+	if (scope.consumed > 1) {
+		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++) {
+			if (row->kind != MetaEntryKind_Array)
+				meta_entry_nesting_error(row, e->kind);
+
+			MetaEntryArgument entries = meta_entry_argument_expect(row, 0, MetaEntryArgumentKind_Array);
+			if (entries.count != t->field_count) {
+				meta_compiler_error_message(row->location, "incorrect field count for @%s entry got: %zu expected: %u\n",
+				                            meta_entry_kind_strings[e->kind],
+				                            entries.count, t->field_count);
+				fprintf(stderr, "  fields: [");
+				for (uz i = 0; i < t->field_count; i++) {
+					if (i != 0) fprintf(stderr, ", ");
+					fprintf(stderr, "%.*s", (i32)t->fields[i].len, t->fields[i].data);
+				}
+				fprintf(stderr, "]\n");
+				meta_error();
+			}
+			t->entry_count++;
+		}
+
+		t->entries = push_array(ctx->arena, s8 *, t->field_count);
+		for (u32 field = 0; field < t->field_count; field++)
+			t->entries[field] = push_array(ctx->arena, s8, t->entry_count);
+
+		u32 row_index = 0;
+		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++, row_index++) {
+			s8 *fs = row->arguments->strings;
+			for (u32 field = 0; field < t->field_count; field++)
+				t->entries[field][row_index] = fs[field];
+		}
+	}
+
+	return scope.consumed;
+}
+
+function iz
 meta_pack_shader(MetaContext *ctx, MetaShaderGroup *sg, Arena scratch, MetaEntry *entries, iz entry_count)
 {
 	assert(entries[0].kind == MetaEntryKind_Shader);
@@ -1933,6 +1984,7 @@ meta_pack_shader(MetaContext *ctx, MetaShaderGroup *sg, Arena scratch, MetaEntry
 	}
 	s->name_id        = meta_pack_shader_name(ctx, entries->name, entries->location);
 	s->base_shader_id = -1;
+	s->push_constants_id = -1;
 
 	MetaBaseShader *base_shader = 0;
 	if (entries->argument_count > 1) {
@@ -2012,6 +2064,32 @@ meta_pack_shader(MetaContext *ctx, MetaShaderGroup *sg, Arena scratch, MetaEntry
 			u32 table_id;
 			result += meta_pack_shader_bake_parameters(ctx, e, entry_count - result, (u32)da_index(s, &ctx->shaders), &table_id);
 			s->bake_parameters = ctx->shader_bake_parameters.data + table_id;
+		}break;
+
+		case MetaEntryKind_PushConstants:{
+			if (s->push_constants_id != (u32)-1) {
+				meta_entry_error(e, "invalid @%s in @%s: only one @%s allowed per @%s\n",
+				                 meta_entry_kind_strings[e->kind], meta_entry_kind_strings[MetaEntryKind_Shader],
+				                 meta_entry_kind_strings[e->kind], meta_entry_kind_strings[MetaEntryKind_Shader]);
+			}
+
+			read_only local_persist s8 push_constant_fields[] = {
+				s8_comp("vk_type"),
+				s8_comp("type"),
+				s8_comp("name"),
+				s8_comp("reference"),
+			};
+
+			MetaTable *t   = da_push(ctx->arena, &ctx->push_constant_tables);
+			t->fields      = push_constant_fields;
+			t->field_count = countof(push_constant_fields);
+
+			s->push_constants_id = (u32)da_index(t, &ctx->push_constant_tables);
+
+			result += meta_fill_table(ctx, e, entry_count - result, t);
+
+			if (t->entry_count > 32)
+				meta_entry_error(e, "maximum push constant parameters exceeded: limit: 32\n");
 		}break;
 
 		default:
@@ -2558,41 +2636,7 @@ meta_pack_table(MetaContext *ctx, MetaEntry *e, iz entry_count)
 	t->fields      = fields.strings;
 	t->field_count = (u32)fields.count;
 
-	MetaEntryScope scope = meta_entry_extract_scope(e, entry_count);
-	if (scope.consumed > 1) {
-		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++) {
-			if (row->kind != MetaEntryKind_Array)
-				meta_entry_nesting_error(row, MetaEntryKind_Table);
-
-			MetaEntryArgument entries = meta_entry_argument_expect(row, 0, MetaEntryArgumentKind_Array);
-			if (entries.count != t->field_count) {
-				meta_compiler_error_message(row->location, "incorrect field count for @%s entry got: %zu expected: %u\n",
-				                            meta_entry_kind_strings[MetaEntryKind_Table],
-				                            entries.count, t->field_count);
-				fprintf(stderr, "  fields: [");
-				for (uz i = 0; i < t->field_count; i++) {
-					if (i != 0) fprintf(stderr, ", ");
-					fprintf(stderr, "%.*s", (i32)t->fields[i].len, t->fields[i].data);
-				}
-				fprintf(stderr, "]\n");
-				meta_error();
-			}
-			t->entry_count++;
-		}
-
-		t->entries = push_array(ctx->arena, s8 *, t->field_count);
-		for (u32 field = 0; field < t->field_count; field++)
-			t->entries[field] = push_array(ctx->arena, s8, t->entry_count);
-
-		u32 row_index = 0;
-		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++, row_index++) {
-			s8 *fs = row->arguments->strings;
-			for (u32 field = 0; field < t->field_count; field++)
-				t->entries[field][row_index] = fs[field];
-		}
-	}
-
-	return scope.consumed;
+	return meta_fill_table(ctx, e, entry_count, t);
 }
 
 function CommandList
@@ -2707,7 +2751,7 @@ meta_expansion_part_conditional(MetaExpansionPart *p, u32 entry, s8 table_name, 
 
 function void
 metagen_run_emit(MetaprogramContext *m, MetaContext *ctx, MetaEmitOperationList *ops,
-                 s8 *evaluation_table)
+                 MetaTableList *tables, s8 *evaluation_table)
 {
 	for (iz opcode = 0; opcode < ops->count; opcode++) {
 		MetaEmitOperation *op = ops->data + opcode;
@@ -2725,8 +2769,10 @@ metagen_run_emit(MetaprogramContext *m, MetaContext *ctx, MetaEmitOperationList 
 			Arena scratch = m->scratch;
 
 			MetaEmitOperationExpansion *eop = &op->expansion_operation;
-			MetaTable *t  = ctx->tables.data + eop->table_id;
-			s8 table_name = ctx->table_names.data[t->table_name_id];
+			MetaTable *t  = tables->data + eop->table_id;
+			// TODO(rnp): table_names should be stored with the in the table list
+			s8 table_name = eop->table_id < ctx->table_names.count ? ctx->table_names.data[t->table_name_id]
+			                                                       : s8("(Unamed Table)");
 
 			u32 alignment_count  = 1;
 			u32 evaluation_count = 0;
@@ -2809,7 +2855,7 @@ metagen_run_emit_set(MetaprogramContext *m, MetaContext *ctx, MetaEmitOperationL
 {
 	for (iz set = 0; set < emit_set->count; set++) {
 		MetaEmitOperationList *ops = emit_set->data + set;
-		metagen_run_emit(m, ctx, ops, evaluation_table);
+		metagen_run_emit(m, ctx, ops, &ctx->tables, evaluation_table);
 	}
 }
 
@@ -2988,6 +3034,15 @@ meta_push_shader_bake(MetaprogramContext *m, MetaContext *ctx)
 	} meta_end_scope(m, s8("};\n"));
 }
 
+function void
+metagen_emit_c_s8_list(MetaprogramContext *m, s8 *strs, u32 count)
+{
+	meta_begin_scope(m, s8("(s8 []){"));
+	for (u32 index = 0; index < count; index++)
+		meta_push_line(m, s8("s8_comp(\""), strs[index], s8("\"),"));
+	meta_end_scope(m, s8("},"));
+}
+
 function b32
 metagen_emit_c_code(MetaContext *ctx, Arena arena)
 {
@@ -3087,6 +3142,8 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	// NOTE(rnp): structs
 	for (u32 bake = 0; bake < ctx->shader_bake_parameters.count; bake++) {
 		Arena tmp = m->scratch;
+
+		// NOTE: Bake Parameters
 		MetaShaderBakeParameters *b = ctx->shader_bake_parameters.data + bake;
 		MetaShader *s = ctx->shaders.data + b->shader_id;
 		s8 name = push_s8_from_parts(&m->scratch, s8(""), s8("BeamformerShader"),
@@ -3097,6 +3154,40 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 				meta_push_line(m, kind, b->names_lower[entry], s8(";"));
 			}
 		meta_end_scope(m, s8("} "), name, s8(";\n"));
+		m->scratch = tmp;
+	}
+
+
+	for (iz base_shader = 0; base_shader < ctx->base_shaders.count; base_shader++) {
+		Arena tmp = m->scratch;
+
+		// NOTE: Push Constants
+		MetaShader *s = ctx->base_shaders.data[base_shader].shader;
+		if (s->push_constants_id != (u32)-1) {
+			MetaEmitOperationList ops[1] = {0};
+			MetaTable *pc = ctx->push_constant_tables.data + s->push_constants_id;
+
+			MetaEmitOperation *op = da_push(&m->scratch, ops);
+			op->kind   = MetaEmitOperationKind_String;
+			op->string = s8("typedef struct {");
+
+			s8 expr = s8("	$(%type)$(|)$(name);");
+
+			MetaExpansionPartList parts = meta_generate_expansion_set(ctx, &m->scratch, expr, pc, META_CURRENT_LOCATION);
+			op = da_push(&m->scratch, ops);
+			op->kind = MetaEmitOperationKind_Expand;
+			op->expansion_operation.parts      = parts.data;
+			op->expansion_operation.part_count = (u32)parts.count;
+			op->expansion_operation.table_id   = s->push_constants_id;
+
+			op = da_push(&m->scratch, ops);
+			op->kind   = MetaEmitOperationKind_String;
+			op->string = push_s8_from_parts(&m->scratch, s8(""), s8("} BeamformerShader"),
+			                                ctx->shader_names.data[s->name_id], s8("PushConstants;"));
+
+			metagen_run_emit(m, ctx, ops, &ctx->push_constant_tables, meta_kind_c_types);
+		}
+
 		m->scratch = tmp;
 	}
 
@@ -3169,10 +3260,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
 		MetaShader *s = ctx->base_shaders.data[shader].shader;
 		if (s->bake_parameters) {
-			meta_begin_scope(m, s8("(s8 []){"));
-			for (u32 index = 0; index < s->bake_parameters->entry_count; index++)
-				meta_push_line(m, s8("s8_comp(\""), s->bake_parameters->names_upper[index], s8("\"),"));
-			meta_end_scope(m, s8("},"));
+			metagen_emit_c_s8_list(m, s->bake_parameters->names_upper, s->bake_parameters->entry_count);
 		} else {
 			meta_push_line(m, s8("0,"));
 		}
@@ -3198,6 +3286,76 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		} else {
 			meta_push_line(m, s8("0,"));
 		}
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global s8 *beamformer_shader_push_constant_vk_types[] = {"));
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		MetaShader *s = ctx->base_shaders.data[shader].shader;
+		if (s->push_constants_id != (u32)-1) {
+			MetaTable *pc = ctx->push_constant_tables.data + s->push_constants_id;
+			iz field = meta_lookup_string_slow(pc->fields, pc->field_count, s8("vk_type"));
+			metagen_emit_c_s8_list(m, pc->entries[field], pc->entry_count);
+		} else {
+			meta_push_line(m, s8("0,"));
+		}
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global s8 *beamformer_shader_push_constant_names[] = {"));
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		MetaShader *s = ctx->base_shaders.data[shader].shader;
+		if (s->push_constants_id != (u32)-1) {
+			MetaTable *pc = ctx->push_constant_tables.data + s->push_constants_id;
+			iz field = meta_lookup_string_slow(pc->fields, pc->field_count, s8("name"));
+			metagen_emit_c_s8_list(m, pc->entries[field], pc->entry_count);
+		} else {
+			meta_push_line(m, s8("0,"));
+		}
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global u8 beamformer_shader_push_constant_counts[] = {"));
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		MetaShader *s = ctx->base_shaders.data[shader].shader;
+		if (s->push_constants_id != (u32)-1) {
+			meta_indent(m);
+			meta_push_u64(m, ctx->push_constant_tables.data[s->push_constants_id].entry_count);
+			meta_end_line(m, s8(","));
+		} else {
+			meta_push_line(m, s8("0,"));
+		}
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global u8 beamformer_shader_push_constant_sizes[] = {"));
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		MetaShader *s = ctx->base_shaders.data[shader].shader;
+		if (s->push_constants_id != (u32)-1) {
+			meta_push_line(m, s8("sizeof(BeamformerShader"), ctx->shader_names.data[s->name_id],
+			               s8("PushConstants),"));
+		} else {
+			meta_push_line(m, s8("0,"));
+		}
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global u32 beamformer_shader_push_constant_reference_bits[] = {"));
+	for (iz shader = 0; shader < ctx->base_shaders.count; shader++) {
+		MetaShader *s = ctx->base_shaders.data[shader].shader;
+		u32 reference_bits = 0;
+		if (s->push_constants_id != (u32)-1) {
+			MetaTable *pc = ctx->push_constant_tables.data + s->push_constants_id;
+			iz field = meta_lookup_string_slow(pc->fields, pc->field_count, s8("reference"));
+			s8 *ref  = pc->entries[field];
+
+			for (u32 bit = 0; bit < pc->entry_count; bit++)
+				if (ref[bit].data[0] != '0')
+					reference_bits |= 1 << bit;
+		}
+		meta_begin_line(m, s8("0x"));
+		meta_push_u64_hex_width(m, reference_bits, 8);
+		meta_end_line(m, s8("UL,"));
 	}
 	meta_end_scope(m, s8("};\n"));
 
@@ -3408,7 +3566,7 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 			                               s8(OUTPUT("matlab") OS_PATH_SEPARATOR "OGLBeamformer"),
 			                               ops->filename, s8(".m"));
 			meta_push_line(m, s8("% GENERATED CODE"));
-			metagen_run_emit(m, ctx, ops, meta_kind_matlab_types);
+			metagen_run_emit(m, ctx, ops, &ctx->tables, meta_kind_matlab_types);
 			result &= meta_write_and_reset(m, (c8 *)output.data);
 			m->scratch = scratch;
 		}

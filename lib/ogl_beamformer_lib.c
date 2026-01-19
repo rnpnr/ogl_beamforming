@@ -183,6 +183,15 @@ beamformer_get_last_error_string(void)
 	return beamformer_error_string(beamformer_get_last_error());
 }
 
+u64
+beamformer_maximum_frame_size(void)
+{
+	u64 result = U64_MAX;
+	if (check_shared_memory())
+		result = g_beamformer_library_context.bp->max_beamformed_data_size;
+	return result;
+}
+
 void
 beamformer_set_global_timeout(u32 timeout_ms)
 {
@@ -230,11 +239,7 @@ function b32
 validate_simple_parameters(BeamformerSimpleParameters *bp)
 {
 	b32 result = check_shared_memory();
-	if (result) {
-		result &= bp->channel_count <= BeamformerMaxChannelCount;
-		if (!result)
-			g_beamformer_library_context.last_error = BeamformerLibErrorKind_InvalidSimpleParameters;
-	}
+	result = result && lib_error_check(bp->channel_count <= BeamformerMaxChannelCount, InvalidParameters);
 	return result;
 }
 
@@ -549,9 +554,9 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 {
 	b32 result = validate_simple_parameters(bp);
 	if (result) {
-		bp->output_points.E[0] = MAX(1, bp->output_points.E[0]);
-		bp->output_points.E[1] = MAX(1, bp->output_points.E[1]);
-		bp->output_points.E[2] = MAX(1, bp->output_points.E[2]);
+		bp->output_points.E[0] = Max(1, bp->output_points.E[0]);
+		bp->output_points.E[1] = Max(1, bp->output_points.E[1]);
+		bp->output_points.E[2] = Max(1, bp->output_points.E[2]);
 
 		beamformer_push_simple_parameters(bp);
 
@@ -561,11 +566,13 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 			complex |= shader == BeamformerShaderKind_Demodulate || shader == BeamformerShaderKind_CudaHilbert;
 		}
 
-		iz output_size = bp->output_points.x * bp->output_points.y * bp->output_points.z * (i32)sizeof(f32);
+		u64 output_size = bp->output_points.x * bp->output_points.y * bp->output_points.z * sizeof(f32);
 		if (complex) output_size *= 2;
 
+		result = lib_error_check(output_size <= g_beamformer_library_context.bp->max_beamformed_data_size, FrameSizeOverflow);
+
 		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
-		if (out_data) result = lib_error_check(output_size <= arena_capacity(&scratch, u8), ExportSpaceOverflow);
+		if (result && out_data) result = lib_error_check((iz)output_size <= arena_capacity(&scratch, u8), ExportSpaceOverflow);
 
 		if (result) {
 			result = beamformer_push_data_with_compute(data, data_size, 0, 0);

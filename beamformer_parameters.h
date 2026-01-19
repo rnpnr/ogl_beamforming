@@ -31,12 +31,13 @@ typedef enum {
 } BeamformerViewPlaneTag;
 
 #define BEAMFORMER_CONSTANTS_LIST \
-	X(FilterSlots,                4) \
-	X(MaxChannelCount,          256) \
-	X(MaxComputeShaderStages,    16) \
-	X(MaxParameterBlockSlots,    16) \
-	X(MaxRawDataFramesInFlight,   3) \
-	X(MaxSavedFrames,            16)
+	X(FilterSlots,                 4) \
+	X(MaxChannelCount,           256) \
+	X(MaxComputeShaderStages,     16) \
+	X(MaxParameterBlockSlots,     16) \
+	X(MaxRawDataFramesInFlight,    3) \
+	X(MaxBacklogFrames,         4096) \
+
 #define X(k, v, ...) Beamformer##k = v,
 typedef enum {BEAMFORMER_CONSTANTS_LIST} BeamformerConstants;
 #undef X
