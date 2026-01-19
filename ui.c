@@ -304,8 +304,7 @@ struct Variable {
 #define BEAMFORMER_FRAME_VIEW_KIND_LIST \
 	X(Latest,   "Latest")     \
 	X(3DXPlane, "3D X-Plane") \
-	X(Indexed,  "Indexed")    \
-	X(Copy,     "Copy")
+	X(Copy,     "Copy")       \
 
 typedef enum {
 	#define X(kind, ...) BeamformerFrameViewKind_##kind,
@@ -318,7 +317,10 @@ typedef struct BeamformerFrameView BeamformerFrameView;
 struct BeamformerFrameView {
 	BeamformerFrameViewKind kind;
 	b32 dirty;
-	BeamformerFrame     *frame;
+	union {
+		BeamformerFrame     *frame;
+		BeamformerFrameCopy *copy;
+	};
 	BeamformerFrameView *prev, *next;
 
 	iv2 texture_dim;
@@ -335,14 +337,13 @@ struct BeamformerFrameView {
 	Variable gamma;
 
 	union {
-		/* BeamformerFrameViewKind_Latest/BeamformerFrameViewKind_Indexed */
+		/* BeamformerFrameViewKind_Latest */
 		struct {
 			Variable lateral_scale_bar;
 			Variable axial_scale_bar;
 			Variable *lateral_scale_bar_active;
 			Variable *axial_scale_bar_active;
-			/* NOTE(rnp): if kind is Latest  selects which plane to use
-			 *            if kind is Indexed selects the index */
+			/* NOTE(rnp): selects which plane to use */
 			Variable *cycler;
 			u32 cycler_state;
 
@@ -411,7 +412,7 @@ struct BeamformerUI {
 
 	BeamformerFrameView *views;
 	BeamformerFrameView *view_freelist;
-	BeamformerFrame     *frame_freelist;
+	BeamformerFrameCopy *frame_freelist;
 
 	Interaction interaction;
 	Interaction hot_interaction;
@@ -718,11 +719,6 @@ push_custom_view_title(Stream *s, Variable *var)
 			#undef X
 			stream_append_s8(s, labels[*bv->cycler->cycler.state % (BeamformerViewPlaneTag_Count + 1)]);
 		}break;
-		case BeamformerFrameViewKind_Indexed:{
-			stream_append_s8(s, s8(": Index {"));
-			stream_append_u64(s, *bv->cycler->cycler.state % BeamformerMaxSavedFrames);
-			stream_append_s8(s, s8("} ["));
-		}break;
 		case BeamformerFrameViewKind_3DXPlane:{ stream_append_s8(s, s8(": 3D X-Plane")); }break;
 		InvalidDefaultCase;
 		}
@@ -958,10 +954,10 @@ resize_frame_view(BeamformerFrameView *view, iv2 dim, b32 depth)
 function void
 ui_beamformer_frame_view_release_subresources(BeamformerUI *ui, BeamformerFrameView *bv, BeamformerFrameViewKind kind)
 {
-	if (kind == BeamformerFrameViewKind_Copy && bv->frame) {
-		glDeleteTextures(1, &bv->frame->texture);
-		bv->frame->texture = 0;
-		SLLPushFreelist(bv->frame, ui->frame_freelist);
+	if (kind == BeamformerFrameViewKind_Copy && bv->copy) {
+		vk_buffer_release(&bv->copy->buffer);
+		//gl_gpu_buffer_release(&bv->copy->gl_buffer);
+		SLLPushFreelist(bv->copy, ui->frame_freelist);
 	}
 
 	if (kind != BeamformerFrameViewKind_3DXPlane) {
@@ -1335,10 +1331,6 @@ ui_beamformer_frame_view_convert(BeamformerUI *ui, Arena *arena, Variable *view,
 		                                 &bv->cycler_state, labels, countof(labels));
 		bv->cycler_state = BeamformerViewPlaneTag_Count;
 	}break;
-	case BeamformerFrameViewKind_Indexed:{
-		bv->cycler = add_variable_cycler(ui, menu, arena, 0, ui->small_font, s8("Index:"),
-		                                 &bv->cycler_state, 0, BeamformerMaxSavedFrames);
-	}break;
 	default:{}break;
 	}
 
@@ -1475,20 +1467,30 @@ function void
 ui_beamformer_frame_view_copy_frame(BeamformerUI *ui, BeamformerFrameView *new, BeamformerFrameView *old)
 {
 	assert(old->frame);
-	new->frame = SLLPopFreelist(ui->frame_freelist);
-	if (!new->frame) new->frame = push_struct(&ui->arena, typeof(*new->frame));
+	new->copy = SLLPopFreelist(ui->frame_freelist);
+	if (!new->copy) new->copy = push_struct_no_zero(&ui->arena, typeof(*new->copy));
+	zero_struct(new->copy);
 
-	mem_copy(new->frame, old->frame, sizeof(*new->frame));
-	new->frame->texture = 0;
-	new->frame->next    = 0;
-	alloc_beamform_frame(new->frame, old->frame->dim, old->frame->gl_kind, s8("Frame Copy: "), ui->arena);
+	mem_copy(new->copy->frame, old->frame, sizeof(*old->frame));
 
-	glCopyImageSubData(old->frame->texture, GL_TEXTURE_3D, 0, 0, 0, 0,
-	                   new->frame->texture, GL_TEXTURE_3D, 0, 0, 0, 0,
-	                   new->frame->dim.x, new->frame->dim.y, new->frame->dim.z);
-	glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
+	//iv3 points     = old->frame->points;
+	//i64 frame_size = points.x * points.y * points.z * beamformer_data_kind_byte_size[old->frame->data_kind];
+
+	Stream sb = arena_stream(ui->arena);
+	stream_append_s8(&sb, s8("Frame Copy ["));
+	stream_append_hex_u64(&sb, new->copy->frame->id);
+	stream_append_s8(&sb, s8("]"));
+	stream_append_byte(&sb, 0);
+
+	//vk_buffer_allocate(&new->copy->buffer, frame_size, 0, &new->copy->gl_buffer.os_handle, s8(""));
+	//gl_gpu_buffer_import(&new->copy->buffer, &new->copy->gl_buffer, stream_to_s8(&sb));
+
+	VulkanHandle cmd = vk_command_begin(VulkanTimeline_Compute);
+	// TODO(rnp): buffer copy
+	vk_command_end(cmd);
+
 	/* TODO(rnp): x vs y here */
-	resize_frame_view(new, (iv2){{new->frame->dim.x, new->frame->dim.z}}, 1);
+	resize_frame_view(new, (iv2){{new->copy->frame->points.x, new->copy->frame->points.z}}, 1);
 }
 
 function void
@@ -1628,6 +1630,7 @@ function void
 render_single_xplane(BeamformerUI *ui, BeamformerFrameView *view, Variable *x_plane_shift,
                      u32 program, f32 rotation_turns, v3 translate, BeamformerViewPlaneTag tag)
 {
+	#if 0
 	u32 texture = 0;
 	if (ui->latest_plane[tag])
 		texture = ui->latest_plane[tag]->texture;
@@ -1659,6 +1662,7 @@ render_single_xplane(BeamformerUI *ui, BeamformerFrameView *view, Variable *x_pl
 		glDrawElements(GL_TRIANGLES, ui->unit_cube_model.elements, GL_UNSIGNED_SHORT,
 		               (void *)ui->unit_cube_model.elements_offset);
 	}
+	#endif
 }
 
 function void
@@ -1691,6 +1695,7 @@ render_3D_xplane(BeamformerUI *ui, BeamformerFrameView *view, u32 program)
 function void
 render_2D_plane(BeamformerUI *ui, BeamformerFrameView *view, u32 program)
 {
+	#if 0
 	m4 view_m     = m4_identity();
 	v3 size       = beamformer_frame_view_plane_size(ui, view);
 	m4 model      = m4_scale(size);
@@ -1704,6 +1709,7 @@ render_2D_plane(BeamformerUI *ui, BeamformerFrameView *view, u32 program)
 	glBindTextureUnit(0, view->frame->texture);
 	glDrawElements(GL_TRIANGLES, ui->unit_cube_model.elements, GL_UNSIGNED_SHORT,
 	               (void *)ui->unit_cube_model.elements_offset);
+	#endif
 }
 
 function b32
@@ -2812,7 +2818,7 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 			cell_rect.size.w = t->widths[column];
 			text_spec.limits.size.w = r.size.w - (cell_rect.pos.x - it->start_x);
 
-			if (column == 0 && row_index < stages && cp->programs[row_index] == 0 &&
+			if (column == 0 && row_index < stages && vk_valid_compute_shader(cp->shaders[row_index]) == 0 &&
 			    cp->pipeline.shaders[row_index] != BeamformerShaderKind_CudaHilbert &&
 			    cp->pipeline.shaders[row_index] != BeamformerShaderKind_CudaDecode)
 			{

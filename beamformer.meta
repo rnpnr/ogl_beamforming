@@ -246,12 +246,23 @@
 			@BakeInt(ToProcess            to_process            )
 			@BakeInt(TransmitCount        transmit_count        )
 		}
+
+		@PushConstants
+		{
+			[HadamardBuffer  U64 hadamard_buffer  1]
+			[RFBuffer        U64 rf_buffer        1]
+			[OutputBuffer    U64 output_buffer    1]
+			[OutputRFBuffer  U64 output_rf_buffer 1]
+			[bool            B32 first_pass       0]
+		}
 	}
 
 	@Shader(filter.glsl) Filter
 	{
 		@Enumeration(DataKind)
 		@Flags([ComplexFilter OutputFloats])
+
+		@SubShader Demodulate
 
 		@Bake
 		{
@@ -268,7 +279,12 @@
 			@BakeFloat(SamplingFrequency     sampling_frequency    )
 		}
 
-		@SubShader Demodulate
+		@PushConstants
+		{
+			[Input  U64 input_data          1]
+			[Output U64 output_data         1]
+			[Filter U64 filter_coefficients 1]
+		}
 	}
 
 	@Shader(das.glsl) DAS
@@ -277,7 +293,7 @@
 		@Enumeration(DataKind)
 		@Enumeration(InterpolationMode)
 		@Enumeration(RCAOrientation)
-		@Flags([Fast Sparse CoherencyWeighting SingleFocus SingleOrientation])
+		@Flags([Sparse CoherencyWeighting SingleFocus SingleOrientation])
 
 		@Bake
 		{
@@ -296,10 +312,52 @@
 			@BakeFloat(TimeOffset            time_offset           )
 			@BakeFloat(TransmitAngle         transmit_angle        )
 		}
+
+		@PushConstants
+		{
+			[mat4                        M4  voxel_transform               0]
+			[mat4                        M4  xdc_transform                 0]
+			[vec2                        V2  xdc_element_pitch             0]
+			[RFData                      U64 rf_data                       1]
+			[Output                      U64 output_data                   1]
+			[IncoherentOutput            U64 incoherent_output             1]
+			[FocalVectors                U64 focal_vectors                 1]
+			[SparseElements              U64 sparse_elements               1]
+			[TransmitReceiveOrientations U64 transmit_receive_orientations 1]
+			[uint32_t                    U32 output_size_x                 0]
+			[uint32_t                    U32 output_size_y                 0]
+			[uint32_t                    U32 output_size_z                 0]
+			[uint32_t                    U32 cycle_t                       0]
+			[int32_t                     S32 channel_t                     0]
+		}
 	}
 
 	@Shader(min_max.glsl) MinMax
 	@Shader(sum.glsl) Sum
+}
+
+@ShaderGroup Internal
+{
+	@Shader(buffer_clear.glsl) BufferClear
+	{
+		@PushConstants
+		{
+			[Data     U64 data        1]
+			[uint32_t U32 clear_word  0]
+			[uint32_t U32 words       0]
+		}
+	}
+
+	@Shader(buffer_copy.glsl) BufferCopy
+	{
+		@PushConstants
+		{
+			[Input    U64 input_data  1]
+			[Output   U64 output_data 1]
+			[uint32_t U32 words       0]
+		}
+	}
+
 }
 
 @ShaderGroup Render

@@ -52,29 +52,9 @@ fatal(s8 message)
 
 #include "vulkan.c"
 
-// TODO(rnp): none of this belongs here, but will be removed
+// TODO(rnp): this doesn't belong here, but will be removed
 // once vulkan migration is complete
-#define GLFW_VISIBLE 0x00020004
-void   glfwWindowHint(i32, i32);
-iptr   glfwCreateWindow(i32, i32, char *, iptr, iptr);
-void   glfwMakeContextCurrent(iptr);
-iptr   glfwGetGLXContext(iptr);
-iptr   glfwGetWGLContext(iptr);
 void * glfwGetProcAddress(char *);
-
-#if OS_WINDOWS
-function iptr
-os_get_native_gl_context(iptr window)
-{
-	return glfwGetWGLContext(window);
-}
-#else
-function iptr
-os_get_native_gl_context(iptr window)
-{
-	return glfwGetGLXContext(window);
-}
-#endif
 
 function void
 gl_debug_logger(u32 src, u32 type, u32 id, u32 lvl, i32 len, const char *msg, const void *userctx)
@@ -182,17 +162,12 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 {
 	GLWorkerThreadContext *ctx = user_context;
 
-	glfwMakeContextCurrent(ctx->window_handle);
-	ctx->gl_context = os_get_native_gl_context(ctx->window_handle);
-
 	BeamformerCtx *beamformer = (BeamformerCtx *)ctx->user_context;
-	glCreateQueries(GL_TIME_ELAPSED, countof(beamformer->compute_context.shader_timer_ids),
-	                beamformer->compute_context.shader_timer_ids);
 
 	for (;;) {
 		worker_thread_sleep(ctx, beamformer->shared_memory);
 		asan_poison_region(ctx->arena.beg, ctx->arena.end - ctx->arena.beg);
-		beamformer_complete_compute(ctx->user_context, &ctx->arena, ctx->gl_context);
+		beamformer_complete_compute(beamformer, &ctx->arena);
 	}
 
 	unreachable();
@@ -202,31 +177,8 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 
 function OS_THREAD_ENTRY_POINT_FN(beamformer_upload_entry_point)
 {
-	GLWorkerThreadContext *ctx = user_context;
-	glfwMakeContextCurrent(ctx->window_handle);
-	ctx->gl_context = os_get_native_gl_context(ctx->window_handle);
-
-	BeamformerUploadThreadContext *up = (typeof(up))ctx->user_context;
-	BeamformerRFBuffer            *rf = up->rf_buffer;
-	glCreateQueries(GL_TIMESTAMP, 1, &rf->data_timestamp_query);
-	/* NOTE(rnp): start this here so we don't have to worry about it being started or not */
-	glQueryCounter(rf->data_timestamp_query, GL_TIMESTAMP);
-
-	glGenSemaphoresEXT(countof(rf->gl_upload_semaphores), rf->gl_upload_semaphores);
-	for EachElement(rf->vk_upload_semaphores, it) {
-		OSHandle export = {0};
-		rf->vk_upload_semaphores[it] = vk_semaphore_create(rf->upload_semaphores_handles + it);
-
-		if (OS_WINDOWS) {
-			glImportSemaphoreWin32HandleEXT(rf->gl_upload_semaphores[it], GL_HANDLE_TYPE_OPAQUE_WIN32_EXT,
-			                                 (void *)export.value[0]);
-			// NOTE(rnp): w32 does not transfer ownership from handle back to driver
-			rf->upload_semaphores_handles[it] = export;
-		} else {
-			glImportSemaphoreFdEXT(rf->gl_upload_semaphores[it], GL_HANDLE_TYPE_OPAQUE_FD_EXT, export.value[0]);
-			rf->upload_semaphores_handles[it].value[0] = OSInvalidHandleValue;
-		}
-	}
+	GLWorkerThreadContext         *ctx = user_context;
+	BeamformerUploadThreadContext *up  = (typeof(up))ctx->user_context;
 
 	for (;;) {
 		worker_thread_sleep(ctx, up->shared_memory);
@@ -260,6 +212,27 @@ beamformer_init(BeamformerInput *input)
 
 	vk_load(input->vulkan_library_handle, &memory, &ctx->error_stream);
 
+	BeamformerComputeContext *cs = &ctx->compute_context;
+
+	// NOTE(rnp): allocate beamformed image ring buffer
+	{
+		u64 gpu_heap_size = vk_gpu_info()->gpu_heap_size;
+		u64 buffer_size   = 0;
+		if (gpu_heap_size >= GB(8)) {
+			buffer_size = GB(4);
+		} else if (gpu_heap_size >= GB(4)) {
+			buffer_size = GB(2);
+		} else if (gpu_heap_size >= GB(2)) {
+			buffer_size = GB(1);
+		} else {
+			// NOTE(rnp): if this becomes an issue we may be able to get by in some other way
+			fatal(s8("Beamformer requires at least 2GB of VRAM to run\n"));
+		}
+		// TODO(rnp): it may be better to download data from this using the transfer queue
+		vk_buffer_allocate(cs->backlog.buffer, buffer_size, GPUBufferCreateFlag_HostWritable,
+		                   0, s8("BeaformedData"));
+	}
+
 	beamformer_load_cuda_library(ctx, input->cuda_library_handle, memory);
 
 	SetConfigFlags(FLAG_VSYNC_HINT|FLAG_WINDOW_ALWAYS_RUN);
@@ -268,14 +241,7 @@ beamformer_init(BeamformerInput *input)
 	SetWindowState(FLAG_WINDOW_RESIZABLE);
 	SetWindowMinSize(840, ctx->window_size.h);
 
-	glfwWindowHint(GLFW_VISIBLE, 0);
-	iptr raylib_window_handle = (iptr)GetPlatformWindowHandle();
-
 	load_gl(&ctx->error_stream);
-
-	ctx->beamform_work_queue  = push_struct(&memory, BeamformWorkQueue);
-	ctx->compute_shader_stats = push_struct(&memory, ComputeShaderStats);
-	ctx->compute_timing_table = push_struct(&memory, ComputeTimingTable);
 
 	ctx->shared_memory = input->shared_memory;
 	if (!ctx->shared_memory) fatal(s8("Get more ram lol\n"));
@@ -283,6 +249,7 @@ beamformer_init(BeamformerInput *input)
 
 	ctx->shared_memory->version = BEAMFORMER_SHARED_MEMORY_VERSION;
 	ctx->shared_memory->reserved_parameter_blocks = 1;
+	ctx->shared_memory->max_beamformed_data_size = cs->backlog.buffer->size;
 
 	/* TODO(rnp): I'm not sure if its a good idea to pre-reserve a bunch of semaphores
 	 * on w32 but thats what we are doing for now */
@@ -310,14 +277,10 @@ beamformer_init(BeamformerInput *input)
 	}
 	#endif
 
-	BeamformerComputeContext *cs = &ctx->compute_context;
-	cs->rf_buffer.export_handle  = (OSHandle){OSInvalidHandleValue};
-
 	GLWorkerThreadContext *worker = &ctx->compute_worker;
 	/* TODO(rnp): we should lock this down after we have something working */
-	worker->user_context  = (iptr)ctx;
-	worker->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
-	worker->handle        = os_create_thread("[compute]", worker, compute_worker_thread_entry_point);
+	worker->user_context = (iptr)ctx;
+	worker->handle       = os_create_thread("[compute]", worker, compute_worker_thread_entry_point);
 
 	GLWorkerThreadContext         *upload = &ctx->upload_worker;
 	BeamformerUploadThreadContext *upctx  = push_struct(&memory, typeof(*upctx));
@@ -326,10 +289,7 @@ beamformer_init(BeamformerInput *input)
 	upctx->shared_memory = ctx->shared_memory;
 	upctx->compute_timing_table = ctx->compute_timing_table;
 	upctx->compute_worker_sync  = &ctx->compute_worker.sync_variable;
-	upload->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
-	upload->handle        = os_create_thread("[upload]", upload, beamformer_upload_entry_point);
-
-	glfwMakeContextCurrent(raylib_window_handle);
+	upload->handle = os_create_thread("[upload]", upload, beamformer_upload_entry_point);
 
 	/* NOTE: set up OpenGL debug logging */
 	Stream *gl_error_stream = push_struct(&memory, Stream);

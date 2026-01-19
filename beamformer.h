@@ -181,6 +181,7 @@ typedef struct {
 	#if BEAMFORMER_RENDERDOC_HOOKS
 	void *renderdoc_start_frame_capture;
 	void *renderdoc_end_frame_capture;
+	void *renderdoc_set_capture_file_path_template;
 	#endif
 } BeamformerInput;
 

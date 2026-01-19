@@ -596,14 +596,6 @@ s8_scan_backwards(s8 s, u8 byte)
 }
 
 function s8
-s8_trim_trailing(s8 s, u8 byte)
-{
-	s8 result = s;
-	while (result.len >= 1 && result.data[result.len - 1] == byte) result.len--;
-	return result;
-}
-
-function s8
 s8_cut_head(s8 s, iz cut)
 {
 	s8 result = s;

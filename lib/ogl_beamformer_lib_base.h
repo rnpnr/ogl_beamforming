@@ -25,7 +25,8 @@
 	X(SharedMemory,                 14, "failed to open shared memory region")               \
 	X(SyncVariable,                 15, "failed to acquire lock within timeout period")      \
 	X(InvalidFilterKind,            16, "invalid filter kind")                               \
-	X(InvalidSimpleParameters,      17, "invalid simple parameters struct")
+	X(InvalidParameters,            17, "invalid parameters struct")                         \
+	X(FrameSizeOverflow,            18, "maximum frame size exceeded")                       \
 
 #define X(type, num, string) BeamformerLibErrorKind_##type = num,
 typedef enum {BEAMFORMER_LIB_ERRORS} BeamformerLibErrorKind;
@@ -36,6 +37,9 @@ BEAMFORMER_LIB_EXPORT uint32_t beamformer_get_api_version(void);
 BEAMFORMER_LIB_EXPORT BeamformerLibErrorKind beamformer_get_last_error(void);
 BEAMFORMER_LIB_EXPORT const char *beamformer_get_last_error_string(void);
 BEAMFORMER_LIB_EXPORT const char *beamformer_error_string(BeamformerLibErrorKind kind);
+
+// NOTE: returns U64_MAX if shared memory could not be opened
+BEAMFORMER_LIB_EXPORT uint64_t beamformer_maximum_frame_size(void);
 
 ///////////////////////////
 // NOTE: Simple API
