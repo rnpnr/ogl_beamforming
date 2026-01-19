@@ -296,16 +296,7 @@ load_platform_libraries(BeamformerInput *input)
 	#if BEAMFORMER_RENDERDOC_HOOKS
 	local_persist OSLibrary renderdoc_handle = {OSInvalidHandleValue};
 	renderdoc_handle = get_module(OS_RENDERDOC_SONAME);
-	if ValidHandle(renderdoc_handle) {
-		renderdoc_get_api_fn *get_api = os_lookup_symbol(renderdoc_handle, "RENDERDOC_GetAPI");
-		if (get_api) {
-			RenderDocAPI *api = 0;
-			if (get_api(10600, (void **)&api)) {
-				input->renderdoc_start_frame_capture = RENDERDOC_START_FRAME_CAPTURE(api);
-				input->renderdoc_end_frame_capture   = RENDERDOC_END_FRAME_CAPTURE(api);
-			}
-		}
-	}
+	load_renderdoc_functions(input, renderdoc_handle);
 	#endif
 }
 
