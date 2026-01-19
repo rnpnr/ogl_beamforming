@@ -229,6 +229,15 @@ beamformer_get_last_error_string(void)
 	return beamformer_error_string(beamformer_get_last_error());
 }
 
+u64
+beamformer_maximum_frame_size(void)
+{
+	u64 result = U64_MAX;
+	if (check_shared_memory())
+		result = g_beamformer_library_context.bp->max_beamformed_data_size;
+	return result;
+}
+
 void
 beamformer_set_global_timeout(u32 timeout_ms)
 {
@@ -666,12 +675,14 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 			complex |= shader == BeamformerShaderKind_Demodulate || shader == BeamformerShaderKind_CudaHilbert;
 		}
 
-		iz output_size = output_points.x * output_points.y * output_points.z * (i32)sizeof(f32);
+		u64 output_size = output_points.x * output_points.y * output_points.z * sizeof(f32);
 		if (complex) output_size *= 2;
+
+		result = lib_error_check(output_size <= g_beamformer_library_context.bp->max_beamformed_data_size, FrameSizeOverflow);
 
 		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
 		                                                       g_beamformer_library_context.shared_memory_size);
-		if (out_data) result &= lib_error_check(output_size <= arena_capacity(&scratch, u8), ExportSpaceOverflow);
+		if (result && out_data) result &= lib_error_check((iz)output_size <= arena_capacity(&scratch, u8), ExportSpaceOverflow);
 
 		if (result) {
 			result = beamformer_push_data_with_compute(data, data_size, 0, 0);
