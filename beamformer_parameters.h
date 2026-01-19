@@ -9,10 +9,24 @@
  *      be organized for simple offset access per frame).
  */
 
+#define BEAMFORMER_CONSTANTS_LIST \
+	X(FilterSlots,                 4) \
+	X(MaxChannelCount,           256) \
+	X(MaxComputeShaderStages,     16) \
+	X(MaxParameterBlockSlots,     16) \
+	X(MaxRawDataFramesInFlight,    3) \
+	X(MaxBacklogFrames,         4096) \
+
+#define X(k, v, ...) Beamformer##k = v,
+typedef enum {BEAMFORMER_CONSTANTS_LIST} BeamformerConstants;
+#undef X
+
 typedef struct {
+	u64  shader_count;
+	u32  shader_ids[BeamformerMaxComputeShaderStages];
 	/* NOTE(rnp): this wants to be iterated on both dimensions. it depends entirely on which
 	 * visualization method you want to use. the coalescing function wants both directions */
-	float times[32][BeamformerShaderKind_ComputeCount];
+	float times[32][BeamformerMaxComputeShaderStages];
 	float rf_time_deltas[32];
 } BeamformerComputeStatsTable;
 
@@ -29,17 +43,6 @@ typedef enum {
 	#undef X
 	BeamformerViewPlaneTag_Count,
 } BeamformerViewPlaneTag;
-
-#define BEAMFORMER_CONSTANTS_LIST \
-	X(FilterSlots,                4) \
-	X(MaxChannelCount,          256) \
-	X(MaxComputeShaderStages,    16) \
-	X(MaxParameterBlockSlots,    16) \
-	X(MaxRawDataFramesInFlight,   3) \
-	X(MaxSavedFrames,            16)
-#define X(k, v, ...) Beamformer##k = v,
-typedef enum {BEAMFORMER_CONSTANTS_LIST} BeamformerConstants;
-#undef X
 
 #define BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST \
 	X(ImagePlaneOffsets, 0) \
