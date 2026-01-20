@@ -43,13 +43,13 @@ os_exit(i32 code)
 }
 
 function u64
-os_get_timer_frequency(void)
+os_timer_frequency(void)
 {
 	return 1000000000ULL;
 }
 
-function u64
-os_get_timer_counter(void)
+BEAMFORMER_IMPORT u64
+os_timer_count(void)
 {
 	struct timespec time = {0};
 	clock_gettime(CLOCK_MONOTONIC, &time);

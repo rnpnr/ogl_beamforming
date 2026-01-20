@@ -81,11 +81,15 @@ typedef struct {
 	uint8_t  path_separator_byte;
 } OSSystemInfo;
 
-BEAMFORMER_IMPORT OSSystemInfo * os_get_system_info(void);
+BEAMFORMER_IMPORT OSSystemInfo * os_system_info(void);
 
 BEAMFORMER_IMPORT OSThread       os_create_thread(const char *name, void *user_context, os_thread_entry_point_fn *fn);
 BEAMFORMER_IMPORT OSBarrier      os_barrier_alloc(uint32_t thread_count);
 BEAMFORMER_IMPORT void           os_barrier_enter(OSBarrier);
+
+/* NOTE(rnp): since the beamformer may spawn threads, which may need to keep time,
+ * passing in a single timer value with the rest of the input is insufficient. */
+BEAMFORMER_IMPORT uint64_t       os_timer_count(void);
 
 BEAMFORMER_IMPORT void           os_add_file_watch(const char *path, int64_t path_length, void *user_context);
 BEAMFORMER_IMPORT int64_t        os_read_entire_file(const char *file, void *buffer, int64_t buffer_capacity);
@@ -153,8 +157,6 @@ typedef struct {
 	uint64_t    shared_memory_size;
 	uint8_t *   shared_memory_name;
 	uint32_t    shared_memory_name_length;
-
-	uint64_t    timer_ticks;
 
 	float       mouse_x;
 	float       mouse_y;

@@ -1533,7 +1533,9 @@ beamformer_frame_step(BeamformerInput *input)
 {
 	BeamformerCtx *ctx = BeamformerContextMemory(input->memory);
 
-	dt_for_frame = (f64)(input->timer_ticks) / os_get_system_info()->timer_frequency;
+	u64 current_time = os_timer_count();
+	dt_for_frame = (f64)(current_time - ctx->frame_timestamp) / os_system_info()->timer_frequency;
+	ctx->frame_timestamp = current_time;
 
 	if (IsWindowResized()) {
 		ctx->window_size.h = GetScreenHeight();

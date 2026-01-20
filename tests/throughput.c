@@ -402,11 +402,11 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 		u32 frame = 0;
 		f32 times[32] = {0};
 		f32 data_size = (f32)(bp.raw_data_dimensions.E[0] * bp.raw_data_dimensions.E[1] * sizeof(*data));
-		u64 start = os_get_timer_counter();
-		f64 frequency = os_get_timer_frequency();
+		u64 start = os_timer_count();
+		f64 frequency = os_timer_frequency();
 		for (;!g_should_exit;) {
 			if (send_frame(data, &bp)) {
-				u64 now   = os_get_timer_counter();
+				u64 now   = os_timer_count();
 				f64 delta = (now - start) / frequency;
 				start = now;
 

@@ -137,15 +137,15 @@ os_exit(i32 code)
 }
 
 function u64
-os_get_timer_frequency(void)
+os_timer_frequency(void)
 {
 	u64 result;
 	QueryPerformanceFrequency(&result);
 	return result;
 }
 
-function u64
-os_get_timer_counter(void)
+BEAMFORMER_IMPORT u64
+os_timer_count(void)
 {
 	u64 result;
 	QueryPerformanceCounter(&result);

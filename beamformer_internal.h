@@ -19,7 +19,7 @@
 
 #define beamformer_info(s) s8("[info] " s "\n")
 
-#define os_path_separator() (s8){.data = &os_get_system_info()->path_separator_byte, .len = 1}
+#define os_path_separator() (s8){.data = &os_system_info()->path_separator_byte, .len = 1}
 
 ///////////////////////////////
 // NOTE: CUDA Library Bindings
@@ -310,6 +310,8 @@ typedef struct {
 	Arena  ui_backing_store;
 	void  *ui;
 	u32    ui_dirty_parameter_blocks;
+
+	u64    frame_timestamp;
 
 	BeamformerComputeContext compute_context;
 

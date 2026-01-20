@@ -59,7 +59,7 @@ typedef struct {
 global OSLinux_Context os_linux_context;
 
 BEAMFORMER_IMPORT OSSystemInfo *
-os_get_system_info(void)
+os_system_info(void)
 {
 	return &os_linux_context.system_info;
 }
@@ -247,12 +247,14 @@ load_platform_libraries(BeamformerInput *input)
 }
 
 function void
-dispatch_file_watch_events(BeamformerInput *input, u64 current_time)
+dispatch_file_watch_events(BeamformerInput *input)
 {
 	OSLinux_FileWatchDirectoryList *fwctx = &os_linux_context.file_watch_list;
 	Arena arena = os_linux_context.arena;
 	u8 *mem     = arena_alloc(&arena, .size = 4096, .align = 16);
 	struct inotify_event *event;
+
+	u64 current_time = os_timer_count();
 
 	iz rlen;
 	while ((rlen = read(os_linux_context.inotify_handle, mem, 4096)) > 0) {
@@ -296,7 +298,7 @@ dispatch_file_watch_events(BeamformerInput *input, u64 current_time)
 extern i32
 main(void)
 {
-	os_linux_context.system_info.timer_frequency         = os_get_timer_frequency();
+	os_linux_context.system_info.timer_frequency         = os_timer_frequency();
 	os_linux_context.system_info.logical_processor_count = os_number_of_processors();
 	os_linux_context.system_info.page_size               = ARCH_X64? KB(4) : getauxval(AT_PAGESZ);
 	os_linux_context.system_info.path_separator_byte     = '/';
@@ -328,21 +330,16 @@ main(void)
 	fds[0].fd     = os_linux_context.inotify_handle;
 	fds[0].events = POLLIN;
 
-	u64 last_time = os_get_timer_counter();
 	while (!WindowShouldClose() && !beamformer_should_close(input)) {
-		u64 now = os_get_timer_counter();
-
 		poll(fds, countof(fds), 0);
 		if (fds[0].revents & POLLIN)
-			dispatch_file_watch_events(input, now);
+			dispatch_file_watch_events(input);
 
 		Vector2 new_mouse = GetMousePosition();
 		input->last_mouse_x = input->mouse_x;
 		input->last_mouse_y = input->mouse_y;
 		input->mouse_x      = new_mouse.x;
 		input->mouse_y      = new_mouse.y;
-		input->timer_ticks  = now - last_time;
-		last_time           = now;
 
 		beamformer_frame_step(input);
 

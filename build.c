@@ -3591,7 +3591,7 @@ metagen_file_direct(Arena arena, char *filename)
 i32
 main(i32 argc, char *argv[])
 {
-	u64 start_time = os_get_timer_counter();
+	u64 start_time = os_timer_count();
 	g_argv0 = argv[0];
 
 	b32 result  = 1;
@@ -3630,7 +3630,7 @@ main(i32 argc, char *argv[])
 	if (config.debug) result &= build_beamformer_as_library(arena);
 
 	if (config.time) {
-		f64 seconds = (f64)(os_get_timer_counter() - start_time) / (f64)os_get_timer_frequency();
+		f64 seconds = (f64)(os_timer_count() - start_time) / (f64)os_timer_frequency();
 		build_log_info("took %0.03f [s]", seconds);
 	}
 
