@@ -297,12 +297,10 @@ load_platform_libraries(BeamformerInput *input)
 }
 
 function void
-dispatch_file_watch(BeamformerInput *input, Arena arena, OSW32_FileWatchDirectory *fw_dir)
+dispatch_file_watch(BeamformerInput *input, Arena arena, u64 current_time, OSW32_FileWatchDirectory *fw_dir)
 {
 	TempArena save_point = {0};
 	i64       offset     = 0;
-
-	u64 current_time = os_timer_count();
 
 	w32_file_notify_info *fni = (w32_file_notify_info *)fw_dir->buffer;
 	do {
@@ -357,12 +355,15 @@ clear_io_queue(BeamformerInput *input, Arena arena)
 	w32_overlapped *overlapped;
 	u32  bytes_read;
 	uptr user_data;
+
+	u64 current_time = os_timer_count();
+
 	while (GetQueuedCompletionStatus(handle, &bytes_read, &user_data, &overlapped, 0)) {
 		w32_io_completion_event *event = (w32_io_completion_event *)user_data;
 		switch (event->tag) {
 		case W32IOEvent_FileWatch:{
 			OSW32_FileWatchDirectory *dir = (OSW32_FileWatchDirectory *)event->context;
-			dispatch_file_watch(input, arena, dir);
+			dispatch_file_watch(input, arena, current_time, dir);
 			zero_struct(&dir->overlapped);
 			ReadDirectoryChangesW(dir->handle, dir->buffer, OSW32_FileWatchDirectoryBufferSize, 0,
 			                      FILE_NOTIFY_CHANGE_LAST_WRITE, 0, &dir->overlapped, 0);
