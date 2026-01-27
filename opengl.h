@@ -71,10 +71,10 @@
 
 #define GL_TIMEOUT_IGNORED                 0xFFFFFFFFFFFFFFFFull
 
-typedef char      GLchar;
-typedef ptrdiff_t GLsizeiptr;
-typedef ptrdiff_t GLintptr;
-typedef uint64_t  GLuint64;
+typedef char GLchar;
+typedef i64  GLsizeiptr;
+typedef i64  GLintptr;
+typedef u64  GLuint64;
 typedef struct __GLsync *GLsync;
 
 /* X(name, ret, params) */

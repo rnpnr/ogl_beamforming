@@ -4,8 +4,36 @@
 
 #include "compiler.h"
 
-#include <stddef.h>
-#include <stdint.h>
+#if COMPILER_MSVC
+  typedef unsigned __int64  u64;
+  typedef signed   __int64  i64;
+  typedef unsigned __int32  u32;
+  typedef signed   __int32  i32;
+  typedef unsigned __int16  u16;
+  typedef signed   __int16  i16;
+  typedef unsigned __int8   u8;
+  typedef signed   __int8   i8;
+#else
+  typedef __UINT64_TYPE__   u64;
+  typedef __INT64_TYPE__    i64;
+  typedef __UINT32_TYPE__   u32;
+  typedef __INT32_TYPE__    i32;
+  typedef __UINT16_TYPE__   u16;
+  typedef __INT16_TYPE__    i16;
+  typedef __UINT8_TYPE__    u8;
+  typedef __INT8_TYPE__     i8;
+#endif
+
+typedef char   c8;
+typedef u8     b8;
+typedef u16    b16;
+typedef u32    b32;
+typedef float  f32;
+typedef double f64;
+typedef i64    iz;
+typedef u64    uz;
+typedef i64    iptr;
+typedef u64    uptr;
 
 #ifndef asm
 #define asm __asm__
@@ -47,8 +75,8 @@
 #define ASSERT assert
 
 #if ASAN_ACTIVE
-  void __asan_poison_memory_region(void *, ptrdiff_t);
-  void __asan_unpoison_memory_region(void *, ptrdiff_t);
+  void __asan_poison_memory_region(void *, i64);
+  void __asan_unpoison_memory_region(void *, i64);
   #define asan_poison_region(region, size)   __asan_poison_memory_region((region), (size))
   #define asan_unpoison_region(region, size) __asan_unpoison_memory_region((region), (size))
 #else
@@ -162,24 +190,6 @@
 #ifndef PI
   #define PI             (3.14159265358979323846f)
 #endif
-
-typedef char      c8;
-typedef uint8_t   u8;
-typedef int8_t    i8;
-typedef int16_t   i16;
-typedef uint16_t  u16;
-typedef uint16_t  b16;
-typedef int32_t   i32;
-typedef uint32_t  u32;
-typedef int64_t   i64;
-typedef uint64_t  u64;
-typedef uint32_t  b32;
-typedef float     f32;
-typedef double    f64;
-typedef ptrdiff_t iz;
-typedef size_t    uz;
-typedef ptrdiff_t iptr;
-typedef size_t    uptr;
 
 #include "intrinsics.c"
 

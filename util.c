@@ -37,7 +37,7 @@ memory_copy_non_temporal(void *restrict dest, void *restrict src, uz n)
 	assume(((u64)dest & 63) == 0);
 	assume(((u64)src  & 63) == 0);
 	assume(((u64)n    & 63) == 0);
-	uint8_t *s = src, *d = dest;
+	u8 *s = src, *d = dest;
 
 	#if defined(__AVX512BW__)
 	{
@@ -97,7 +97,7 @@ arena_from_memory(void *memory, u64 size)
 function void *
 align_pointer_up(void *p, uz alignment)
 {
-	uz padding = -(uintptr_t)p & (alignment - 1);
+	uz padding = -(u64)p & (alignment - 1);
 	void *result = (u8 *)p + padding;
 	return result;
 }
@@ -178,7 +178,7 @@ function Arena
 sub_arena_end(Arena *a, iz len, uz align)
 {
 	Arena result;
-	result.beg = (u8 *)((uintptr_t)(a->end - len) & ~(align - 1)),
+	result.beg = (u8 *)((u64)(a->end - len) & ~(align - 1)),
 	result.end = a->end,
 
 	a->end = result.beg;
