@@ -86,11 +86,14 @@ global char *g_argv0;
 #endif
 
 #if COMPILER_CLANG
-  #define COMPILER "clang"
+  #define COMPILER     "clang"
+  #define PREPROCESSOR "clang", "-E", "-P"
 #elif COMPILER_MSVC
-  #define COMPILER "cl"
+  #define COMPILER     "cl"
+  #define PREPROCESSOR "cl", "/EP"
 #else
-  #define COMPILER "cc"
+  #define COMPILER     "cc"
+  #define PREPROCESSOR "cc", "-E", "-P"
 #endif
 
 #if COMPILER_MSVC
@@ -99,6 +102,7 @@ global char *g_argv0;
   #define OUTPUT_DLL(name)           "/LD", "/Fe:", name
   #define OUTPUT_LIB(name)           "/out:" OUTPUT(name)
   #define OUTPUT_EXE(name)           "/Fe:", name
+  #define COMPILER_OUTPUT            "/Fo:"
   #define STATIC_LIBRARY_BEGIN(name) "lib", "/nologo", name
 #else
   #define LINK_LIB(name)             "-l" name
@@ -106,6 +110,7 @@ global char *g_argv0;
   #define OUTPUT_DLL(name)           "-fPIC", "-shared", "-o", name
   #define OUTPUT_LIB(name)           OUTPUT(name)
   #define OUTPUT_EXE(name)           "-o", name
+  #define COMPILER_OUTPUT            "-o"
   #define STATIC_LIBRARY_BEGIN(name) "ar", "rc", name
 #endif
 
@@ -126,6 +131,11 @@ typedef struct {
 	b32   time;
 } Config;
 global Config config;
+
+read_only global s8 c_file_header = s8_comp(""
+	"/* See LICENSE for license details. */\n\n"
+	"// GENERATED CODE\n\n"
+);
 
 #define BUILD_LOG_KINDS \
 	X(Error,    "\x1B[31m[ERROR]\x1B[0m    ") \
@@ -2932,11 +2942,6 @@ meta_push_shader_bake(MetaprogramContext *m, MetaContext *ctx)
 	} meta_end_scope(m, s8("};\n"));
 }
 
-read_only global s8 c_file_header = s8_comp(""
-	"/* See LICENSE for license details. */\n\n"
-	"// GENERATED CODE\n\n"
-);
-
 function b32
 metagen_emit_c_code(MetaContext *ctx, Arena arena)
 {
@@ -3394,8 +3399,7 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 
 	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
 
-	meta_push_line(m, s8("/* See LICENSE for license details. */\n"));
-	meta_push_line(m, s8("// GENERATED CODE\n"));
+	meta_push(m, c_file_header);
 	meta_push_line(m, s8("#include <stdint.h>\n"));
 
 	/////////////////////////
@@ -3457,6 +3461,12 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 
 	meta_push(m, parameters_header, base_header);
 	result &= meta_write_and_reset(m, out);
+
+	{
+		CommandList cpp = {0};
+		cmd_append(&arena, &cpp, PREPROCESSOR, out, COMPILER_OUTPUT, OUTPUT("ogl_beamformer_lib_python_ffi.h"));
+		result &= run_synchronous(arena, &cpp);
+	}
 
 	return result;
 }
