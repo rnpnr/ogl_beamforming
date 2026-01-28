@@ -1818,7 +1818,7 @@ meta_pack_shader_bake_parameters(MetaContext *ctx, MetaEntry *e, iz entry_count,
 		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++, row_index++) {
 			bp->names_upper[row_index]  = row->arguments[0].string;
 			bp->names_lower[row_index]  = row->arguments[1].string;
-			bp->floating_point         |= (row->kind == MetaEntryKind_BakeFloat) << row_index;
+			bp->floating_point         |= (u32)(row->kind == MetaEntryKind_BakeFloat) << row_index;
 		}
 	}
 

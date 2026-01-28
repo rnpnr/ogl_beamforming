@@ -22,7 +22,7 @@ mem_copy(void *restrict dest, void *restrict src, uz n)
 	{
 		for (; n >= 64; n -= 64, s += 64, d += 64)
 			_mm512_storeu_epi8(d, _mm512_loadu_epi8(s));
-		__mmask64 k = _cvtu64_mask64(_bzhi_u64(-1, n));
+		__mmask64 k = _cvtu64_mask64(_bzhi_u64(-1ULL, n));
 		_mm512_mask_storeu_epi8(d, k, _mm512_maskz_loadu_epi8(k, s));
 	}
 	#else

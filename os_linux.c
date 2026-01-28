@@ -28,7 +28,7 @@ os_write_file(i32 file, void *data, i64 length)
 {
 	i64 offset = 0;
 	while (offset < length) {
-		iz r = write(file, (u8 *)data + offset, length - offset);
+		iz r = write(file, (u8 *)data + offset, (u64)(length - offset));
 		if (r < 0 && errno != EINTR) break;
 		if (r >= 0) offset += r;
 	}
@@ -72,7 +72,7 @@ os_number_of_processors(void)
 function OS_ALLOC_ARENA_FN(os_alloc_arena)
 {
 	Arena result = {0};
-	capacity     = round_up_to(capacity, ARCH_X64? KB(4) : getauxval(AT_PAGESZ));
+	capacity     = round_up_to(capacity, ARCH_X64? (i64)KB(4) : (i64)getauxval(AT_PAGESZ));
 	void *memory = mmap(0, (uz)capacity, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
 	if (memory != MAP_FAILED) {
 		result.beg = memory;
@@ -90,7 +90,7 @@ BEAMFORMER_IMPORT OS_READ_ENTIRE_FILE_FN(os_read_entire_file)
 	if (fd >= 0 && fstat(fd, &sb) >= 0) {
 		if (buffer_capacity >= sb.st_size) {
 			do {
-				i64 rlen = read(fd, (u8 *)buffer + result, sb.st_size - result);
+				i64 rlen = read(fd, (u8 *)buffer + result, (u64)(sb.st_size - result));
 				if (rlen > 0) result += rlen;
 			} while (result != sb.st_size && errno != EINTR);
 			if (result != sb.st_size) result = 0;

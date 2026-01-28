@@ -106,7 +106,7 @@
   #define exp_f64(a)      __builtin_exp(a)
   #define sqrt_f64(a)     __builtin_sqrt(a)
 
-  #define popcount_u64(a) __builtin_popcountll(a)
+  #define popcount_u64(a) (u64)__builtin_popcountll(a)
 #endif
 
 #if COMPILER_MSVC
