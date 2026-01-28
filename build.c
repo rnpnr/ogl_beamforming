@@ -550,7 +550,7 @@ cmd_base(Arena *a, CommandList *c)
 	if (!is_msvc) {
 		/* TODO(rnp): support cross compiling with clang */
 		if (!o->generic)     cmd_append(a, c, "-march=native");
-		else if (is_amd64)   cmd_append(a, c, "-march=x86-64-v3");
+		else if (is_amd64)   cmd_append(a, c, "-march=x86-64-v3", "-msse4.1");
 		else if (is_aarch64) cmd_append(a, c, "-march=armv8");
 	}
 
