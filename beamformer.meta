@@ -334,8 +334,8 @@
 			@Expand(ChirpFilterParameters)  `			$(%type)$(|)$(name);`
 	`		} matched_chirp;`
 	`	};`
-	`	f32 sampling_frequency;`
-	`	b16 complex;`
+	`	float    sampling_frequency;`
+	`	uint16_t complex;`
 	`} BeamformerFilterParameters;`
 	``
 	`typedef struct {`
