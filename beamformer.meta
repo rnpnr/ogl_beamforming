@@ -325,6 +325,20 @@
 	`} BeamformerEmissionParameters;`
 	``
 	`typedef struct {`
+	`	BeamformerFilterKind kind;`
+	`	union {`
+	`		struct {`
+			@Expand(KaiserFilterParameters) `			$(%type)$(|)$(name);`
+	`		} kaiser;`
+	`		struct {`
+			@Expand(ChirpFilterParameters)  `			$(%type)$(|)$(name);`
+	`		} matched_chirp;`
+	`	};`
+	`	f32 sampling_frequency;`
+	`	b16 complex;`
+	`} BeamformerFilterParameters;`
+	``
+	`typedef struct {`
 	@Expand(ParametersHead)   `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
 	@Expand(ParametersUI)     `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
 	@Expand(ParametersExtra)  `	$(c_type)$(|)$(name);`
