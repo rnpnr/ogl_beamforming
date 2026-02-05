@@ -70,7 +70,14 @@
   #if COMPILER_CLANG
     #define assume(x)      __builtin_assume(x)
   #else
-    #define assume(x)      __attribute__((assume(x)))
+    #if defined(__has_attribute)
+      #if __has_attribute(assume)
+        #define assume(x)  __attribute__((assume(x)))
+      #endif
+    #endif
+  #endif
+  #if !defined(assume)
+    #define assume(x)      if (!(x)) unreachable()
   #endif
   #define unreachable()    __builtin_unreachable()
   #if ARCH_ARM64
