@@ -88,8 +88,8 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 
 	if (!result) {
 		result = SLLPopFreelist(cc->compute_plan_freelist);
-		if (result) zero_struct(result);
-		else        result = push_struct(arena, BeamformerComputePlan);
+		if (!result) result = push_struct_no_zero(arena, BeamformerComputePlan);
+		zero_struct(result);
 		cc->compute_plans[block] = result;
 
 		glCreateBuffers(countof(result->ubos), result->ubos);
@@ -652,7 +652,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			BeamformerShaderDASBakeParameters *db = &sd->bake.DAS;
 			BeamformerDASUBO *du = &cp->das_ubo_data;
 			du->voxel_transform        = das_voxel_transform_matrix(&pb->parameters);
-			du->xdc_transform          = pb->parameters.xdc_transform;
 			du->xdc_element_pitch      = pb->parameters.xdc_element_pitch;
 			db->sampling_frequency     = sampling_frequency;
 			db->demodulation_frequency = pb->parameters.demodulation_frequency;
@@ -667,6 +666,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			db->transmit_angle         = pb->parameters.focal_vector.E[0];
 			db->focus_depth            = pb->parameters.focal_vector.E[1];
 			db->transmit_receive_orientation = pb->parameters.transmit_receive_orientation;
+
+			// NOTE(rnp): old gcc will miscompile an assignment
+			mem_copy(du->xdc_transform.E, pb->parameters.xdc_transform.E, sizeof(du->xdc_transform));
 
 			if (pb->parameters.single_focus)        sd->bake.flags |= BeamformerShaderDASFlags_SingleFocus;
 			if (pb->parameters.single_orientation)  sd->bake.flags |= BeamformerShaderDASFlags_SingleOrientation;
