@@ -148,6 +148,7 @@ typedef struct {
 	u32 acquisition_count;
 	u32 acquisition_kind;
 	u32 channel_count;
+	u32 channel_chunk_count;
 	u32 interpolation_mode;
 	u32 sample_count;
 	u32 transmit_receive_orientation;
@@ -188,7 +189,7 @@ typedef struct {
 	u32 output_size_y;
 	u32 output_size_z;
 	u32 cycle_t;
-	i32 channel_t;
+	i32 channel_offset;
 } BeamformerShaderDASPushConstants;
 
 typedef struct {
@@ -670,6 +671,7 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("AcquisitionCount"),
 		s8_comp("AcquisitionKind"),
 		s8_comp("ChannelCount"),
+		s8_comp("ChannelChunkCount"),
 		s8_comp("InterpolationMode"),
 		s8_comp("SampleCount"),
 		s8_comp("TransmitReceiveOrientation"),
@@ -691,7 +693,7 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
 	0x00000000UL,
 	0x00000600UL,
-	0x00001fc0UL,
+	0x00003f80UL,
 	0x00000000UL,
 	0x00000000UL,
 	0x00000000UL,
@@ -702,7 +704,7 @@ read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
 read_only global i32 beamformer_shader_bake_parameter_counts[] = {
 	9,
 	11,
-	13,
+	14,
 	0,
 	0,
 	0,
@@ -804,7 +806,7 @@ read_only global s8 *beamformer_shader_push_constant_names[] = {
 		s8_comp("output_size_y"),
 		s8_comp("output_size_z"),
 		s8_comp("cycle_t"),
-		s8_comp("channel_t"),
+		s8_comp("channel_offset"),
 	},
 	(s8 []){
 		s8_comp("output_data"),
