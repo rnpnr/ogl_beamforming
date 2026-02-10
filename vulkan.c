@@ -2,10 +2,13 @@
 // TODO(rnp)
 // [ ]: what is needed for HDR? I think it makes sense to just default to it nowadays
 // [ ]: once opengl is removed switch images to SRGB and/or 16 bit Float
+// [ ]: synchronization is busted when there is only one unique queue
 
 #include "beamformer_internal.h"
 #include "vulkan.h"
 #include "external/glslang/glslang/Include/glslang_c_interface.h"
+
+#define ForceSingleQueue (0)
 
 #define glslang_info(s) s8("[glslang] " s)
 #define vulkan_info(s)  s8("[vulkan]  " s)
@@ -59,8 +62,8 @@ typedef struct {
 } VulkanSemaphore;
 
 typedef struct {
-	VulkanQueueKind kind;
-	u32             command_buffer_index;
+	VulkanTimeline timeline;
+	u32            buffer_index;
 
 	// NOTE(rnp): since there may not be QueueKind_Count queues, when putting values into this
 	// array you must be careful to map through the queue_indices array in the vulkan_context.
@@ -96,21 +99,25 @@ typedef alignas(64) struct {
 	u16     queue_index;
 	VkQueue queue;
 
-	VkQueryPool     query_pool;
-	u32             query_pool_occupied[VulkanQueueKind_Count];
-
-	u32             next_command_buffer_index;
-	VkCommandPool   command_pool;
-	VkCommandBuffer command_buffers[MaxCommandBuffersInFlight];
-	u64             command_buffer_submission_values[MaxCommandBuffersInFlight];
-
 	VulkanSemaphore timeline_semaphore;
 
 	VkPipelineStageFlags2 pipeline_stage_flags;
-
-	VulkanPipeline *bound_pipeline;
 } VulkanQueue;
 static_assert(alignof(VulkanQueue) == 64, "VulkanQueue must be placed on its own cacheline");
+
+typedef alignas(64) struct {
+	i32             lock;
+	i32             next_index;
+
+	VulkanPipeline *bound_pipeline;
+
+	VkCommandPool   handle;
+	VkQueryPool     query_pool;
+	VkCommandBuffer buffers[MaxCommandBuffersInFlight];
+
+	u64             submission_values[MaxCommandBuffersInFlight];
+	u32             queries_occupied[MaxCommandBuffersInFlight];
+} VulkanCommandPool;
 
 typedef struct {
 	Arena             arena;
@@ -136,7 +143,8 @@ typedef struct {
 		static_assert(VK_MAX_MEMORY_TYPES < U8_MAX, "");
 	} memory_info;
 
-	VulkanQueue *     queues[VulkanQueueKind_Count];
+	VulkanCommandPool * command_pools[VulkanTimeline_Count];
+	VulkanQueue *       queues[VulkanQueueKind_Count];
 	// NOTE(rnp): there are a few places in the code where simply going through the queues map
 	// is not sufficient. those places need to know of the unique queues which unique queue
 	// is being referred to. that code uses this map instead.
@@ -355,9 +363,8 @@ function VkCommandBuffer
 vk_command_buffer(VulkanHandle h)
 {
 	VulkanCommandBuffer *vcb = vk_entity_data(h, VulkanEntityKind_CommandBuffer);
-	VulkanQueue         *vq  = vulkan_context->queues[vcb->kind];
-
-	VkCommandBuffer result = vq->command_buffers[vcb->command_buffer_index];
+	VulkanCommandPool   *vcp = vulkan_context->command_pools[vcb->timeline];
+	VkCommandBuffer result = vcp->buffers[vcb->buffer_index];
 	return result;
 }
 
@@ -1208,6 +1215,7 @@ vk_load_queues(Arena *memory, Stream *err)
 	// NOTE(rnp): start by assigning queue families for each queue
 
 	/* NOTE(rnp): try for exclusive transfer queue */
+	#if !ForceSingleQueue
 	{
 		u32 mask = VK_QUEUE_GRAPHICS_BIT|VK_QUEUE_COMPUTE_BIT|VK_QUEUE_TRANSFER_BIT;
 		u32 max_timestamp_bits = 0;
@@ -1230,6 +1238,7 @@ vk_load_queues(Arena *memory, Stream *err)
 			break;
 		}
 	}
+	#endif /* !ForceSingleQueue */
 
 	/* NOTE(rnp): find graphics family and verify it is exclusive */
 	b32 multi_graphics = 0;
@@ -1317,6 +1326,9 @@ vk_load_queues(Arena *memory, Stream *err)
 		}
 		vk->queues[it] = vk->queues[vk->queue_indices[it]];
 	}
+
+	for EachElement(vk->command_pools, it)
+		vk->command_pools[it] = push_struct(memory, VulkanCommandPool);
 
 	VkDeviceQueueCreateInfo queue_create_infos[VulkanQueueKind_Count];
 
@@ -1409,33 +1421,38 @@ vk_load_queues(Arena *memory, Stream *err)
 		VulkanQueue *qp = vk->queues[q];
 		vkGetDeviceQueue(vk->device, qp->queue_family, qp->queue_index, &qp->queue);
 
-		VkCommandPoolCreateInfo command_pool_create_info = {
-			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-			.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-			.queueFamilyIndex = qp->queue_family,
-		};
-		vkCreateCommandPool(vk->device, &command_pool_create_info, 0, &qp->command_pool);
-
-		VkCommandBufferAllocateInfo command_buffer_allocate_info = {
-			.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-			.commandPool        = qp->command_pool,
-			.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-			.commandBufferCount = countof(qp->command_buffers),
-		};
-		vkAllocateCommandBuffers(vk->device, &command_buffer_allocate_info, qp->command_buffers);
-
 		qp->timeline_semaphore = vk_make_semaphore(0);
-
-		VkQueryPoolCreateInfo query_pool_create_info = {
-			.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
-			.queryType  = VK_QUERY_TYPE_TIMESTAMP,
-			.queryCount = countof(qp->command_buffers) * MaxCommandBufferTimestamps,
-		};
-		vkCreateQueryPool(vk->device, &query_pool_create_info, 0, &qp->query_pool);
 	}
 
 	vk->queues[VulkanQueueKind_Graphics]->pipeline_stage_flags |= VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT;
 	vk->queues[VulkanQueueKind_Compute]->pipeline_stage_flags  |= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+
+	for EachElement(vk->command_pools, it) {
+		VulkanCommandPool *vcp = vk->command_pools[it];
+
+		VkCommandPoolCreateInfo command_pool_create_info = {
+			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+			.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+			.queueFamilyIndex = vk->queues[it]->queue_family,
+		};
+
+		vkCreateCommandPool(vk->device, &command_pool_create_info, 0, &vcp->handle);
+
+		VkCommandBufferAllocateInfo command_buffer_allocate_info = {
+			.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+			.commandPool        = vcp->handle,
+			.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+			.commandBufferCount = countof(vcp->buffers),
+		};
+		vkAllocateCommandBuffers(vk->device, &command_buffer_allocate_info, vcp->buffers);
+
+		VkQueryPoolCreateInfo query_pool_create_info = {
+			.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+			.queryType  = VK_QUERY_TYPE_TIMESTAMP,
+			.queryCount = MaxCommandBuffersInFlight * MaxCommandBufferTimestamps,
+		};
+		vkCreateQueryPool(vk->device, &query_pool_create_info, 0, &vcp->query_pool);
+	}
 }
 
 function void
@@ -1998,17 +2015,16 @@ vk_pipeline_release(VulkanHandle h)
 		if (e->as.pipeline.stage_flags == VK_SHADER_STAGE_COMPUTE_BIT) timeline = VulkanTimeline_Compute;
 		else                                                           timeline = VulkanTimeline_Graphics;
 
-		VulkanQueue  *vq = vulkan_context->queues[timeline];
-		DeferLoop(take_lock(&vq->lock, -1), release_lock(&vq->lock))
-		{
-			u32 index = (vq->next_command_buffer_index - 1) % countof(vq->command_buffers);
-			vk_host_wait_timeline(timeline, vq->command_buffer_submission_values[index], -1ULL);
-
-			if (&e->as.pipeline == vq->bound_pipeline)
-				vq->bound_pipeline = 0;
-
+		// NOTE(rnp): block more command buffers from being recorded
+		VulkanCommandPool *vcp = vulkan_context->command_pools[timeline];
+		DeferLoop(take_lock(&vcp->lock, -1), release_lock(&vcp->lock)) {
+			u32 index = (vcp->next_index - 1) % countof(vcp->buffers);
+			vk_host_wait_timeline(timeline, vcp->submission_values[index], -1ULL);
 			vkDestroyPipeline(vulkan_context->device, e->as.pipeline.pipeline, 0);
 			vkDestroyPipelineLayout(vulkan_context->device, e->as.pipeline.layout, 0);
+
+			if (&e->as.pipeline == vcp->bound_pipeline)
+				vcp->bound_pipeline = 0;
 		}
 		vk_entity_release(e);
 	}
@@ -2019,31 +2035,31 @@ vk_command_begin(VulkanTimeline timeline)
 {
 	VulkanHandle result = {0};
 	if Between(timeline, 0, VulkanTimeline_Count - 1) {
-		VulkanContext *vk = vulkan_context;
-		VulkanQueue   *vq = vk->queues[timeline];
+		VulkanContext     *vk  = vulkan_context;
+		VulkanCommandPool *vcp = vk->command_pools[timeline];
 
-		take_lock(&vq->lock, -1);
+		take_lock(&vcp->lock, -1);
 
 		VulkanEntity        *e   = vk_entity_allocate(VulkanEntityKind_CommandBuffer);
 		VulkanCommandBuffer *vcb = &e->as.command_buffer;
-		u32 index = vq->next_command_buffer_index++ % countof(vq->command_buffers);
-		vcb->kind                 = (VulkanQueueKind)timeline;
-		vcb->command_buffer_index = index;
+		vcb->timeline     = timeline;
+		vcb->buffer_index = vcp->next_index++ % countof(vcp->buffers);
 
+		u32 index = vcb->buffer_index;
 		// TODO(rnp): probably not the best to have this here but it will likely not be hit
-		b32 wait_result = vk_host_wait_timeline(timeline, vq->command_buffer_submission_values[index], -1ULL);
+		b32 wait_result = vk_host_wait_timeline(timeline, vcp->submission_values[index], -1ULL);
 		assert(wait_result);
+
+		vcp->queries_occupied[index] = 0;
 
 		VkCommandBufferBeginInfo buffer_begin_info = {
 			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
 			.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
 		};
 
-		vq->query_pool_occupied[index] = 0;
-
-		vkBeginCommandBuffer(vq->command_buffers[index], &buffer_begin_info);
-		vkCmdResetQueryPool(vq->command_buffers[index], vq->query_pool,
-		                    index * MaxCommandBufferTimestamps, MaxCommandBufferTimestamps);
+		vkBeginCommandBuffer(vcp->buffers[index], &buffer_begin_info);
+		vkCmdResetQueryPool(vcp->buffers[index], vcp->query_pool, index * MaxCommandBufferTimestamps,
+		                    MaxCommandBufferTimestamps);
 
 		result = (VulkanHandle){(u64)e};
 	}
@@ -2056,30 +2072,30 @@ vk_command_bind_pipeline(VulkanHandle command, VulkanHandle pipeline)
 	if ValidVulkanHandle(command) {
 		VulkanContext       *vk  = vulkan_context;
 		VulkanCommandBuffer *vcb = vk_entity_data(command, VulkanEntityKind_CommandBuffer);
-		VulkanQueue         *vq  = vk->queues[vcb->kind];
+		VulkanCommandPool   *vcp = vk->command_pools[vcb->timeline];
 
 		VulkanPipeline *vp = 0;
 		if ValidVulkanHandle(pipeline) {
 			vp = vk_entity_data(pipeline, VulkanEntityKind_Pipeline);
-		} else if (vcb->kind == VulkanQueueKind_Compute) {
+		} else if (vcb->timeline == VulkanTimeline_Compute) {
 			vp = &vk->default_compute_pipeline;
-		} else if (vcb->kind == VulkanQueueKind_Graphics) {
+		} else if (vcb->timeline == VulkanTimeline_Graphics) {
 			vp = &vk->default_graphics_pipeline;
 		} else {
 			InvalidCodePath;
 		}
 
-		read_only local_persist VkPipelineBindPoint bind_point_lut[VulkanQueueKind_Count] = {
-			[VulkanQueueKind_Graphics] = VK_PIPELINE_BIND_POINT_GRAPHICS,
-			[VulkanQueueKind_Compute]  = VK_PIPELINE_BIND_POINT_COMPUTE,
-			[VulkanQueueKind_Transfer] = -1,
+		read_only local_persist VkPipelineBindPoint bind_point_lut[VulkanTimeline_Count] = {
+			[VulkanTimeline_Graphics] = VK_PIPELINE_BIND_POINT_GRAPHICS,
+			[VulkanTimeline_Compute]  = VK_PIPELINE_BIND_POINT_COMPUTE,
+			[VulkanTimeline_Transfer] = -1,
 		};
 
-		VkPipelineBindPoint bind_point = bind_point_lut[vcb->kind];
+		VkPipelineBindPoint bind_point = bind_point_lut[vcb->timeline];
 		assert(bind_point != (VkPipelineBindPoint)-1);
 
-		vkCmdBindPipeline(vq->command_buffers[vcb->command_buffer_index], bind_point, vp->pipeline);
-		vq->bound_pipeline = vp;
+		vkCmdBindPipeline(vcp->buffers[vcb->buffer_index], bind_point, vp->pipeline);
+		vcp->bound_pipeline = vp;
 	}
 }
 
@@ -2089,7 +2105,8 @@ vk_command_buffer_memory_barriers(VulkanHandle command, GPUMemoryBarrierInfo *ba
 	if ValidVulkanHandle(command) {
 		VulkanContext       *vk  = vulkan_context;
 		VulkanCommandBuffer *vcb = vk_entity_data(command, VulkanEntityKind_CommandBuffer);
-		VulkanQueue         *vq  = vk->queues[vcb->kind];
+		VulkanCommandPool   *vcp = vk->command_pools[vcb->timeline];
+		VulkanQueue         *vq  = vk->queues[vcb->timeline];
 
 		DeferLoop(take_lock(&vk->arena_lock, -1), release_lock(&vk->arena_lock))
 		{
@@ -2119,7 +2136,7 @@ vk_command_buffer_memory_barriers(VulkanHandle command, GPUMemoryBarrierInfo *ba
 				.pBufferMemoryBarriers    = memory_barriers,
 			};
 
-			vkCmdPipelineBarrier2(vq->command_buffers[vcb->command_buffer_index], &dependancy_info);
+			vkCmdPipelineBarrier2(vcp->buffers[vcb->buffer_index], &dependancy_info);
 		}
 	}
 }
@@ -2141,13 +2158,12 @@ vk_command_push_constants(VulkanHandle command, u32 offset, u32 size, void *valu
 {
 	if ValidVulkanHandle(command) {
 		VulkanCommandBuffer *vcb = vk_entity_data(command, VulkanEntityKind_CommandBuffer);
-		VulkanQueue         *vq  = vulkan_context->queues[vcb->kind];
-		VulkanPipeline      *vp  = vq->bound_pipeline;
+		VulkanCommandPool   *vcp = vulkan_context->command_pools[vcb->timeline];
+		VulkanPipeline      *vp  = vcp->bound_pipeline;
 
 		assert(vp);
 
-		vkCmdPushConstants(vq->command_buffers[vcb->command_buffer_index], vp->layout, vp->stage_flags,
-		                   offset, size, values);
+		vkCmdPushConstants(vcp->buffers[vcb->buffer_index], vp->layout, vp->stage_flags, offset, size, values);
 	}
 }
 
@@ -2157,22 +2173,21 @@ vk_command_timestamp(VulkanHandle command)
 	if ValidVulkanHandle(command) {
 		VulkanContext       *vk  = vulkan_context;
 		VulkanCommandBuffer *vcb = vk_entity_data(command, VulkanEntityKind_CommandBuffer);
-		VulkanQueue         *vq  = vk->queues[vcb->kind];
+		VulkanCommandPool   *vcp = vk->command_pools[vcb->timeline];
 
-		read_only local_persist VkPipelineStageFlags2 stage_lut[VulkanQueueKind_Count] = {
-			[VulkanQueueKind_Graphics] = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
-			[VulkanQueueKind_Compute]  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-			[VulkanQueueKind_Transfer] = -1,
+		read_only local_persist VkPipelineStageFlags2 stage_lut[VulkanTimeline_Count] = {
+			[VulkanTimeline_Graphics] = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
+			[VulkanTimeline_Compute]  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+			[VulkanTimeline_Transfer] = -1,
 		};
 
-		VkPipelineStageFlags2 stage = stage_lut[vcb->kind];
+		VkPipelineStageFlags2 stage = stage_lut[vcb->timeline];
 		assert(stage != (VkPipelineStageFlags2)-1);
 
-		if (vq->query_pool_occupied[vcb->command_buffer_index] < MaxCommandBufferTimestamps) {
-			u32 query_index = vq->query_pool_occupied[vcb->command_buffer_index]++;
-			vkCmdWriteTimestamp2(vq->command_buffers[vcb->command_buffer_index], stage,
-			                     vq->query_pool,
-			                     vcb->command_buffer_index * MaxCommandBufferTimestamps + query_index);
+		if (vcp->queries_occupied[vcb->buffer_index] < MaxCommandBufferTimestamps) {
+			u32 query_index = vcp->queries_occupied[vcb->buffer_index]++;
+			vkCmdWriteTimestamp2(vcp->buffers[vcb->buffer_index], stage, vcp->query_pool,
+			                     vcb->buffer_index * MaxCommandBufferTimestamps + query_index);
 		}
 	}
 }
@@ -2196,77 +2211,80 @@ vk_command_end(VulkanHandle command, VulkanHandle wait_semaphore, VulkanHandle f
 	if ValidVulkanHandle(command) {
 		VulkanContext       *vk  = vulkan_context;
 		VulkanCommandBuffer *vcb = vk_entity_data(command, VulkanEntityKind_CommandBuffer);
-		VulkanQueue         *vq  = vk->queues[vcb->kind];
+		VulkanCommandPool   *vcp = vk->command_pools[vcb->timeline];
+		VulkanQueue         *vq  = vk->queues[vcb->timeline];
 		VulkanSemaphore     *vs  = &vq->timeline_semaphore;
 
-		vkEndCommandBuffer(vq->command_buffers[vcb->command_buffer_index]);
+		vkEndCommandBuffer(vcp->buffers[vcb->buffer_index]);
 
-		VkCommandBufferSubmitInfo command_buffer_submit_info = {
-			.sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-			.commandBuffer = vq->command_buffers[vcb->command_buffer_index],
-		};
-
-		result = ++vs->value;
-
-		u32 signal_submit_info_count = 1;
-		VkSemaphoreSubmitInfo signal_submit_infos[2] = {{
-			.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-			.semaphore = vs->semaphore,
-			.value     = result,
-			.stageMask = vq->pipeline_stage_flags,
-		}};
-
-		if ValidVulkanHandle(finished_semaphore) {
-			VulkanSemaphore *fs = vk_entity_data(finished_semaphore, VulkanEntityKind_Semaphore);
-			signal_submit_infos[signal_submit_info_count++] = (VkSemaphoreSubmitInfo){
-				.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-				.semaphore = fs->semaphore,
-				.stageMask = vq->pipeline_stage_flags,
+		DeferLoop(take_lock(&vq->lock, -1), release_lock(&vq->lock)) {
+			VkCommandBufferSubmitInfo command_buffer_submit_info = {
+				.sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+				.commandBuffer = vcp->buffers[vcb->buffer_index],
 			};
-		}
 
-		u32 wait_submit_info_count = 0;
-		VkSemaphoreSubmitInfo wait_submit_infos[VulkanQueueKind_Count + 1];
-		for (u32 i = 0; i < vk->unique_queues; i++) {
-			u32 queue_index = vk->queue_indices[i];
-			if (vcb->in_flight_wait_values[queue_index] > 0) {
-				VulkanQueue *q = vk->queues[queue_index];
-				VkSemaphoreSubmitInfo wait_ssi = {
+			result = ++vs->value;
+
+			u32 signal_submit_info_count = 1;
+			VkSemaphoreSubmitInfo signal_submit_infos[2] = {{
+				.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+				.semaphore = vs->semaphore,
+				.value     = result,
+				.stageMask = vq->pipeline_stage_flags,
+			}};
+
+			if ValidVulkanHandle(finished_semaphore) {
+				VulkanSemaphore *fs = vk_entity_data(finished_semaphore, VulkanEntityKind_Semaphore);
+				signal_submit_infos[signal_submit_info_count++] = (VkSemaphoreSubmitInfo){
 					.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-					.semaphore = q->timeline_semaphore.semaphore,
-					.value     = vcb->in_flight_wait_values[queue_index],
-					.stageMask = q->pipeline_stage_flags,
+					.semaphore = fs->semaphore,
+					.stageMask = vq->pipeline_stage_flags,
 				};
-				wait_submit_infos[wait_submit_info_count++] = wait_ssi;
 			}
-		}
 
-		if ValidVulkanHandle(wait_semaphore) {
-			VulkanSemaphore *ws = vk_entity_data(wait_semaphore, VulkanEntityKind_Semaphore);
-			wait_submit_infos[wait_submit_info_count++] = (VkSemaphoreSubmitInfo){
-				.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-				.semaphore = ws->semaphore,
-				.stageMask = vq->pipeline_stage_flags,
+			u32 wait_submit_info_count = 0;
+			VkSemaphoreSubmitInfo wait_submit_infos[VulkanQueueKind_Count + 1];
+			for (u32 i = 0; i < vk->unique_queues; i++) {
+				u32 queue_index = vk->queue_indices[i];
+				if (vcb->in_flight_wait_values[queue_index] > 0) {
+					VulkanQueue *q = vk->queues[queue_index];
+					VkSemaphoreSubmitInfo wait_ssi = {
+						.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+						.semaphore = q->timeline_semaphore.semaphore,
+						.value     = vcb->in_flight_wait_values[queue_index],
+						.stageMask = q->pipeline_stage_flags,
+					};
+					wait_submit_infos[wait_submit_info_count++] = wait_ssi;
+				}
+			}
+
+			if ValidVulkanHandle(wait_semaphore) {
+				VulkanSemaphore *ws = vk_entity_data(wait_semaphore, VulkanEntityKind_Semaphore);
+				wait_submit_infos[wait_submit_info_count++] = (VkSemaphoreSubmitInfo){
+					.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+					.semaphore = ws->semaphore,
+					.stageMask = vq->pipeline_stage_flags,
+				};
+			}
+
+			VkSubmitInfo2 submit_info = {
+				.sType                    = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+				.commandBufferInfoCount   = 1,
+				.pCommandBufferInfos      = &command_buffer_submit_info,
+				.waitSemaphoreInfoCount   = wait_submit_info_count,
+				.pWaitSemaphoreInfos      = wait_submit_infos,
+				.signalSemaphoreInfoCount = signal_submit_info_count,
+				.pSignalSemaphoreInfos    = signal_submit_infos,
 			};
+
+			vkQueueSubmit2(vq->queue, 1, &submit_info, 0);
+
+			vcp->bound_pipeline = 0;
+
+			atomic_store_u64(vcp->submission_values + vcb->buffer_index, result);
 		}
 
-		VkSubmitInfo2 submit_info = {
-			.sType                    = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
-			.commandBufferInfoCount   = 1,
-			.pCommandBufferInfos      = &command_buffer_submit_info,
-			.waitSemaphoreInfoCount   = wait_submit_info_count,
-			.pWaitSemaphoreInfos      = wait_submit_infos,
-			.signalSemaphoreInfoCount = signal_submit_info_count,
-			.pSignalSemaphoreInfos    = signal_submit_infos,
-		};
-
-		vkQueueSubmit2(vq->queue, 1, &submit_info, 0);
-
-		vq->bound_pipeline = 0;
-
-		atomic_store_u64(vq->command_buffer_submission_values + vcb->command_buffer_index, result);
-
-		release_lock(&vq->lock);
+		release_lock(&vcp->lock);
 
 		vk_entity_release((VulkanEntity *)command.value[0]);
 	}
@@ -2458,18 +2476,18 @@ vk_command_read_timestamps(VulkanTimeline timeline, Arena *arena)
 {
 	u64 *result = 0;
 	if Between(timeline, 0, VulkanTimeline_Count - 1) {
-		VulkanContext *vk = vulkan_context;
-		VulkanQueue   *vq = vk->queues[timeline];
-		DeferLoop(take_lock(&vq->lock, -1), release_lock(&vq->lock)) {
-			u32 index = (vq->next_command_buffer_index - 1) % countof(vq->command_buffers);
-			u32 count = vq->query_pool_occupied[index];
+		VulkanContext     *vk  = vulkan_context;
+		VulkanCommandPool *vcp = vk->command_pools[timeline];
+		DeferLoop(take_lock(&vcp->lock, -1), release_lock(&vcp->lock)) {
+			u32 index = (vcp->next_index - 1) % countof(vcp->buffers);
+			u32 count = vcp->queries_occupied[index];
 			if (count > 0) {
 				result = push_array(arena, u64, count + 1);
 				result[0] = count;
 
-				vk_host_wait_timeline(timeline, vq->command_buffer_submission_values[index], -1ULL);
+				vk_host_wait_timeline(timeline, vcp->submission_values[index], -1ULL);
 
-				vkGetQueryPoolResults(vk->device, vq->query_pool, index * MaxCommandBufferTimestamps, count,
+				vkGetQueryPoolResults(vk->device, vcp->query_pool, index * MaxCommandBufferTimestamps, count,
 				                      count * sizeof(u64), result + 1, 8, VK_QUERY_RESULT_WAIT_BIT);
 			}
 		}
