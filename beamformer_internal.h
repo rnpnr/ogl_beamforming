@@ -269,6 +269,10 @@ struct BeamformerComputePlan {
 
 	VulkanHandle vulkan_pipelines[BeamformerMaxComputeShaderStages];
 
+	u32 first_image_shader_index;
+	u32 channel_count;
+	u32 raw_channel_byte_stride;
+
 	u32 dirty_programs;
 
 	BeamformerAcquisitionKind acquisition_kind;

@@ -25,6 +25,8 @@
 
 #include "beamformer_internal.h"
 
+#define BeamformerChannelChunkCount (16)
+
 global f32 dt_for_frame;
 
 #if !BEAMFORMER_RENDERDOC_HOOKS
@@ -319,14 +321,18 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	cp->iq_pipeline = demodulate || run_cuda_hilbert;
 
 	f32 sampling_frequency = pb->parameters.sampling_frequency;
-	u32 decimation_rate = MAX(pb->parameters.decimation_rate, 1);
+	u32 decimation_rate = Max(pb->parameters.decimation_rate, 1);
 	u32 sample_count    = pb->parameters.sample_count;
 	if (demodulate) {
 		sample_count       /= (2 * decimation_rate);
 		sampling_frequency /= 2 * (f32)decimation_rate;
 	}
 
-	cp->rf_size = sample_count * pb->parameters.channel_count * pb->parameters.acquisition_count;
+	BeamformerDataKind data_kind = pb->pipeline.data_kind;
+	cp->raw_channel_byte_stride  = pb->parameters.sample_count * pb->parameters.acquisition_count * beamformer_data_kind_byte_size[data_kind];
+
+	cp->channel_count = pb->parameters.channel_count;
+	cp->rf_size       = sample_count * pb->parameters.acquisition_count * BeamformerChannelChunkCount;
 	if (cp->iq_pipeline) cp->rf_size *= 8;
 	else                 cp->rf_size *= 4;
 
@@ -338,7 +344,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 	f32 time_offset = pb->parameters.time_offset;
 
-	BeamformerDataKind data_kind = pb->pipeline.data_kind;
 	cp->pipeline.shader_count = 0;
 	for (u32 i = 0; i < pb->pipeline.shader_count; i++) {
 		BeamformerShaderParameters *sp = pb->pipeline.parameters + i;
@@ -398,7 +403,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 					sd->layout = (uv3){{subgroup_size, 1, 1}};
 
 					sd->dispatch.x = (u32)ceil_f32((f32)sample_count                     / (f32)sd->layout.x);
-					sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count     / (f32)sd->layout.y);
+					sd->dispatch.y = (u32)ceil_f32(BeamformerChannelChunkCount           / (f32)sd->layout.y);
 					sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z);
 				} else if (db->transmit_count > 40) {
 					sd->bake.flags |= BeamformerShaderDecodeFlags_UseSharedMemory;
@@ -412,18 +417,17 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 					sd->layout = (uv3){{4, 1, use_16z? 16 : 32}};
 
 					sd->dispatch.x = (u32)ceil_f32((f32)sample_count                     / (f32)sd->layout.x);
-					sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count     / (f32)sd->layout.y);
+					sd->dispatch.y = (u32)ceil_f32(BeamformerChannelChunkCount           / (f32)sd->layout.y);
 					sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z / (f32)db->to_process);
 				} else {
 					db->to_process = 1;
 
 					/* NOTE(rnp): register caching. using more threads will cause the compiler to do
 					 * contortions to avoid spilling registers. using less gives higher performance */
-					/* TODO(rnp): may need to be adjusted to 16 on NVIDIA */
 					sd->layout = (uv3){{subgroup_size / 2, 1, 1}};
 
-					sd->dispatch.x = (u32)ceil_f32((f32)sample_count                 / (f32)sd->layout.x);
-					sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count / (f32)sd->layout.y);
+					sd->dispatch.x = (u32)ceil_f32((f32)sample_count           / (f32)sd->layout.x);
+					sd->dispatch.y = (u32)ceil_f32(BeamformerChannelChunkCount / (f32)sd->layout.y);
 					sd->dispatch.z = 1;
 				}
 
@@ -502,16 +506,17 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 					fb->sample_count           = sample_count;
 				}
 
-				/* TODO(rnp): filter may need a different dispatch layout */
-				sd->layout     = (uv3){{128, 1, 1}};
+				sd->layout     = (uv3){{subgroup_size, 1, 1}};
 				sd->dispatch.x = (u32)ceil_f32((f32)sample_count                     / (f32)sd->layout.x);
-				sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count     / (f32)sd->layout.y);
+				sd->dispatch.y = (u32)ceil_f32(BeamformerChannelChunkCount           / (f32)sd->layout.y);
 				sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z);
 			}
 		}break;
 
 		case BeamformerShaderKind_DAS:{
 			if (compute_plan_push_shader(cp, shader, sp)) {
+				cp->first_image_shader_index = cp->pipeline.shader_count;
+
 				sd->bake.data_kind = BeamformerDataKind_Float32;
 				if (cp->iq_pipeline)
 					sd->bake.data_kind = BeamformerDataKind_Float32Complex;
@@ -535,6 +540,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				db->transmit_angle         = pb->parameters.focal_vector.E[0];
 				db->focus_depth            = pb->parameters.focal_vector.E[1];
 				db->transmit_receive_orientation = pb->parameters.transmit_receive_orientation;
+				db->channel_chunk_count    = BeamformerChannelChunkCount;
 
 				if (pb->parameters.single_focus)        sd->bake.flags |= BeamformerShaderDASFlags_SingleFocus;
 				if (pb->parameters.single_orientation)  sd->bake.flags |= BeamformerShaderDASFlags_SingleOrientation;
@@ -816,7 +822,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 
 function void
 do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *cp, BeamformerFrame *frame,
-                  u32 shader_slot, Arena arena, u64 rf_pointer)
+                  u32 shader_slot, u32 channel_offset, u64 rf_pointer, Arena arena)
 {
 	BeamformerComputeContext *cc = &ctx->compute_context;
 
@@ -931,21 +937,11 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			.output_size_y                 = cp->output_points.y,
 			.output_size_z                 = cp->output_points.z,
 			.cycle_t                       = das_cycle_t++,
+			.channel_offset                = channel_offset,
 		};
 
 		BeamformerShaderBakeParameters *bp = &cp->shader_descriptors[shader_slot].bake;
 		b32 coherent = (bp->flags & BeamformerShaderDASFlags_CoherencyWeighting) != 0;
-
-		i32 loop_end;
-		if (bp->DAS.acquisition_kind == BeamformerAcquisitionKind_RCA_VLS ||
-		    bp->DAS.acquisition_kind == BeamformerAcquisitionKind_RCA_TPW)
-		{
-			/* NOTE(rnp): to avoid repeatedly sampling the whole focal vectors
-			 * texture we loop over transmits for VLS/TPW */
-			loop_end = (i32)bp->DAS.acquisition_count;
-		} else {
-			loop_end = (i32)bp->DAS.channel_count;
-		}
 
 		GPUMemoryBarrierInfo memory_barriers[2] = {
 			{
@@ -964,15 +960,8 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 		vk_command_buffer_memory_barriers(cmd, memory_barriers, 1 + coherent);
 
 		vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
-		for (i32 index = 0; index < loop_end; index++) {
-			if (index != 0) {
-				pc.channel_t = index;
-				vk_command_push_constants(cmd, offsetof(BeamformerShaderDASPushConstants, channel_t),
-				                          sizeof(pc.channel_t), &pc.channel_t);
-			}
-			vk_command_dispatch_compute(cmd, dispatch);
-			vk_command_buffer_memory_barriers(cmd, memory_barriers, 1 + coherent);
-		}
+		vk_command_dispatch_compute(cmd, dispatch);
+		vk_command_buffer_memory_barriers(cmd, memory_barriers, 1 + coherent);
 	}break;
 
 	case BeamformerShaderKind_CoherencyWeighting:{
@@ -1215,9 +1204,20 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				slot = (rf->compute_index - 1) % countof(rf->upload_complete_values);
 			}
 
-			for (u32 i = 0; i < cp->pipeline.shader_count; i++) {
-				do_compute_shader(ctx, cmd, cp, frame, i, *arena,
-				                  rf->buffer.gpu_pointer + slot * rf->active_rf_size);
+			for (u32 channel_offset = 0;
+			     channel_offset < cp->channel_count;
+			     channel_offset += BeamformerChannelChunkCount)
+			{
+				u64 rf_pointer = rf->buffer.gpu_pointer + slot * rf->active_rf_size;
+				rf_pointer += cp->raw_channel_byte_stride * channel_offset;
+				for (u32 i = 0; i < cp->first_image_shader_index; i++) {
+					do_compute_shader(ctx, cmd, cp, frame, i, channel_offset, rf_pointer, *arena);
+					vk_command_timestamp(cmd);
+				}
+			}
+
+			for (u32 i = cp->first_image_shader_index; i < cp->pipeline.shader_count; i++) {
+				do_compute_shader(ctx, cmd, cp, frame, i, 0, 0, *arena);
 				vk_command_timestamp(cmd);
 			}
 
@@ -1232,10 +1232,13 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			{
 				Arena scratch    = *arena;
 				/* NOTE(rnp): this blocks until work completes */
-				u64 * timestamps = vk_command_read_timestamps(VulkanTimeline_Compute, &scratch);
+				u64 *timestamps  = vk_command_read_timestamps(VulkanTimeline_Compute, &scratch);
 
-				u64 last_time    = timestamps[0] > 0 ? timestamps[1] : 0;
+				i32 steps        = ((i32)cp->channel_count / BeamformerChannelChunkCount) - 1;
+				i32 step         = 0;
 				u32 shader_index = 0;
+				u64 last_time    = timestamps[0] > 0 ? timestamps[1] : 0;
+
 				for (u64 i = 2; i < timestamps[0] + 1; i++) {
 					push_compute_timing_info(ctx->compute_timing_table, (ComputeTimingInfo){
 						.kind        = ComputeTimingInfoKind_Shader,
@@ -1244,7 +1247,12 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 						.timer_count = timestamps[i] - last_time,
 					});
 					last_time = timestamps[i];
+
 					shader_index++;
+					if (shader_index == cp->first_image_shader_index && step < steps) {
+						shader_index = 0;
+						step++;
+					}
 				}
 			}
 
@@ -1285,7 +1293,7 @@ coalesce_timing_table(ComputeTimingTable *t, ComputeShaderStats *stats)
 	 * info item. this could result in garbage entries but they shouldn't really matter */
 
 	u32 target = atomic_load_u32(&t->write_index);
-	u32 stats_index = (stats->latest_frame_index + 1) % countof(stats->table.times);
+	u32 stats_index = stats->latest_frame_index;
 
 	b32 has_rf = 0;
 	f32 gpu_clocks_to_nano = 1.0e-9f * vk_gpu_info()->timestamp_period_ns;
@@ -1307,8 +1315,7 @@ coalesce_timing_table(ComputeTimingTable *t, ComputeShaderStats *stats)
 		case ComputeTimingInfoKind_ComputeFrameEnd:{
 			assert(t->compute_frame_active == 1);
 			t->compute_frame_active = 0;
-			stats->latest_frame_index = stats_index;
-			stats_index = (stats_index + 1) % countof(stats->table.times);
+			stats_index = stats->latest_frame_index = (stats_index + 1) % countof(stats->table.times);
 			stats->table.shader_count = t->in_flight_shader_count;
 			mem_copy(stats->table.shader_ids, t->in_flight_shader_ids, sizeof(t->in_flight_shader_ids));
 		}break;

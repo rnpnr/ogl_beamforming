@@ -2656,7 +2656,7 @@ draw_compute_stats_bar_view(BeamformerUI *ui, Arena arena, ComputeShaderStats *s
 	for (u32 i = 0; i < countof(frame_labels); i++) {
 		TableCell *cells = table_push_row(table, &arena, TRK_CELLS)->data;
 		cells[0].text = frame_labels[i];
-		u32 frame_index = (stats->latest_frame_index - i) % countof(stats->table.times);
+		u32 frame_index = (stats->latest_frame_index - i - 1) % countof(stats->table.times);
 		for (u32 j = 0; j < stages; j++)
 			total_times[i] += stats->table.times[frame_index][j];
 	}
@@ -2680,7 +2680,7 @@ draw_compute_stats_bar_view(BeamformerUI *ui, Arena arena, ComputeShaderStats *s
 		ts.limits.size.w = cr.size.w;
 		draw_table_cell(ui, arena, (TableCell *)row->data, cr, table->alignment[0], ts, mouse);
 
-		u32 frame_index = (stats->latest_frame_index - row_index) % countof(stats->table.times);
+		u32 frame_index = (stats->latest_frame_index - row_index - 1) % countof(stats->table.times);
 		f32 total_width = average_width * total_times[row_index] / compute_time_sum;
 		Rect rect;
 		rect.pos  = v2_add(cr.pos, (v2){{cr.size.w + table->cell_pad.w , cr.size.h * 0.15f}});

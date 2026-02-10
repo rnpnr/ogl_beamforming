@@ -5,14 +5,16 @@
     #define RESULT_COHERENT_CAST(a)   (a).x
     #define RESULT_INCOHERENT_CAST(a) (a).y
   #endif
-  #define SAMPLE_TYPE float
+  #define SAMPLE_TYPE  float
+  #define SAMPLE_BYTES 4
 #elif DataKind == DataKind_Float32Complex
   #if CoherencyWeighting
     #define RESULT_TYPE               vec3
     #define RESULT_COHERENT_CAST(a)   (a).xy
     #define RESULT_INCOHERENT_CAST(a) (a).z
   #endif
-  #define SAMPLE_TYPE vec2
+  #define SAMPLE_TYPE  vec2
+  #define SAMPLE_BYTES 8
 #else
   #error DataKind unsupported for DAS
 #endif
@@ -35,18 +37,6 @@ layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly 
 	SAMPLE_TYPE values[];
 };
 
-layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer SparseElements {
-	int16_t values[];
-};
-
-layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer TransmitReceiveOrientations {
-	uint16_t values[];
-};
-
-layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer FocalVectors {
-	vec2 values[];
-};
-
 layout(std430, buffer_reference, buffer_reference_align = 64) restrict buffer Output {
 	SAMPLE_TYPE values[];
 };
@@ -55,10 +45,20 @@ layout(std430, buffer_reference, buffer_reference_align = 64) restrict buffer In
 	float values[];
 };
 
-#define RX_ORIENTATION(tx_rx) (((tx_rx) >> 0) & 0x0F)
-#define TX_ORIENTATION(tx_rx) (((tx_rx) >> 4) & 0x0F)
-//#define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
-//#define TX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 4, 4)
+layout(std430, buffer_reference) restrict readonly buffer SparseElements {
+	int16_t values[];
+};
+
+layout(std430, buffer_reference) restrict readonly buffer TransmitReceiveOrientations {
+	uint16_t values[];
+};
+
+layout(std430, buffer_reference) restrict readonly buffer FocalVectors {
+	vec2 values[];
+};
+
+#define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
+#define TX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 4, 4)
 
 #define C_SPLINE 0.5
 
@@ -76,7 +76,7 @@ vec2 rotate_iq(const vec2 iq, const float time)
 #endif
 
 /* NOTE: See: https://cubic.org/docs/hermite.htm */
-SAMPLE_TYPE cubic(const int base_index, const float index)
+SAMPLE_TYPE cubic(const RF rf, const float index)
 {
 	const mat4 h = mat4(
 		 2, -3,  0, 1,
@@ -87,10 +87,10 @@ SAMPLE_TYPE cubic(const int base_index, const float index)
 
 	float tk, t = modf(index, tk);
 	SAMPLE_TYPE samples[4] = {
-		RF(rf_data).values[base_index + int(tk) - 1],
-		RF(rf_data).values[base_index + int(tk) + 0],
-		RF(rf_data).values[base_index + int(tk) + 1],
-		RF(rf_data).values[base_index + int(tk) + 2],
+		rf.values[int(tk) - 1],
+		rf.values[int(tk) + 0],
+		rf.values[int(tk) + 1],
+		rf.values[int(tk) + 2],
 	};
 
 	vec4        S  = vec4(t * t * t, t * t, t, 1);
@@ -112,23 +112,24 @@ SAMPLE_TYPE cubic(const int base_index, const float index)
 SAMPLE_TYPE sample_rf(const int channel, const int transmit, const float index)
 {
 	SAMPLE_TYPE result = SAMPLE_TYPE(0);
-	int base_index = int(channel * SampleCount * AcquisitionCount + transmit * SampleCount);
+	int offset = SAMPLE_BYTES * (channel * SampleCount * AcquisitionCount + transmit * SampleCount);
+	RF rf = RF(rf_data + offset);
 	switch (InterpolationMode) {
 	case InterpolationMode_Nearest:{
 		if (index >= 0 && int(round(index)) < SampleCount)
-			result = rotate_iq(RF(rf_data).values[base_index + int(round(index))], index / SamplingFrequency);
+			result = rotate_iq(rf.values[int(round(index))], index / SamplingFrequency);
 	}break;
 	case InterpolationMode_Linear:{
 		if (index >= 0 && round(index) < SampleCount) {
 			float tk, t = modf(index, tk);
-			int n = base_index + int(tk);
-			result = (1 - t) * RF(rf_data).values[n] + t * RF(rf_data).values[n + 1];
+			int n = int(tk);
+			result = (1 - t) * rf.values[n] + t * rf.values[n + 1];
 		}
 		result = rotate_iq(result, index / SamplingFrequency);
 	}break;
 	case InterpolationMode_Cubic:{
-		if (index >= 0 && (int(index) + 2) < SampleCount)
-			result = rotate_iq(cubic(base_index, index), index / SamplingFrequency);
+		if (int(index) > 0 && (int(index) + 2) < SampleCount)
+			result = rotate_iq(cubic(rf, index), index / SamplingFrequency);
 	}break;
 	}
 	return result;
@@ -213,24 +214,23 @@ float rca_transmit_distance(const vec3 world_point, const vec2 focal_vector, con
 
 RESULT_TYPE RCA(const vec3 world_point)
 {
-	const int16_t acquisition_start = int16_t(channel_t);
-	const int16_t acquisition_end   = int16_t(channel_t + 1);
 	RESULT_TYPE result = RESULT_TYPE(0);
-	for (int16_t acquisition = acquisition_start; acquisition < acquisition_end; acquisition++) {
+	for (int16_t acquisition = int16_t(0); acquisition < int16_t(AcquisitionCount); acquisition++) {
 		const uint16_t tx_rx_orientation = tx_rx_orientation_for_acquisition(acquisition);
 		const bool     rx_rows           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows;
 		const vec2     focal_vector      = focal_vector_for_acquisition(acquisition);
 		vec2  xdc_world_point   = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
 		float transmit_distance = rca_transmit_distance(world_point, focal_vector, tx_rx_orientation);
 
-		for (int16_t rx_channel = int16_t(0); rx_channel < int16_t(ChannelCount); rx_channel++) {
+		for (int16_t chunk_channel = int16_t(0); chunk_channel < int16_t(ChannelChunkCount); chunk_channel++) {
+			int16_t rx_channel   = int16_t(channel_offset) + chunk_channel;
 			vec3  rx_center      = vec3(rx_channel * xdc_element_pitch, 0);
 			vec2  receive_vector = xdc_world_point - rca_plane_projection(rx_center, rx_rows);
 			float a_arg          = abs(FNumber * receive_vector.x / abs(xdc_world_point.y));
 
 			if (a_arg < 0.5f) {
 				float       sidx  = sample_index(transmit_distance + length(receive_vector));
-				SAMPLE_TYPE value = apodize(a_arg) * sample_rf(rx_channel, acquisition, sidx);
+				SAMPLE_TYPE value = apodize(a_arg) * sample_rf(chunk_channel, acquisition, sidx);
 				result += RESULT_STORE(value);
 			}
 		}
@@ -250,8 +250,8 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 	for (int16_t transmit = int16_t(Sparse); transmit < int16_t(AcquisitionCount); transmit++) {
 		const int16_t tx_channel = bool(Sparse) ? SparseElements(sparse_elements).values[transmit - Sparse]
 		                                        : transmit;
-		const int16_t rx_channel = int16_t(channel_t);
-		{
+		for (int16_t chunk_channel = int16_t(0); chunk_channel < int16_t(ChannelChunkCount); chunk_channel++) {
+			int16_t rx_channel = int16_t(channel_offset) + chunk_channel;
 			vec3 element_position;
 			if (rx_cols) element_position = vec3(rx_channel, tx_channel, 0) * vec3(xdc_element_pitch, 0);
 			else         element_position = vec3(tx_channel, rx_channel, 0) * vec3(xdc_element_pitch, 0);
@@ -264,7 +264,7 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 				if (transmit == 0) apodization *= inversesqrt(float(AcquisitionCount));
 
 				float       sidx  = sample_index(transmit_distance + distance(xdc_world_point, element_position));
-				SAMPLE_TYPE value = apodization * sample_rf(rx_channel, transmit, sidx);
+				SAMPLE_TYPE value = apodization * sample_rf(chunk_channel, transmit, sidx);
 				result += RESULT_STORE(value);
 			}
 		}
@@ -274,15 +274,14 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 
 RESULT_TYPE FORCES(const vec3 world_point)
 {
-	const int16_t rx_channel_start = int16_t(channel_t);
-	const int16_t rx_channel_end   = int16_t(channel_t + 1);
-
 	RESULT_TYPE result = RESULT_TYPE(0);
 	vec3 xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
-	for (int16_t rx_channel = rx_channel_start; rx_channel < rx_channel_end; rx_channel++) {
+	for (int16_t chunk_channel = int16_t(0); chunk_channel < int16_t(ChannelChunkCount); chunk_channel++) {
+		int16_t rx_channel = int16_t(channel_offset) + chunk_channel;
 		float receive_distance = distance(xdc_world_point.xz, vec2(rx_channel * xdc_element_pitch.x, 0));
 		float a_arg = abs(FNumber * (xdc_world_point.x - rx_channel * xdc_element_pitch.x) /
 		                  abs(xdc_world_point.z));
+
 		if (a_arg < 0.5f) {
 			float apodization = apodize(a_arg);
 			for (int16_t transmit = int16_t(Sparse); transmit < int16_t(AcquisitionCount); transmit++) {
@@ -291,7 +290,7 @@ RESULT_TYPE FORCES(const vec3 world_point)
 				vec3    transmit_center = vec3(xdc_element_pitch * vec2(tx_channel, int(ChannelCount / 2)), 0);
 
 				float       sidx  = sample_index(distance(xdc_world_point, transmit_center) + receive_distance);
-				SAMPLE_TYPE value = apodization * sample_rf(rx_channel, transmit, sidx);
+				SAMPLE_TYPE value = apodization * sample_rf(chunk_channel, transmit, sidx);
 				result += RESULT_STORE(value);
 			}
 		}

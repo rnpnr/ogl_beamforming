@@ -300,6 +300,7 @@
 			@BakeInt(AcquisitionCount           acquisition_count           )
 			@BakeInt(AcquisitionKind            acquisition_kind            )
 			@BakeInt(ChannelCount               channel_count               )
+			@BakeInt(ChannelChunkCount          channel_chunk_count         )
 			@BakeInt(InterpolationMode          interpolation_mode          )
 			@BakeInt(SampleCount                sample_count                )
 			@BakeInt(TransmitReceiveOrientation transmit_receive_orientation)
@@ -328,7 +329,7 @@
 			[uint32_t U32 output_size_y                ]
 			[uint32_t U32 output_size_z                ]
 			[uint32_t U32 cycle_t                      ]
-			[int32_t  S32 channel_t                    ]
+			[int32_t  S32 channel_offset               ]
 		}
 	}
 
