@@ -280,37 +280,41 @@ RESULT_TYPE FORCES(const vec3 world_point)
 void main()
 {
 	ivec3 out_voxel = ivec3(gl_GlobalInvocationID);
+	#if !Fast
+		out_voxel += u_voxel_offset;
+	#endif
+
+	vec3  image_points = vec3(imageSize(u_out_data_tex)) - 1.0f;
 	if (!all(lessThan(out_voxel, imageSize(u_out_data_tex))))
 		return;
 
-#if Fast
-	RESULT_TYPE sum = RESULT_TYPE_CAST(imageLoad(u_out_data_tex, out_voxel));
-#else
-	RESULT_TYPE sum = RESULT_TYPE(0);
-	out_voxel += u_voxel_offset;
-#endif
+	vec3 point       = vec3(out_voxel) / max(vec3(1.0f), image_points);
+	vec3 world_point = (voxel_transform * vec4(point, 1)).xyz;
 
-	vec3 world_point = (voxel_transform * vec4(out_voxel, 1)).xyz;
-
+	RESULT_TYPE sum;
 	switch (AcquisitionKind) {
 	case AcquisitionKind_FORCES:
 	case AcquisitionKind_UFORCES:
 	{
-		sum += FORCES(world_point);
+		sum = FORCES(world_point);
 	}break;
 	case AcquisitionKind_HERCULES:
 	case AcquisitionKind_UHERCULES:
 	case AcquisitionKind_HERO_PA:
 	{
-		sum += HERCULES(world_point);
+		sum = HERCULES(world_point);
 	}break;
 	case AcquisitionKind_Flash:
 	case AcquisitionKind_RCA_TPW:
 	case AcquisitionKind_RCA_VLS:
 	{
-		sum += RCA(world_point);
+		sum = RCA(world_point);
 	}break;
 	}
+
+	#if Fast
+		sum += RESULT_TYPE_CAST(imageLoad(u_out_data_tex, out_voxel));
+	#endif
 
 	#if CoherencyWeighting
 		/* TODO(rnp): scale such that brightness remains ~constant */

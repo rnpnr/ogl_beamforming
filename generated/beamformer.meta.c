@@ -174,6 +174,7 @@ typedef union {
 } BeamformerEmissionParameters;
 
 typedef struct {
+	m4  das_voxel_transform;
 	m4  xdc_transform;
 	v2  xdc_element_pitch;
 	uv2 raw_data_dimensions;
@@ -188,23 +189,20 @@ typedef struct {
 	u8  single_orientation;
 	u8  decode_mode;
 	u8  sampling_mode;
-	v3  output_min_coordinate;
-	v3  output_max_coordinate;
 	iv4 output_points;
 	f32 sampling_frequency;
 	f32 demodulation_frequency;
 	f32 speed_of_sound;
 	f32 f_number;
-	f32 off_axis_pos;
 	u32 interpolation_mode;
 	u32 coherency_weighting;
-	u32 beamform_plane;
 	u32 decimation_rate;
 	BeamformerEmissionKind       emission_kind;
 	BeamformerEmissionParameters emission_parameters;
 } BeamformerParameters;
 
 typedef struct {
+	m4  das_voxel_transform;
 	m4  xdc_transform;
 	v2  xdc_element_pitch;
 	uv2 raw_data_dimensions;
@@ -222,21 +220,18 @@ typedef struct {
 } BeamformerParametersHead;
 
 typedef struct {
-	v3  output_min_coordinate;
-	v3  output_max_coordinate;
 	iv4 output_points;
 	f32 sampling_frequency;
 	f32 demodulation_frequency;
 	f32 speed_of_sound;
 	f32 f_number;
-	f32 off_axis_pos;
 	u32 interpolation_mode;
 	u32 coherency_weighting;
-	u32 beamform_plane;
 	u32 decimation_rate;
 } BeamformerUIParameters;
 
 typedef struct {
+	m4  das_voxel_transform;
 	m4  xdc_transform;
 	v2  xdc_element_pitch;
 	uv2 raw_data_dimensions;
@@ -251,17 +246,13 @@ typedef struct {
 	u8  single_orientation;
 	u8  decode_mode;
 	u8  sampling_mode;
-	v3  output_min_coordinate;
-	v3  output_max_coordinate;
 	iv4 output_points;
 	f32 sampling_frequency;
 	f32 demodulation_frequency;
 	f32 speed_of_sound;
 	f32 f_number;
-	f32 off_axis_pos;
 	u32 interpolation_mode;
 	u32 coherency_weighting;
-	u32 beamform_plane;
 	u32 decimation_rate;
 	BeamformerEmissionKind       emission_kind;
 	BeamformerEmissionParameters emission_parameters;

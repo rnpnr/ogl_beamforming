@@ -453,7 +453,7 @@ beamformer_init(BeamformerInput *input)
 	"\tf_orig_texture_coordinate = (2 * v_position + 1) / 2;\n"
 	//"\tif (v_position.y == -1) pos.x = clamp(v_position.x, -u_clip_fraction, u_clip_fraction);\n"
 	"\tvec3 tex_coord = (2 * pos + 1) / 2;\n"
-	"\tf_texture_coordinate = tex_coord.xzy;\n"
+	"\tf_texture_coordinate = tex_coord;\n"
 	//"\tf_texture_coordinate = u_swizzle? tex_coord.xzy : tex_coord;\n"
 	//"\tf_normal    = normalize(mat3(u_model) * v_normal);\n"
 	"\tf_normal    = v_normal;\n"

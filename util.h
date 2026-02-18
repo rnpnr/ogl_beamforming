@@ -110,7 +110,6 @@ typedef u64    uptr;
 
 #define countof(a)       (iz)(sizeof(a) / sizeof(*a))
 #define ARRAY_COUNT(a)   (sizeof(a) / sizeof(*a))
-#define ABS(x)           ((x) < 0 ? (-x) : (x))
 #define BETWEEN(x, a, b) ((x) >= (a) && (x) <= (b))
 #define CLAMP(x, a, b)   ((x) < (a) ? (a) : (x) > (b) ? (b) : (x))
 #define CLAMP01(x)       CLAMP(x, 0, 1)
@@ -121,6 +120,9 @@ typedef u64    uptr;
 #define SIGN(x)          ((x) < 0? -1 : 1)
 #define swap(a, b)       do {typeof(a) __tmp = (a); (a) = (b); (b) = __tmp;} while(0)
 
+#define Abs(a)           ((a) < 0 ? -(a) : (a))
+#define Between(x, a, b) ((x) >= (a) && (x) <= (b))
+#define Clamp(x, a, b)   ((x) < (a) ? (a) : (x) > (b) ? (b) : (x))
 #define Min(a, b)        ((a) < (b) ? (a) : (b))
 #define Max(a, b)        ((a) > (b) ? (a) : (b))
 
@@ -129,7 +131,7 @@ typedef u64    uptr;
 #define TOLOWER(c)       (((c) | 0x20u))
 #define TOUPPER(c)       (((c) & ~(0x20u)))
 
-#define f32_cmp(x, y)    (ABS((x) - (y)) <= F32_EPSILON * MAX(1.0f, MAX(ABS(x), ABS(y))))
+#define f32_equal(x, y)  (Abs((x) - (y)) <= F32_EPSILON * Max(1.0f, Max(Abs(x), Abs(y))))
 
 #define DeferLoop(begin, end)          for (i32 _i_ = ((begin), 0); !_i_; _i_ += 1, (end))
 #define DeferLoopTag(begin, end, tag)  for (i32 __##tag = ((begin), 0); !__##tag ; __##tag += 1, (end))
@@ -138,6 +140,7 @@ typedef u64    uptr;
 #define EachElement(array, it)         (u64 it = 0; it < countof(array); it += 1)
 #define EachEnumValue(type, it)        (type it = (type)0; it < type##_Count; it = (type)(it + 1))
 #define EachNonZeroEnumValue(type, it) (type it = (type)1; it < type##_Count; it = (type)(it + 1))
+#define EachIndex(count, it)           (u64 it = 0; it < count; it += 1)
 
 #define spin_wait(c) while ((c)) cpu_yield()
 

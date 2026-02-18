@@ -157,12 +157,37 @@ iv3_equal(iv3 a, iv3 b)
 	return result;
 }
 
+function i32
+iv3_dimension(iv3 points)
+{
+	i32 result = (points.x > 1) + (points.y > 1) + (points.z > 1);
+	return result;
+}
+
 function v2
 clamp_v2_rect(v2 v, Rect r)
 {
 	v2 result = v;
 	result.x = CLAMP(v.x, r.pos.x, r.pos.x + r.size.x);
 	result.y = CLAMP(v.y, r.pos.y, r.pos.y + r.size.y);
+	return result;
+}
+
+function v2
+v2_from_iv2(iv2 v)
+{
+	v2 result;
+	result.E[0] = (f32)v.E[0];
+	result.E[1] = (f32)v.E[1];
+	return result;
+}
+
+function v2
+v2_abs(v2 a)
+{
+	v2 result;
+	result.x = Abs(a.x);
+	result.y = Abs(a.y);
 	return result;
 }
 
@@ -256,9 +281,9 @@ function v3
 v3_abs(v3 a)
 {
 	v3 result;
-	result.x = ABS(a.x);
-	result.y = ABS(a.y);
-	result.z = ABS(a.z);
+	result.x = Abs(a.x);
+	result.y = Abs(a.y);
+	result.z = Abs(a.z);
 	return result;
 }
 
@@ -459,28 +484,36 @@ m4_scale(v3 scale)
 }
 
 function m4
+m4_rotation_about_axis(v3 axis, f32 turns)
+{
+	assert(f32_equal(v3_magnitude_squared(axis), 1.0f));
+	f32 sa  = sin_f32(turns * 2 * PI);
+	f32 ca  = cos_f32(turns * 2 * PI);
+	f32 mca = 1.0f - ca;
+
+	f32 x = axis.x, x2 = x * x;
+	f32 y = axis.y, y2 = y * y;
+	f32 z = axis.z, z2 = z * z;
+
+	m4 result;
+	result.c[0] = (v4){{ca + mca * x2,        mca * x * y - sa * z, mca * x * z + sa * y, 0}};
+	result.c[1] = (v4){{mca * x * y + sa * z, ca + mca * y2,        mca * y * z - sa * x, 0}};
+	result.c[2] = (v4){{mca * x * z - sa * y, mca * y * z + sa * x, ca + mca * z2,        0}};
+	result.c[3] = (v4){{0, 0, 0, 1}};
+	return result;
+}
+
+function m4
 m4_rotation_about_z(f32 turns)
 {
-	f32 sa = sin_f32(turns * 2 * PI);
-	f32 ca = cos_f32(turns * 2 * PI);
-	m4 result;
-	result.c[0] = (v4){{ca, -sa, 0, 0}};
-	result.c[1] = (v4){{sa,  ca, 0, 0}};
-	result.c[2] = (v4){{0,    0, 1, 0}};
-	result.c[3] = (v4){{0,    0, 0, 1}};
+	m4 result = m4_rotation_about_axis((v3){{0, 0, 1.0f}}, turns);
 	return result;
 }
 
 function m4
 m4_rotation_about_y(f32 turns)
 {
-	f32 sa = sin_f32(turns * 2 * PI);
-	f32 ca = cos_f32(turns * 2 * PI);
-	m4 result;
-	result.c[0] = (v4){{ca, 0, -sa, 0}};
-	result.c[1] = (v4){{0,  1,  0,  0}};
-	result.c[2] = (v4){{sa, 0,  ca, 0}};
-	result.c[3] = (v4){{0,  0,  0,  1}};
+	m4 result = m4_rotation_about_axis((v3){{0, 1.0f, 0}}, turns);
 	return result;
 }
 
@@ -579,7 +612,7 @@ obb_raycast(m4 obb_orientation, v3 obb_size, v3 obb_center, ray r)
 	f32 result = 0;
 	f32 t[6] = {0};
 	for (i32 i = 0; i < 3; i++) {
-		if (f32_cmp(f.E[i], 0)) {
+		if (f32_equal(f.E[i], 0)) {
 			if (-e.E[i] - obb_size.E[i] > 0 || -e.E[i] + obb_size.E[i] < 0)
 				result = -1.0f;
 			f.E[i] = F32_EPSILON;
@@ -648,7 +681,7 @@ kaiser_low_pass_filter(Arena *arena, f32 cutoff_frequency, f32 sampling_frequenc
 
 	for (i32 n = 0; n < length; n++) {
 		f32 t       = (f32)n - a;
-		f32 impulse = !f32_cmp(t, 0) ? sin_f32(wc * t) / t : wc;
+		f32 impulse = !f32_equal(t, 0) ? sin_f32(wc * t) / t : wc;
 		t           = t / a;
 		f32 window  = (f32)cephes_i0(beta * sqrt_f32(1 - t * t)) / pi_i0_b;
 		result[n]   = impulse * window;
@@ -684,6 +717,98 @@ baseband_chirp(Arena *arena, f32 min_frequency, f32 max_frequency, f32 sampling_
 		v2 sample = {{scale * cos_f32(arg), conjugate * scale * sin_f32(arg)}};
 		result[index] = v2_scale(sample, tukey_window((f32)i / (f32)length, 0.2f));
 	}
+	return result;
+}
+
+function iv3
+das_output_dimension(iv3 points)
+{
+	iv3 result;
+	result.x = Max(points.x, 1);
+	result.y = Max(points.y, 1);
+	result.z = Max(points.z, 1);
+
+	switch (iv3_dimension(result)) {
+	case 1:{
+		if (result.y > 1) result.x = result.y;
+		if (result.z > 1) result.x = result.z;
+		result.y = result.z = 1;
+	}break;
+
+	case 2:{
+		if (result.x > 1) {
+			if (result.z > 1) result.y = result.z;
+		} else {
+			result.x = result.z;
+		}
+		result.z = 1;
+	}break;
+
+	case 3:{}break;
+
+	InvalidDefaultCase;
+	}
+
+	return result;
+}
+
+function m4
+das_transform_1d(v3 p1, v3 p2)
+{
+	v3 extent = v3_sub(p2, p1);
+	m4 result = {
+		.c[0] = (v4){{extent.x, extent.y, extent.z, 0.0f}},
+		.c[1] = (v4){{0.0f, 0.0f, 0.0f, 0.0f}},
+		.c[2] = (v4){{0.0f, 0.0f, 0.0f, 0.0f}},
+		.c[3] = (v4){{p1.x, p1.y, p1.z, 1.0f}},
+	};
+	return result;
+}
+
+function m4
+das_transform_2d_xz(v2 min_coordinate, v2 max_coordinate)
+{
+	v2 extent = v2_abs(v2_sub(max_coordinate, min_coordinate));
+
+	// NOTE(rnp): DAS assumes 3D grid with z down -> swap y and z
+	m4 result;
+	result.c[0] = (v4){{extent.x,         0.0f, 0.0f,             0.0f}};
+	result.c[1] = (v4){{0.0f,             0.0f, extent.y,         0.0f}};
+	result.c[2] = (v4){{0.0f,             1.0f, 0.0f,             0.0f}};
+	result.c[3] = (v4){{min_coordinate.x, 0.0f, min_coordinate.y, 1.0f}};
+	return result;
+}
+
+function m4
+das_transform_3d(v3 min_coordinate, v3 max_coordinate)
+{
+	v3 extent = v3_abs(v3_sub(max_coordinate, min_coordinate));
+	m4 result = m4_mul(m4_translation(min_coordinate), m4_scale(extent));
+	return result;
+}
+
+function m4
+das_transform(v3 min_coordinate, v3 max_coordinate, iv3 *points)
+{
+	m4 result;
+
+	*points = das_output_dimension(*points);
+
+	switch (iv3_dimension(*points)) {
+	case 1:{result = das_transform_1d(      min_coordinate,     max_coordinate); }break;
+	case 2:{result = das_transform_2d_xz(XY(min_coordinate), XY(max_coordinate));}break;
+	case 3:{result = das_transform_3d(      min_coordinate,     max_coordinate); }break;
+	}
+
+	return result;
+}
+
+function v2
+plane_uv(v3 point, v3 U, v3 V)
+{
+	v2 result;
+	result.x = v3_dot(U, point) / v3_dot(U, U);
+	result.y = v3_dot(V, point) / v3_dot(V, V);
 	return result;
 }
 

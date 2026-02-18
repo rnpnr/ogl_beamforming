@@ -88,6 +88,7 @@
 
 @Table([name type]) ParametersHead
 {
+	[das_voxel_transform           M4]
 	[xdc_transform                 M4]
 	[xdc_element_pitch             V2]
 	[raw_data_dimensions          UV2]
@@ -106,17 +107,13 @@
 
 @Table([name type]) ParametersUI
 {
-	[output_min_coordinate   V3]
-	[output_max_coordinate   V3]
 	[output_points          SV4]
 	[sampling_frequency     F32]
 	[demodulation_frequency F32]
 	[speed_of_sound         F32]
 	[f_number               F32]
-	[off_axis_pos           F32]
 	[interpolation_mode     U32]
 	[coherency_weighting    U32]
-	[beamform_plane         U32]
 	[decimation_rate        U32]
 }
 

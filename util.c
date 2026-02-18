@@ -14,6 +14,16 @@ mem_clear(void *restrict p_, u8 c, iz size)
 	return p;
 }
 
+function b32
+memory_equal(void *restrict left, void *restrict right, uz n)
+{
+	u8 *a = left, *b = right;
+	b32 result = 1;
+	for (; result && n; n--)
+		result &= *a++ == *b++;
+	return result;
+}
+
 function void
 mem_copy(void *restrict dest, void *restrict src, uz n)
 {
@@ -493,7 +503,7 @@ stream_append_f64_e(Stream *s, f64 f)
 	stream_append_byte(s, scale >= 0? '+' : '-');
 	for (u32 i = prec / 10; i > 1; i /= 10)
 		stream_append_byte(s, '0');
-	stream_append_u64(s, (u64)ABS(scale));
+	stream_append_u64(s, (u64)Abs(scale));
 }
 
 function void

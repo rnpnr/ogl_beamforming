@@ -161,8 +161,8 @@ struct BeamformerComputePlan {
 	i32 hadamard_order;
 	b32 iq_pipeline;
 
-	v3  min_coordinate;
-	v3  max_coordinate;
+	m4  voxel_transform;
+
 	iv3 output_points;
 	i32 average_frames;
 
@@ -269,8 +269,7 @@ struct BeamformerFrame {
 
 	/* NOTE: for use when displaying either prebeamformed frames or on the current frame
 	 * when we intend to recompute on the next frame */
-	v3  min_coordinate;
-	v3  max_coordinate;
+	m4  voxel_transform;
 
 	// metadata
 	GLenum                    gl_kind;

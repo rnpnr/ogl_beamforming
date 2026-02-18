@@ -207,24 +207,14 @@ beamformer_frame_compatible(BeamformerFrame *f, iv3 dim, GLenum gl_kind)
 	return result;
 }
 
-function iv3
-make_valid_output_points(i32 points[3])
-{
-	iv3 result;
-	result.E[0] = CLAMP(points[0], 1, gl_parameters.max_3d_texture_dim);
-	result.E[1] = CLAMP(points[1], 1, gl_parameters.max_3d_texture_dim);
-	result.E[2] = CLAMP(points[2], 1, gl_parameters.max_3d_texture_dim);
-	return result;
-}
-
 function void
 alloc_beamform_frame(BeamformerFrame *out, iv3 out_dim, GLenum gl_kind, s8 name, Arena arena)
 {
-	out->dim = make_valid_output_points(out_dim.E);
+	out->dim = das_output_dimension(out_dim);
 
 	/* NOTE: allocate storage for beamformed output data;
 	 * this is shared between compute and fragment shaders */
-	u32 max_dim = (u32)MAX(out->dim.x, MAX(out->dim.y, out->dim.z));
+	u32 max_dim = (u32)Max(out->dim.x, Max(out->dim.y, out->dim.z));
 	out->mips   = (i32)ctz_u32(round_up_power_of_2(max_dim)) + 1;
 
 	out->gl_kind = gl_kind;
@@ -404,42 +394,6 @@ function b32
 compute_cursor_finished(struct compute_cursor *cursor)
 {
 	b32 result = cursor->completed_points >= cursor->total_points;
-	return result;
-}
-
-function m4
-das_voxel_transform_matrix(BeamformerParameters *bp)
-{
-	v3 extent = v3_abs(v3_sub(bp->output_max_coordinate, bp->output_min_coordinate));
-	v3 points = v3_from_iv3(make_valid_output_points(bp->output_points.E));
-
-	m4 T1 = m4_translation(v3_scale(v3_sub(points, (v3){{1.0f, 1.0f, 1.0f}}), -0.5f));
-	m4 T2 = m4_translation(v3_add(bp->output_min_coordinate, v3_scale(extent, 0.5f)));
-	m4 S  = m4_scale(v3_div(extent, points));
-
-	m4 R;
-	switch (bp->acquisition_kind) {
-	case BeamformerAcquisitionKind_FORCES:
-	case BeamformerAcquisitionKind_UFORCES:
-	case BeamformerAcquisitionKind_Flash:
-	{
-		R = m4_identity();
-		S.c[1].E[1]  = 0;
-		T2.c[3].E[1] = 0;
-	}break;
-	case BeamformerAcquisitionKind_HERO_PA:
-	case BeamformerAcquisitionKind_HERCULES:
-	case BeamformerAcquisitionKind_UHERCULES:
-	case BeamformerAcquisitionKind_RCA_TPW:
-	case BeamformerAcquisitionKind_RCA_VLS:
-	{
-		R = m4_rotation_about_z(bp->beamform_plane ? 0.0f : 0.25f);
-		if (!(points.x > 1 && points.y > 1 && points.z > 1))
-			T2.c[3].E[1] = bp->off_axis_pos;
-	}break;
-	default:{ R = m4_identity(); }break;
-	}
-	m4 result = m4_mul(R, m4_mul(T2, m4_mul(S, T1)));
 	return result;
 }
 
@@ -651,7 +605,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 			BeamformerShaderDASBakeParameters *db = &sd->bake.DAS;
 			BeamformerDASUBO *du = &cp->das_ubo_data;
-			du->voxel_transform        = das_voxel_transform_matrix(&pb->parameters);
 			du->xdc_element_pitch      = pb->parameters.xdc_element_pitch;
 			db->sampling_frequency     = sampling_frequency;
 			db->demodulation_frequency = pb->parameters.demodulation_frequency;
@@ -668,7 +621,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			db->transmit_receive_orientation = pb->parameters.transmit_receive_orientation;
 
 			// NOTE(rnp): old gcc will miscompile an assignment
-			mem_copy(du->xdc_transform.E, pb->parameters.xdc_transform.E, sizeof(du->xdc_transform));
+			mem_copy(du->voxel_transform.E, pb->parameters.das_voxel_transform.E, sizeof(du->voxel_transform));
+			mem_copy(du->xdc_transform.E,   pb->parameters.xdc_transform.E,       sizeof(du->xdc_transform));
 
 			if (pb->parameters.single_focus)        sd->bake.flags |= BeamformerShaderDASFlags_SingleFocus;
 			if (pb->parameters.single_orientation)  sd->bake.flags |= BeamformerShaderDASFlags_SingleOrientation;
@@ -679,9 +633,21 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			if (id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES)
 				sd->bake.flags |= BeamformerShaderDASFlags_Sparse;
 
-			sd->layout.x = DAS_LOCAL_SIZE_X;
-			sd->layout.y = DAS_LOCAL_SIZE_Y;
-			sd->layout.z = DAS_LOCAL_SIZE_Z;
+			// TODO(rnp): subgroup size
+			u32 subgroup_size = gl_parameters.vendor_id == GLVendor_NVIDIA ? 32 : 64;
+			switch (iv3_dimension(cp->output_points)) {
+			case 1:{sd->layout = (uv3){{subgroup_size, 1, 1}};                }break;
+			case 2:{sd->layout = (uv3){{subgroup_size/4, subgroup_size/4, 1}};}break;
+			case 3:{sd->layout = (uv3){{8, 8, 8}};                            }break;
+			InvalidDefaultCase;
+			}
+
+			if ((sd->bake.flags & BeamformerShaderDASFlags_Fast) == 0)
+				sd->layout = (uv3){{DAS_LOCAL_SIZE_X, DAS_LOCAL_SIZE_Y, DAS_LOCAL_SIZE_Z}};
+
+			sd->dispatch.x = (u32)ceil_f32((f32)cp->output_points.x / sd->layout.x);
+			sd->dispatch.y = (u32)ceil_f32((f32)cp->output_points.y / sd->layout.y);
+			sd->dispatch.z = (u32)ceil_f32((f32)cp->output_points.z / sd->layout.z);
 
 			commit = 1;
 		}break;
@@ -826,6 +792,9 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 		case BeamformerParameterBlockRegion_ComputePipeline:
 		case BeamformerParameterBlockRegion_Parameters:
 		{
+			cp->output_points  = das_output_dimension(pb->parameters.output_points.xyz);
+			cp->average_frames = pb->parameters.output_points.E[3];
+
 			plan_compute_pipeline(cp, pb);
 
 			/* NOTE(rnp): these are both handled by plan_compute_pipeline() */
@@ -855,11 +824,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			if (cp->hadamard_order != (i32)cp->acquisition_count)
 				update_hadamard_texture(cp, (i32)cp->acquisition_count, arena);
 
-			cp->min_coordinate = pb->parameters.output_min_coordinate;
-			cp->max_coordinate = pb->parameters.output_max_coordinate;
-
-			cp->output_points  = make_valid_output_points(pb->parameters.output_points.E);
-			cp->average_frames = pb->parameters.output_points.E[3];
+			cp->voxel_transform = pb->parameters.das_voxel_transform;
 
 			GLenum gl_kind = cp->iq_pipeline ? GL_RG32F : GL_R32F;
 			if (cp->average_frames > 1 && !beamformer_frame_compatible(ctx->averaged_frames + 0, cp->output_points, gl_kind)) {
@@ -1014,9 +979,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 				/* IMPORTANT(rnp): prevents OS from coalescing and killing our shader */
 				glFinish();
 				glProgramUniform1i(program, DAS_FAST_CHANNEL_UNIFORM_LOC, index);
-				glDispatchCompute((u32)ceil_f32((f32)frame->dim.x / DAS_LOCAL_SIZE_X),
-				                  (u32)ceil_f32((f32)frame->dim.y / DAS_LOCAL_SIZE_Y),
-				                  (u32)ceil_f32((f32)frame->dim.z / DAS_LOCAL_SIZE_Z));
+				glDispatchCompute(dispatch.x, dispatch.y, dispatch.z);
 				glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 			}
 		} else {
@@ -1070,8 +1033,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 
 		glProgramUniform1f(program, SUM_PRESCALE_UNIFORM_LOC, 1 / (f32)frame_count);
 		do_sum_shader(cc, in_textures, frame_count, aframe->texture, aframe->dim);
-		aframe->min_coordinate   = frame->min_coordinate;
-		aframe->max_coordinate   = frame->max_coordinate;
+		aframe->voxel_transform  = frame->voxel_transform;
 		aframe->compound_count   = frame->compound_count;
 		aframe->acquisition_kind = frame->acquisition_kind;
 	}break;
@@ -1226,8 +1188,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			if (!beamformer_frame_compatible(frame, cp->output_points, gl_kind))
 				alloc_beamform_frame(frame, cp->output_points, gl_kind, s8("Beamformed_Data"), *arena);
 
-			frame->min_coordinate   = cp->min_coordinate;
-			frame->max_coordinate   = cp->max_coordinate;
+			frame->voxel_transform  = cp->voxel_transform;
 			frame->acquisition_kind = cp->acquisition_kind;
 			frame->compound_count   = cp->acquisition_count;
 

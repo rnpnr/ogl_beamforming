@@ -293,19 +293,14 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	BeamformerParameters bp = {0};
 	beamformer_parameters_from_zemp_bp_v1(zbp, &bp);
 
+	v3 min_coordinate = (v3){{g_lateral_extent.x, g_axial_extent.x, 0}};
+	v3 max_coordinate = (v3){{g_lateral_extent.y, g_axial_extent.y, 0}};
+	bp.das_voxel_transform = das_transform(min_coordinate, max_coordinate, &g_output_points);
+
 	bp.output_points.xyz = g_output_points;
 	bp.output_points.w   = 1;
 
-	bp.output_min_coordinate.E[0] = g_lateral_extent.x;
-	bp.output_min_coordinate.E[1] = 0;
-	bp.output_min_coordinate.E[2] = g_axial_extent.x;
-
-	bp.output_max_coordinate.E[0] = g_lateral_extent.y;
-	bp.output_max_coordinate.E[1] = 0;
-	bp.output_max_coordinate.E[2] = g_axial_extent.y;
-
 	bp.f_number           = g_f_number;
-	bp.beamform_plane     = 0;
 	bp.interpolation_mode = BeamformerInterpolationMode_Cubic;
 
 	bp.decimation_rate = 1;
@@ -316,9 +311,9 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 
 	#if 0
 	BeamformerFilterParameters kaiser = {0};
-	kaiser.Kaiser.beta             = 5.65f;
-	kaiser.Kaiser.cutoff_frequency = 2.0e6f;
-	kaiser.Kaiser.length           = 36;
+	kaiser.kaiser.beta             = 5.65f;
+	kaiser.kaiser.cutoff_frequency = 2.0e6f;
+	kaiser.kaiser.length           = 36;
 
 	beamformer_create_filter(BeamformerFilterKind_Kaiser, (f32 *)&kaiser.kaiser,
 	                         sizeof(kaiser.kaiser), bp.sampling_frequency / 2, 0, 0, 0);

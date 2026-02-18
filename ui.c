@@ -1,5 +1,9 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: bug: draw_view_ruler() needs to use a ray intersection instead of clamping
+ * [ ]: bug: plane rotation and offset position only work if plane is Z aligned
+ * [ ]: refactor: ui and views need to store current uv coordinates for expected transform
+ * [ ]: refactor: there shouldn't need to be if 1d checks all over
  * [ ]: refactor: ui kind of needs to be mostly thrown away
  *      - want all drawing to be immediate mode
  *      - only layout information should be retained
@@ -119,8 +123,8 @@ typedef enum {
 } RulerState;
 
 typedef struct {
-	v2 start;
-	v2 end;
+	v3 start;
+	v3 end;
 	RulerState state;
 } Ruler;
 
@@ -321,9 +325,9 @@ struct BeamformerFrameView {
 	BeamformerFrame     *frame;
 	BeamformerFrameView *prev, *next;
 
-	iv2 texture_dim;
-	u32 textures[2];
+	u32 texture;
 	i32 texture_mipmaps;
+	iv2 texture_dim;
 
 	/* NOTE(rnp): any pointers to variables are added to the menu and will
 	 * be put onto the freelist if the view is closed. */
@@ -429,6 +433,12 @@ struct BeamformerUI {
 	BeamformerUIParameters params;
 	b32                    flush_params;
 	u32 selected_parameter_block;
+
+	m4  das_transform;
+	v3  min_coordinate;
+	v3  max_coordinate;
+	f32 off_axis_position;
+	f32 beamform_plane;
 
 	FrameViewRenderContext *frame_view_render_context;
 
@@ -614,7 +624,7 @@ function Texture
 make_raylib_texture(BeamformerFrameView *v)
 {
 	Texture result;
-	result.id      = v->textures[0];
+	result.id      = v->texture;
 	result.width   = v->texture_dim.w;
 	result.height  = v->texture_dim.h;
 	result.mipmaps = v->texture_mipmaps;
@@ -929,30 +939,30 @@ table_end_subtable(Table *table)
 }
 
 function void
-resize_frame_view(BeamformerFrameView *view, iv2 dim, b32 depth)
+resize_frame_view(BeamformerFrameView *view, iv2 dim)
 {
-	glDeleteTextures(countof(view->textures), view->textures);
-	glCreateTextures(GL_TEXTURE_2D, depth ? countof(view->textures) : countof(view->textures) - 1, view->textures);
+	glDeleteTextures(1, &view->texture);
+	glCreateTextures(GL_TEXTURE_2D, 1, &view->texture);
 
 	view->texture_dim     = dim;
-	view->texture_mipmaps = (i32)ctz_u32((u32)MAX(dim.x, dim.y)) + 1;
-	glTextureStorage2D(view->textures[0], view->texture_mipmaps, GL_RGBA8, dim.x, dim.y);
-	if (depth) glTextureStorage2D(view->textures[1], 1, GL_DEPTH_COMPONENT24, dim.x, dim.y);
+	view->texture_mipmaps = (i32)ctz_u32((u32)Max(dim.x, dim.y)) + 1;
+	glTextureStorage2D(view->texture, view->texture_mipmaps, GL_RGBA8, dim.x, dim.y);
 
-	glGenerateTextureMipmap(view->textures[0]);
+	glGenerateTextureMipmap(view->texture);
 
 	/* NOTE(rnp): work around raylib's janky texture sampling */
-	v4 border_colour = {0};
-	if (view->kind == BeamformerFrameViewKind_Copy) border_colour = (v4){{0, 0, 0, 1}};
-	glTextureParameteri(view->textures[0], GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-	glTextureParameteri(view->textures[0], GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-	glTextureParameterfv(view->textures[0], GL_TEXTURE_BORDER_COLOR, border_colour.E);
+	v4 border_colour = (v4){{0, 0, 0, 1}};
+	if (view->kind != BeamformerFrameViewKind_Copy) border_colour = (v4){0};
+	glTextureParameteri(view->texture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+	glTextureParameteri(view->texture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+	glTextureParameterfv(view->texture, GL_TEXTURE_BORDER_COLOR, border_colour.E);
 	/* TODO(rnp): better choice when depth component is included */
-	glTextureParameteri(view->textures[0], GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	glTextureParameteri(view->textures[0], GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTextureParameteri(view->texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTextureParameteri(view->texture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 
 	/* TODO(rnp): add some ID for the specific view here */
-	LABEL_GL_OBJECT(GL_TEXTURE, view->textures[0], s8("Frame View Texture"));
+	s8 label = s8("Frame View Texture");
+	glObjectLabel(GL_TEXTURE, view->texture, (i32)label.len, (char *)label.data);
 }
 
 function void
@@ -1198,11 +1208,11 @@ add_beamformer_parameters_view(Variable *parent, BeamformerCtx *ctx)
 	                           VariableGroupKind_Vector, ui->font);
 	{
 		add_beamformer_variable(ui, group, &ui->arena, s8("Min:"), s8("[mm]"),
-		                       bp->output_min_coordinate.E + 0, v2_inf, 1e3f, 0.5e-3f,
+		                       ui->min_coordinate.E + 0, v2_inf, 1e3f, 0.5e-3f,
 		                       V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 
 		add_beamformer_variable(ui, group, &ui->arena, s8("Max:"), s8("[mm]"),
-		                        bp->output_max_coordinate.E + 0, v2_inf, 1e3f, 0.5e-3f,
+		                        ui->max_coordinate.E + 0, v2_inf, 1e3f, 0.5e-3f,
 		                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 	}
 	group = end_variable_group(group);
@@ -1211,22 +1221,22 @@ add_beamformer_parameters_view(Variable *parent, BeamformerCtx *ctx)
 	                           VariableGroupKind_Vector, ui->font);
 	{
 		add_beamformer_variable(ui, group, &ui->arena, s8("Min:"), s8("[mm]"),
-		                        bp->output_min_coordinate.E + 2, v2_inf, 1e3f, 0.5e-3f,
+		                        ui->min_coordinate.E + 2, v2_inf, 1e3f, 0.5e-3f,
 		                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 
 		add_beamformer_variable(ui, group, &ui->arena, s8("Max:"), s8("[mm]"),
-		                        bp->output_max_coordinate.E + 2, v2_inf, 1e3f, 0.5e-3f,
+		                        ui->max_coordinate.E + 2, v2_inf, 1e3f, 0.5e-3f,
 		                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 	}
 	group = end_variable_group(group);
 
 	add_beamformer_variable(ui, group, &ui->arena, s8("Off Axis Position:"), s8("[mm]"),
-	                        &bp->off_axis_pos, (v2){{-1e3f, 1e3f}}, 0.25e3f, 0.5e-3f,
+	                        &ui->off_axis_position, v2_inf, 1e3f, 0.5e-3f,
 	                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 
-	read_only local_persist s8 beamform_plane_labels[] = {s8_comp("XZ"), s8_comp("YZ")};
-	add_variable_cycler(ui, group, &ui->arena, V_CAUSES_COMPUTE, ui->font, s8("Beamform Plane:"),
-	                    (u32 *)&bp->beamform_plane, beamform_plane_labels, countof(beamform_plane_labels));
+	add_beamformer_variable(ui, group, &ui->arena, s8("Beamform Plane:"), s8(""),
+	                        &ui->beamform_plane, (v2){{0, 1.0f}}, 1.0f, 0.025f,
+	                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 
 	add_beamformer_variable(ui, group, &ui->arena, s8("F#:"), s8(""), &bp->f_number, (v2){.y = 1e3f},
 	                        1, 0.1f, V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
@@ -1264,8 +1274,10 @@ ui_beamformer_frame_view_convert(BeamformerUI *ui, Arena *arena, Variable *view,
 	bv->threshold.real32          = old? old->threshold.real32          : 55.0f;
 	bv->gamma.scaled_real32.val   = old? old->gamma.scaled_real32.val   : 1.0f;
 	bv->gamma.scaled_real32.scale = old? old->gamma.scaled_real32.scale : 0.05f;
-	bv->min_coordinate = (old && old->frame)? old->frame->min_coordinate : (v3){0};
-	bv->max_coordinate = (old && old->frame)? old->frame->max_coordinate : (v3){0};
+	bv->min_coordinate = (old && old->frame) ? m4_mul_v4(old->frame->voxel_transform, (v4){{0.0f, 0.0f, 0.0f, 1.0f}}).xyz
+	                                         : (v3){0};
+	bv->max_coordinate = (old && old->frame) ? m4_mul_v4(old->frame->voxel_transform, (v4){{1.0f, 1.0f, 1.0f, 1.0f}}).xyz
+	                                         : (v3){0};
 
 	#define X(_t, pretty) s8_comp(pretty),
 	read_only local_persist s8 kind_labels[] = {BEAMFORMER_FRAME_VIEW_KIND_LIST};
@@ -1273,12 +1285,15 @@ ui_beamformer_frame_view_convert(BeamformerUI *ui, Arena *arena, Variable *view,
 	bv->kind_cycler = add_variable_cycler(ui, menu, arena, V_EXTRA_ACTION, ui->small_font,
 	                                      s8("Kind:"), (u32 *)&bv->kind, kind_labels, countof(kind_labels));
 
+	/* TODO(rnp): this is quite dumb. what we actually want is to render directly
+	 * into the view region with the appropriate size for that region (scissor) */
+	resize_frame_view(bv, (iv2){{FRAME_VIEW_RENDER_TARGET_SIZE}});
+
 	switch (kind) {
 	case BeamformerFrameViewKind_3DXPlane:{
 		view->flags |= V_HIDES_CURSOR;
-		resize_frame_view(bv, (iv2){{FRAME_VIEW_RENDER_TARGET_SIZE}}, 0);
-		glTextureParameteri(bv->textures[0], GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		glTextureParameteri(bv->textures[0], GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		glTextureParameteri(bv->texture, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTextureParameteri(bv->texture, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 		fill_variable(bv->x_plane_shifts + 0, view, s8("XZ Shift"), V_INPUT|V_HIDES_CURSOR,
 		              VT_X_PLANE_SHIFT, ui->small_font);
 		fill_variable(bv->x_plane_shifts + 1, view, s8("YZ Shift"), V_INPUT|V_HIDES_CURSOR,
@@ -1299,10 +1314,10 @@ ui_beamformer_frame_view_convert(BeamformerUI *ui, Arena *arena, Variable *view,
 		axial->zoom_starting_coord   = F32_INFINITY;
 
 		b32 copy = kind == BeamformerFrameViewKind_Copy;
-		lateral->min_value = copy ? &bv->min_coordinate.x : &ui->params.output_min_coordinate.x;
-		lateral->max_value = copy ? &bv->max_coordinate.x : &ui->params.output_max_coordinate.x;
-		axial->min_value   = copy ? &bv->min_coordinate.z : &ui->params.output_min_coordinate.z;
-		axial->max_value   = copy ? &bv->max_coordinate.z : &ui->params.output_max_coordinate.z;
+		lateral->min_value = copy ? &bv->min_coordinate.x : &ui->min_coordinate.x;
+		lateral->max_value = copy ? &bv->max_coordinate.x : &ui->max_coordinate.x;
+		axial->min_value   = copy ? &bv->min_coordinate.z : &ui->min_coordinate.z;
+		axial->max_value   = copy ? &bv->max_coordinate.z : &ui->max_coordinate.z;
 
 		#define X(id, text) add_button(ui, menu, arena, s8(text), UI_BID_ ##id, 0, ui->small_font);
 		FRAME_VIEW_BUTTONS
@@ -1487,8 +1502,6 @@ ui_beamformer_frame_view_copy_frame(BeamformerUI *ui, BeamformerFrameView *new, 
 	                   new->frame->texture, GL_TEXTURE_3D, 0, 0, 0, 0,
 	                   new->frame->dim.x, new->frame->dim.y, new->frame->dim.z);
 	glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
-	/* TODO(rnp): x vs y here */
-	resize_frame_view(new, (iv2){{new->frame->dim.x, new->frame->dim.z}}, 1);
 }
 
 function void
@@ -1516,11 +1529,11 @@ beamformer_frame_view_plane_size(BeamformerUI *ui, BeamformerFrameView *view)
 {
 	v3 result;
 	if (view->kind == BeamformerFrameViewKind_3DXPlane) {
-		result = v3_sub(ui->params.output_max_coordinate, ui->params.output_min_coordinate);
+		result = v3_sub(ui->max_coordinate, ui->min_coordinate);
 		swap(result.y, result.z);
-		result.x = MAX(1e-3f, result.x);
-		result.y = MAX(1e-3f, result.y);
-		result.z = MAX(1e-3f, result.z);
+		result.x = Max(1e-3f, result.x);
+		result.y = Max(1e-3f, result.y);
+		result.z = Max(1e-3f, result.z);
 	} else {
 		v2 size = v2_sub(XZ(view->max_coordinate), XZ(view->min_coordinate));
 		result  = (v3){.x = size.x, .y = size.y};
@@ -1549,8 +1562,8 @@ normalized_p_in_rect(Rect r, v2 p, b32 invert_y)
 function v3
 x_plane_position(BeamformerUI *ui)
 {
-	f32 y_min = ui->params.output_min_coordinate.E[2];
-	f32 y_max = ui->params.output_max_coordinate.E[2];
+	f32 y_min = ui->min_coordinate.E[2];
+	f32 y_max = ui->max_coordinate.E[2];
 	v3 result = {.y = y_min + (y_max - y_min) / 2};
 	return result;
 }
@@ -1645,7 +1658,7 @@ render_single_xplane(BeamformerUI *ui, BeamformerFrameView *view, Variable *x_pl
 
 	XPlaneShift *xp = &x_plane_shift->x_plane_shift;
 	v3 xp_delta = v3_sub(xp->end_point, xp->start_point);
-	if (!f32_cmp(v3_magnitude(xp_delta), 0)) {
+	if (!f32_equal(v3_magnitude(xp_delta), 0)) {
 		m4 x_rotation = m4_rotation_about_y(rotation_turns);
 		v3 Z = x_rotation.c[2].xyz;
 		v3 f = v3_scale(Z, v3_dot(Z, v3_sub(xp->end_point, xp->start_point)));
@@ -1692,9 +1705,8 @@ function void
 render_2D_plane(BeamformerUI *ui, BeamformerFrameView *view, u32 program)
 {
 	m4 view_m     = m4_identity();
-	v3 size       = beamformer_frame_view_plane_size(ui, view);
-	m4 model      = m4_scale(size);
-	m4 projection = orthographic_projection(0, 1, size.y / 2, size.x / 2);
+	m4 model      = m4_scale((v3){{2.0f, 2.0f, 0.0f}});
+	m4 projection = orthographic_projection(0, 1, 1, 1);
 
 	glProgramUniformMatrix4fv(program, FRAME_VIEW_MODEL_MATRIX_LOC, 1, 0, model.E);
 	glProgramUniformMatrix4fv(program, FRAME_VIEW_VIEW_MATRIX_LOC,  1, 0, view_m.E);
@@ -1722,23 +1734,13 @@ view_update(BeamformerUI *ui, BeamformerFrameView *view)
 		u32 index = *view->cycler->cycler.state;
 		view->dirty |= view->frame != ui->latest_plane[index];
 		view->frame  = ui->latest_plane[index];
-		if (view->dirty) {
-			view->min_coordinate = ui->params.output_min_coordinate;
-			view->max_coordinate = ui->params.output_max_coordinate;
+		if (view->dirty && view->frame) {
+			view->min_coordinate = m4_mul_v4(view->frame->voxel_transform, (v4){{0.0f, 0.0f, 0.0f, 1.0f}}).xyz;
+			view->max_coordinate = m4_mul_v4(view->frame->voxel_transform, (v4){{1.0f, 1.0f, 1.0f, 1.0f}}).xyz;
 		}
 	}
 
 	/* TODO(rnp): x-z or y-z */
-	/* TODO(rnp): add method of setting a target size in frame view */
-	iv2 current = view->texture_dim;
-	iv2 target  = {.w = ui->params.output_points.E[0], .h = ui->params.output_points.E[2]};
-	if (view->kind != BeamformerFrameViewKind_Copy &&
-	    view->kind != BeamformerFrameViewKind_3DXPlane &&
-	    !iv2_equal(current, target) && !iv2_equal(target, (iv2){0}))
-	{
-		resize_frame_view(view, target, 1);
-		view->dirty = 1;
-	}
 	view->dirty |= ui->frame_view_render_context->updated;
 	view->dirty |= view->kind == BeamformerFrameViewKind_3DXPlane;
 
@@ -1753,6 +1755,8 @@ update_frame_views(BeamformerUI *ui, Rect window)
 	b32 fbo_bound = 0;
 	for (BeamformerFrameView *view = ui->views; view; view = view->next) {
 		if (view_update(ui, view)) {
+			//start_renderdoc_capture(0);
+
 			if (!fbo_bound) {
 				fbo_bound = 1;
 				glBindFramebuffer(GL_FRAMEBUFFER, ctx->framebuffers[0]);
@@ -1769,25 +1773,26 @@ update_frame_views(BeamformerUI *ui, Rect window)
 			glProgramUniform1f(program,  FRAME_VIEW_GAMMA_LOC,         view->gamma.scaled_real32.val);
 			glProgramUniform1ui(program, FRAME_VIEW_LOG_SCALE_LOC,     view->log_scale->bool32);
 
+			glNamedFramebufferRenderbuffer(fb, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, ctx->renderbuffers[0]);
+			glNamedFramebufferRenderbuffer(fb, GL_DEPTH_ATTACHMENT,  GL_RENDERBUFFER, ctx->renderbuffers[1]);
+			glClearNamedFramebufferfv(fb, GL_COLOR, 0, (f32 []){0, 0, 0, 0});
+			glClearNamedFramebufferfv(fb, GL_DEPTH, 0, (f32 []){1});
+
 			if (view->kind == BeamformerFrameViewKind_3DXPlane) {
-				glNamedFramebufferRenderbuffer(fb, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, ctx->renderbuffers[0]);
-				glNamedFramebufferRenderbuffer(fb, GL_DEPTH_ATTACHMENT,  GL_RENDERBUFFER, ctx->renderbuffers[1]);
-				glClearNamedFramebufferfv(fb, GL_COLOR, 0, (f32 []){0, 0, 0, 0});
-				glClearNamedFramebufferfv(fb, GL_DEPTH, 0, (f32 []){1});
 				render_3D_xplane(ui, view, program);
-				/* NOTE(rnp): resolve multisampled scene */
-				glNamedFramebufferTexture(ctx->framebuffers[1], GL_COLOR_ATTACHMENT0, view->textures[0], 0);
-				glBlitNamedFramebuffer(fb, ctx->framebuffers[1], 0, 0, FRAME_VIEW_RENDER_TARGET_SIZE,
-				                       0, 0, FRAME_VIEW_RENDER_TARGET_SIZE, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 			} else {
-				glNamedFramebufferTexture(fb, GL_COLOR_ATTACHMENT0, view->textures[0], 0);
-				glNamedFramebufferTexture(fb, GL_DEPTH_ATTACHMENT,  view->textures[1], 0);
-				glClearNamedFramebufferfv(fb, GL_COLOR, 0, (f32 []){0, 0, 0, 0});
-				glClearNamedFramebufferfv(fb, GL_DEPTH, 0, (f32 []){1});
 				render_2D_plane(ui, view, program);
 			}
-			glGenerateTextureMipmap(view->textures[0]);
+
+			/* NOTE(rnp): resolve multisampled scene */
+			glNamedFramebufferTexture(ctx->framebuffers[1], GL_COLOR_ATTACHMENT0, view->texture, 0);
+			glBlitNamedFramebuffer(fb, ctx->framebuffers[1], 0, 0, FRAME_VIEW_RENDER_TARGET_SIZE,
+			                       0, 0, view->texture_dim.w, view->texture_dim.h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+			glGenerateTextureMipmap(view->texture);
 			view->dirty = 0;
+
+			//end_renderdoc_capture(0);
 		}
 	}
 	if (fbo_bound) {
@@ -1959,7 +1964,24 @@ function b32
 point_in_rect(v2 p, Rect r)
 {
 	v2  end    = v2_add(r.pos, r.size);
-	b32 result = BETWEEN(p.x, r.pos.x, end.x) & BETWEEN(p.y, r.pos.y, end.y);
+	b32 result = Between(p.x, r.pos.x, end.x) & Between(p.y, r.pos.y, end.y);
+	return result;
+}
+
+function v2
+rect_uv(v2 p, Rect r)
+{
+	v2 result = v2_div(v2_sub(p, r.pos), r.size);
+	return result;
+}
+
+function v3
+world_point_from_plane_uv(m4 world, v2 uv)
+{
+	v3 U   = world.c[0].xyz;
+	v3 V   = world.c[1].xyz;
+	v3 min = world.c[3].xyz;
+	v3 result =  v3_add(v3_add(v3_scale(U, uv.x), v3_scale(V, uv.y)), min);
 	return result;
 }
 
@@ -2081,12 +2103,13 @@ draw_ruler(BeamformerUI *ui, Arena arena, v2 start_point, v2 end_point,
 	v2 tp = {{(f32)ui->small_font.baseSize / 2.0f, ep.y + RULER_TEXT_PAD}};
 	TextSpec text_spec = {.font = &ui->small_font, .rotation = 90.0f, .colour = txt_colour, .flags = TF_ROTATED};
 	Color rl_txt_colour = colour_from_normalized(txt_colour);
+
 	for (u32 j = 0; j <= segments; j++) {
 		DrawLineEx(rl_v2(sp), rl_v2(ep), 3, rl_txt_colour);
 
 		stream_reset(&buf, 0);
 		if (draw_plus && value > 0) stream_append_byte(&buf, '+');
-		stream_append_f64(&buf, value, 10);
+		stream_append_f64(&buf, value, Abs(value_inc) < 1 ? 100 : 10);
 		stream_append_s8(&buf, suffix);
 		draw_text(stream_to_s8(&buf), tp, &text_spec);
 
@@ -2356,18 +2379,31 @@ function void
 draw_view_ruler(BeamformerFrameView *view, Arena a, Rect view_rect, TextSpec ts)
 {
 	v2 vr_max_p = v2_add(view_rect.pos, view_rect.size);
-	v2 start_p  = world_point_to_screen_2d(view->ruler.start, XZ(view->min_coordinate),
-	                                       XZ(view->max_coordinate), view_rect.pos, vr_max_p);
-	v2 end_p    = world_point_to_screen_2d(view->ruler.end, XZ(view->min_coordinate),
-	                                       XZ(view->max_coordinate), view_rect.pos, vr_max_p);
+
+	v3 U   = view->frame->voxel_transform.c[0].xyz;
+	v3 V   = view->frame->voxel_transform.c[1].xyz;
+	v3 min = view->frame->voxel_transform.c[3].xyz;
+
+	v2 start_uv = plane_uv(v3_sub(view->ruler.start, min), U, V);
+	v2 end_uv   = plane_uv(v3_sub(view->ruler.end,   min), U, V);
+
+	v2 start_p  = v2_add(view_rect.pos, v2_mul(start_uv, view_rect.size));
+	v2 end_p    = v2_add(view_rect.pos, v2_mul(end_uv,   view_rect.size));
+
+	b32 start_in_bounds = point_in_rect(start_p, view_rect);
+	b32 end_in_bounds   = point_in_rect(end_p,   view_rect);
+
+	// TODO(rnp): this should be a ray intersection not a clamp
+	start_p = clamp_v2_rect(start_p, view_rect);
+	end_p   = clamp_v2_rect(end_p, view_rect);
 
 	Color rl_colour = colour_from_normalized(ts.colour);
-	DrawCircleV(rl_v2(start_p), 3, rl_colour);
 	DrawLineEx(rl_v2(end_p), rl_v2(start_p), 2, rl_colour);
-	DrawCircleV(rl_v2(end_p), 3, rl_colour);
+	if (start_in_bounds) DrawCircleV(rl_v2(start_p), 3, rl_colour);
+	if (end_in_bounds)   DrawCircleV(rl_v2(end_p),   3, rl_colour);
 
 	Stream buf = arena_stream(a);
-	stream_append_f64(&buf, 1e3 * v2_magnitude(v2_sub(view->ruler.end, view->ruler.start)), 100);
+	stream_append_f64(&buf, 1e3 * v3_magnitude(v3_sub(view->ruler.end, view->ruler.start)), 100);
 	stream_append_s8(&buf, s8(" mm"));
 
 	v2 txt_p = start_p;
@@ -2474,13 +2510,27 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 	BeamformerFrameView *view  = var->generic;
 	BeamformerFrame     *frame = view->frame;
 
+	b32 is_1d = iv3_dimension(frame->dim) == 1;
+
 	f32 txt_w = measure_text(ui->small_font, s8("-288.8 mm")).w;
 	f32 scale_bar_size = 1.2f * txt_w + RULER_TICK_LENGTH;
 
-	v3 min = view->min_coordinate;
-	v3 max = view->max_coordinate;
-	v2 requested_dim = v2_sub(XZ(max), XZ(min));
-	f32 aspect = requested_dim.w / requested_dim.h;
+	v3 U = frame->voxel_transform.c[0].xyz;
+	v3 V = frame->voxel_transform.c[1].xyz;
+
+	v2 min_uv = plane_uv(view->min_coordinate, U, V);
+	v2 max_uv = plane_uv(view->max_coordinate, U, V);
+
+	v2 output_dim;
+	output_dim.x = v3_magnitude(U);
+	output_dim.y = v3_magnitude(V);
+
+	// NOTE(rnp): may be different from UV if recompute in progress or Copy View
+	v2 requested_dim;
+	requested_dim.x = v3_magnitude(v3_sub(v3_scale(U, max_uv.x), v3_scale(U, min_uv.x)));
+	requested_dim.y = v3_magnitude(v3_sub(v3_scale(V, max_uv.y), v3_scale(V, min_uv.y)));
+
+	f32 aspect = is_1d ? 1.0f : output_dim.w / output_dim.h;
 
 	Rect vr = display_rect;
 	v2 scale_bar_area = {0};
@@ -2511,23 +2561,26 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 	occupied = v2_add(vr.size, scale_bar_area);
 	vr.pos   = v2_add(vr.pos, v2_scale(v2_sub(display_rect.size, occupied), 0.5));
 
-	/* TODO(rnp): make this depend on the requested draw orientation (x-z or y-z or x-y) */
-	v2 output_dim = v2_sub(XZ(frame->max_coordinate), XZ(frame->min_coordinate));
-	v2 pixels_per_meter = {
-		.w = (f32)view->texture_dim.w / output_dim.w,
-		.h = (f32)view->texture_dim.h / output_dim.h,
-	};
+	Rectangle tex_r;
+	if (is_1d) {
+		tex_r  = (Rectangle){0, 0, view->texture_dim.x, -view->texture_dim.y};
+	} else {
+		v2 pixels_per_meter = {
+			.w = (f32)view->texture_dim.w / output_dim.w,
+			.h = (f32)view->texture_dim.h / output_dim.h,
+		};
 
-	/* NOTE(rnp): math to resize the texture without stretching when the view changes
-	 * but the texture hasn't been (or cannot be) rebeamformed */
-	v2 texture_points  = v2_mul(pixels_per_meter, requested_dim);
-	/* TODO(rnp): this also depends on x-y, y-z, x-z */
-	v2 texture_start   = {
-		.x = pixels_per_meter.x * 0.5f * (output_dim.x - requested_dim.x),
-		.y = pixels_per_meter.y * (frame->max_coordinate.z - max.z),
-	};
+		/* NOTE(rnp): math to resize the texture without stretching when the view changes
+		 * but the texture hasn't been (or cannot be) rebeamformed */
+		v2 texture_points  = v2_mul(pixels_per_meter, requested_dim);
+		v2 texture_start   = {
+			.x = pixels_per_meter.x * 0.5f * (output_dim.x - requested_dim.x),
+			.y = pixels_per_meter.y * (output_dim.y - requested_dim.y),
+		};
 
-	Rectangle  tex_r  = {texture_start.x, texture_start.y, texture_points.x, texture_points.y};
+		tex_r = (Rectangle){texture_start.x, texture_start.y, texture_points.x, texture_points.y};
+	}
+
 	NPatchInfo tex_np = { tex_r, 0, 0, 0, 0, NPATCH_NINE_PATCH };
 	DrawTextureNPatch(make_raylib_texture(view), tex_np, rl_rect(vr), (Vector2){0}, 0, WHITE);
 
@@ -2545,10 +2598,16 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 	start_pos.x += vr.size.x;
 
 	if (vr.size.h > 0 && view->axial_scale_bar_active->bool32) {
-		do_scale_bar(ui, a, &view->axial_scale_bar, mouse,
-		             (Rect){.pos = start_pos, .size = vr.size},
-		             *view->axial_scale_bar.scale_bar.max_value * 1e3f,
-		             *view->axial_scale_bar.scale_bar.min_value * 1e3f, s8(" mm"));
+		if (is_1d) {
+			v2 end_pos = start_pos;
+			u32 tick_count  = (u32)(vr.size.y / (1.5f * (f32)ui->small_font.baseSize));
+			start_pos.y    += vr.size.y;
+			draw_ruler(ui, a, start_pos, end_pos, 0.0f, 1.0f, 0, 0, tick_count, s8(""), RULER_COLOUR, FG_COLOUR);
+		} else {
+			do_scale_bar(ui, a, &view->axial_scale_bar, mouse, (Rect){.pos = start_pos, .size = vr.size},
+			             *view->axial_scale_bar.scale_bar.max_value * 1e3f,
+			             *view->axial_scale_bar.scale_bar.min_value * 1e3f, s8(" mm"));
+		}
 	}
 
 	TextSpec text_spec = {.font = &ui->small_font, .flags = TF_LIMITED|TF_OUTLINED,
@@ -2564,8 +2623,17 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 		v2 world = screen_point_to_world_2d(mouse, vr.pos, v2_add(vr.pos, vr.size),
 		                                    XZ(view->min_coordinate),
 		                                    XZ(view->max_coordinate));
+		world = v2_scale(world, 1e3f);
+
+		if (is_1d) world.y = ((vr.pos.y + vr.size.y) - mouse.y) / vr.size.y;
+
 		Stream buf = arena_stream(a);
-		stream_append_v2(&buf, v2_scale(world, 1e3f));
+		stream_append_s8(&buf, s8("{"));
+		stream_append_f64(&buf, world.x, 100);
+		if (is_1d) stream_append_s8(&buf, s8(" mm"));
+		stream_append_s8(&buf, s8(", "));
+		stream_append_f64(&buf, world.y, 100);
+		stream_append_s8(&buf, s8("}"));
 
 		text_spec.limits.size.w -= 4.0f;
 		v2 txt_s = measure_text(*text_spec.font, stream_to_s8(&buf));
@@ -2573,7 +2641,7 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 			.x = vr.pos.x + vr.size.w - txt_s.w - 4.0f,
 			.y = vr.pos.y + vr.size.h - txt_s.h - 4.0f,
 		};
-		txt_p.x = MAX(vr.pos.x, txt_p.x);
+		txt_p.x = Max(vr.pos.x, txt_p.x);
 		draw_table_width -= draw_text(stream_to_s8(&buf), txt_p, &text_spec).w;
 		text_spec.limits.size.w += 4.0f;
 	}
@@ -2588,7 +2656,7 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 			.x = vr.pos.x + vr.size.w - txt_s.w - 16,
 			.y = vr.pos.y + 4,
 		};
-		txt_p.x = MAX(vr.pos.x, txt_p.x);
+		txt_p.x = Max(vr.pos.x, txt_p.x);
 		draw_text(stream_to_s8(&buf), txt_p, &text_spec);
 		text_spec.font = &ui->small_font;
 		text_spec.limits.size.w += 16;
@@ -3559,6 +3627,10 @@ ui_begin_interact(BeamformerUI *ui, v2 mouse, b32 scroll)
 					begin_text_input(&ui->text_input_state, hot.rect, hot.var, mouse);
 				}
 				ui_widget_bring_to_front(&ui->floating_widget_sentinal, hot.var);
+
+				// TODO(rnp): hack. this won't be needed with a proper immediate mode UI
+				if (ui->interaction.kind == InteractionKind_Text)
+					hot.var = hot.var->view.child;
 			}break;
 			case VT_UI_VIEW:{
 				if (scroll) hot.kind = InteractionKind_Scroll;
@@ -3592,11 +3664,8 @@ ui_begin_interact(BeamformerUI *ui, v2 mouse, b32 scroll)
 						switch (++bv->ruler.state) {
 						case RulerState_Start:{
 							hot.kind = InteractionKind_Ruler;
-							v2 r_max = v2_add(hot.rect.pos, hot.rect.size);
-							v2 p = screen_point_to_world_2d(mouse, hot.rect.pos, r_max,
-							                                XZ(bv->min_coordinate),
-							                                XZ(bv->max_coordinate));
-							bv->ruler.start = p;
+							bv->ruler.start = world_point_from_plane_uv(bv->frame->voxel_transform,
+							                                            rect_uv(mouse, hot.rect));
 						}break;
 						case RulerState_Hold:{}break;
 						default:{ bv->ruler.state = RulerState_None; }break;
@@ -3834,11 +3903,8 @@ ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 	case InteractionKind_Ruler:{
 		assert(it->var->type == VT_BEAMFORMER_FRAME_VIEW);
 		BeamformerFrameView *bv = it->var->generic;
-		v2 r_max = v2_add(it->rect.pos, it->rect.size);
 		v2 mouse = clamp_v2_rect(input_mouse, it->rect);
-		bv->ruler.end = screen_point_to_world_2d(mouse, it->rect.pos, r_max,
-		                                         XZ(bv->min_coordinate),
-		                                         XZ(bv->max_coordinate));
+		bv->ruler.end = world_point_from_plane_uv(bv->frame->voxel_transform, rect_uv(mouse, it->rect));
 	}break;
 	case InteractionKind_Drag:{
 		if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !IsMouseButtonDown(MOUSE_BUTTON_RIGHT)) {
@@ -3870,7 +3936,7 @@ ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 				BeamformerFrameView *bv = it->var->generic;
 				switch (bv->kind) {
 				case BeamformerFrameViewKind_3DXPlane:{
-					bv->rotation += dMouse.x / ws.w;
+					bv->rotation -= dMouse.x / ws.w;
 					if (bv->rotation > 1.0f) bv->rotation -= 1.0f;
 					if (bv->rotation < 0.0f) bv->rotation += 1.0f;
 				}break;
@@ -3969,12 +4035,12 @@ ui_init(BeamformerCtx *ctx, Arena store)
 }
 
 function void
-validate_ui_parameters(BeamformerUIParameters *p)
+validate_ui_parameters(BeamformerUI *ui)
 {
-	if (p->output_min_coordinate.x > p->output_max_coordinate.x)
-		swap(p->output_min_coordinate.x, p->output_max_coordinate.x);
-	if (p->output_min_coordinate.z > p->output_max_coordinate.z)
-		swap(p->output_min_coordinate.z, p->output_max_coordinate.z);
+	if (ui->min_coordinate.x > ui->max_coordinate.x)
+		swap(ui->min_coordinate.x, ui->max_coordinate.x);
+	if (ui->min_coordinate.z > ui->max_coordinate.z)
+		swap(ui->min_coordinate.z, ui->max_coordinate.z);
 }
 
 function void
@@ -3992,10 +4058,16 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 	if (ctx->ui_dirty_parameter_blocks & selected_mask) {
 		BeamformerParameterBlock *pb = beamformer_parameter_block_lock(ui->shared_memory, selected_block, 0);
 		if (pb) {
-			mem_copy(&ui->params, &pb->parameters_ui, sizeof(ui->params));
 			ui->flush_params = 0;
+
+			mem_copy(&ui->params, &pb->parameters_ui, sizeof(ui->params));
+			mem_copy(ui->das_transform.E, pb->parameters.das_voxel_transform.E, sizeof(ui->das_transform));
+
 			atomic_and_u32(&ctx->ui_dirty_parameter_blocks, ~selected_mask);
 			beamformer_parameter_block_unlock(ui->shared_memory, selected_block);
+
+			ui->min_coordinate = m4_mul_v4(ui->das_transform, (v4){{0.0f, 0.0f, 0.0f, 1.0f}}).xyz;
+			ui->max_coordinate = m4_mul_v4(ui->das_transform, (v4){{1.0f, 1.0f, 1.0f, 1.0f}}).xyz;
 		}
 	}
 
@@ -4005,17 +4077,58 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 	ui_interact(ui, input, window_rect);
 
 	if (ui->flush_params) {
-		validate_ui_parameters(&ui->params);
+		validate_ui_parameters(ui);
 		if (ctx->latest_frame) {
 			BeamformerParameterBlock *pb = beamformer_parameter_block_lock(ui->shared_memory, selected_block, 0);
 			if (pb) {
 				ui->flush_params = 0;
+
+				v3 min_coordinate = ui->min_coordinate;
+				v3 max_coordinate = ui->max_coordinate;
+
+				iv3 points    = ctx->latest_frame->dim;
+				i32 dimension = iv3_dimension(points);
+
+				// TODO(rnp): this is immediate mode code that should be in the ui building code
+				swap(min_coordinate.y, min_coordinate.z);
+				swap(max_coordinate.y, max_coordinate.z);
+				m4  new_transform = das_transform(min_coordinate, max_coordinate, &points);
+				switch (dimension) {
+				case 1:{}break;
+
+				case 2:{
+					v3 U = ui->das_transform.c[0].xyz;
+					v3 V = ui->das_transform.c[1].xyz;
+					v3 N = v3_normalize(cross(V, U));
+
+					v3 rotation_axis = v3_normalize(cross(U, N));
+
+					m4 T = m4_translation(v3_scale(N, ui->off_axis_position));
+					m4 R = m4_rotation_about_axis(rotation_axis, ui->beamform_plane);
+
+					new_transform = m4_mul(R, m4_mul(T, new_transform));
+				}break;
+
+				case 3:{
+				}break;
+				}
+
+				// TODO(rnp): super janky code because of the retained mode parameters list.
+				// when this code is run in the correct place we can just decide inline
+				b32 recompute = 0;
+				for EachElement(new_transform.E, it)
+					recompute |= !f32_equal(new_transform.E[it], pb->parameters.das_voxel_transform.E[it]);
+				recompute |= !memory_equal(&pb->parameters_ui, &ui->params, sizeof(ui->params));
+
 				mem_copy(&pb->parameters_ui, &ui->params, sizeof(ui->params));
+				mem_copy(pb->parameters.das_voxel_transform.E, new_transform.E, sizeof(new_transform));
+
 				mark_parameter_block_region_dirty(ui->shared_memory, selected_block,
 				                                  BeamformerParameterBlockRegion_Parameters);
 				beamformer_parameter_block_unlock(ui->shared_memory, selected_block);
 
-				beamformer_queue_compute(ctx, frame_to_draw, selected_block);
+				if (recompute)
+					beamformer_queue_compute(ctx, frame_to_draw, selected_block);
 			}
 		}
 	}
