@@ -207,10 +207,20 @@ beamformer_frame_compatible(BeamformerFrame *f, iv3 dim, GLenum gl_kind)
 	return result;
 }
 
+function iv3
+das_valid_points(iv3 points)
+{
+	iv3 result;
+	result.x = Max(points.x, 1);
+	result.y = Max(points.y, 1);
+	result.z = Max(points.z, 1);
+	return result;
+}
+
 function void
 alloc_beamform_frame(BeamformerFrame *out, iv3 out_dim, GLenum gl_kind, s8 name, Arena arena)
 {
-	out->dim = das_output_dimension(out_dim);
+	out->dim = das_valid_points(out_dim);
 
 	/* NOTE: allocate storage for beamformed output data;
 	 * this is shared between compute and fragment shaders */
@@ -792,7 +802,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 		case BeamformerParameterBlockRegion_ComputePipeline:
 		case BeamformerParameterBlockRegion_Parameters:
 		{
-			cp->output_points  = das_output_dimension(pb->parameters.output_points.xyz);
+			cp->output_points  = das_valid_points(pb->parameters.output_points.xyz);
 			cp->average_frames = pb->parameters.output_points.E[3];
 
 			plan_compute_pipeline(cp, pb);
