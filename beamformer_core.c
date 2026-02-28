@@ -643,12 +643,29 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			if (id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES)
 				sd->bake.flags |= BeamformerShaderDASFlags_Sparse;
 
+			sd->layout = (uv3){{1, 1, 1}};
+
+			b32 has_x = cp->output_points.x > 1;
+			b32 has_y = cp->output_points.y > 1;
+			b32 has_z = cp->output_points.z > 1;
 			// TODO(rnp): subgroup size
 			u32 subgroup_size = gl_parameters.vendor_id == GLVendor_NVIDIA ? 32 : 64;
 			switch (iv3_dimension(cp->output_points)) {
-			case 1:{sd->layout = (uv3){{subgroup_size, 1, 1}};                }break;
-			case 2:{sd->layout = (uv3){{subgroup_size/4, subgroup_size/4, 1}};}break;
-			case 3:{sd->layout = (uv3){{8, 8, 8}};                            }break;
+
+			case 1:{
+				if (has_x) sd->layout.x = subgroup_size;
+				if (has_y) sd->layout.y = subgroup_size;
+				if (has_z) sd->layout.z = subgroup_size;
+			}break;
+
+			case 2:{
+				if (has_x && has_y) { sd->layout.x = subgroup_size / 4; sd->layout.x = subgroup_size / 4; }
+				if (has_x && has_z) { sd->layout.x = subgroup_size / 4; sd->layout.z = subgroup_size / 4; }
+				if (has_y && has_z) { sd->layout.y = subgroup_size / 4; sd->layout.z = subgroup_size / 4; }
+			}break;
+
+			case 3:{sd->layout = (uv3){{4, 4, 4}};}break;
+
 			InvalidDefaultCase;
 			}
 
