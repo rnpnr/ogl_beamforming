@@ -851,7 +851,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			if (cp->hadamard_order != (i32)cp->acquisition_count)
 				update_hadamard_texture(cp, (i32)cp->acquisition_count, arena);
 
-			cp->voxel_transform = pb->parameters.das_voxel_transform;
+			mem_copy(cp->voxel_transform.E,  pb->parameters.das_voxel_transform.E, sizeof(cp->voxel_transform));
 
 			GLenum gl_kind = cp->iq_pipeline ? GL_RG32F : GL_R32F;
 			if (cp->average_frames > 1 && !beamformer_frame_compatible(ctx->averaged_frames + 0, cp->output_points, gl_kind)) {
@@ -1060,7 +1060,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 
 		glProgramUniform1f(program, SUM_PRESCALE_UNIFORM_LOC, 1 / (f32)frame_count);
 		do_sum_shader(cc, in_textures, frame_count, aframe->texture, aframe->dim);
-		aframe->voxel_transform  = frame->voxel_transform;
+		mem_copy(aframe->voxel_transform.E,  frame->voxel_transform.E, sizeof(frame->voxel_transform));
 		aframe->compound_count   = frame->compound_count;
 		aframe->acquisition_kind = frame->acquisition_kind;
 	}break;
@@ -1215,7 +1215,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			if (!beamformer_frame_compatible(frame, cp->output_points, gl_kind))
 				alloc_beamform_frame(frame, cp->output_points, gl_kind, s8("Beamformed_Data"), *arena);
 
-			frame->voxel_transform  = cp->voxel_transform;
+			mem_copy(frame->voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));
 			frame->acquisition_kind = cp->acquisition_kind;
 			frame->compound_count   = cp->acquisition_count;
 
