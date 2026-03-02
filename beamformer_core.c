@@ -659,7 +659,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			}break;
 
 			case 2:{
-				if (has_x && has_y) { sd->layout.x = subgroup_size / 4; sd->layout.x = subgroup_size / 4; }
+				if (has_x && has_y) { sd->layout.x = subgroup_size / 4; sd->layout.y = subgroup_size / 4; }
 				if (has_x && has_z) { sd->layout.x = subgroup_size / 4; sd->layout.z = subgroup_size / 4; }
 				if (has_y && has_z) { sd->layout.y = subgroup_size / 4; sd->layout.z = subgroup_size / 4; }
 			}break;
