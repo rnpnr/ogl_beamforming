@@ -46,9 +46,9 @@ typedef struct {
 	iptr handle;
 	s8   name;
 
-	OSLinux_FileWatch * data;
-	iz                  count;
-	iz                  capacity;
+	OSLinux_FileWatch *data;
+	da_count           count;
+	da_count           capacity;
 } OSLinux_FileWatchDirectory;
 DA_STRUCT(OSLinux_FileWatchDirectory, OSLinux_FileWatchDirectory);
 
@@ -152,7 +152,7 @@ function OSLinux_FileWatchDirectory *
 os_lookup_file_watch_directory(OSLinux_FileWatchDirectoryList *ctx, u64 hash)
 {
 	OSLinux_FileWatchDirectory *result = 0;
-	for (iz i = 0; !result && i < ctx->count; i++)
+	for (da_count i = 0; !result && i < ctx->count; i++)
 		if (ctx->data[i].hash == hash)
 			result = ctx->data + i;
 	return result;
@@ -270,14 +270,14 @@ dispatch_file_watch_events(BeamformerInput *input)
 	while ((rlen = read(os_linux_context.inotify_handle, mem, 4096)) > 0) {
 		for (u8 *data = mem; data < mem + rlen; data += sizeof(*event) + event->len) {
 			event = (struct inotify_event *)data;
-			for (u32 i = 0; i < fwctx->count; i++) {
+			for (da_count i = 0; i < fwctx->count; i++) {
 				OSLinux_FileWatchDirectory *dir = fwctx->data + i;
 				if (event->wd != dir->handle)
 					continue;
 
 				s8  file = c_str_to_s8(event->name);
 				u64 hash = u64_hash_from_s8(file);
-				for (u32 j = 0; j < dir->count; j++) {
+				for (da_count j = 0; j < dir->count; j++) {
 					OSLinux_FileWatch *fw = dir->data + j;
 					if (fw->hash == hash) {
 						// NOTE(rnp): avoid multiple updates in a single frame

@@ -511,8 +511,8 @@ typedef struct {
 
 typedef struct Table {
 	TableRow *data;
-	iz        count;
-	iz        capacity;
+	da_count  count;
+	da_count  capacity;
 
 	/* NOTE(rnp): counted by columns */
 	TextAlignment *alignment;
@@ -538,8 +538,8 @@ typedef struct {
 
 typedef struct {
 	TableStackFrame *data;
-	iz count;
-	iz capacity;
+	da_count         count;
+	da_count         capacity;
 } TableStack;
 
 typedef enum {
@@ -1705,7 +1705,7 @@ view_plane_tag_from_x_plane_shift(BeamformerFrameView *view, Variable *x_plane_s
 function void
 render_single_xplane(BeamformerUI *ui, BeamformerFrameView *view, Variable *x_plane_shift,
                      f32 rotation_turns, v3 translate, BeamformerViewPlaneTag tag,
-                     VulkanHandle command, BeamformerShaderRenderBeamformedPushConstants *pc)
+                     VulkanHandle command, BeamformerRenderBeamformedPushConstants *pc)
 {
 	GPUBuffer *beamformed_buffer = ui->beamformer_context->compute_context.backlog.buffer;
 	pc->input_data = 0;
@@ -1755,7 +1755,7 @@ render_single_xplane(BeamformerUI *ui, BeamformerFrameView *view, Variable *x_pl
 }
 
 function void
-render_3D_xplane(BeamformerUI *ui, BeamformerFrameView *view, VulkanHandle command, BeamformerShaderRenderBeamformedPushConstants *pc)
+render_3D_xplane(BeamformerUI *ui, BeamformerFrameView *view, VulkanHandle command, BeamformerRenderBeamformedPushConstants *pc)
 {
 	if (view->demo->bool32) {
 		view->rotation += dt_for_frame * 0.125f;
@@ -1774,7 +1774,7 @@ render_3D_xplane(BeamformerUI *ui, BeamformerFrameView *view, VulkanHandle comma
 }
 
 function void
-render_2D_plane(BeamformerUI *ui, BeamformerFrameView *view, VulkanHandle command, BeamformerShaderRenderBeamformedPushConstants *pc)
+render_2D_plane(BeamformerUI *ui, BeamformerFrameView *view, VulkanHandle command, BeamformerRenderBeamformedPushConstants *pc)
 {
 	m4 view_m     = m4_identity();
 	m4 model      = m4_scale((v3){{2.0f, 2.0f, 0.0f}});
@@ -1827,7 +1827,7 @@ update_frame_views(BeamformerUI *ui, Rect window)
 {
 	for (BeamformerFrameView *view = ui->views; view; view = view->next) {
 		if (view_update(ui, view)) {
-			BeamformerShaderRenderBeamformedPushConstants pc = {
+			BeamformerRenderBeamformedPushConstants pc = {
 				.bounding_box_colour = FRAME_VIEW_BB_COLOUR,
 				.db_cutoff           = view->log_scale->bool32 ? view->dynamic_range.real32 : 0,
 				.threshold           = view->threshold.real32,
@@ -2873,7 +2873,7 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 	assert(view->type == VT_COMPUTE_STATS_VIEW);
 
 	read_only local_persist BeamformerComputePlan dummy_plan = {0};
-	u32 selected_plan = ui->selected_parameter_block % BeamformerMaxParameterBlockSlots;
+	u32 selected_plan = ui->selected_parameter_block % BeamformerMaxParameterBlocks;
 	BeamformerComputePlan *cp = ui->beamformer_context->compute_context.compute_plans[selected_plan];
 	if (!cp) cp = &dummy_plan;
 
@@ -3307,9 +3307,9 @@ draw_ui_regions(BeamformerUI *ui, Rect window, v2 mouse)
 
 	struct {
 		struct region_frame *data;
-		iz count;
-		iz capacity;
-	} stack = {init, 0, ARRAY_COUNT(init)};
+		da_count             count;
+		da_count             capacity;
+	} stack = {init, 0, countof(init)};
 
 	TempArena arena_savepoint = begin_temp_arena(&ui->arena);
 
@@ -3450,7 +3450,10 @@ function void
 end_text_input(InputState *is, Variable *var)
 {
 	f32 value = 0;
-	if (is->numeric) value = (f32)parse_f64((s8){.len = is->count, .data = is->buf});
+	if (is->numeric) {
+		NumberConversion number = number_from_s8((s8){.len = is->count, .data = is->buf});
+		value = number.F64;
+	}
 
 	switch (var->type) {
 	case VT_SCALED_F32:{ var->scaled_real32.val = value; }break;
@@ -4227,7 +4230,7 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 
 	asan_poison_region(ui->arena.beg, ui->arena.end - ui->arena.beg);
 
-	u32 selected_block = ui->selected_parameter_block % BeamformerMaxParameterBlockSlots;
+	u32 selected_block = ui->selected_parameter_block % BeamformerMaxParameterBlocks;
 	u32 selected_mask  = 1 << selected_block;
 	if (ctx->ui_dirty_parameter_blocks & selected_mask) {
 		BeamformerParameterBlock *pb = beamformer_parameter_block_lock(ui->shared_memory, selected_block, 0);
