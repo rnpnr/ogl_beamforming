@@ -363,7 +363,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				db->data_kind = data_kind;
 				if (!first) {
 					if (data_kind == BeamformerDataKind_Int16) {
-						db->data_kind = BeamformerDataKind_Int16Complex;
+						db->data_kind = BeamformerDataKind_Float16Complex;
 					} else {
 						db->data_kind = BeamformerDataKind_Float32Complex;
 					}
