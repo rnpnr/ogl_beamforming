@@ -49,6 +49,8 @@ typedef enum {
 	BeamformerDataKind_Int16Complex   = 1,
 	BeamformerDataKind_Float32        = 2,
 	BeamformerDataKind_Float32Complex = 3,
+	BeamformerDataKind_Float16        = 4,
+	BeamformerDataKind_Float16Complex = 5,
 	BeamformerDataKind_Count,
 } BeamformerDataKind;
 
@@ -447,9 +449,13 @@ read_only global u8 beamformer_data_kind_element_size[] = {
 	2,
 	4,
 	4,
+	2,
+	2,
 };
 
 read_only global u8 beamformer_data_kind_element_count[] = {
+	1,
+	2,
 	1,
 	2,
 	1,
@@ -461,6 +467,8 @@ read_only global u8 beamformer_data_kind_byte_size[] = {
 	2 * 2,
 	4 * 1,
 	4 * 2,
+	2 * 1,
+	2 * 2,
 };
 
 read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
@@ -589,6 +597,8 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"#define DataKind_Int16Complex   1\n"
 	"#define DataKind_Float32        2\n"
 	"#define DataKind_Float32Complex 3\n"
+	"#define DataKind_Float16        4\n"
+	"#define DataKind_Float16Complex 5\n"
 	"\n"),
 	s8_comp(""
 	"#define DecodeMode_None     0\n"
