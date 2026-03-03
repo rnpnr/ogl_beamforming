@@ -15,6 +15,17 @@
 // NOTE: Constants (Float)
 
 typedef enum {
+	BeamformerShaderResourceKind_Buffer = 0,
+	BeamformerShaderResourceKind_Count,
+} BeamformerShaderResourceKind;
+
+typedef enum {
+	BeamformerShaderBufferSlot_BeamformedData = 0,
+	BeamformerShaderBufferSlot_PingPong       = 1,
+	BeamformerShaderBufferSlot_Count,
+} BeamformerShaderBufferSlot;
+
+typedef enum {
 	BeamformerDecodeMode_None     = 0,
 	BeamformerDecodeMode_Hadamard = 1,
 	BeamformerDecodeMode_Count,
@@ -191,18 +202,18 @@ typedef struct {
 
 typedef struct {
 	u64 input_data;
-	u64 output_data;
 	u64 filter_coefficients;
+	u32 output_element_offset;
 } BeamformerFilterPushConstants;
 
 typedef struct {
 	m4  xdc_transform;
 	m4  voxel_transform;
 	v2  xdc_element_pitch;
-	u64 rf_data;
-	u64 output_data;
-	u64 incoherent_output;
 	u64 array_parameters;
+	u32 rf_element_offset;
+	u32 output_element_offset;
+	u32 incoherent_element_offset;
 	u32 output_size_x;
 	u32 output_size_y;
 	u32 output_size_z;
@@ -493,6 +504,15 @@ read_only global s8 beamformer_interpolation_mode_strings[] = {
 	s8_comp("Cubic"),
 };
 
+read_only global s8 beamformer_shader_resource_kind_strings[] = {
+	s8_comp("Buffer"),
+};
+
+read_only global s8 game_shader_buffer_slot_strings[] = {
+	s8_comp("BeamformedData"),
+	s8_comp("PingPong"),
+};
+
 read_only global s8 beamformer_shader_names[] = {
 	s8_comp("CudaDecode"),
 	s8_comp("CudaHilbert"),
@@ -584,10 +604,17 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"};\n"
 	"\n"),
 	s8_comp(""
+	"#define ShaderBufferSlot_BeamformedData 0\n"
+	"#define ShaderBufferSlot_PingPong       1\n"
+	"\n"),
+	s8_comp(""
+	"#define ShaderResourceKind_Buffer 0\n"
+	"\n"),
+	s8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  uint64_t input_data;\n"
-	"  uint64_t output_data;\n"
 	"  uint64_t filter_coefficients;\n"
+	"  uint32_t output_element_offset;\n"
 	"};\n"
 	"\n"),
 	s8_comp("#define MaxChannelCount (256)\n\n"),
@@ -627,10 +654,10 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"  f32mat4  xdc_transform;\n"
 	"  f32mat4  voxel_transform;\n"
 	"  f32vec2  xdc_element_pitch;\n"
-	"  uint64_t rf_data;\n"
-	"  uint64_t output_data;\n"
-	"  uint64_t incoherent_output;\n"
 	"  uint64_t array_parameters;\n"
+	"  uint32_t rf_element_offset;\n"
+	"  uint32_t output_element_offset;\n"
+	"  uint32_t incoherent_element_offset;\n"
 	"  uint32_t output_size_x;\n"
 	"  uint32_t output_size_y;\n"
 	"  uint32_t output_size_z;\n"
@@ -707,19 +734,19 @@ read_only global b8 beamformer_shader_primitive_is_vertex[] = {
 
 read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){0, 1, 2},
-	(i32 []){0, 3},
-	(i32 []){4, 5, 0, 6, 7, 8, 9},
-	(i32 []){0, 10},
+	(i32 []){0, 3, 4, 5},
+	(i32 []){6, 7, 0, 8, 9, 3, 4, 10, 11},
+	(i32 []){0, 12},
 	0,
-	(i32 []){0, 11},
-	(i32 []){12},
 	(i32 []){0, 13},
+	(i32 []){14},
+	(i32 []){0, 15},
 };
 
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	3,
-	2,
-	7,
+	4,
+	9,
 	2,
 	0,
 	2,
