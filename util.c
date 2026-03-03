@@ -235,9 +235,9 @@ enum { DA_INITIAL_CAP = 16 };
     : (s)->data + (s)->count++)
 
 function void *
-da_reserve_(Arena *a, void *data, iz *capacity, iz needed, uz align, iz size)
+da_reserve_(Arena *a, void *data, da_count *capacity, da_count needed, u64 align, i64 size)
 {
-	iz cap = *capacity;
+	da_count cap = *capacity;
 
 	/* NOTE(rnp): handle both 0 initialized DAs and DAs that need to be moved (they started
 	 * on the stack or someone allocated something in the middle of the arena during usage) */
@@ -783,7 +783,7 @@ cut_rect_vertical(Rect rect, f32 at, Rect *top, Rect *bot)
 	}
 }
 
-function IntegerConversion
+function NumberConversion
 integer_from_s8(s8 raw)
 {
 	read_only local_persist alignas(64) i8 lut[64] = {
@@ -793,7 +793,7 @@ integer_from_s8(s8 raw)
 		-1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1,
 	};
 
-	IntegerConversion result = {.unparsed = raw};
+	NumberConversion result = {.unparsed = raw};
 
 	iz  i     = 0;
 	i64 scale = 1;
@@ -813,7 +813,7 @@ integer_from_s8(s8 raw)
 			i64 value = lut[Min((u8)(raw.data[i] - (u8)'0'), clamp)];\
 			if (value >= 0) {\
 				if (result.U64 > (U64_MAX - (u64)value) / radix) {\
-					result.result = IntegerConversionResult_OutOfRange;\
+					result.result = NumberConversionResult_OutOfRange;\
 					result.U64    = U64_MAX;\
 					return result;\
 				} else {\
@@ -831,27 +831,42 @@ integer_from_s8(s8 raw)
 	#undef integer_conversion_body
 
 	result.unparsed = (s8){.len = raw.len - i, .data = raw.data + i};
-	result.result   = IntegerConversionResult_Success;
+	result.result   = i > 0 ? NumberConversionResult_Success : NumberConversionResult_Invalid;
+	result.kind     = NumberConversionKind_Integer;
 	if (scale < 0) result.U64 = 0 - result.U64;
 
 	return result;
 }
 
-function f64
-parse_f64(s8 s)
+function NumberConversion
+number_from_s8(s8 s)
 {
-	IntegerConversion integral = integer_from_s8(s);
+	NumberConversion result  = {.unparsed = s};
+	NumberConversion integer = integer_from_s8(s);
+	if (integer.result == NumberConversionResult_Success) {
+		if (integer.unparsed.len != 0 && integer.unparsed.data[0] == '.') {
+			s = integer.unparsed;
+			s.data++;
+			s.len--;
 
-	s = integral.unparsed;
-	if (*s.data == '.') { s.data++; s.len--; }
-	while (s.len > 0 && s.data[s.len - 1] == '0') s.len--;
+			while (s.len > 0 && s.data[s.len - 1] == '0') s.len--;
 
-	IntegerConversion fractional = integer_from_s8(s);
+			NumberConversion fractional = integer_from_s8(s);
+			if (fractional.result == NumberConversionResult_Success) {
+				result.F64 = (f64)fractional.U64;
 
-	u64 power = (u64)(fractional.unparsed.data - s.data);
-	f64 frac  = (f64)fractional.U64;
-	while (power > 0) { frac /= 10.0; power--; }
+				u64 divisor = (u64)(fractional.unparsed.data - s.data);
+				while (divisor > 0) { result.F64 /= 10.0; divisor--; }
 
-	f64 result = (f64)integral.S64 + frac;
+				result.F64 += (f64)integer.S64;
+
+				result.result   = NumberConversionResult_Success;
+				result.kind     = NumberConversionKind_Float;
+				result.unparsed = fractional.unparsed;
+			}
+		} else {
+			result = integer;
+		}
+	}
 	return result;
 }

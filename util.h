@@ -4,6 +4,8 @@
 
 #include "compiler.h"
 
+#define da_count i32
+
 #if COMPILER_MSVC
   typedef unsigned __int64  u64;
   typedef signed   __int64  i64;
@@ -105,7 +107,6 @@ typedef u64    uptr;
 #define str(...) str_(__VA_ARGS__)
 
 #define countof(a)       (iz)(sizeof(a) / sizeof(*a))
-#define ARRAY_COUNT(a)   (sizeof(a) / sizeof(*a))
 #define BETWEEN(x, a, b) ((x) >= (a) && (x) <= (b))
 #define CLAMP(x, a, b)   ((x) < (a) ? (a) : (x) > (b) ? (b) : (x))
 #define CLAMP01(x)       CLAMP(x, 0, 1)
@@ -145,9 +146,9 @@ typedef u64    uptr;
 #define spin_wait(c) while ((c)) cpu_yield()
 
 #define DA_STRUCT(kind, name) typedef struct { \
-	kind *data;     \
-	iz    count;    \
-	iz    capacity; \
+	kind     *data;     \
+	da_count  count;    \
+	da_count  capacity; \
 } name ##List;
 
 #define SLLStackPush(list, n) ((n)->next = (list), (list) = (n))
@@ -216,19 +217,27 @@ typedef struct { iz len; u16 *data; } s16;
 typedef struct { u32 cp, consumed; } UnicodeDecode;
 
 typedef enum {
-	IntegerConversionResult_Invalid,
-	IntegerConversionResult_OutOfRange,
-	IntegerConversionResult_Success,
-} IntegerConversionResult;
+	NumberConversionResult_Invalid,
+	NumberConversionResult_OutOfRange,
+	NumberConversionResult_Success,
+} NumberConversionResult;
+
+typedef enum {
+	NumberConversionKind_Invalid,
+	NumberConversionKind_Integer,
+	NumberConversionKind_Float,
+} NumberConversionKind;
 
 typedef struct {
-	IntegerConversionResult result;
+	NumberConversionResult result;
+	NumberConversionKind   kind;
 	union {
 		u64 U64;
 		i64 S64;
+		f64 F64;
 	};
 	s8 unparsed;
-} IntegerConversion;
+} NumberConversion;
 
 typedef struct { u64 start, stop; } RangeU64;
 

@@ -1,35 +1,72 @@
-@Enumeration(DecodeMode [None Hadamard])
-@Enumeration(RCAOrientation [None Rows Columns])
-@Enumeration(SamplingMode [2X 4X])
+@Constant(16)   ChannelChunkCount
+@Constant(4)    FilterSlots
+@Constant(4096) MaxBacklogFrames
+@Constant(256)  MaxChannelCount
+@Constant(256)  MaxEmmissionsCount
+@Constant(16)   MaxComputeShaderStages
+@Constant(16)   MaxParameterBlocks
+@Constant(3)    MaxRawDataFramesInFlight
 
-@Table([name size elements]) DataKind
+@Enumeration DecodeMode
+{
+	None
+	Hadamard
+}
+
+@Enumeration RCAOrientation
+{
+	None
+	Rows
+	Columns
+}
+
+@Enumeration SamplingMode
+{
+	2X
+	4X
+}
+
+@Table([name size elements]) DataKindTable
 {
 	[Int16          2 1]
 	[Int16Complex   2 2]
 	[Float32        4 1]
 	[Float32Complex 4 2]
 }
+@Expand(DataKindTable) @Enumeration(`$(name)`) DataKind
 
-@Enumeration(EmissionKind [Sine SineAM Chirp])
-
-@Table([type name]) SineParameters
+@Enumeration EmissionKind
 {
-	[F32 cycles   ]
-	[F32 frequency]
+	Sine
+	SineAM
+	Chirp
 }
 
-@Table([type name]) SineAMParameters
+@Enumeration InterpolationMode
 {
-	[F32 cycles   ]
-	[F32 frequency]
-	[U32 emissions]
+	Nearest
+	Linear
+	Cubic
 }
 
-@Table([type name]) ChirpParameters
+@Struct SineParameters
 {
-	[F32 duration     ]
-	[F32 min_frequency]
-	[F32 max_frequency]
+	[cycles    F32]
+	[frequency F32]
+}
+
+@Struct SineAMParameters
+{
+	[cycles    F32]
+	[frequency F32]
+	[emissions U32]
+}
+
+@Struct ChirpParameters
+{
+	[duration      F32]
+	[min_frequency F32]
+	[max_frequency F32]
 }
 
 @MUnion(EmissionKind [
@@ -38,24 +75,25 @@
 	ChirpParameters
 ]) Emission
 
-@Table([name name_lower]) FilterKind
+@Table([name name_lower]) FilterKindTable
 {
 	[Kaiser       kaiser]
 	[MatchedChirp matched_chirp]
 }
+@Expand(FilterKindTable) @Enumeration(`$(name)`) FilterKind
 
-@Table([type name]) KaiserFilterParameters
+@Struct KaiserFilterParameters
 {
-	[F32 cutoff_frequency]
-	[F32 beta]
-	[U32 length]
+	[cutoff_frequency F32]
+	[beta             F32]
+	[length           U32]
 }
 
-@Table([type name]) ChirpFilterParameters
+@Struct ChirpFilterParameters
 {
-	[F32 duration]
-	[F32 min_frequency]
-	[F32 max_frequency]
+	[duration      F32]
+	[min_frequency F32]
+	[max_frequency F32]
 }
 
 @MUnion(FilterKind [
@@ -63,7 +101,7 @@
 	ChirpFilterParameters
 ]) Filter
 
-@Table([name pretty_name fixed_transmits]) AcquisitionKind
+@Table([name pretty_name fixed_transmits]) AcquisitionKindTable
 {
 	[FORCES         FORCES         1]
 	[UFORCES        UFORCES        0]
@@ -78,15 +116,9 @@
 	[Flash          Flash          0]
 	[HERO_PA        HERO-PA        0]
 }
+@Expand(AcquisitionKindTable) @Enumeration(`$(name)`) AcquisitionKind
 
-@Table([name]) InterpolationMode
-{
-	[Nearest]
-	[Linear]
-	[Cubic]
-}
-
-@Table([name type]) ParametersHead
+@Struct ParametersHead
 {
 	[das_voxel_transform           M4]
 	[xdc_transform                 M4]
@@ -105,7 +137,7 @@
 	[sampling_mode                 U8]
 }
 
-@Table([name type]) ParametersUI
+@Struct ParametersUI
 {
 	[output_points          SV4]
 	[sampling_frequency     F32]
@@ -123,8 +155,8 @@
 	[emission_parameters BeamformerEmissionParameters uint8  12]
 }
 
-// TODO(rnp): definable constants in meta code (or at least references to enum values)
-@Table([name type elements]) ParametersSimple
+// TODO(rnp): allow emit statements to reference Constants
+@Struct ParametersSimple
 {
 	[channel_mapping               S16  256]
 	[sparse_elements               S16  256]
@@ -137,10 +169,12 @@
 	[data_kind                     S32    1]
 }
 
-@Expand(AcquisitionKind)   @Enumeration(AcquisitionKind   `$(name)`)
-@Expand(DataKind)          @Enumeration(DataKind          `$(name)`)
-@Expand(FilterKind)        @Enumeration(FilterKind        `$(name)`)
-@Expand(InterpolationMode) @Enumeration(InterpolationMode `$(name)`)
+@Struct DASArrayParameters
+{
+	[focal_vectors                 V2  MaxChannelCount]
+	[sparse_elements               S16 MaxChannelCount]
+	[transmit_receive_orientations U16 MaxChannelCount]
+}
 
 @Emit
 {
@@ -161,10 +195,6 @@
 	@Expand(ParametersUI)    `	$(%type)$(|)$(name);`
 	@Expand(ParametersExtra) `	$(c_type)$(|)$(name);`
 	`} BeamformerParameters;`
-	``
-	`typedef struct {`
-	@Expand(ParametersHead) `	$(%type)$(|)$(name);`
-	`} BeamformerParametersHead;`
 	``
 	`typedef struct {`
 	@Expand(ParametersUI) `	$(%type)$(|)$(name);`
@@ -192,27 +222,27 @@
 	`} BeamformerFilterParameters;`
 	``
 	`read_only global u8 beamformer_data_kind_element_size[] = {`
-	@Expand(DataKind) `	$(size),`
+	@Expand(DataKindTable) `	$(size),`
 	`};`
 	``
 	`read_only global u8 beamformer_data_kind_element_count[] = {`
-	@Expand(DataKind) `	$(elements),`
+	@Expand(DataKindTable) `	$(elements),`
 	`};`
 	``
 	`read_only global u8 beamformer_data_kind_byte_size[] = {`
-	@Expand(DataKind) `	$(size) * $(elements),`
+	@Expand(DataKindTable) `	$(size) * $(elements),`
 	`};`
 	``
 	`read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {`
-	@Expand(AcquisitionKind) `	$(fixed_transmits),`
+	@Expand(AcquisitionKindTable) `	$(fixed_transmits),`
 	`};`
 	``
 	`read_only global s8 beamformer_acquisition_kind_strings[] = {`
-	@Expand(AcquisitionKind) `	s8_comp("$(pretty_name)"),`
+	@Expand(AcquisitionKindTable) `	s8_comp("$(pretty_name)"),`
 	`};`
 	``
 	`read_only global s8 beamformer_filter_kind_strings[] = {`
-	@Expand(FilterKind) `	s8_comp("$(name)"),`
+	@Expand(FilterKindTable) `	s8_comp("$(name)"),`
 	`};`
 	``
 	`read_only global s8 beamformer_interpolation_mode_strings[] = {`
@@ -227,118 +257,136 @@
 
 	@Shader(decode.glsl) Decode
 	{
-		@Enumeration(DataKind)
-		@Enumeration(DecodeMode)
-		@Flags([DilateOutput UseSharedMemory])
+		@Enumeration DataKind
+		@Enumeration DecodeMode
 
 		@Bake
 		{
-			@BakeInt(DecodeMode           decode_mode           )
-			@BakeInt(InputChannelStride   input_channel_stride  )
-			@BakeInt(InputSampleStride    input_sample_stride   )
-			@BakeInt(InputTransmitStride  input_transmit_stride )
-			@BakeInt(OutputChannelStride  output_channel_stride )
-			@BakeInt(OutputSampleStride   output_sample_stride  )
-			@BakeInt(OutputTransmitStride output_transmit_stride)
-			@BakeInt(ToProcess            to_process            )
-			@BakeInt(TransmitCount        transmit_count        )
+			[DataKind             data_kind              U32]
+			[DilateOutput         dilate_output          U32]
+			[UseSharedMemory      use_shared_memory      U32]
+			[DecodeMode           decode_mode            U32]
+			[InputChannelStride   input_channel_stride   U32]
+			[InputSampleStride    input_sample_stride    U32]
+			[InputTransmitStride  input_transmit_stride  U32]
+			[OutputChannelStride  output_channel_stride  U32]
+			[OutputSampleStride   output_sample_stride   U32]
+			[OutputTransmitStride output_transmit_stride U32]
+			[ToProcess            to_process             U32]
+			[TransmitCount        transmit_count         U32]
 		}
 
 		@PushConstants
 		{
-			[uint64_t U64 hadamard_buffer ]
-			[uint64_t U64 rf_buffer       ]
-			[uint64_t U64 output_buffer   ]
-			[uint64_t U64 output_rf_buffer]
-			[bool     B32 first_pass      ]
+			[hadamard_buffer  U64]
+			[rf_buffer        U64]
+			[output_buffer    U64]
+			[output_rf_buffer U64]
+			[first_pass       B32]
 		}
 	}
 
 	@Shader(filter.glsl) Filter
 	{
-		@Enumeration(DataKind)
-		@Flags([ComplexFilter OutputFloats])
+		@Enumeration DataKind
 
 		@ShaderAlias Demodulate
 
 		@Bake
 		{
-			@BakeInt(DecimationRate       decimation_rate       )
-			@BakeInt(FilterLength         filter_length         )
-			@BakeInt(InputChannelStride   input_channel_stride  )
-			@BakeInt(InputSampleStride    input_sample_stride   )
-			@BakeInt(InputTransmitStride  input_transmit_stride )
-			@BakeInt(OutputChannelStride  output_channel_stride )
-			@BakeInt(OutputSampleStride   output_sample_stride  )
-			@BakeInt(OutputTransmitStride output_transmit_stride)
-			@BakeInt(SampleCount          sample_count          )
-			@BakeFloat(DemodulationFrequency demodulation_frequency)
-			@BakeFloat(SamplingFrequency     sampling_frequency    )
+			[DataKind              data_kind              U32]
+			[Demodulate            demodulate             U32]
+			[ComplexFilter         complex_filter         U32]
+			[OutputFloats          output_floats          U32]
+			[DecimationRate        decimation_rate        U32]
+			[FilterLength          filter_length          U32]
+			[InputChannelStride    input_channel_stride   U32]
+			[InputSampleStride     input_sample_stride    U32]
+			[InputTransmitStride   input_transmit_stride  U32]
+			[OutputChannelStride   output_channel_stride  U32]
+			[OutputSampleStride    output_sample_stride   U32]
+			[OutputTransmitStride  output_transmit_stride U32]
+			[SampleCount           sample_count           U32]
+
+			[DemodulationFrequency demodulation_frequency F32]
+			[SamplingFrequency     sampling_frequency     F32]
 		}
 
 		@PushConstants
 		{
-			[uint64_t U64 input_data         ]
-			[uint64_t U64 output_data        ]
-			[uint64_t U64 filter_coefficients]
+			[input_data          U64]
+			[output_data         U64]
+			[filter_coefficients U64]
 		}
 	}
 
 	@Shader(das.glsl) DAS
 	{
-		@Enumeration(AcquisitionKind)
-		@Enumeration(DataKind)
-		@Enumeration(InterpolationMode)
-		@Enumeration(RCAOrientation)
-		@Flags([Sparse CoherencyWeighting SingleFocus SingleOrientation])
+		@Constant    MaxChannelCount
+
+		@Enumeration AcquisitionKind
+		@Enumeration DataKind
+		@Enumeration InterpolationMode
+		@Enumeration RCAOrientation
+
+		@Struct      DASArrayParameters
 
 		@Bake
 		{
-			@BakeInt(AcquisitionCount           acquisition_count           )
-			@BakeInt(AcquisitionKind            acquisition_kind            )
-			@BakeInt(ChannelCount               channel_count               )
-			@BakeInt(ChannelChunkCount          channel_chunk_count         )
-			@BakeInt(InterpolationMode          interpolation_mode          )
-			@BakeInt(SampleCount                sample_count                )
-			@BakeInt(TransmitReceiveOrientation transmit_receive_orientation)
+			[DataKind                   data_kind                    U32]
+			[CoherencyWeighting         coherency_weighting          U32]
+			[SingleFocus                single_focus                 U32]
+			[SingleOrientation          single_orientation           U32]
+			[Sparse                     sparse                       U32]
+			[AcquisitionCount           acquisition_count            U32]
+			[AcquisitionKind            acquisition_kind             U32]
+			[ChannelCount               channel_count                U32]
+			[ChannelChunkCount          channel_chunk_count          U32]
+			[InterpolationMode          interpolation_mode           U32]
+			[SampleCount                sample_count                 U32]
+			[TransmitReceiveOrientation transmit_receive_orientation U32]
 
-			@BakeFloat(DemodulationFrequency demodulation_frequency)
-			@BakeFloat(FNumber               f_number              )
-			@BakeFloat(FocusDepth            focus_depth           )
-			@BakeFloat(SamplingFrequency     sampling_frequency    )
-			@BakeFloat(SpeedOfSound          speed_of_sound        )
-			@BakeFloat(TimeOffset            time_offset           )
-			@BakeFloat(TransmitAngle         transmit_angle        )
+			[DemodulationFrequency      demodulation_frequency       F32]
+			[FNumber                    f_number                     F32]
+			[FocusDepth                 focus_depth                  F32]
+			[SamplingFrequency          sampling_frequency           F32]
+			[SpeedOfSound               speed_of_sound               F32]
+			[TimeOffset                 time_offset                  F32]
+			[TransmitAngle              transmit_angle               F32]
 		}
 
 		@PushConstants
 		{
-			[mat4     M4  xdc_transform                ]
-			[mat4     M4  voxel_transform              ]
-			[vec2     V2  xdc_element_pitch            ]
-			[uint64_t U64 rf_data                      ]
-			[uint64_t U64 output_data                  ]
-			[uint64_t U64 incoherent_output            ]
-			[uint64_t U64 focal_vectors                ]
-			[uint64_t U64 sparse_elements              ]
-			[uint64_t U64 transmit_receive_orientations]
-			[uint32_t U32 output_size_x                ]
-			[uint32_t U32 output_size_y                ]
-			[uint32_t U32 output_size_z                ]
-			[uint32_t U32 cycle_t                      ]
-			[int32_t  S32 channel_offset               ]
+			[xdc_transform     M4 ]
+			[voxel_transform   M4 ]
+			[xdc_element_pitch V2 ]
+			[rf_data           U64]
+			[output_data       U64]
+			[incoherent_output U64]
+			[array_parameters  U64]
+			[output_size_x     U32]
+			[output_size_y     U32]
+			[output_size_z     U32]
+			[cycle_t           U32]
+			[channel_offset    S32]
 		}
 	}
 
 	@Shader(sum.glsl) Sum
 	{
-		@Enumeration(DataKind)
+		@Enumeration DataKind
+
+		@Bake
+		{
+			[DataKind data_kind U32]
+		}
+
 		@PushConstants
 		{
-			[uint64_t U64 output_data   ]
-			[uint64_t U64 input_data    ]
-			[uint32_t U32 image_elements]
-			[float    F32 scale         ]
+			[output_data    U64]
+			[input_data     U64]
+			[image_elements U32]
+			[scale          F32]
 		}
 	}
 
@@ -351,17 +399,22 @@
 {
 	@Shader(coherency_weighting.glsl) CoherencyWeighting
 	{
-		@Enumeration(DataKind)
+		@Enumeration DataKind
+
+		@Bake
+		{
+			[DataKind data_kind U32]
+		}
 
 		@PushConstants
 		{
-			[uint64_t U64 left_side_buffer ]
-			[uint64_t U64 right_side_buffer]
-			[uint32_t U32 elements         ]
-			[float    F32 scale            ]
-			[uint32_t U32 output_size_x    ]
-			[uint32_t U32 output_size_y    ]
-			[uint32_t U32 output_size_z    ]
+			[left_side_buffer  U64]
+			[right_side_buffer U64]
+			[elements          U32]
+			[scale             F32]
+			[output_size_x     U32]
+			[output_size_y     U32]
+			[output_size_z     U32]
 		}
 	}
 }
@@ -373,9 +426,9 @@
 	{
 		@PushConstants
 		{
-			[uint64_t U64 data      ]
-			[uint32_t U32 clear_word]
-			[uint32_t U32 words     ]
+			[data       U64]
+			[clear_word U32]
+			[words      U32]
 		}
 	}
 }
@@ -384,27 +437,27 @@
 {
 	@RenderShader RenderBeamformed
 	{
-		@Enumeration(DataKind)
+		@Enumeration DataKind
 
 		@VertexShader(render_3d.vert.glsl)
 		@FragmentShader(render_3d.frag.glsl)
 
 		@PushConstants
 		{
-			[mat4     M4  mvp_matrix           ]
-			[uint64_t U64 positions            ]
-			[uint64_t U64 normals              ]
+			[mvp_matrix            M4 ]
+			[positions             U64]
+			[normals               U64]
 
-			[vec4     V4  bounding_box_colour  ]
-			[float    F32 bounding_box_fraction]
-			[float    F32 db_cutoff            ]
-			[float    F32 threshold            ]
-			[float    F32 gamma                ]
-			[uint64_t U64 input_data           ]
-			[uint32_t U32 input_size_x         ]
-			[uint32_t U32 input_size_y         ]
-			[uint32_t U32 input_size_z         ]
-			[uint32_t U32 data_kind            ]
+			[bounding_box_colour   V4 ]
+			[bounding_box_fraction F32]
+			[db_cutoff             F32]
+			[threshold             F32]
+			[gamma                 F32]
+			[input_data            U64]
+			[input_size_x          U32]
+			[input_size_y          U32]
+			[input_size_z          U32]
+			[data_kind             U32]
 		}
 	}
 }
@@ -502,7 +555,7 @@
 	`	properties`
 	@Expand(ParametersHead)   `		$(name)(1,$(#type)) $(%type)`
 	@Expand(ParametersUI)     `		$(name)(1,$(#type)) $(%type)`
-	@Expand(ParametersExtra)  `		$(name)(1,$(m_size))$(|)$(m_type)`
+	@Expand(ParametersExtra)  `		$(name)(1,$(m_size)) $(m_type)`
 	@Expand(ParametersSimple) `		$(name)(1,$(elements)) $(%type)`
 	`	end`
 	`end`
