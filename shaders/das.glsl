@@ -33,16 +33,16 @@
   #define RESULT_STORE(a) (a)
 #endif
 
-layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer RF {
-	SAMPLE_TYPE values[];
+layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_PingPong) readonly buffer RF {
+	SAMPLE_TYPE rf[];
 };
 
-layout(std430, buffer_reference, buffer_reference_align = 64) restrict buffer Output {
-	SAMPLE_TYPE values[];
+layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_BeamformedData) buffer Output {
+	SAMPLE_TYPE output_data[];
 };
 
-layout(std430, buffer_reference, buffer_reference_align = 64) restrict buffer IncoherentOutput {
-	float values[];
+layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_BeamformedData) buffer IncoherentOutput {
+	float incoherent_data[];
 };
 
 layout(std430, buffer_reference) restrict readonly buffer ArrayParameters {
@@ -68,7 +68,7 @@ vec2 rotate_iq(const vec2 iq, const float time)
 #endif
 
 /* NOTE: See: https://cubic.org/docs/hermite.htm */
-SAMPLE_TYPE cubic(const RF rf, const float index)
+SAMPLE_TYPE cubic(const int offset, const float index)
 {
 	const mat4 h = mat4(
 		 2, -3,  0, 1,
@@ -79,10 +79,10 @@ SAMPLE_TYPE cubic(const RF rf, const float index)
 
 	float tk, t = modf(index, tk);
 	SAMPLE_TYPE samples[4] = {
-		rf.values[int(tk) - 1],
-		rf.values[int(tk) + 0],
-		rf.values[int(tk) + 1],
-		rf.values[int(tk) + 2],
+		rf[offset + int(tk) - 1],
+		rf[offset + int(tk) + 0],
+		rf[offset + int(tk) + 1],
+		rf[offset + int(tk) + 2],
 	};
 
 	vec4        S  = vec4(t * t * t, t * t, t, 1);
@@ -104,24 +104,23 @@ SAMPLE_TYPE cubic(const RF rf, const float index)
 SAMPLE_TYPE sample_rf(const int channel, const int transmit, const float index)
 {
 	SAMPLE_TYPE result = SAMPLE_TYPE(0);
-	int offset = SAMPLE_BYTES * (channel * SampleCount * AcquisitionCount + transmit * SampleCount);
-	RF rf = RF(rf_data + offset);
+	int offset = int(rf_element_offset) + channel * SampleCount * AcquisitionCount + transmit * SampleCount;
 	switch (InterpolationMode) {
 	case InterpolationMode_Nearest:{
 		if (index >= 0 && int(round(index)) < SampleCount)
-			result = rotate_iq(rf.values[int(round(index))], index / SamplingFrequency);
+			result = rotate_iq(rf[offset + int(round(index))], index / SamplingFrequency);
 	}break;
 	case InterpolationMode_Linear:{
 		if (index >= 0 && round(index) < SampleCount) {
 			float tk, t = modf(index, tk);
-			int n = int(tk);
-			result = (1 - t) * rf.values[n] + t * rf.values[n + 1];
+			int n = offset + int(tk);
+			result = (1 - t) * rf[n] + t * rf[n + 1];
 		}
 		result = rotate_iq(result, index / SamplingFrequency);
 	}break;
 	case InterpolationMode_Cubic:{
 		if (int(index) > 0 && (int(index) + 2) < SampleCount)
-			result = rotate_iq(cubic(rf, index), index / SamplingFrequency);
+			result = rotate_iq(cubic(offset, index), index / SamplingFrequency);
 	}break;
 	}
 	return result;
@@ -328,8 +327,8 @@ void main()
 	#endif
 
 	#if CoherencyWeighting
-	IncoherentOutput(incoherent_output).values[out_index] += RESULT_INCOHERENT_CAST(sum);
+	incoherent_data[incoherent_element_offset + out_index] += RESULT_INCOHERENT_CAST(sum);
 	#endif
 
-	Output(output_data).values[out_index] += RESULT_COHERENT_CAST(sum);
+	output_data[output_element_offset + out_index] += RESULT_COHERENT_CAST(sum);
 }
