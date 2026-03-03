@@ -25,8 +25,6 @@
 
 #include "beamformer_internal.h"
 
-#define BeamformerChannelChunkCount (16)
-
 global f32 dt_for_frame;
 
 #if !BEAMFORMER_RENDERDOC_HOOKS
@@ -360,16 +358,17 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			if ((first || pb->parameters.decode_mode != BeamformerDecodeMode_None) &&
 			    compute_plan_push_shader(cp, shader, sp))
 			{
-				sd->bake.data_kind = data_kind;
+				BeamformerDecodeBakeParameters *db = &sd->bake.Decode;
+
+				db->data_kind = data_kind;
 				if (!first) {
 					if (data_kind == BeamformerDataKind_Int16) {
-						sd->bake.data_kind = BeamformerDataKind_Int16Complex;
+						db->data_kind = BeamformerDataKind_Int16Complex;
 					} else {
-						sd->bake.data_kind = BeamformerDataKind_Float32Complex;
+						db->data_kind = BeamformerDataKind_Float32Complex;
 					}
 				}
 
-				BeamformerShaderDecodeBakeParameters *db = &sd->bake.Decode;
 				db->decode_mode    = pb->parameters.decode_mode;
 				db->transmit_count = pb->parameters.acquisition_count;
 
@@ -386,7 +385,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 					db->output_transmit_stride *= decimation_rate;
 				}
 
-				if (run_cuda_hilbert) sd->bake.flags |= BeamformerShaderDecodeFlags_DilateOutput;
+				db->dilate_output = run_cuda_hilbert;
 
 				if (db->decode_mode == BeamformerDecodeMode_None) {
 					sd->layout = (uv3){{subgroup_size, 1, 1}};
@@ -395,8 +394,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 					sd->dispatch.y = (u32)ceil_f32((f32)channel_chunk_count              / (f32)sd->layout.y);
 					sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z);
 				} else if (db->transmit_count > 40) {
-					sd->bake.flags |= BeamformerShaderDecodeFlags_UseSharedMemory;
-					db->to_process = 2;
+					db->use_shared_memory = 1;
+					db->to_process        = 2;
 
 					if (db->transmit_count == 48)
 						db->to_process = db->transmit_count / 16;
@@ -438,13 +437,13 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 				time_offset += f->time_delay;
 
-				BeamformerShaderFilterBakeParameters *fb = &sd->bake.Filter;
-				fb->filter_length = (u32)f->length;
-				if (demod)                 sd->bake.flags |= BeamformerShaderFilterFlags_Demodulate;
-				if (f->parameters.complex) sd->bake.flags |= BeamformerShaderFilterFlags_ComplexFilter;
+				BeamformerFilterBakeParameters *fb = &sd->bake.Filter;
+				fb->filter_length  = (u32)f->length;
+				fb->demodulate     = demod;
+				fb->complex_filter = f->parameters.complex;
 
-				sd->bake.data_kind = data_kind;
-				if (!first) sd->bake.data_kind = BeamformerDataKind_Float32;
+				fb->data_kind = data_kind;
+				if (!first) fb->data_kind = BeamformerDataKind_Float32;
 
 				/* NOTE(rnp): when we are demodulating we pretend that the sampler was alternating
 				 * between sampling the I portion and the Q portion of an IQ signal. Therefore there
@@ -471,7 +470,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 						fb->input_transmit_stride = pb->parameters.sample_count / 2;
 
 						if (pb->parameters.decode_mode == BeamformerDecodeMode_None) {
-							sd->bake.flags |= BeamformerShaderFilterFlags_OutputFloats;
+							fb->output_floats = 1;
 						} else {
 							/* NOTE(rnp): output optimized layout for decoding */
 							fb->output_channel_stride  = das_channel_stride;
@@ -506,11 +505,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			if (compute_plan_push_shader(cp, shader, sp)) {
 				cp->first_image_shader_index = cp->pipeline.shader_count;
 
-				sd->bake.data_kind = BeamformerDataKind_Float32;
-				if (cp->iq_pipeline)
-					sd->bake.data_kind = BeamformerDataKind_Float32Complex;
+				BeamformerDASBakeParameters *db = &sd->bake.DAS;
+				db->data_kind = BeamformerDataKind_Float32;
+				if (cp->iq_pipeline) db->data_kind = BeamformerDataKind_Float32Complex;
 
-				BeamformerShaderDASBakeParameters *db = &sd->bake.DAS;
 				cp->xdc_element_pitch      = pb->parameters.xdc_element_pitch;
 
 				db->sampling_frequency     = sampling_frequency;
@@ -533,16 +531,13 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				mem_copy(cp->voxel_transform.E, pb->parameters.das_voxel_transform.E, sizeof(cp->voxel_transform));
 
 				u32 id = pb->parameters.acquisition_kind;
-
 				if (id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_FORCES)
 					cp->voxel_transform = m4_mul(cp->xdc_transform, cp->voxel_transform);
 
-				if (id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES)
-					sd->bake.flags |= BeamformerShaderDASFlags_Sparse;
-
-				if (pb->parameters.single_focus)        sd->bake.flags |= BeamformerShaderDASFlags_SingleFocus;
-				if (pb->parameters.single_orientation)  sd->bake.flags |= BeamformerShaderDASFlags_SingleOrientation;
-				if (pb->parameters.coherency_weighting) sd->bake.flags |= BeamformerShaderDASFlags_CoherencyWeighting;
+				db->sparse = id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES;
+				db->single_focus        = pb->parameters.single_focus;
+				db->single_orientation  = pb->parameters.single_orientation;
+				db->coherency_weighting = pb->parameters.coherency_weighting;
 
 				sd->layout   = layout_for_output(cp->output_points);
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
@@ -553,7 +548,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 					BeamformerShaderDescriptor *shader_descriptor = cp->shader_descriptors + cp->pipeline.shader_count - 1;
 					shader_descriptor->layout   = sd->layout;
 					shader_descriptor->dispatch = sd->dispatch;
-					shader_descriptor->bake.data_kind = sd->bake.data_kind;
+					shader_descriptor->bake.CoherencyWeighting.data_kind = db->data_kind;
 				}
 			}
 		}break;
@@ -615,28 +610,6 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDes
 			stream_append_hex_u64(s, parameters[index]);
 			stream_append_s8(s, s8(")\n"));
 		}
-
-		stream_append_s8(s, s8("#define DataKind (0x"));
-		stream_append_hex_u64(s, sd->bake.data_kind);
-		stream_append_s8(s, s8(")\n\n"));
-
-		s8  *flag_names = beamformer_shader_flag_strings[reloadable_index];
-		u32  flag_count = beamformer_shader_flag_strings_count[reloadable_index];
-		u32  flags      = sd->bake.flags;
-		for (u32 bit = 0; bit < flag_count; bit++) {
-			stream_append_s8s(s, s8("#define "), flag_names[bit],
-			                  (flags & (1 << bit))? s8(" 1") : s8(" 0"), s8("\n"));
-		}
-	}
-
-	u32  pc_count    = beamformer_shader_push_constant_counts[reloadable_index];
-	s8  *pc_names    = beamformer_shader_push_constant_names[reloadable_index];
-	s8  *pc_types    = beamformer_shader_push_constant_vk_types[reloadable_index];
-	if (pc_count) {
-		stream_append_s8s(s, s8("\n\nlayout(push_constant, std430) uniform PushConstants {\n"));
-		for (u32 it = 0; it < pc_count; it++)
-			stream_append_s8s(s, s8("\t"), pc_types[it], s8(" "), pc_names[it],s8(";\n"));
-		stream_append_s8s(s, s8("};"));
 	}
 
 	if (!renderdoc_attached())
@@ -833,7 +806,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 
 	case BeamformerShaderKind_Decode:{
 		BeamformerDecodeMode mode = cp->shader_descriptors[shader_slot].bake.Decode.decode_mode;
-		BeamformerShaderDecodePushConstants pc = {
+		BeamformerDecodePushConstants pc = {
 			.hadamard_buffer = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, Hadamard),
 			.output_buffer   = pp_output_pointer,
 		};
@@ -885,7 +858,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 	case BeamformerShaderKind_Demodulate:
 	{
 		u32 filter_slot = cp->pipeline.parameters[shader_slot].filter_slot;
-		BeamformerShaderFilterPushConstants pc = {
+		BeamformerFilterPushConstants pc = {
 			.filter_coefficients = cp->filters[filter_slot].buffer.gpu_pointer,
 			.output_data         = pp_output_pointer,
 			.input_data          = shader_slot == 0 ? rf_pointer : pp_input_pointer,
@@ -912,28 +885,22 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 		u64 frame_size      = beamformer_frame_byte_size(frame->points, frame->data_kind);
 		u64 incoherent_size = frame_size / beamformer_data_kind_element_count[frame->data_kind];
 
-		BeamformerShaderDASPushConstants pc = {
-			.xdc_element_pitch             = cp->xdc_element_pitch,
-			.rf_data                       = pp_input_pointer,
-			.output_data                   = b->gpu_pointer + frame->buffer_offset,
-			.incoherent_output             = b->gpu_pointer + b->size - incoherent_size,
-
-			// TODO(rnp): move structure definition to shader, store one pointer
-			.focal_vectors                 = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, FocalVectors),
-			.sparse_elements               = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, SparseElements),
-			.transmit_receive_orientations = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, TransmitReceiveOrientations),
-
-			.output_size_x                 = cp->output_points.x,
-			.output_size_y                 = cp->output_points.y,
-			.output_size_z                 = cp->output_points.z,
-			.cycle_t                       = das_cycle_t++,
-			.channel_offset                = channel_offset,
+		BeamformerDASPushConstants pc = {
+			.xdc_element_pitch  = cp->xdc_element_pitch,
+			.rf_data            = pp_input_pointer,
+			.output_data        = b->gpu_pointer + frame->buffer_offset,
+			.incoherent_output  = b->gpu_pointer + b->size - incoherent_size,
+			.array_parameters   = cp->array_parameters.gpu_pointer + offsetof(BeamformerDASArrayParameters, focal_vectors),
+			.output_size_x      = cp->output_points.x,
+			.output_size_y      = cp->output_points.y,
+			.output_size_z      = cp->output_points.z,
+			.cycle_t            = das_cycle_t++,
+			.channel_offset     = channel_offset,
 		};
 		mem_copy(pc.voxel_transform.E, cp->voxel_transform.E, sizeof(pc.voxel_transform));
 		mem_copy(pc.xdc_transform.E,   cp->xdc_transform.E,   sizeof(pc.xdc_transform));
 
-		BeamformerShaderBakeParameters *bp = &cp->shader_descriptors[shader_slot].bake;
-		b32 coherent = (bp->flags & BeamformerShaderDASFlags_CoherencyWeighting) != 0;
+		b32 coherent = cp->shader_descriptors[shader_slot].bake.DAS.coherency_weighting;
 
 		GPUMemoryBarrierInfo memory_barriers[2] = {
 			{
@@ -968,7 +935,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			.size       = frame_size,
 		};
 
-		BeamformerShaderCoherencyWeightingPushConstants cwpc = {
+		BeamformerCoherencyWeightingPushConstants cwpc = {
 			.left_side_buffer  = b->gpu_pointer + frame->buffer_offset,
 			.right_side_buffer = b->gpu_pointer + b->size - incoherent_size,
 			.elements          = incoherent_size / beamformer_data_kind_element_size[frame->data_kind],
@@ -1132,9 +1099,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				if (cp->pipeline.shaders[i] == BeamformerShaderKind_DAS)
 					das_index = (i32)i;
 			}
-			b32 das_coherent = das_index >= 0 && (cp->shader_descriptors[das_index].bake.flags &
-			                                      BeamformerShaderDASFlags_CoherencyWeighting);
 
+			b32 das_coherent = das_index >= 0 && cp->shader_descriptors[das_index].bake.DAS.coherency_weighting;
 			u64 reserved_frame_size = 0;
 
 			if (has_sum)
@@ -1157,7 +1123,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			if (das_index >= 0) {
 				GPUBuffer *backlog = cs->backlog.buffer;
 				u32 subgroup_size = vk_gpu_info()->subgroup_size;
-				BeamformerShaderBufferClearPushConstants pc = {
+				BeamformerBufferClearPushConstants pc = {
 					.data       = backlog->gpu_pointer + frame->buffer_offset,
 					.clear_word = 0,
 					.words      = beamformer_frame_byte_size(frame->points, frame->data_kind) / sizeof(u32),

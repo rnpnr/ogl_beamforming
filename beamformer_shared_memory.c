@@ -13,8 +13,8 @@ typedef struct {
 	BeamformerFilterParameters parameters;
 	u8 filter_slot;
 	u8 parameter_block;
-	static_assert(BeamformerFilterSlots            <= 255, "CreateFilterContext only supports 255 filter slots");
-	static_assert(BeamformerMaxParameterBlockSlots <= 255, "CreateFilterContext only supports 255 parameter blocks");
+	static_assert(BeamformerFilterSlots        <= 255, "CreateFilterContext only supports 255 filter slots");
+	static_assert(BeamformerMaxParameterBlocks <= 255, "CreateFilterContext only supports 255 parameter blocks");
 } BeamformerCreateFilterContext;
 
 typedef enum {
@@ -142,7 +142,7 @@ typedef struct {
 
 	/* NOTE(rnp): not used for locking on w32 but we can use these to peek at the status of
 	 * the lock without leaving userspace. */
-	i32 locks[(u32)BeamformerSharedMemoryLockKind_Count + (u32)BeamformerMaxParameterBlockSlots];
+	i32 locks[(u32)BeamformerSharedMemoryLockKind_Count + (u32)BeamformerMaxParameterBlocks];
 
 	/* NOTE(rnp): total number of parameter block regions the client has requested.
 	 * used to calculate offset to scratch space and to track number of allocated
@@ -258,7 +258,7 @@ beamformer_parameter_block_dirty(BeamformerSharedMemory *sm, u32 block)
 function BeamformerParameterBlock *
 beamformer_parameter_block_lock(BeamformerSharedMemory *sm, u32 block, i32 timeout_ms)
 {
-	assert(block < BeamformerMaxParameterBlockSlots);
+	assert(block < BeamformerMaxParameterBlocks);
 	BeamformerParameterBlock *result = 0;
 	if (beamformer_shared_memory_take_lock(sm, BeamformerSharedMemoryLockKind_Count + block, (u32)timeout_ms))
 		result = beamformer_parameter_block(sm, block);
@@ -268,7 +268,7 @@ beamformer_parameter_block_lock(BeamformerSharedMemory *sm, u32 block, i32 timeo
 function void
 beamformer_parameter_block_unlock(BeamformerSharedMemory *sm, u32 block)
 {
-	assert(block < BeamformerMaxParameterBlockSlots);
+	assert(block < BeamformerMaxParameterBlocks);
 	beamformer_shared_memory_release_lock(sm, BeamformerSharedMemoryLockKind_Count + block);
 }
 

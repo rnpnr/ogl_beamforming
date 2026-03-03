@@ -45,16 +45,8 @@ layout(std430, buffer_reference, buffer_reference_align = 64) restrict buffer In
 	float values[];
 };
 
-layout(std430, buffer_reference) restrict readonly buffer SparseElements {
-	int16_t values[];
-};
-
-layout(std430, buffer_reference) restrict readonly buffer TransmitReceiveOrientations {
-	uint16_t values[];
-};
-
-layout(std430, buffer_reference) restrict readonly buffer FocalVectors {
-	vec2 values[];
+layout(std430, buffer_reference) restrict readonly buffer ArrayParameters {
+	DASArrayParameters data;
 };
 
 #define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
@@ -183,15 +175,16 @@ float cylindrical_wave_transmit_distance(const vec3 point, const float focal_dep
 
 uint16_t tx_rx_orientation_for_acquisition(const int16_t acquisition)
 {
-	uint16_t result = bool(SingleOrientation) ? uint16_t(TransmitReceiveOrientation)
-	                                          : TransmitReceiveOrientations(transmit_receive_orientations).values[acquisition];
+	uint16_t result = uint16_t(TransmitReceiveOrientation);
+	if (!bool(SingleOrientation))
+		result = ArrayParameters(array_parameters).data.transmit_receive_orientations[acquisition];
 	return result;
 }
 
 vec2 focal_vector_for_acquisition(const int16_t acquisition)
 {
 	vec2 result = bool(SingleFocus) ? vec2(TransmitAngle, FocusDepth)
-	                                : FocalVectors(focal_vectors).values[acquisition];
+	                                : ArrayParameters(array_parameters).data.focal_vectors[acquisition];
 	return result;
 }
 
@@ -248,7 +241,7 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 
 	RESULT_TYPE result = RESULT_TYPE(0);
 	for (int16_t transmit = int16_t(Sparse); transmit < int16_t(AcquisitionCount); transmit++) {
-		const int16_t tx_channel = bool(Sparse) ? SparseElements(sparse_elements).values[transmit - Sparse]
+		const int16_t tx_channel = bool(Sparse) ? ArrayParameters(array_parameters).data.sparse_elements[transmit - Sparse]
 		                                        : transmit;
 		for (int16_t chunk_channel = int16_t(0); chunk_channel < int16_t(ChannelChunkCount); chunk_channel++) {
 			int16_t rx_channel = int16_t(channel_offset) + chunk_channel;
@@ -284,8 +277,8 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 		if (a_arg < 0.5f) {
 			float apodization = apodize(a_arg);
 			for (int16_t transmit = int16_t(Sparse); transmit < int16_t(AcquisitionCount); transmit++) {
-				int16_t tx_channel = bool(Sparse) ? SparseElements(sparse_elements).values[transmit - Sparse]
-				                                  : transmit;
+				const int16_t tx_channel = bool(Sparse) ? ArrayParameters(array_parameters).data.sparse_elements[transmit - Sparse]
+				                                        : transmit;
 				vec3    transmit_center = vec3(xdc_element_pitch * vec2(tx_channel, int(ChannelCount / 2)), 0);
 
 				float       sidx  = sample_index(distance(xdc_world_point, transmit_center) + receive_distance);

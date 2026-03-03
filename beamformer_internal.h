@@ -397,7 +397,7 @@ typedef struct {
 typedef struct {
 	BeamformerRFBuffer rf_buffer;
 
-	BeamformerComputePlan *compute_plans[BeamformerMaxParameterBlockSlots];
+	BeamformerComputePlan *compute_plans[BeamformerMaxParameterBlocks];
 	BeamformerComputePlan *compute_plan_freelist;
 
 	VulkanHandle compute_internal_pipelines[BeamformerShaderKind_ComputeInternalCount];
