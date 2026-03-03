@@ -14,6 +14,12 @@
 #elif DataKind == DataKind_Float32Complex
   #define INPUT_DATA_TYPE  vec2
   #define SAMPLE_DATA_TYPE vec2
+#elif DataKind == DataKind_Float16Complex
+  #define INPUT_DATA_TYPE  f16vec2
+  #define SAMPLE_DATA_TYPE vec2
+#elif DataKind == DataKind_Float16
+  #define INPUT_DATA_TYPE  float16_t
+  #define SAMPLE_DATA_TYPE float
 #elif DataKind == DataKind_Int16Complex
   #define INPUT_DATA_TYPE  i16vec2
   #define SAMPLE_DATA_TYPE vec2
