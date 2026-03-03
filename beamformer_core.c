@@ -741,6 +741,15 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			if (ctx->compute_context.ping_pong_buffer.size < buffer_size) {
 				GPUBufferAllocateInfo allocate_info = {.size = buffer_size, .label = s8("PingPongBuffer")};
 				vk_buffer_allocate(&ctx->compute_context.ping_pong_buffer, &allocate_info);
+
+				BeamformerShaderResourceInfo shader_resource_infos[] = {
+					{
+						.kind   = BeamformerShaderResourceKind_Buffer,
+						.handle = ctx->compute_context.ping_pong_buffer.handle,
+						.slot   = BeamformerShaderBufferSlot_PingPong,
+					},
+				};
+				vk_bind_shader_resources(shader_resource_infos, countof(shader_resource_infos));
 				// TODO(rnp): figure out how to share with CUDA
 			}
 
@@ -863,11 +872,14 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 	case BeamformerShaderKind_Filter:
 	case BeamformerShaderKind_Demodulate:
 	{
+		u64 element_size = beamformer_data_kind_byte_size[cp->shader_descriptors[shader_slot].bake.Filter.data_kind];
+		b32 demod = cp->pipeline.shaders[shader_slot] == BeamformerShaderKind_Demodulate;
+
 		u32 filter_slot = cp->pipeline.parameters[shader_slot].filter_slot;
 		BeamformerFilterPushConstants pc = {
-			.filter_coefficients = cp->filters[filter_slot].buffer.gpu_pointer,
-			.output_data         = pp_output_pointer,
-			.input_data          = shader_slot == 0 ? rf_pointer : pp_input_pointer,
+			.filter_coefficients   = cp->filters[filter_slot].buffer.gpu_pointer,
+			.input_data            = shader_slot == 0 ? rf_pointer : pp_input_pointer,
+			.output_element_offset = output_index * pp_size / element_size / (demod ? 2 : 1),
 		};
 
 		GPUMemoryBarrierInfo barrier = {
@@ -888,20 +900,26 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 
 		GPUBuffer *b = cc->backlog.buffer;
 
-		u64 frame_size      = beamformer_frame_byte_size(frame->points, frame->data_kind);
-		u64 incoherent_size = frame_size / beamformer_data_kind_element_count[frame->data_kind];
+
+		u64 frame_element_size  = beamformer_data_kind_byte_size[frame->data_kind];
+		u64 frame_size          = beamformer_frame_byte_size(frame->points, frame->data_kind);
+		u64 iframe_element_size = beamformer_data_kind_byte_size[frame->data_kind]
+		                          / beamformer_data_kind_element_count[frame->data_kind];
+		u64 iframe_size         = frame_size / beamformer_data_kind_element_count[frame->data_kind];
+
+		u64 element_size = beamformer_data_kind_byte_size[cp->shader_descriptors[shader_slot].bake.DAS.data_kind];
 
 		BeamformerDASPushConstants pc = {
-			.xdc_element_pitch  = cp->xdc_element_pitch,
-			.rf_data            = pp_input_pointer,
-			.output_data        = b->gpu_pointer + frame->buffer_offset,
-			.incoherent_output  = b->gpu_pointer + b->size - incoherent_size,
-			.array_parameters   = cp->array_parameters.gpu_pointer + offsetof(BeamformerDASArrayParameters, focal_vectors),
-			.output_size_x      = cp->output_points.x,
-			.output_size_y      = cp->output_points.y,
-			.output_size_z      = cp->output_points.z,
-			.cycle_t            = das_cycle_t++,
-			.channel_offset     = channel_offset,
+			.xdc_element_pitch         = cp->xdc_element_pitch,
+			.rf_element_offset         = input_index * pp_size / element_size,
+			.output_element_offset     = frame->buffer_offset / frame_element_size,
+			.incoherent_element_offset = (b->size - iframe_size) / iframe_element_size,
+			.output_size_x             = cp->output_points.x,
+			.output_size_y             = cp->output_points.y,
+			.output_size_z             = cp->output_points.z,
+			.cycle_t                   = das_cycle_t++,
+			.channel_offset            = channel_offset,
+			.array_parameters = cp->array_parameters.gpu_pointer + offsetof(BeamformerDASArrayParameters, focal_vectors),
 		};
 		mem_copy(pc.voxel_transform.E, cp->voxel_transform.E, sizeof(pc.voxel_transform));
 		mem_copy(pc.xdc_transform.E,   cp->xdc_transform.E,   sizeof(pc.xdc_transform));
@@ -916,8 +934,8 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			},
 			{
 				.gpu_buffer = b,
-				.offset     = pc.incoherent_output - b->gpu_pointer,
-				.size       = incoherent_size,
+				.offset     = pc.incoherent_element_offset * iframe_element_size,
+				.size       = iframe_size,
 			},
 		};
 
