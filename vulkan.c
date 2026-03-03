@@ -18,6 +18,9 @@
 #define MaxCommandBuffersInFlight  BeamformerMaxRawDataFramesInFlight
 #define MaxCommandBufferTimestamps (1024)
 
+// TODO(rnp): labelling
+#define vk_label_object(...)
+
 typedef enum {
 	VulkanQueueKind_Graphics,
 	VulkanQueueKind_Compute,
@@ -35,6 +38,7 @@ typedef enum {
 typedef struct {
 	VkDeviceMemory    memory;
 	VkBuffer          buffer;
+	u64               memory_size;
 
 	void *            host_pointer;
 
@@ -126,6 +130,12 @@ typedef struct {
 	VkInstance        handle;
 	VkDevice          device;
 	VkPhysicalDevice  physical_device;
+
+	VkDescriptorPool       descriptor_pool;
+	VkDescriptorSetLayout  descriptor_set_layouts[BeamformerShaderResourceKind_Count];
+	VkDescriptorSet        descriptor_sets[BeamformerShaderResourceKind_Count];
+	// NOTE(rnp): must store these if we want to allow partial updates easily
+	VkDescriptorBufferInfo descriptor_buffer_infos[BeamformerShaderBufferSlot_Count];
 
 	// NOTE(rnp): fallback for when a shader fails to compile
 	VulkanPipeline    default_compute_pipeline;
@@ -504,6 +514,8 @@ vk_compute_pipeline_from_shader_text(Arena arena, s8 text, s8 name, u32 push_con
 
 		VkPipelineLayoutCreateInfo pipeline_layout_create_info = {
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+			.setLayoutCount         = countof(vulkan_context->descriptor_set_layouts),
+			.pSetLayouts            = vulkan_context->descriptor_set_layouts,
 			.pushConstantRangeCount = push_constants_size ? 1 : 0,
 			.pPushConstantRanges    = push_constants_size ? &push_constant_range : 0,
 		};
@@ -522,6 +534,11 @@ vk_compute_pipeline_from_shader_text(Arena arena, s8 text, s8 name, u32 push_con
 		};
 
 		vkCreateComputePipelines(vulkan_context->device, 0, 1, &pipeline_create_info, 0, &result.pipeline);
+
+		vk_label_object(PIPELINE,        result.pipeline, name, s8("Pipeline"));
+		vk_label_object(PIPELINE_LAYOUT, result.layout,   name, s8("Pipeline Layout"));
+		vk_label_object(SHADER_MODULE,   module,          name, s8("Module"));
+
 		vkDestroyShaderModule(vulkan_context->device, module, 0);
 	}
 	if (result.pipeline == 0) result = vulkan_context->default_compute_pipeline;
@@ -553,6 +570,8 @@ vk_graphics_pipeline_from_infos(Arena arena, VulkanPipelineCreateInfo *infos, u3
 
 		VkPipelineLayoutCreateInfo pipeline_layout_info = {
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+			.setLayoutCount         = countof(vulkan_context->descriptor_set_layouts),
+			.pSetLayouts            = vulkan_context->descriptor_set_layouts,
 			.pushConstantRangeCount = push_constants_size ? 1    : 0,
 			.pPushConstantRanges    = push_constants_size ? &pcr : 0,
 		};
@@ -673,6 +692,19 @@ vk_graphics_pipeline_from_infos(Arena arena, VulkanPipelineCreateInfo *infos, u3
 		};
 
 		vkCreateGraphicsPipelines(vulkan_context->device, 0, 1, &pci,0, &result.pipeline);
+
+		s8 extras[] = {
+			[VulkanShaderKind_Vertex]   = s8_comp("Vertex Module"),
+			[VulkanShaderKind_Mesh]     = s8_comp("Mesh Module"),
+			[VulkanShaderKind_Fragment] = s8_comp("Fragment Module"),
+		};
+		assert(infos[0].kind < countof(extras));
+		assert(infos[1].kind < countof(extras));
+
+		vk_label_object(PIPELINE,        result.pipeline, infos[0].name, s8("Pipeline"));
+		vk_label_object(PIPELINE_LAYOUT, result.layout,   infos[0].name, s8("Pipeline Layout"));
+		//vk_label_object_(VK_OBJECT_TYPE_SHADER_MODULE, (u64)modules[0], infos[0].name, extras[infos[0].kind]);
+		//vk_label_object_(VK_OBJECT_TYPE_SHADER_MODULE, (u64)modules[1], infos[1].name, extras[infos[1].kind]);
 	}
 
 	if (modules[0]) vkDestroyShaderModule(vulkan_context->device, modules[0], 0);
@@ -831,7 +863,7 @@ vk_buffer_allocate_common(VulkanBuffer *vb, VulkanBufferAllocateInfo *ai)
 
 	VkBufferCreateInfo buffer_create_info = {
 		.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-		.usage       = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+		.usage       = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT|VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
 		.size        = size,
 		.sharingMode = ai->queue_family_count > 1 ? VK_SHARING_MODE_CONCURRENT : VK_SHARING_MODE_EXCLUSIVE,
 		.queueFamilyIndexCount = ai->queue_family_count,
@@ -878,6 +910,7 @@ vk_buffer_allocate_common(VulkanBuffer *vb, VulkanBufferAllocateInfo *ai)
 	if (vk_allocate_memory(&vb->memory, size, vb->memory_kind, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, &dedicated_allocate_info, 0)) {
 		result  = 1;
 		ai->gpu_buffer->size = size;
+		vb->memory_size = size;
 
 		vb->index_type = ai->index_type;
 
@@ -1488,6 +1521,79 @@ vk_load_graphics(void)
 	}
 }
 
+function void
+vk_load_descriptor_block(void)
+{
+	// NOTE(rnp):
+	// * One Descriptor Pool
+	// * One Descriptor Set Per Resource Kind
+	// * Shaders know the ResourceKind enumeration
+	// * Shaders know the per set binding points
+
+	VulkanContext *vk = vulkan_context;
+
+	// NOTE(rnp): Pool
+	VkDescriptorPoolSize pool_sizes[] = {
+		{
+			.type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+			.descriptorCount = BeamformerShaderBufferSlot_Count,
+		},
+	};
+	static_assert(countof(pool_sizes) == BeamformerShaderResourceKind_Count, "");
+
+	VkDescriptorPoolCreateInfo pool_create_info = {
+		.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+		.maxSets       = BeamformerShaderResourceKind_Count,
+		.poolSizeCount = countof(pool_sizes),
+		.pPoolSizes    = pool_sizes,
+	};
+
+	vkCreateDescriptorPool(vk->device, &pool_create_info, 0, &vk->descriptor_pool);
+
+	// NOTE(rnp): Set Layouts
+	VkDescriptorSetLayoutCreateInfo layout_create_info = {
+		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+	};
+
+	{
+		VkDescriptorSetLayoutBinding layout_bindings[BeamformerShaderBufferSlot_Count];
+		for EachEnumValue(BeamformerShaderBufferSlot, it) {
+			layout_bindings[it] = (VkDescriptorSetLayoutBinding){
+				.binding         = it,
+				.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				.descriptorCount = 1,
+				.stageFlags      = VK_SHADER_STAGE_ALL,
+			};
+		}
+		layout_create_info.bindingCount = countof(layout_bindings),
+		layout_create_info.pBindings    = layout_bindings,
+		vkCreateDescriptorSetLayout(vk->device, &layout_create_info, 0,
+		                            vk->descriptor_set_layouts + BeamformerShaderResourceKind_Buffer);
+	}
+
+	// NOTE(rnp): Sets
+	VkDescriptorSetAllocateInfo set_allocate_info = {
+		.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+		.descriptorPool     = vk->descriptor_pool,
+		.descriptorSetCount = countof(vk->descriptor_sets),
+		.pSetLayouts        = vk->descriptor_set_layouts,
+	};
+	static_assert(countof(vk->descriptor_set_layouts) == countof(vk->descriptor_sets), "");
+	vkAllocateDescriptorSets(vk->device, &set_allocate_info, vk->descriptor_sets);
+
+	vk_label_object(DESCRIPTOR_POOL, vk->descriptor_pool, s8("Beamformer Resources"), s8("Pool"));
+
+	DeferLoop(take_lock(&vk->arena_lock, -1), release_lock(&vk->arena_lock)) {
+		Arena scratch = vk->arena;
+		for EachElement(vk->descriptor_sets, it) {
+			Stream sb = arena_stream(scratch);
+			stream_append_s8s(&sb, s8("Beamformer "), beamformer_shader_resource_kind_strings[it], s8("s"));
+			vk_label_object(DESCRIPTOR_SET,        vk->descriptor_sets[it],        stream_to_s8(&sb), s8("Set"));
+			vk_label_object(DESCRIPTOR_SET_LAYOUT, vk->descriptor_set_layouts[it], stream_to_s8(&sb), s8("Set Layout"));
+		}
+	}
+}
+
 ///////////////////////
 // NOTE(rnp): User API
 
@@ -1511,6 +1617,7 @@ vk_load(OSLibrary vulkan_library_handle, Arena *memory, Stream *err)
 	vk_load_physical_device(vulkan_context->arena, err);
 	vk_load_queues(&vulkan_context->arena, err);
 	vk_load_graphics();
+	vk_load_descriptor_block();
 
 	read_only local_persist s8 default_compute_shader = s8(""
 		"#version 430 core\n"
@@ -1561,7 +1668,7 @@ vk_gpu_info(void)
 }
 
 function void
-vk_vulkan_buffer_release(VulkanBuffer *vb, u64 size)
+vk_vulkan_buffer_release(VulkanBuffer *vb)
 {
 	VulkanContext *vk = vulkan_context;
 	VulkanEntity  *e  = (VulkanEntity *)((u8 *)vb - offsetof(VulkanEntity, as));
@@ -1572,15 +1679,15 @@ vk_vulkan_buffer_release(VulkanBuffer *vb, u64 size)
 	if (vb->buffer)
 		vkDestroyBuffer(vk->device, vb->buffer, 0);
 
-	vk_release_memory(vb->memory, vb->memory_kind != VulkanMemoryKind_Host ? size : 0);
+	vk_release_memory(vb->memory, vb->memory_kind != VulkanMemoryKind_Host ? vb->memory_size : 0);
 	vk_entity_release(e);
 }
 
 DEBUG_IMPORT void
 vk_buffer_release(GPUBuffer *b)
 {
-	if ValidVulkanHandle(b->buffer)
-		vk_vulkan_buffer_release(vk_entity_data(b->buffer, VulkanEntityKind_Buffer), b->size);
+	if ValidVulkanHandle(b->handle)
+		vk_vulkan_buffer_release(vk_entity_data(b->handle, VulkanEntityKind_Buffer));
 	zero_struct(b);
 }
 
@@ -1614,7 +1721,7 @@ vk_buffer_allocate(GPUBuffer *b, GPUBufferAllocateInfo *info)
 	}
 
 	if (vk_buffer_allocate_common(&e->as.buffer, &vulkan_buffer_allocate_info)) {
-		b->buffer.value[0] = (u64)e;
+		b->handle.value[0] = (u64)e;
 	} else {
 		vk_entity_release(e);
 	}
@@ -1624,8 +1731,8 @@ DEBUG_IMPORT b32
 vk_buffer_needs_sync(GPUBuffer *b)
 {
 	b32 result = 0;
-	if ValidVulkanHandle(b->buffer) {
-		VulkanBuffer *vb = vk_entity_data(b->buffer, VulkanEntityKind_Buffer);
+	if ValidVulkanHandle(b->handle) {
+		VulkanBuffer *vb = vk_entity_data(b->handle, VulkanEntityKind_Buffer);
 
 		// TODO(rnp): not correct check. need to check if we used transfer queue
 		result = vb->memory_kind != VulkanMemoryKind_BAR;
@@ -1718,7 +1825,7 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 DEBUG_IMPORT void
 vk_buffer_range_upload(GPUBuffer *b, void *data, u64 offset, u64 size, b32 non_temporal)
 {
-	VulkanBuffer *db = vk_entity_data(b->buffer, VulkanEntityKind_Buffer);
+	VulkanBuffer *db = vk_entity_data(b->handle, VulkanEntityKind_Buffer);
 	VulkanBuffer  sb = {
 		.host_pointer = data,
 		.memory_kind  = VulkanMemoryKind_Host,
@@ -1729,7 +1836,7 @@ vk_buffer_range_upload(GPUBuffer *b, void *data, u64 offset, u64 size, b32 non_t
 DEBUG_IMPORT void
 vk_buffer_range_download(void *destination, GPUBuffer *source, u64 offset, u64 size, b32 non_temporal)
 {
-	VulkanBuffer *sb = vk_entity_data(source->buffer, VulkanEntityKind_Buffer);
+	VulkanBuffer *sb = vk_entity_data(source->handle, VulkanEntityKind_Buffer);
 	VulkanBuffer  db = {
 		.host_pointer = destination,
 		.memory_kind  = VulkanMemoryKind_Host,
@@ -1740,8 +1847,8 @@ vk_buffer_range_download(void *destination, GPUBuffer *source, u64 offset, u64 s
 DEBUG_IMPORT void
 vk_render_model_release(GPUBuffer *model)
 {
-	if ValidVulkanHandle(model->buffer)
-		vk_vulkan_buffer_release(vk_entity_data(model->buffer, VulkanEntityKind_RenderModel), model->size);
+	if ValidVulkanHandle(model->handle)
+		vk_vulkan_buffer_release(vk_entity_data(model->handle, VulkanEntityKind_RenderModel));
 	zero_struct(model);
 }
 
@@ -1772,7 +1879,7 @@ vk_render_model_allocate(GPUBuffer *model, void *indices, u64 index_count, u64 m
 		.queue_family_indices[0] = vulkan_context->queues[VulkanQueueKind_Graphics]->queue_family,
 	};
 	if (vk_buffer_allocate_common(&e->as.buffer, &vulkan_buffer_allocate_info)) {
-		model->buffer.value[0] = (u64)e;
+		model->handle.value[0] = (u64)e;
 		model->index_count  = index_count;
 		model->gpu_pointer += indices_size;
 
@@ -1790,7 +1897,7 @@ vk_render_model_allocate(GPUBuffer *model, void *indices, u64 index_count, u64 m
 DEBUG_IMPORT void
 vk_render_model_range_upload(GPUBuffer *model, void *data, u64 offset, u64 size, b32 non_temporal)
 {
-	VulkanBuffer *db = vk_entity_data(model->buffer, VulkanEntityKind_RenderModel);
+	VulkanBuffer *db = vk_entity_data(model->handle, VulkanEntityKind_RenderModel);
 	VulkanBuffer  sb = {
 		.host_pointer = data,
 		.memory_kind  = VulkanMemoryKind_Host,
@@ -2030,6 +2137,36 @@ vk_pipeline_release(VulkanHandle h)
 	}
 }
 
+DEBUG_IMPORT void
+vk_bind_shader_resources(BeamformerShaderResourceInfo *infos, u64 info_count)
+{
+	VulkanContext *vk = vulkan_context;
+
+	VkWriteDescriptorSet   write_sets[BeamformerShaderResourceKind_Count] = {0};
+
+	for EachIndex(info_count, it) {
+		switch (infos[it].kind) {
+		case BeamformerShaderResourceKind_Buffer:{
+			VulkanBuffer *vb = vk_entity_data(infos[it].handle, VulkanEntityKind_Buffer);
+			vk->descriptor_buffer_infos[infos[it].slot].buffer = vb->buffer;
+			vk->descriptor_buffer_infos[infos[it].slot].offset = 0;
+			vk->descriptor_buffer_infos[infos[it].slot].range  = vb->memory_size;
+		}break;
+
+		InvalidDefaultCase;
+		}
+	}
+
+	write_sets[BeamformerShaderResourceKind_Buffer].sType            = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+	write_sets[BeamformerShaderResourceKind_Buffer].dstSet           = vk->descriptor_sets[BeamformerShaderResourceKind_Buffer];
+	write_sets[BeamformerShaderResourceKind_Buffer].dstBinding       = 0;
+	write_sets[BeamformerShaderResourceKind_Buffer].descriptorCount  = countof(vk->descriptor_buffer_infos);
+	write_sets[BeamformerShaderResourceKind_Buffer].descriptorType   = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+	write_sets[BeamformerShaderResourceKind_Buffer].pBufferInfo      = vk->descriptor_buffer_infos;
+
+	vkUpdateDescriptorSets(vk->device, countof(write_sets), write_sets, 0, 0);
+}
+
 DEBUG_IMPORT VulkanHandle
 vk_command_begin(VulkanTimeline timeline)
 {
@@ -2095,6 +2232,8 @@ vk_command_bind_pipeline(VulkanHandle command, VulkanHandle pipeline)
 		assert(bind_point != (VkPipelineBindPoint)-1);
 
 		vkCmdBindPipeline(vcp->buffers[vcb->buffer_index], bind_point, vp->pipeline);
+		vkCmdBindDescriptorSets(vcp->buffers[vcb->buffer_index], bind_point, vp->layout,
+		                        0, countof(vk->descriptor_sets), vk->descriptor_sets, 0, 0);
 		vcp->bound_pipeline = vp;
 	}
 }
@@ -2114,9 +2253,9 @@ vk_command_buffer_memory_barriers(VulkanHandle command, GPUMemoryBarrierInfo *ba
 			u32 valid_count = 0;
 			VkBufferMemoryBarrier2 *memory_barriers = push_array(&arena, VkBufferMemoryBarrier2, count);
 			for (u64 it = 0; it < count; it++) {
-				if ValidVulkanHandle(barriers[it].gpu_buffer->buffer) {
+				if ValidVulkanHandle(barriers[it].gpu_buffer->handle) {
 					u32           index = valid_count++;
-					VulkanBuffer *vb    = vk_entity_data(barriers[it].gpu_buffer->buffer, VulkanEntityKind_Buffer);
+					VulkanBuffer *vb    = vk_entity_data(barriers[it].gpu_buffer->handle, VulkanEntityKind_Buffer);
 					memory_barriers[index].sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
 					memory_barriers[index].srcStageMask        = vq->pipeline_stage_flags;
 					memory_barriers[index].srcAccessMask       = VK_ACCESS_2_MEMORY_WRITE_BIT;
@@ -2409,9 +2548,9 @@ vk_command_begin_rendering(VulkanHandle command, GPUImage *colour, GPUImage *dep
 DEBUG_IMPORT void
 vk_command_draw(VulkanHandle command, GPUBuffer *model)
 {
-	if (ValidVulkanHandle(command) && ValidVulkanHandle(model->buffer)) {
+	if (ValidVulkanHandle(command) && ValidVulkanHandle(model->handle)) {
 		VkCommandBuffer cmd = vk_command_buffer(command);
-		VulkanBuffer   *vb  = vk_entity_data(model->buffer, VulkanEntityKind_RenderModel);
+		VulkanBuffer   *vb  = vk_entity_data(model->handle, VulkanEntityKind_RenderModel);
 		vkCmdBindIndexBuffer2(cmd, vb->buffer, 0, vk_index_size(vb->index_type) * model->index_count, vb->index_type);
 		vkCmdDrawIndexed(cmd, model->index_count, 1, 0, 0, 0);
 	}
@@ -2447,10 +2586,10 @@ DEBUG_IMPORT void
 vk_command_copy_buffer(VulkanHandle command, GPUBuffer *restrict destination,
                        GPUBuffer *restrict source, u64 source_offset, i64 size)
 {
-	if (ValidVulkanHandle(command) && ValidVulkanHandle(destination->buffer) && ValidVulkanHandle(source->buffer)) {
+	if (ValidVulkanHandle(command) && ValidVulkanHandle(destination->handle) && ValidVulkanHandle(source->handle)) {
 		VkCommandBuffer cmd = vk_command_buffer(command);
-		VulkanBuffer *db = vk_entity_data(destination->buffer, VulkanEntityKind_Buffer);
-		VulkanBuffer *sb = vk_entity_data(source->buffer,      VulkanEntityKind_Buffer);
+		VulkanBuffer *db = vk_entity_data(destination->handle, VulkanEntityKind_Buffer);
+		VulkanBuffer *sb = vk_entity_data(source->handle,      VulkanEntityKind_Buffer);
 
 		VkBufferCopy2 buffer_copy = {
 			.sType     = VK_STRUCTURE_TYPE_BUFFER_COPY_2,

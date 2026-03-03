@@ -6,7 +6,6 @@
     #define RESULT_INCOHERENT_CAST(a) (a).y
   #endif
   #define SAMPLE_TYPE  float
-  #define SAMPLE_BYTES 4
 #elif DataKind == DataKind_Float32Complex
   #if CoherencyWeighting
     #define RESULT_TYPE               vec3
@@ -14,7 +13,6 @@
     #define RESULT_INCOHERENT_CAST(a) (a).z
   #endif
   #define SAMPLE_TYPE  vec2
-  #define SAMPLE_BYTES 8
 #else
   #error DataKind unsupported for DAS
 #endif
@@ -33,16 +31,16 @@
   #define RESULT_STORE(a) (a)
 #endif
 
-layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer RF {
-	SAMPLE_TYPE values[];
+layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_PingPong) readonly buffer RF {
+	SAMPLE_TYPE rf[];
 };
 
-layout(std430, buffer_reference, buffer_reference_align = 64) restrict buffer Output {
-	SAMPLE_TYPE values[];
+layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_BeamformedData) buffer Output {
+	SAMPLE_TYPE output_data[];
 };
 
-layout(std430, buffer_reference, buffer_reference_align = 64) restrict buffer IncoherentOutput {
-	float values[];
+layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_BeamformedData) buffer IncoherentOutput {
+	float incoherent_data[];
 };
 
 layout(std430, buffer_reference) restrict readonly buffer ArrayParameters {
@@ -68,7 +66,7 @@ vec2 rotate_iq(const vec2 iq, const float time)
 #endif
 
 /* NOTE: See: https://cubic.org/docs/hermite.htm */
-SAMPLE_TYPE cubic(const RF rf, const float t)
+SAMPLE_TYPE cubic(const int offset, const float t)
 {
 	const mat4 h = mat4(
 		 2, -3,  0, 1,
@@ -78,10 +76,10 @@ SAMPLE_TYPE cubic(const RF rf, const float t)
 	);
 
 	SAMPLE_TYPE samples[4] = {
-		rf.values[0],
-		rf.values[1],
-		rf.values[2],
-		rf.values[3],
+		rf[offset + 0],
+		rf[offset + 1],
+		rf[offset + 2],
+		rf[offset + 3],
 	};
 
 	vec4        S  = vec4(t * t * t, t * t, t, 1);
@@ -103,24 +101,23 @@ SAMPLE_TYPE cubic(const RF rf, const float t)
 SAMPLE_TYPE sample_rf(const int rf_offset, const float index)
 {
 	SAMPLE_TYPE result = SAMPLE_TYPE(0);
-	RF rf = RF(rf_data + SAMPLE_BYTES * rf_offset);
 	switch (InterpolationMode) {
 	case InterpolationMode_Nearest:{
 		if (int(index) >= 0 && int(round(index)) < SampleCount)
-			result = rotate_iq(rf.values[int(round(index))], index / SamplingFrequency);
+			result = rotate_iq(rf[rf_offset + int(round(index))], index / SamplingFrequency);
 	}break;
 	case InterpolationMode_Linear:{
 		if (int(index) >= 0 && int(index) < SampleCount - 1) {
 			float tk, t = modf(index, tk);
-			int n = int(tk);
-			result = (1 - t) * rf.values[n] + t * rf.values[n + 1];
+			int n = rf_offset + int(tk);
+			result = (1 - t) * rf[n] + t * rf[n + 1];
 			result = rotate_iq(result, index / SamplingFrequency);
 		}
 	}break;
 	case InterpolationMode_Cubic:{
 		if (int(index) > 0 && int(index) < SampleCount - 2) {
 			float tk, t = modf(index, tk);
-			result = rotate_iq(cubic(RF(rf_data + SAMPLE_BYTES * (rf_offset + int(index))), t), index / SamplingFrequency);
+			result = rotate_iq(cubic(rf_offset + int(index), t), index / SamplingFrequency);
 		}
 	}break;
 	}
@@ -215,7 +212,7 @@ RESULT_TYPE RCA(const vec3 world_point)
 		vec2  xdc_world_point   = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
 		float transmit_distance = rca_transmit_distance(world_point, focal_vector, tx_rx_orientation);
 
-		int rf_offset  = acquisition * SampleCount;
+		int rf_offset  = int(rf_element_offset) + acquisition * SampleCount;
 		rf_offset     -= int(InterpolationMode == InterpolationMode_Cubic);
 		for (int chunk_channel = 0; chunk_channel < ChannelChunkCount; chunk_channel++) {
 			int   rx_channel     = channel_offset + chunk_channel;
@@ -250,7 +247,7 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 	RESULT_TYPE result = RESULT_TYPE(0);
 	for (float chunk_channel = 0; chunk_channel < float(ChannelChunkCount); chunk_channel += 1.0f) {
 		float rx_channel = float(channel_offset) + chunk_channel;
-		int rf_offset   = int(chunk_channel) * SampleCount * AcquisitionCount + Sparse * SampleCount;
+		int rf_offset   = int(rf_element_offset) + int(chunk_channel) * SampleCount * AcquisitionCount + Sparse * SampleCount;
 		rf_offset      -= int(InterpolationMode == InterpolationMode_Cubic);
 
 		// NOTE(rnp): this wouldn't be so messy if we just forced an orientation like with FORCES
@@ -302,7 +299,7 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 		float a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
 
 		if (a_arg < 0.5f) {
-			int rf_offset  = int(chunk_channel) * SampleCount * AcquisitionCount + Sparse * SampleCount;
+			int rf_offset  = int(rf_element_offset) + int(chunk_channel) * SampleCount * AcquisitionCount + Sparse * SampleCount;
 			rf_offset     -= int(InterpolationMode == InterpolationMode_Cubic);
 
 			float receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
@@ -356,8 +353,8 @@ void main()
 	}
 
 	#if CoherencyWeighting
-	IncoherentOutput(incoherent_output).values[out_index] += RESULT_INCOHERENT_CAST(sum);
+	incoherent_data[incoherent_element_offset + out_index] += RESULT_INCOHERENT_CAST(sum);
 	#endif
 
-	Output(output_data).values[out_index] += RESULT_COHERENT_CAST(sum);
+	output_data[output_element_offset + out_index] += RESULT_COHERENT_CAST(sum);
 }
