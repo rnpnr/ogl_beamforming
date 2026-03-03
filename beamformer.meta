@@ -43,6 +43,8 @@
 	[Int16Complex   2 2]
 	[Float32        4 1]
 	[Float32Complex 4 2]
+	[Float16        2 1]
+	[Float16Complex 2 2]
 }
 @Expand(DataKindTable) @Enumeration(`$(name)`) DataKind
 
