@@ -32,26 +32,26 @@ layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly 
 	DATA_TYPE values[];
 };
 
-layout(std430, buffer_reference, buffer_reference_align = 64) restrict writeonly buffer Output {
-	OUT_DATA_TYPE values[];
+layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_PingPong) buffer Output {
+	OUT_DATA_TYPE output_data[];
 };
 
 layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer Filter {
 	FILTER_TYPE values[FilterLength];
 };
 
-vec2 complex_mul(vec2 a, vec2 b)
+SAMPLE_TYPE complex_mul(SAMPLE_TYPE a, SAMPLE_TYPE b)
 {
 	mat2 m = mat2(b.x, b.y, -b.y, b.x);
-	vec2 result = m * a;
+	SAMPLE_TYPE result = SAMPLE_TYPE(m * a);
 	return result;
 }
 
 #if Demodulate
-vec2 rotate_iq(vec2 iq, uint index)
+SAMPLE_TYPE rotate_iq(SAMPLE_TYPE iq, uint index)
 {
-	float arg    = radians(360) * DemodulationFrequency * index / SamplingFrequency;
-	vec2  result = complex_mul(iq, vec2(cos(arg), -sin(arg)));
+	float arg          = radians(360) * DemodulationFrequency * index / SamplingFrequency;
+	SAMPLE_TYPE result = complex_mul(iq, SAMPLE_TYPE(cos(arg), -sin(arg)));
 	return result;
 }
 #endif
@@ -70,11 +70,7 @@ void main()
 	uint channel    = gl_GlobalInvocationID.y;
 	uint transmit   = gl_GlobalInvocationID.z;
 
-	uint in_offset  = InputChannelStride * channel + InputTransmitStride * transmit;
-	uint out_offset = OutputChannelStride  * channel +
-	                  OutputTransmitStride * transmit +
-	                  OutputSampleStride   * out_sample;
-
+	uint in_offset    = InputChannelStride * channel + InputTransmitStride * transmit;
 	uint thread_index = gl_LocalInvocationIndex;
 	uint thread_count = gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z;
 	/////////////////////////
@@ -110,6 +106,10 @@ void main()
 		uint offset = DecimationRate * thread_index;
 		for (uint j = 0; j < FilterLength; j++)
 			result += apply_filter(rf[offset + j], Filter(filter_coefficients).values[j]);
-		Output(output_data).values[out_offset] = RESULT_TYPE_CAST(result);
+
+		uint out_offset = OutputChannelStride  * channel +
+		                  OutputTransmitStride * transmit +
+		                  OutputSampleStride   * out_sample;
+		output_data[output_element_offset + out_offset] = RESULT_TYPE_CAST(result);
 	}
 }
