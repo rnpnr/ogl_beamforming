@@ -83,9 +83,6 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 {
 	assert(block < countof(cc->compute_plans));
 	BeamformerComputePlan *result = cc->compute_plans[block];
-
-	assert(result || arena);
-
 	if (!result) {
 		result = SLLPopFreelist(cc->compute_plan_freelist);
 		if (!result) result = push_struct_no_zero(arena, BeamformerComputePlan);
@@ -1494,12 +1491,9 @@ beamformer_process_input_events(BeamformerCtx *ctx, BeamformerInput *input,
 				beamformer_reload_shader(ctx, src, ctx->arena, beamformer_shader_names[kind]);
 			}break;
 			case BeamformerFileReloadKind_ComputeShader:{
-				BeamformerSharedMemory *sm = ctx->shared_memory;
-				u32 reserved_blocks = sm->reserved_parameter_blocks;
-
-				for (u32 block = 0; block < reserved_blocks; block++) {
-					BeamformerComputePlan *cp = beamformer_compute_plan_for_block(&ctx->compute_context, block, 0);
-					for (u32 slot = 0; slot < cp->pipeline.shader_count; slot++) {
+				for EachElement(ctx->compute_context.compute_plans, block) {
+					BeamformerComputePlan *cp = ctx->compute_context.compute_plans[block];
+					for (u32 slot = 0; cp && slot < cp->pipeline.shader_count; slot++) {
 						i32 shader_index = beamformer_shader_reloadable_index_by_shader[cp->pipeline.shaders[slot]];
 						if (beamformer_reloadable_shader_kinds[shader_index] == frc->compute_shader_kind)
 							atomic_or_u32(&cp->dirty_programs, 1 << slot);
