@@ -147,7 +147,7 @@ DEBUG_IMPORT void vk_buffer_range_download(void *output, GPUBuffer *, u64 source
 DEBUG_IMPORT u64  vk_round_up_to_sync_size(u64, u64 min);
 
 // NOTE: images are 2D only, any other use case should just use a buffer and index in the shader
-DEBUG_IMPORT void vk_image_allocate(GPUImage *, u32 width, u32 height, u32 mips, u32 samples, VulkanImageUsage usage, VulkanUsageFlags flags, OSHandle *export);
+DEBUG_IMPORT void vk_image_allocate(GPUImage *, u32 width, u32 height, u32 mips, u32 samples, VulkanImageUsage usage, VulkanUsageFlags flags, OSHandle *export, s8 label);
 DEBUG_IMPORT void vk_image_release(GPUImage *);
 
 DEBUG_IMPORT void vk_render_model_allocate(GPUBuffer *, void *indices, u64 index_count, u64 model_size, s8 label);
