@@ -440,6 +440,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 	f32 time_offset = pb->parameters.time_offset;
 
+	// TODO(rnp): subgroup size
+	u32 subgroup_size = gl_parameters.vendor_id == GLVendor_NVIDIA ? 32 : 64;
+
 	BeamformerDataKind data_kind = pb->pipeline.data_kind;
 	cp->pipeline.shader_count = 0;
 	for (u32 i = 0; i < pb->pipeline.shader_count; i++) {
@@ -491,7 +494,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			if (run_cuda_hilbert) sd->bake.flags |= BeamformerShaderDecodeFlags_DilateOutput;
 
 			if (db->decode_mode == BeamformerDecodeMode_None) {
-				sd->layout = (uv3){{64, 1, 1}};
+				sd->layout = (uv3){{subgroup_size, 1, 1}};
 
 				sd->dispatch.x = (u32)ceil_f32((f32)sample_count                     / (f32)sd->layout.x);
 				sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count     / (f32)sd->layout.y);
@@ -515,8 +518,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 				/* NOTE(rnp): register caching. using more threads will cause the compiler to do
 				 * contortions to avoid spilling registers. using less gives higher performance */
-				/* TODO(rnp): may need to be adjusted to 16 on NVIDIA */
-				sd->layout = (uv3){{32, 1, 1}};
+				sd->layout = (uv3){{subgroup_size / 2, 1, 1}};
 
 				sd->dispatch.x = (u32)ceil_f32((f32)sample_count                 / (f32)sd->layout.x);
 				sd->dispatch.y = (u32)ceil_f32((f32)pb->parameters.channel_count / (f32)sd->layout.y);
@@ -645,8 +647,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			b32 has_x = cp->output_points.x > 1;
 			b32 has_y = cp->output_points.y > 1;
 			b32 has_z = cp->output_points.z > 1;
-			// TODO(rnp): subgroup size
-			u32 subgroup_size = gl_parameters.vendor_id == GLVendor_NVIDIA ? 32 : 64;
+
+			u32 grid_3d_z_size = Max(1, subgroup_size / (4 * 4));
+			u32 grid_2d_y_size = Max(1, subgroup_size / 8);
+
 			switch (iv3_dimension(cp->output_points)) {
 
 			case 1:{
@@ -656,12 +660,12 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			}break;
 
 			case 2:{
-				if (has_x && has_y) { sd->layout.x = subgroup_size / 4; sd->layout.y = subgroup_size / 4; }
-				if (has_x && has_z) { sd->layout.x = subgroup_size / 4; sd->layout.z = subgroup_size / 4; }
-				if (has_y && has_z) { sd->layout.y = subgroup_size / 4; sd->layout.z = subgroup_size / 4; }
+				if (has_x && has_y) {sd->layout.x = 8; sd->layout.y = grid_2d_y_size;}
+				if (has_x && has_z) {sd->layout.x = 8; sd->layout.z = grid_2d_y_size;}
+				if (has_y && has_z) {sd->layout.y = 8; sd->layout.z = grid_2d_y_size;}
 			}break;
 
-			case 3:{sd->layout = (uv3){{4, 4, 4}};}break;
+			case 3:{sd->layout = (uv3){{4, 4, grid_3d_z_size}};}break;
 
 			InvalidDefaultCase;
 			}
