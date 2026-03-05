@@ -633,14 +633,18 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			mem_copy(du->voxel_transform.E, pb->parameters.das_voxel_transform.E, sizeof(du->voxel_transform));
 			mem_copy(du->xdc_transform.E,   pb->parameters.xdc_transform.E,       sizeof(du->xdc_transform));
 
+			u32 id = pb->parameters.acquisition_kind;
+
+			if (id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_FORCES)
+				du->voxel_transform = m4_mul(du->xdc_transform, du->voxel_transform);
+
+			if (id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES)
+				sd->bake.flags |= BeamformerShaderDASFlags_Sparse;
+
 			if (pb->parameters.single_focus)        sd->bake.flags |= BeamformerShaderDASFlags_SingleFocus;
 			if (pb->parameters.single_orientation)  sd->bake.flags |= BeamformerShaderDASFlags_SingleOrientation;
 			if (pb->parameters.coherency_weighting) sd->bake.flags |= BeamformerShaderDASFlags_CoherencyWeighting;
 			else                                    sd->bake.flags |= BeamformerShaderDASFlags_Fast;
-
-			u32 id = pb->parameters.acquisition_kind;
-			if (id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES)
-				sd->bake.flags |= BeamformerShaderDASFlags_Sparse;
 
 			sd->layout = (uv3){{1, 1, 1}};
 

@@ -101,8 +101,8 @@ typedef struct {
 
 /* X(name, type, gltype) */
 #define BEAMFORMER_DAS_UBO_PARAM_LIST \
-	X(voxel_transform,        m4,  mat4) \
 	X(xdc_transform,          m4,  mat4) \
+	X(voxel_transform,        m4,  mat4) \
 	X(xdc_element_pitch,      v2,  vec2)
 
 typedef alignas(16) struct {

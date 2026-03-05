@@ -251,13 +251,12 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 	return result;
 }
 
-RESULT_TYPE FORCES(const vec3 world_point)
+RESULT_TYPE FORCES(const vec3 xdc_world_point)
 {
 	const int rx_channel_start = bool(Fast)? u_channel     : 0;
 	const int rx_channel_end   = bool(Fast)? u_channel + 1 : ChannelCount;
 
 	RESULT_TYPE result = RESULT_TYPE(0);
-	vec3 xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
 	for (int rx_channel = rx_channel_start; rx_channel < rx_channel_end; rx_channel++) {
 		float receive_distance = distance(xdc_world_point.xz, vec2(rx_channel * xdc_element_pitch.x, 0));
 		float a_arg = abs(FNumber * (xdc_world_point.x - rx_channel * xdc_element_pitch.x) /
