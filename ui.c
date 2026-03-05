@@ -972,8 +972,10 @@ resize_frame_view(BeamformerFrameView *view, uv2 dim)
 	glDeleteTextures(1, &view->texture);
 	glCreateTextures(GL_TEXTURE_2D, 1, &view->texture);
 
+	/* TODO(rnp): add some ID for the specific view here */
+	s8 label = s8("Frame View Texture");
 	vk_image_allocate(&view->colour_image, dim.w, dim.h, 1, 1, VulkanImageUsage_Colour,
-	                  VulkanUsageFlag_ImageSampling, &view->export_handle);
+	                  VulkanUsageFlag_ImageSampling, &view->export_handle, label);
 
 	glMemoryObjectParameterivEXT(view->memory_object, GL_DEDICATED_MEMORY_OBJECT_EXT, (GLint []){1});
 
@@ -1001,8 +1003,6 @@ resize_frame_view(BeamformerFrameView *view, uv2 dim)
 	glTextureParameteri(view->texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	glTextureParameteri(view->texture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 
-	/* TODO(rnp): add some ID for the specific view here */
-	s8 label = s8("Frame View Texture");
 	glObjectLabel(GL_TEXTURE, view->texture, (i32)label.len, (char *)label.data);
 }
 
@@ -4079,8 +4079,8 @@ ui_init(BeamformerCtx *ctx, Arena store)
 		split->region_split.right = add_compute_stats_view(ui, split, &ui->arena, ctx);
 
 		u32 samples = vk_gpu_info()->max_msaa_samples;
-		vk_image_allocate(&ui->render_3d_image,       FRAME_VIEW_RENDER_TARGET_SIZE, 1, samples, VulkanImageUsage_Colour,       0, 0);
-		vk_image_allocate(&ui->render_3d_depth_image, FRAME_VIEW_RENDER_TARGET_SIZE, 1, samples, VulkanImageUsage_DepthStencil, 0, 0);
+		vk_image_allocate(&ui->render_3d_image,       FRAME_VIEW_RENDER_TARGET_SIZE, 1, samples, VulkanImageUsage_Colour,       0, 0, s8("Render Target Colour"));
+		vk_image_allocate(&ui->render_3d_depth_image, FRAME_VIEW_RENDER_TARGET_SIZE, 1, samples, VulkanImageUsage_DepthStencil, 0, 0, s8("Render Target Depth"));
 
 		glGenSemaphoresEXT(countof(ui->render_semaphores_gl), ui->render_semaphores_gl);
 		for EachElement(ui->render_semaphores, it)
