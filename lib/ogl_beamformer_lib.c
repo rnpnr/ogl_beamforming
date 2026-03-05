@@ -46,6 +46,12 @@ os_open_shared_memory_area(char *name)
 	return result;
 }
 
+function void
+os_close_shared_memory_area(void *memory)
+{
+	munmap(memory, BEAMFORMER_SHARED_MEMORY_SIZE);
+}
+
 #elif OS_WINDOWS
 
 W32(b32) UnmapViewOfFile(void *);
@@ -94,6 +100,12 @@ os_open_shared_memory_area(char *name)
 	return result;
 }
 
+function void
+os_close_shared_memory_area(void *memory)
+{
+	UnmapViewOfFile(memory);
+}
+
 #endif
 
 #define lib_error_check(c, e) lib_error_check_(c, BeamformerLibErrorKind_##e)
@@ -109,15 +121,16 @@ lib_error_check_(b32 condition, BeamformerLibErrorKind error_kind)
 function b32
 check_shared_memory(void)
 {
+	b32 result = g_beamformer_library_context.bp != 0;
 	if unlikely(!g_beamformer_library_context.bp) {
-		g_beamformer_library_context.bp = os_open_shared_memory_area(OS_SHARED_MEMORY_NAME);
-		if (lib_error_check(g_beamformer_library_context.bp != 0, SharedMemory)) {
-			u32 version = g_beamformer_library_context.bp->version;
-			lib_error_check(version == BEAMFORMER_SHARED_MEMORY_VERSION, VersionMismatch);
+		BeamformerSharedMemory *bp = os_open_shared_memory_area(OS_SHARED_MEMORY_NAME);
+		if (lib_error_check(bp != 0, SharedMemory)) {
+			result = lib_error_check(bp->version == BEAMFORMER_SHARED_MEMORY_VERSION, VersionMismatch);
+			if (result) g_beamformer_library_context.bp = bp;
+			else        os_close_shared_memory_area(bp);
 		}
 	}
 
-	b32 result = 0;
 	if likely(g_beamformer_library_context.bp)
 		result = lib_error_check(likely(!g_beamformer_library_context.bp->invalid), InvalidAccess);
 	return result;
