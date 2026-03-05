@@ -18,9 +18,6 @@
 #define MaxCommandBuffersInFlight  BeamformerMaxRawDataFramesInFlight
 #define MaxCommandBufferTimestamps (1024)
 
-// TODO(rnp): labelling
-#define vk_label_object(...)
-
 typedef enum {
 	VulkanQueueKind_Graphics,
 	VulkanQueueKind_Compute,
@@ -231,6 +228,13 @@ read_only global const char *vk_debug_extensions[] = {VK_DEBUG_EXTENSIONS};
 read_only global u32 vk_debug_extension_name_lengths[] = {VK_DEBUG_EXTENSIONS};
 #undef X
 
+#define VK_INSTANCE_DEBUG_EXTENSIONS_LIST \
+	X(VK_EXT, debug_utils) \
+
+#define X(p, s, ...) s8_comp(#p "_" #s),
+read_only global s8 vk_instance_debug_extensions[] = {VK_INSTANCE_DEBUG_EXTENSIONS_LIST};
+#undef X
+
 global union {
 	struct {
 		#define X(_, name, ...) b8 name;
@@ -238,6 +242,15 @@ global union {
 		#undef X
 	};
 	b8 E[countof(vk_debug_extensions)];
+
+	union {
+		struct {
+			#define X(_, name, ...) b8 name;
+			VK_INSTANCE_DEBUG_EXTENSIONS_LIST
+			#undef X
+		};
+		b8 E[countof(vk_instance_debug_extensions)];
+	} instance;
 } vulkan_debug;
 
 global VulkanContext vulkan_context[1];
@@ -335,6 +348,32 @@ vk_renderdoc_instance_handle(void)
 {
 	return *((void **)vulkan_context->handle);
 }
+#endif
+
+#if BEAMFORMER_DEBUG
+#define vk_label_object(k, h, label, extra) vk_label_object_(VK_OBJECT_TYPE_##k, (u64)h, label, extra)
+function void
+vk_label_object_(VkObjectType kind, u64 handle, s8 label, s8 extra)
+{
+	local_persist u8 buffer[1024];
+	Stream sb = arena_stream(arena_from_memory(buffer, sizeof(buffer)));
+	if (vulkan_debug.instance.debug_utils && label.len > 0) {
+		stream_append_s8s(&sb, label, s8(" ("), extra, s8(")"));
+		stream_append_byte(&sb, 0);
+		if (!sb.errors) {
+			VkDebugUtilsObjectNameInfoEXT object_name_info = {
+				.sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+				.objectType   = kind,
+				.objectHandle = handle,
+				.pObjectName  = (char *)sb.data,
+			};
+			vkSetDebugUtilsObjectNameEXT(vulkan_context->device, &object_name_info);
+		}
+	}
+}
+#else
+#define vk_label_object(...)
+#define vk_label_object_(...)
 #endif
 
 function VulkanEntity *
@@ -880,6 +919,7 @@ vk_buffer_allocate_common(VulkanBuffer *vb, VulkanBufferAllocateInfo *ai)
 		buffer_create_info.usage |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
 
 	vkCreateBuffer(vk->device, &buffer_create_info, 0, &vb->buffer);
+	vk_label_object(BUFFER, vb->buffer, ai->label, s8("Buffer"));
 
 	VkMemoryRequirements memory_requirements;
 	vkGetBufferMemoryRequirements(vk->device, vb->buffer, &memory_requirements);
@@ -914,6 +954,8 @@ vk_buffer_allocate_common(VulkanBuffer *vb, VulkanBufferAllocateInfo *ai)
 
 		vb->index_type = ai->index_type;
 
+		vk_label_object(DEVICE_MEMORY, vb->memory, ai->label, s8("Memory"));
+
 		if (host_read_write)
 			vkMapMemory(vk->device, vb->memory, 0, size, 0, &vb->host_pointer);
 
@@ -928,11 +970,84 @@ vk_buffer_allocate_common(VulkanBuffer *vb, VulkanBufferAllocateInfo *ai)
 }
 
 function void
-vk_load_instance(void)
+vk_load_instance(Arena arena, Stream *err)
 {
 	#define X(name, ...) name = (name##_fn *)vkGetInstanceProcAddr(0, #name);
 	VkBaseProcedureList
 	#undef X
+
+	s8 validation_layers[] = {
+		#if BEAMFORMER_DEBUG
+		s8_comp("VK_LAYER_KHRONOS_validation"),
+		#endif
+	};
+
+	u32 enabled_validation_layers_count = 0;
+	const char *enabled_validation_layers[countof(validation_layers)];
+
+	u32 enabled_instance_extensions_count = 0;
+	const char *enabled_instance_extensions[countof(vk_required_instance_extensions) + countof(vk_instance_debug_extensions)];
+
+	static_assert(countof(vk_required_instance_extensions) == 0, "");
+	//for EachElement(vk_required_instance_extensions, it)
+	//	enabled_instance_extensions[enabled_instance_extensions_count++] = vk_required_instance_extensions[it];
+
+	#if BEAMFORMER_DEBUG
+	{
+		u32 layer_count = 0;
+		vkEnumerateInstanceLayerProperties(&layer_count, 0);
+
+		VkLayerProperties *layers    = push_array(&arena, VkLayerProperties, layer_count);
+		s8                *layer_s8s = push_array(&arena, s8,                layer_count);
+		vkEnumerateInstanceLayerProperties(&layer_count, layers);
+
+		for (u32 i = 0; i < layer_count; i++)
+			layer_s8s[i] = c_str_to_s8(layers[i].layerName);
+
+		b32 supported_layers[countof(validation_layers)] = {0};
+		for EachElement(validation_layers, it) {
+			for(u32 i = 0; i < layer_count; i++) {
+				if (s8_equal(validation_layers[it], layer_s8s[i])) {
+					u32 index = enabled_validation_layers_count++;
+					enabled_validation_layers[index] = (char *)validation_layers[it].data;
+					supported_layers[it] = 1;
+					break;
+				}
+			}
+		}
+
+		if (countof(validation_layers) != enabled_validation_layers_count) {
+			i32 missing_count = countof(validation_layers) - enabled_validation_layers_count;
+			stream_append_s8s(err, vulkan_info("missing validation layer"),
+			                  missing_count > 1 ? s8("s:") : s8(":"), s8("\n"));
+
+			for EachElement(validation_layers, it) {
+				if (supported_layers[it] == 0)
+					stream_append_s8s(err, s8("    "), validation_layers[it], s8("\n"));
+			}
+		}
+
+		u32 instance_extension_count = 0;
+		vkEnumerateInstanceExtensionProperties(0, &instance_extension_count, 0);
+
+		VkExtensionProperties *instance_extensions = push_array(&arena, VkExtensionProperties, instance_extension_count);
+		s8                    *instance_ext_s8s    = push_array(&arena, s8,                    instance_extension_count);
+		vkEnumerateInstanceExtensionProperties(0, &instance_extension_count, instance_extensions);
+		for EachIndex(instance_extension_count, it)
+			instance_ext_s8s[it] = c_str_to_s8(instance_extensions[it].extensionName);
+
+		for EachElement(vk_instance_debug_extensions, it) {
+			for EachIndex(instance_extension_count, i) {
+				if (s8_equal(vk_instance_debug_extensions[it], instance_ext_s8s[i])) {
+					u32 index = enabled_instance_extensions_count++;
+					enabled_instance_extensions[index] = (char *)vk_instance_debug_extensions[it].data;
+					vulkan_debug.instance.E[it] = 1;
+					break;
+				}
+			}
+		}
+	}
+	#endif
 
 	VkApplicationInfo app_info = {
 		.sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -943,20 +1058,13 @@ vk_load_instance(void)
 		.apiVersion         = VK_MAKE_API_VERSION(1, 3, 0, 0),
 	};
 
-	/* TODO(rnp): debug only, and check for these before enabling */
-	const char *validation_layers[] = {
-		#if BEAMFORMER_DEBUG
-		"VK_LAYER_KHRONOS_validation",
-		#endif
-	};
-
 	VkInstanceCreateInfo instance_create_info = {
 		.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
 		.pApplicationInfo        = &app_info,
-		.ppEnabledExtensionNames = vk_required_instance_extensions,
-		.enabledExtensionCount   = countof(vk_required_instance_extensions),
-		.ppEnabledLayerNames     = validation_layers,
-		.enabledLayerCount       = countof(validation_layers),
+		.ppEnabledExtensionNames = enabled_instance_extensions,
+		.enabledExtensionCount   = enabled_instance_extensions_count,
+		.ppEnabledLayerNames     = enabled_validation_layers,
+		.enabledLayerCount       = enabled_validation_layers_count,
 	};
 
 	#if 0 && BEAMFORMER_DEBUG
@@ -1613,9 +1721,9 @@ vk_load(OSLibrary vulkan_library_handle, Arena *memory, Stream *err)
 	vk->entity_arena = sub_arena_end(memory, KB(64), KB(4));
 	vk->arena        = sub_arena_end(memory, KB(96), KB(4));
 
-	vk_load_instance();
-	vk_load_physical_device(vulkan_context->arena, err);
-	vk_load_queues(&vulkan_context->arena, err);
+	vk_load_instance(vk->arena, err);
+	vk_load_physical_device(vk->arena, err);
+	vk_load_queues(&vk->arena, err);
 	vk_load_graphics();
 	vk_load_descriptor_block();
 
@@ -1926,7 +2034,7 @@ vk_image_release(GPUImage *image)
 
 DEBUG_IMPORT void
 vk_image_allocate(GPUImage *image, u32 width, u32 height, u32 mips, u32 samples,
-                  VulkanImageUsage usage, VulkanUsageFlags flags, OSHandle *export)
+                  VulkanImageUsage usage, VulkanUsageFlags flags, OSHandle *export, s8 label)
 {
 	assert(IsPowerOfTwo(samples));
 
@@ -2026,6 +2134,10 @@ vk_image_allocate(GPUImage *image, u32 width, u32 height, u32 mips, u32 samples,
 			},
 		};
 		vkCreateImageView(vk->device, &image_view_info, 0, &vi->view);
+
+		vk_label_object(IMAGE,         vi->image,  label, s8("Image"));
+		vk_label_object(IMAGE_VIEW,    vi->view,   label, s8("Image View"));
+		vk_label_object(DEVICE_MEMORY, vi->memory, label, s8("Memory"));
 	} else {
 		vkDestroyImage(vk->device, vi->image, 0);
 		vk_entity_release(e);
