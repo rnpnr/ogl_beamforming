@@ -48,11 +48,13 @@ global f32 dt_for_frame;
 #if !BEAMFORMER_RENDERDOC_HOOKS
 #define start_renderdoc_capture(...)
 #define end_renderdoc_capture(...)
+#define renderdoc_attached(...) (0)
 #else
 global renderdoc_start_frame_capture_fn *start_frame_capture;
 global renderdoc_end_frame_capture_fn   *end_frame_capture;
 #define start_renderdoc_capture(gl) if (start_frame_capture) start_frame_capture(gl, 0)
 #define end_renderdoc_capture(gl)   if (end_frame_capture)   end_frame_capture(gl, 0)
+#define renderdoc_attached(...)   (start_frame_capture != 0)
 #endif
 
 typedef struct {
@@ -793,7 +795,8 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 			                  (flags & (1 << bit))? s8(" 1") : s8(" 0"), s8("\n"));
 		}
 
-		stream_append_s8(&shader_stream, s8("\n#line 1\n"));
+		if (!renderdoc_attached())
+			stream_append_s8(&shader_stream, s8("\n#line 1\n"));
 
 		s8 shader_text;
 		if (BakeShaders) {
