@@ -278,11 +278,7 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 
 void main()
 {
-	ivec3 out_voxel = ivec3(gl_GlobalInvocationID);
-	#if !Fast
-		out_voxel += u_voxel_offset;
-	#endif
-
+	ivec3 out_voxel    = ivec3(gl_GlobalInvocationID);
 	vec3  image_points = vec3(imageSize(u_out_data_tex)) - 1.0f;
 	if (!all(lessThan(out_voxel, imageSize(u_out_data_tex))))
 		return;

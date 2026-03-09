@@ -34,13 +34,8 @@ global f32 dt_for_frame;
 
 #define DECODE_FIRST_PASS_UNIFORM_LOC 1
 
-#define DAS_LOCAL_SIZE_X  16
-#define DAS_LOCAL_SIZE_Y   1
-#define DAS_LOCAL_SIZE_Z  16
-
-#define DAS_VOXEL_OFFSET_UNIFORM_LOC  2
-#define DAS_CYCLE_T_UNIFORM_LOC       3
-#define DAS_FAST_CHANNEL_UNIFORM_LOC  4
+#define DAS_CYCLE_T_UNIFORM_LOC       2
+#define DAS_FAST_CHANNEL_UNIFORM_LOC  3
 
 #define MIN_MAX_MIPS_LEVEL_UNIFORM_LOC 1
 #define SUM_PRESCALE_UNIFORM_LOC       1
@@ -340,72 +335,6 @@ do_sum_shader(BeamformerComputeContext *cc, u32 *in_textures, u32 in_texture_cou
 	}
 }
 
-struct compute_cursor {
-	iv3 cursor;
-	uv3 dispatch;
-	iv3 target;
-	u32 points_per_dispatch;
-	u32 completed_points;
-	u32 total_points;
-};
-
-function struct compute_cursor
-start_compute_cursor(iv3 dim, u32 max_points)
-{
-	struct compute_cursor result = {0};
-	u32 invocations_per_dispatch = DAS_LOCAL_SIZE_X * DAS_LOCAL_SIZE_Y * DAS_LOCAL_SIZE_Z;
-
-	result.dispatch.y = MIN(max_points / invocations_per_dispatch, (u32)ceil_f32((f32)dim.y / DAS_LOCAL_SIZE_Y));
-
-	u32 remaining     = max_points / result.dispatch.y;
-	result.dispatch.x = MIN(remaining / invocations_per_dispatch, (u32)ceil_f32((f32)dim.x / DAS_LOCAL_SIZE_X));
-	result.dispatch.z = MIN(remaining / (invocations_per_dispatch * result.dispatch.x),
-	                        (u32)ceil_f32((f32)dim.z / DAS_LOCAL_SIZE_Z));
-
-	result.target.x = MAX(dim.x / (i32)result.dispatch.x / DAS_LOCAL_SIZE_X, 1);
-	result.target.y = MAX(dim.y / (i32)result.dispatch.y / DAS_LOCAL_SIZE_Y, 1);
-	result.target.z = MAX(dim.z / (i32)result.dispatch.z / DAS_LOCAL_SIZE_Z, 1);
-
-	result.points_per_dispatch = 1;
-	result.points_per_dispatch *= result.dispatch.x * DAS_LOCAL_SIZE_X;
-	result.points_per_dispatch *= result.dispatch.y * DAS_LOCAL_SIZE_Y;
-	result.points_per_dispatch *= result.dispatch.z * DAS_LOCAL_SIZE_Z;
-
-	result.total_points = (u32)(dim.x * dim.y * dim.z);
-
-	return result;
-}
-
-function iv3
-step_compute_cursor(struct compute_cursor *cursor)
-{
-	cursor->cursor.x += 1;
-	if (cursor->cursor.x >= cursor->target.x) {
-		cursor->cursor.x  = 0;
-		cursor->cursor.y += 1;
-		if (cursor->cursor.y >= cursor->target.y) {
-			cursor->cursor.y  = 0;
-			cursor->cursor.z += 1;
-		}
-	}
-
-	cursor->completed_points += cursor->points_per_dispatch;
-
-	iv3 result = cursor->cursor;
-	result.x *= (i32)cursor->dispatch.x * DAS_LOCAL_SIZE_X;
-	result.y *= (i32)cursor->dispatch.y * DAS_LOCAL_SIZE_Y;
-	result.z *= (i32)cursor->dispatch.z * DAS_LOCAL_SIZE_Z;
-
-	return result;
-}
-
-function b32
-compute_cursor_finished(struct compute_cursor *cursor)
-{
-	b32 result = cursor->completed_points >= cursor->total_points;
-	return result;
-}
-
 function void
 plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 {
@@ -676,9 +605,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			InvalidDefaultCase;
 			}
 
-			if ((sd->bake.flags & BeamformerShaderDASFlags_Fast) == 0)
-				sd->layout = (uv3){{DAS_LOCAL_SIZE_X, DAS_LOCAL_SIZE_Y, DAS_LOCAL_SIZE_Z}};
-
 			sd->dispatch.x = (u32)ceil_f32((f32)cp->output_points.x / sd->layout.x);
 			sd->dispatch.y = (u32)ceil_f32((f32)cp->output_points.y / sd->layout.y);
 			sd->dispatch.z = (u32)ceil_f32((f32)cp->output_points.z / sd->layout.z);
@@ -705,7 +631,6 @@ stream_push_shader_header(Stream *s, BeamformerShaderKind shader_kind, s8 header
 	switch (shader_kind) {
 	case BeamformerShaderKind_DAS:{
 		stream_append_s8(s, s8(""
-		"layout(location = " str(DAS_VOXEL_OFFSET_UNIFORM_LOC) ") uniform ivec3 u_voxel_offset;\n"
 		"layout(location = " str(DAS_CYCLE_T_UNIFORM_LOC)      ") uniform uint  u_cycle_t;\n"
 		"layout(location = " str(DAS_FAST_CHANNEL_UNIFORM_LOC) ") uniform int   u_channel;\n\n"
 		));
@@ -1018,32 +943,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 				glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 			}
 		} else {
-			#if 1
-			/* TODO(rnp): compute max_points_per_dispatch based on something like a
-			 * transmit_count * channel_count product */
-			u32 max_points_per_dispatch = KB(64);
-			struct compute_cursor cursor = start_compute_cursor(frame->dim, max_points_per_dispatch);
-			f32 percent_per_step = (f32)cursor.points_per_dispatch / (f32)cursor.total_points;
-			cc->processing_progress = -percent_per_step;
-			for (iv3 offset = {0};
-			     !compute_cursor_finished(&cursor);
-			     offset = step_compute_cursor(&cursor))
-			{
-				cc->processing_progress += percent_per_step;
-				/* IMPORTANT(rnp): prevents OS from coalescing and killing our shader */
-				glFinish();
-				glProgramUniform3iv(program, DAS_VOXEL_OFFSET_UNIFORM_LOC, 1, offset.E);
-				glDispatchCompute(cursor.dispatch.x, cursor.dispatch.y, cursor.dispatch.z);
-			}
-			#else
-			/* NOTE(rnp): use this for testing tiling code. The performance of the above path
-			 * should be the same as this path if everything is working correctly */
-			iv3 compute_dim_offset = {0};
-			glProgramUniform3iv(program, DAS_VOXEL_OFFSET_UNIFORM_LOC, 1, compute_dim_offset.E);
-			glDispatchCompute((u32)ceil_f32((f32)dim.x / DAS_LOCAL_SIZE_X),
-			                  (u32)ceil_f32((f32)dim.y / DAS_LOCAL_SIZE_Y),
-			                  (u32)ceil_f32((f32)dim.z / DAS_LOCAL_SIZE_Z));
-			#endif
+			glDispatchCompute(dispatch.x, dispatch.y, dispatch.z);
 		}
 		glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT|GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 	}break;
