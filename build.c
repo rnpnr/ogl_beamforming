@@ -870,8 +870,8 @@ build_tests(Arena arena)
 	b32 result = 1;
 	iz cc_count = cc.count;
 	#define X(prog, ...) \
-		result &= cc_single_file(arena, cc, prog, "tests/" prog ".c", \
-		                         OUTPUT("tests/" prog),            \
+		result &= cc_single_file(arena, cc, prog, "tests" OS_PATH_SEPARATOR prog ".c", \
+		                         OUTPUT("tests" OS_PATH_SEPARATOR prog), \
 		                         arg_list(char *, ##__VA_ARGS__)); \
 		cc.count = cc_count;
 	TEST_PROGRAMS
