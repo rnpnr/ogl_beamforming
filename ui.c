@@ -435,10 +435,12 @@ struct BeamformerUI {
 	u32 selected_parameter_block;
 
 	m4  das_transform;
-	v3  min_coordinate;
-	v3  max_coordinate;
+	v2  min_coordinate;
+	v2  max_coordinate;
 	f32 off_axis_position;
 	f32 beamform_plane;
+
+	BeamformerViewPlaneTag plane_layout;
 
 	FrameViewRenderContext *frame_view_render_context;
 
@@ -561,6 +563,22 @@ function Rectangle
 rl_rect(Rect a)
 {
 	Rectangle result = {a.pos.x, a.pos.y, a.size.w, a.size.h};
+	return result;
+}
+
+function BeamformerViewPlaneTag
+ui_plane_layout_from_normal(v3 normal)
+{
+	BeamformerViewPlaneTag result = BeamformerViewPlaneTag_Arbitrary;
+	b32 has_x = !f32_equal(normal.x, 0.0f);
+	b32 has_y = !f32_equal(normal.y, 0.0f);
+	b32 has_z = !f32_equal(normal.z, 0.0f);
+	if ((has_x + has_y + has_z) == 1) {
+		if (has_x) result = BeamformerViewPlaneTag_YZ;
+		if (has_y) result = BeamformerViewPlaneTag_XZ;
+		if (has_z) result = BeamformerViewPlaneTag_XY;
+		assert(result != BeamformerViewPlaneTag_Arbitrary);
+	}
 	return result;
 }
 
@@ -1208,11 +1226,11 @@ add_beamformer_parameters_view(Variable *parent, BeamformerCtx *ctx)
 	                           VariableGroupKind_Vector, ui->font);
 	{
 		add_beamformer_variable(ui, group, &ui->arena, s8("Min:"), s8("[mm]"),
-		                       ui->min_coordinate.E + 0, v2_inf, 1e3f, 0.5e-3f,
-		                       V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
+		                        &ui->min_coordinate.x, v2_inf, 1e3f, 0.5e-3f,
+		                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 
 		add_beamformer_variable(ui, group, &ui->arena, s8("Max:"), s8("[mm]"),
-		                        ui->max_coordinate.E + 0, v2_inf, 1e3f, 0.5e-3f,
+		                        &ui->max_coordinate.x, v2_inf, 1e3f, 0.5e-3f,
 		                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 	}
 	group = end_variable_group(group);
@@ -1221,11 +1239,11 @@ add_beamformer_parameters_view(Variable *parent, BeamformerCtx *ctx)
 	                           VariableGroupKind_Vector, ui->font);
 	{
 		add_beamformer_variable(ui, group, &ui->arena, s8("Min:"), s8("[mm]"),
-		                        ui->min_coordinate.E + 2, v2_inf, 1e3f, 0.5e-3f,
+		                        &ui->min_coordinate.y, v2_inf, 1e3f, 0.5e-3f,
 		                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 
 		add_beamformer_variable(ui, group, &ui->arena, s8("Max:"), s8("[mm]"),
-		                        ui->max_coordinate.E + 2, v2_inf, 1e3f, 0.5e-3f,
+		                        &ui->max_coordinate.y, v2_inf, 1e3f, 0.5e-3f,
 		                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
 	}
 	group = end_variable_group(group);
@@ -1314,10 +1332,41 @@ ui_beamformer_frame_view_convert(BeamformerUI *ui, Arena *arena, Variable *view,
 		axial->zoom_starting_coord   = F32_INFINITY;
 
 		b32 copy = kind == BeamformerFrameViewKind_Copy;
-		lateral->min_value = copy ? &bv->min_coordinate.x : &ui->min_coordinate.x;
-		lateral->max_value = copy ? &bv->max_coordinate.x : &ui->max_coordinate.x;
-		axial->min_value   = copy ? &bv->min_coordinate.z : &ui->min_coordinate.z;
-		axial->max_value   = copy ? &bv->max_coordinate.z : &ui->max_coordinate.z;
+		BeamformerViewPlaneTag plane = ui->plane_layout;
+		if (old && old->frame) {
+			v3 normal = cross(old->frame->voxel_transform.c[0].xyz, old->frame->voxel_transform.c[1].xyz);
+			plane = ui_plane_layout_from_normal(normal);
+		}
+
+		switch (plane) {
+		case BeamformerViewPlaneTag_XY:{
+			lateral->min_value = copy ? &bv->min_coordinate.x : &ui->min_coordinate.x;
+			lateral->max_value = copy ? &bv->max_coordinate.x : &ui->max_coordinate.x;
+			axial->min_value   = copy ? &bv->min_coordinate.y : &ui->min_coordinate.y;
+			axial->max_value   = copy ? &bv->max_coordinate.y : &ui->max_coordinate.y;
+		}break;
+
+		case BeamformerViewPlaneTag_XZ:{
+			lateral->min_value = copy ? &bv->min_coordinate.x : &ui->min_coordinate.x;
+			lateral->max_value = copy ? &bv->max_coordinate.x : &ui->max_coordinate.x;
+			axial->min_value   = copy ? &bv->min_coordinate.z : &ui->min_coordinate.y;
+			axial->max_value   = copy ? &bv->max_coordinate.z : &ui->max_coordinate.y;
+		}break;
+
+		case BeamformerViewPlaneTag_YZ:{
+			lateral->min_value = copy ? &bv->min_coordinate.y : &ui->min_coordinate.x;
+			lateral->max_value = copy ? &bv->max_coordinate.y : &ui->max_coordinate.x;
+			axial->min_value   = copy ? &bv->min_coordinate.z : &ui->min_coordinate.y;
+			axial->max_value   = copy ? &bv->max_coordinate.z : &ui->max_coordinate.y;
+		}break;
+
+		default:{
+			lateral->min_value = copy ? &bv->min_coordinate.x : &ui->min_coordinate.x;
+			lateral->max_value = copy ? &bv->max_coordinate.x : &ui->max_coordinate.x;
+			axial->min_value   = copy ? &bv->min_coordinate.z : &ui->min_coordinate.y;
+			axial->max_value   = copy ? &bv->max_coordinate.z : &ui->max_coordinate.y;
+		}break;
+		}
 
 		#define X(id, text) add_button(ui, menu, arena, s8(text), UI_BID_ ##id, 0, ui->small_font);
 		FRAME_VIEW_BUTTONS
@@ -1527,17 +1576,12 @@ ui_copy_frame(BeamformerUI *ui, Variable *view, RegionSplitDirection direction)
 function v3
 beamformer_frame_view_plane_size(BeamformerUI *ui, BeamformerFrameView *view)
 {
-	v3 result;
-	if (view->kind == BeamformerFrameViewKind_3DXPlane) {
-		result = v3_sub(ui->max_coordinate, ui->min_coordinate);
-		swap(result.y, result.z);
-		result.x = Max(1e-3f, result.x);
-		result.y = Max(1e-3f, result.y);
-		result.z = Max(1e-3f, result.z);
-	} else {
-		v2 size = v2_sub(XZ(view->max_coordinate), XZ(view->min_coordinate));
-		result  = (v3){.x = size.x, .y = size.y};
-	}
+	assert(view->kind == BeamformerFrameViewKind_3DXPlane);
+	v3 result = {0};
+	result.xy = v2_sub(ui->max_coordinate, ui->min_coordinate);
+	result.x  = Max(1e-3f, result.x);
+	result.y  = Max(1e-3f, result.y);
+	result.z  = Max(1e-3f, result.z);
 	return result;
 }
 
@@ -1562,8 +1606,8 @@ normalized_p_in_rect(Rect r, v2 p, b32 invert_y)
 function v3
 x_plane_position(BeamformerUI *ui)
 {
-	f32 y_min = ui->min_coordinate.E[2];
-	f32 y_max = ui->max_coordinate.E[2];
+	f32 y_min = ui->min_coordinate.y;
+	f32 y_max = ui->max_coordinate.y;
 	v3 result = {.y = y_min + (y_max - y_min) / 2};
 	return result;
 }
@@ -4039,8 +4083,8 @@ validate_ui_parameters(BeamformerUI *ui)
 {
 	if (ui->min_coordinate.x > ui->max_coordinate.x)
 		swap(ui->min_coordinate.x, ui->max_coordinate.x);
-	if (ui->min_coordinate.z > ui->max_coordinate.z)
-		swap(ui->min_coordinate.z, ui->max_coordinate.z);
+	if (ui->min_coordinate.y > ui->max_coordinate.y)
+		swap(ui->min_coordinate.y, ui->max_coordinate.y);
 }
 
 function void
@@ -4063,11 +4107,41 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 			mem_copy(&ui->params, &pb->parameters_ui, sizeof(ui->params));
 			mem_copy(ui->das_transform.E, pb->parameters.das_voxel_transform.E, sizeof(ui->das_transform));
 
+			v3 normal = cross(ui->das_transform.c[0].xyz, ui->das_transform.c[1].xyz);
+			ui->plane_layout = ui_plane_layout_from_normal(normal);
+
 			atomic_and_u32(&ctx->ui_dirty_parameter_blocks, ~selected_mask);
 			beamformer_parameter_block_unlock(ui->shared_memory, selected_block);
 
-			ui->min_coordinate = m4_mul_v4(ui->das_transform, (v4){{0.0f, 0.0f, 0.0f, 1.0f}}).xyz;
-			ui->max_coordinate = m4_mul_v4(ui->das_transform, (v4){{1.0f, 1.0f, 1.0f, 1.0f}}).xyz;
+			ui->off_axis_position = 0.0f;
+			ui->beamform_plane    = 0.0f;
+
+			v3 min_coordinate = m4_mul_v4(ui->das_transform, (v4){{0.0f, 0.0f, 0.0f, 1.0f}}).xyz;
+			v3 max_coordinate = m4_mul_v4(ui->das_transform, (v4){{1.0f, 1.0f, 1.0f, 1.0f}}).xyz;
+			switch (ui->plane_layout) {
+			case BeamformerViewPlaneTag_XY:{
+				ui->min_coordinate    = min_coordinate.xy;
+				ui->max_coordinate    = max_coordinate.xy;
+				ui->off_axis_position = min_coordinate.z;
+			}break;
+
+			case BeamformerViewPlaneTag_XZ:{
+				ui->min_coordinate    = (v2){{min_coordinate.x, min_coordinate.z}};
+				ui->max_coordinate    = (v2){{max_coordinate.x, max_coordinate.z}};
+				ui->off_axis_position = min_coordinate.y;
+			}break;
+
+			case BeamformerViewPlaneTag_YZ:{
+				ui->min_coordinate    = min_coordinate.yz;
+				ui->max_coordinate    = max_coordinate.yz;
+				ui->off_axis_position = min_coordinate.x;
+			}break;
+
+			default:{
+				ui->min_coordinate = (v2){{min_coordinate.x, min_coordinate.z}};
+				ui->max_coordinate = (v2){{max_coordinate.x, max_coordinate.z}};
+			}break;
+			}
 		}
 	}
 
@@ -4083,23 +4157,28 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 			if (pb) {
 				ui->flush_params = 0;
 
-				v3 min_coordinate = ui->min_coordinate;
-				v3 max_coordinate = ui->max_coordinate;
+				v2 min = ui->min_coordinate;
+				v2 max = ui->max_coordinate;
 
 				iv3 points    = ctx->latest_frame->dim;
 				i32 dimension = iv3_dimension(points);
 
 				// TODO(rnp): this is immediate mode code that should be in the ui building code
-				swap(min_coordinate.y, min_coordinate.z);
-				swap(max_coordinate.y, max_coordinate.z);
-				m4  new_transform = das_transform(min_coordinate, max_coordinate, &points);
+				m4 new_transform = ui->das_transform;
+				switch (ui->plane_layout) {
+				case BeamformerViewPlaneTag_XY:{new_transform = das_transform_2d_xy(min, max, 0.0f);}break;
+				case BeamformerViewPlaneTag_XZ:{new_transform = das_transform_2d_xz(min, max, 0.0f);}break;
+				case BeamformerViewPlaneTag_YZ:{new_transform = das_transform_2d_yz(min, max, 0.0f);}break;
+				default:{}break;
+				}
+
 				switch (dimension) {
 				case 1:{}break;
 
 				case 2:{
 					v3 U = ui->das_transform.c[0].xyz;
 					v3 V = ui->das_transform.c[1].xyz;
-					v3 N = v3_normalize(cross(V, U));
+					v3 N = v3_normalize(cross(U, V));
 
 					v3 rotation_axis = v3_normalize(cross(U, N));
 

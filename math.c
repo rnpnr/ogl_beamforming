@@ -766,16 +766,41 @@ das_transform_1d(v3 p1, v3 p2)
 }
 
 function m4
-das_transform_2d_xz(v2 min_coordinate, v2 max_coordinate)
+das_transform_2d_xz(v2 min_coordinate, v2 max_coordinate, f32 y_off)
 {
 	v2 extent = v2_abs(v2_sub(max_coordinate, min_coordinate));
 
-	// NOTE(rnp): DAS assumes 3D grid with z down -> swap y and z
 	m4 result;
-	result.c[0] = (v4){{extent.x,         0.0f, 0.0f,             0.0f}};
-	result.c[1] = (v4){{0.0f,             0.0f, extent.y,         0.0f}};
-	result.c[2] = (v4){{0.0f,             1.0f, 0.0f,             0.0f}};
-	result.c[3] = (v4){{min_coordinate.x, 0.0f, min_coordinate.y, 1.0f}};
+	result.c[0] = (v4){{extent.x,         0.0f,  0.0f,             0.0f}};
+	result.c[1] = (v4){{0.0f,             0.0f,  extent.y,         0.0f}};
+	result.c[2] = (v4){{0.0f,             1.0f,  0.0f,             0.0f}};
+	result.c[3] = (v4){{min_coordinate.x, y_off, min_coordinate.y, 1.0f}};
+	return result;
+}
+
+function m4
+das_transform_2d_yz(v2 min_coordinate, v2 max_coordinate, f32 x_off)
+{
+	v2 extent = v2_abs(v2_sub(max_coordinate, min_coordinate));
+
+	m4 result;
+	result.c[0] = (v4){{0.0f,  extent.x,         0.0f,             0.0f}};
+	result.c[1] = (v4){{0.0f,  0.0f,             extent.y,         0.0f}};
+	result.c[2] = (v4){{1.0f,  0.0f,             0.0f,             0.0f}};
+	result.c[3] = (v4){{x_off, min_coordinate.x, min_coordinate.y, 1.0f}};
+	return result;
+}
+
+function m4
+das_transform_2d_xy(v2 min_coordinate, v2 max_coordinate, f32 z_off)
+{
+	v2 extent = v2_abs(v2_sub(max_coordinate, min_coordinate));
+
+	m4 result;
+	result.c[0] = (v4){{extent.x,         0.0f,             0.0f,  0.0f}};
+	result.c[1] = (v4){{0.0f,             extent.y,         0.0f,  0.0f}};
+	result.c[2] = (v4){{0.0f,             0.0f,             1.0f,  0.0f}};
+	result.c[3] = (v4){{min_coordinate.x, min_coordinate.y, z_off, 1.0f}};
 	return result;
 }
 
@@ -795,9 +820,9 @@ das_transform(v3 min_coordinate, v3 max_coordinate, iv3 *points)
 	*points = das_output_dimension(*points);
 
 	switch (iv3_dimension(*points)) {
-	case 1:{result = das_transform_1d(      min_coordinate,     max_coordinate); }break;
-	case 2:{result = das_transform_2d_xz(XY(min_coordinate), XY(max_coordinate));}break;
-	case 3:{result = das_transform_3d(      min_coordinate,     max_coordinate); }break;
+	case 1:{result = das_transform_1d(      min_coordinate,     max_coordinate);    }break;
+	case 2:{result = das_transform_2d_xz(XY(min_coordinate), XY(max_coordinate), 0);}break;
+	case 3:{result = das_transform_3d(      min_coordinate,     max_coordinate);    }break;
 	}
 
 	return result;

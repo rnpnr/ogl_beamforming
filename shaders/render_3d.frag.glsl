@@ -80,6 +80,7 @@ void main(void)
 		out_colour = vec4(u_bb_colour.xyz, alpha);
 	}break;
 
+	case 0: // NOTE(rnp): 0 is a special case for X-Plane Rendering
 	case 2:
 	case 3:
 	{

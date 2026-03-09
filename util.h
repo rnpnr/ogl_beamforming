@@ -277,8 +277,10 @@ typedef union {
 } v2;
 
 typedef union {
-	struct { f32 x, y, z; };
-	struct { f32 w, h, d; };
+	struct { f32 x,  y, z;   };
+	struct { f32 w,  h, d;   };
+	struct { v2  xy; f32 _1; };
+	struct { f32 _2; v2 yz;  };
 	f32 E[3];
 } v3;
 
