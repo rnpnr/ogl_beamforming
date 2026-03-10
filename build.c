@@ -696,7 +696,6 @@ cc_single_file(Arena a, CommandList cc, char *exe, char *src, char *dest, char *
 	char *executable[] = {src, is_msvc? "/Fe:" : "-o", dest};
 	char *object[]     = {is_msvc? "/c" : "-c", src, is_msvc? "/Fo:" : "-o", dest};
 
-
 	cmd_append_count(&a, &cc, exe? executable : object,
 	                 exe? countof(executable) : countof(object));
 	if (exe) cmd_pdb(&a, &cc, exe);
@@ -861,7 +860,7 @@ build_tests(Arena arena)
 	cmd_append(&arena, &cc, EXTRA_FLAGS);
 
 	#define TEST_PROGRAMS \
-		X("throughput", LINK_LIB("zstd"), W32_DECL(LINK_LIB("Synchronization")))
+		X("throughput", LINK_LIB("m"), LINK_LIB("zstd"), W32_DECL(LINK_LIB("Synchronization"))) \
 
 	os_make_directory(OUTPUT("tests"));
 	if (!is_msvc) cmd_append(&arena, &cc, "-Wno-unused-function");
