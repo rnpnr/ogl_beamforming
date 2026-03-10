@@ -213,9 +213,9 @@ typedef struct {
 	m4  voxel_transform;
 	v2  xdc_element_pitch;
 	u64 array_parameters;
+	u64 output_frame;
+	u64 incoherent_frame;
 	u32 rf_element_offset;
-	u32 output_element_offset;
-	u32 incoherent_element_offset;
 	u32 output_size_x;
 	u32 output_size_y;
 	u32 output_size_z;
@@ -665,9 +665,9 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"  f32mat4  voxel_transform;\n"
 	"  f32vec2  xdc_element_pitch;\n"
 	"  uint64_t array_parameters;\n"
+	"  uint64_t output_frame;\n"
+	"  uint64_t incoherent_frame;\n"
 	"  uint32_t rf_element_offset;\n"
-	"  uint32_t output_element_offset;\n"
-	"  uint32_t incoherent_element_offset;\n"
 	"  uint32_t output_size_x;\n"
 	"  uint32_t output_size_y;\n"
 	"  uint32_t output_size_z;\n"

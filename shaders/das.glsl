@@ -35,17 +35,18 @@ layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_PingPong) rea
 	SAMPLE_TYPE rf[];
 };
 
-layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_BeamformedData) buffer Output {
-	SAMPLE_TYPE output_data[];
-};
-
-layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_BeamformedData) buffer IncoherentOutput {
-	float incoherent_data[];
-};
-
 layout(std430, buffer_reference) restrict readonly buffer ArrayParameters {
 	DASArrayParameters data;
 };
+
+layout(std430, buffer_reference) buffer Output {
+	SAMPLE_TYPE x[];
+};
+
+layout(std430, buffer_reference) buffer IncoherentOutput {
+	f32 x[];
+};
+
 
 #define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
 #define TX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 4, 4)
@@ -321,8 +322,8 @@ void main()
 	}
 
 	#if CoherencyWeighting
-	incoherent_data[incoherent_element_offset + out_index] += RESULT_INCOHERENT_CAST(sum);
+	IncoherentOutput(incoherent_frame).x[out_index] += RESULT_INCOHERENT_CAST(sum);
 	#endif
 
-	output_data[output_element_offset + out_index] += RESULT_COHERENT_CAST(sum);
+	Output(output_frame).x[out_index] += RESULT_COHERENT_CAST(sum);
 }
