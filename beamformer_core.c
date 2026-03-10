@@ -581,7 +581,16 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDes
 	stream_append_s8s(s, s8("#version 460 core\n\n"
 	"#extension GL_EXT_buffer_reference : require\n"
 	"#extension GL_EXT_shader_16bit_storage : require\n"
-	"#extension GL_EXT_shader_explicit_arithmetic_types : require\n\n"));
+	"#extension GL_EXT_shader_explicit_arithmetic_types : require\n\n"
+	"#define f32     float32_t\n"
+	"#define f16     float16_t\n"
+	"#define s32     int32_t\n"
+	"#define u32     uint32_t\n"
+	"#define s16     int16_t\n"
+	"#define u16     uint16_t\n"
+	"#define s32vec2 i32vec2\n"
+	"#define s16vec2 i16vec2\n"
+	"\n"));
 
 	i32  header_vector_length = beamformer_shader_header_vector_lengths[reloadable_index];
 	i32 *header_vector        = beamformer_shader_header_vectors[reloadable_index];
@@ -895,25 +904,21 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 		GPUBuffer *b = cc->backlog.buffer;
 
 
-		u64 frame_element_size  = beamformer_data_kind_byte_size[frame->data_kind];
-		u64 frame_size          = beamformer_frame_byte_size(frame->points, frame->data_kind);
-		u64 iframe_element_size = beamformer_data_kind_byte_size[frame->data_kind]
-		                          / beamformer_data_kind_element_count[frame->data_kind];
-		u64 iframe_size         = frame_size / beamformer_data_kind_element_count[frame->data_kind];
-
+		u64 frame_size   = beamformer_frame_byte_size(frame->points, frame->data_kind);
+		u64 iframe_size  = frame_size / beamformer_data_kind_element_count[frame->data_kind];
 		u64 element_size = beamformer_data_kind_byte_size[cp->shader_descriptors[shader_slot].bake.DAS.data_kind];
 
 		BeamformerDASPushConstants pc = {
-			.xdc_element_pitch         = cp->xdc_element_pitch,
-			.rf_element_offset         = input_index * pp_size / element_size,
-			.output_element_offset     = frame->buffer_offset / frame_element_size,
-			.incoherent_element_offset = (b->size - iframe_size) / iframe_element_size,
-			.output_size_x             = cp->output_points.x,
-			.output_size_y             = cp->output_points.y,
-			.output_size_z             = cp->output_points.z,
-			.cycle_t                   = das_cycle_t++,
-			.channel_offset            = channel_offset,
-			.array_parameters = cp->array_parameters.gpu_pointer + offsetof(BeamformerDASArrayParameters, focal_vectors),
+			.xdc_element_pitch = cp->xdc_element_pitch,
+			.rf_element_offset = input_index * pp_size / element_size,
+			.output_frame      = b->gpu_pointer + frame->buffer_offset,
+			.incoherent_frame  = b->gpu_pointer + b->size - iframe_size,
+			.output_size_x     = cp->output_points.x,
+			.output_size_y     = cp->output_points.y,
+			.output_size_z     = cp->output_points.z,
+			.cycle_t           = das_cycle_t++,
+			.channel_offset    = channel_offset,
+			.array_parameters  = cp->array_parameters.gpu_pointer + offsetof(BeamformerDASArrayParameters, focal_vectors),
 		};
 		mem_copy(pc.voxel_transform.E, cp->voxel_transform.E, sizeof(pc.voxel_transform));
 		mem_copy(pc.xdc_transform.E,   cp->xdc_transform.E,   sizeof(pc.xdc_transform));
@@ -928,7 +933,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			},
 			{
 				.gpu_buffer = b,
-				.offset     = pc.incoherent_element_offset * iframe_element_size,
+				.offset     = pc.incoherent_frame - b->gpu_pointer,
 				.size       = iframe_size,
 			},
 		};

@@ -2,7 +2,6 @@
 // TODO(rnp)
 // [ ]: what is needed for HDR? I think it makes sense to just default to it nowadays
 // [ ]: once opengl is removed switch images to SRGB and/or 16 bit Float
-// [ ]: synchronization is busted when there is only one unique queue
 
 #include "beamformer_internal.h"
 #include "vulkan.h"
