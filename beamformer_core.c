@@ -1173,7 +1173,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			if (work->kind == BeamformerWorkKind_ComputeIndirect) {
 				// TODO(rnp): this shouldn't be necessary, there should be a way of communicating
 				// what the value will be so that the only the command wait is needed.
-				spin_wait(atomic_load_u64(rf->upload_complete_values + slot) <= compute_index);
+				spin_wait(atomic_load_u64(&rf->insertion_index) <= compute_index);
 
 				/* NOTE(rnp): if the GPU supports BAR there may be no need to synchronize
 				 * other than the above spin */
@@ -1362,10 +1362,10 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 			vk_buffer_allocate(&rf->buffer, &allocate_info);
 		}
 
-		u32 slot = rf->insertion_index % countof(rf->upload_complete_values);
+		u64 slot = rf->insertion_index % countof(rf->upload_complete_values);
 
 		/* NOTE(rnp): don't overwrite slot if the compute thread hasn't processed it */
-		spin_wait(atomic_load_u64(&rf->compute_index) < rf->upload_complete_values[slot]);
+		spin_wait(atomic_load_u64(&rf->compute_index) < rf->insertion_index);
 		vk_host_wait_timeline(VulkanTimeline_Compute, rf->compute_complete_values[slot], -1ULL);
 
 		vk_buffer_range_upload(&rf->buffer, beamformer_shared_memory_scratch_arena(sm, ctx->shared_memory_size).beg,
@@ -1375,8 +1375,8 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		beamformer_shared_memory_release_lock(ctx->shared_memory, (i32)scratch_lock);
 		post_sync_barrier(ctx->shared_memory, upload_lock);
 
-		rf->insertion_index++;
 		atomic_store_u64(rf->upload_complete_values + slot, vk_host_signal_timeline(VulkanTimeline_Transfer));
+		atomic_add_u64(&rf->insertion_index, 1);
 
 		os_wake_all_waiters(ctx->compute_worker_sync);
 
