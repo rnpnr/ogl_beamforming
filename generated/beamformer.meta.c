@@ -240,9 +240,9 @@ typedef struct {
 } BeamformerCoherencyWeightingPushConstants;
 
 typedef struct {
+	uv4 clear_v4;
 	u64 data;
-	u32 clear_word;
-	u32 words;
+	u32 bins;
 } BeamformerBufferClearPushConstants;
 
 typedef struct {
@@ -707,9 +707,9 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 	s8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
+	"  u32vec4  clear_v4;\n"
 	"  uint64_t data;\n"
-	"  uint32_t clear_word;\n"
-	"  uint32_t words;\n"
+	"  uint32_t bins;\n"
 	"};\n"
 	"\n"),
 	s8_comp(""
