@@ -768,7 +768,7 @@ das_transform_1d(v3 p1, v3 p2)
 function m4
 das_transform_2d_xz(v2 min_coordinate, v2 max_coordinate, f32 y_off)
 {
-	v2 extent = v2_abs(v2_sub(max_coordinate, min_coordinate));
+	v2 extent = v2_sub(max_coordinate, min_coordinate);
 
 	m4 result;
 	result.c[0] = (v4){{extent.x,         0.0f,  0.0f,             0.0f}};
@@ -781,7 +781,7 @@ das_transform_2d_xz(v2 min_coordinate, v2 max_coordinate, f32 y_off)
 function m4
 das_transform_2d_yz(v2 min_coordinate, v2 max_coordinate, f32 x_off)
 {
-	v2 extent = v2_abs(v2_sub(max_coordinate, min_coordinate));
+	v2 extent = v2_sub(max_coordinate, min_coordinate);
 
 	m4 result;
 	result.c[0] = (v4){{0.0f,  extent.x,         0.0f,             0.0f}};
@@ -794,7 +794,7 @@ das_transform_2d_yz(v2 min_coordinate, v2 max_coordinate, f32 x_off)
 function m4
 das_transform_2d_xy(v2 min_coordinate, v2 max_coordinate, f32 z_off)
 {
-	v2 extent = v2_abs(v2_sub(max_coordinate, min_coordinate));
+	v2 extent = v2_sub(max_coordinate, min_coordinate);
 
 	m4 result;
 	result.c[0] = (v4){{extent.x,         0.0f,             0.0f,  0.0f}};
@@ -807,8 +807,12 @@ das_transform_2d_xy(v2 min_coordinate, v2 max_coordinate, f32 z_off)
 function m4
 das_transform_3d(v3 min_coordinate, v3 max_coordinate)
 {
-	v3 extent = v3_abs(v3_sub(max_coordinate, min_coordinate));
-	m4 result = m4_mul(m4_translation(min_coordinate), m4_scale(extent));
+	v3 extent = v3_sub(max_coordinate, min_coordinate);
+	m4 result;
+	result.c[0] = (v4){{extent.x,         0.0f,             0.0f,             0.0f}};
+	result.c[1] = (v4){{0.0f,             extent.y,         0.0f,             0.0f}};
+	result.c[2] = (v4){{0.0f,             0.0f,             extent.z,         0.0f}};
+	result.c[3] = (v4){{min_coordinate.x, min_coordinate.y, min_coordinate.z, 1.0f}};
 	return result;
 }
 
