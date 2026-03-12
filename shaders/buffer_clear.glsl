@@ -1,11 +1,11 @@
 /* See LICENSE for license details. */
-layout(std430, buffer_reference, buffer_reference_align = 8) restrict writeonly buffer Buffer {
-	uint32_t values[];
+layout(std430, buffer_reference, buffer_reference_align = 32) restrict writeonly buffer Buffer {
+	u32vec4 x[];
 };
 
 void main()
 {
-	uint32_t word = gl_GlobalInvocationID.x;
-	if (word < words)
-		Buffer(data).values[word] = clear_word;
+	u32 index = gl_GlobalInvocationID.x;
+	if (index < bins)
+		Buffer(data).x[index] = clear_v4;
 }

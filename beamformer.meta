@@ -459,9 +459,9 @@
 	{
 		@PushConstants
 		{
-			[data       U64]
-			[clear_word U32]
-			[words      U32]
+			[clear_v4 UV4]
+			[data     U64]
+			[bins     U32]
 		}
 	}
 }
