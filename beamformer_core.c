@@ -27,22 +27,6 @@
 
 global f32 dt_for_frame;
 
-#if !BEAMFORMER_RENDERDOC_HOOKS
-#define start_renderdoc_capture(...)
-#define end_renderdoc_capture(...)
-#define renderdoc_attached(...) (0)
-#else
-global renderdoc_start_frame_capture_fn       *start_frame_capture;
-global renderdoc_set_capture_path_template_fn *set_capture_path_template;
-global renderdoc_end_frame_capture_fn         *end_frame_capture;
-#define start_renderdoc_capture()  do { \
-	if (set_capture_path_template) set_capture_path_template("captures/ogl.rdc"); \
-	if (start_frame_capture)       start_frame_capture(vk_renderdoc_instance_handle(), 0); \
-} while(0)
-#define end_renderdoc_capture()   if (end_frame_capture)   end_frame_capture(vk_renderdoc_instance_handle(), 0)
-#define renderdoc_attached(...)   (start_frame_capture != 0)
-#endif
-
 read_only global u32 beamformer_compute_array_parameter_sizes[] = {
 	#define X(k, type, elements) sizeof(type) * elements,
 	BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST
@@ -1429,12 +1413,6 @@ beamformer_process_input_events(BeamformerCtx *ctx, BeamformerInput *input,
 					                                   ctx->arena);
 				}
 			}
-
-			#if BEAMFORMER_RENDERDOC_HOOKS
-			start_frame_capture       = input->renderdoc_start_frame_capture;
-			end_frame_capture         = input->renderdoc_end_frame_capture;
-			set_capture_path_template = input->renderdoc_set_capture_file_path_template;
-			#endif
 		}break;
 
 		case BeamformerInputEventKind_FileEvent:{
