@@ -37,13 +37,9 @@ typedef enum {BEAMFORMER_SHARED_MEMORY_LOCKS BeamformerSharedMemoryLockKind_Coun
 #undef X
 
 typedef struct {
-	u32 parameter_block;
-} BeamformerComputeWorkContext;
-
-typedef struct {
 	BeamformerViewPlaneTag view_plane;
 	u32                    parameter_block;
-} BeamformerComputeIndirectWorkContext;
+} BeamformerComputeWorkContext;
 
 /* NOTE: discriminated union based on type */
 typedef struct {
@@ -52,7 +48,6 @@ typedef struct {
 	union {
 		void                                 *generic;
 		BeamformerComputeWorkContext          compute_context;
-		BeamformerComputeIndirectWorkContext  compute_indirect_context;
 		BeamformerCreateFilterContext         create_filter_context;
 		BeamformerExportContext               export_context;
 		BeamformerShaderKind                  reload_shader;
