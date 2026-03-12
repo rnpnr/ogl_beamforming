@@ -443,8 +443,8 @@ beamformer_push_data_with_compute(void *data, u32 data_size, u32 image_plane_tag
 			BeamformWork *work = try_push_work_queue();
 			if (work) {
 				work->kind = BeamformerWorkKind_ComputeIndirect;
-				work->compute_indirect_context.view_plane      = image_plane_tag;
-				work->compute_indirect_context.parameter_block = parameter_slot;
+				work->compute_context.view_plane      = image_plane_tag;
+				work->compute_context.parameter_block = parameter_slot;
 				beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
 				beamformer_flush_commands();
 				result = 1;
