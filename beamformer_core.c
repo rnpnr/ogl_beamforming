@@ -865,14 +865,21 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 	case BeamformerShaderKind_Filter:
 	case BeamformerShaderKind_Demodulate:
 	{
-		u64 element_size = beamformer_data_kind_byte_size[cp->shader_descriptors[shader_slot].bake.Filter.data_kind];
 		b32 demod = cp->pipeline.shaders[shader_slot] == BeamformerShaderKind_Demodulate;
 
-		u32 filter_slot = cp->pipeline.parameters[shader_slot].filter_slot;
+		BeamformerDataKind output_data_kind = cp->shader_descriptors[shader_slot].bake.Filter.data_kind;
+		if (demod) output_data_kind = BeamformerDataKind_Float16Complex;
+		if (cp->shader_descriptors[shader_slot].bake.Filter.output_floats) {
+			output_data_kind = demod ? BeamformerDataKind_Float32Complex
+			                         : BeamformerDataKind_Float32;
+		}
+
+		u64 element_size = beamformer_data_kind_byte_size[output_data_kind];
+		u32 filter_slot  = cp->pipeline.parameters[shader_slot].filter_slot;
 		BeamformerFilterPushConstants pc = {
 			.filter_coefficients   = cp->filters[filter_slot].buffer.gpu_pointer,
 			.input_data            = shader_slot == 0 ? rf_pointer : pp_input_pointer,
-			.output_element_offset = output_index * pp_size / element_size / (demod ? 2 : 1),
+			.output_element_offset = output_index * pp_size / element_size,
 		};
 
 		GPUMemoryBarrierInfo barrier = {
@@ -893,7 +900,6 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 
 		GPUBuffer *b = cc->backlog.buffer;
 
-
 		u64 frame_size   = beamformer_frame_byte_size(frame->points, frame->data_kind);
 		u64 iframe_size  = frame_size / beamformer_data_kind_element_count[frame->data_kind];
 		u64 element_size = beamformer_data_kind_byte_size[cp->shader_descriptors[shader_slot].bake.DAS.data_kind];
@@ -908,7 +914,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			.output_size_z     = cp->output_points.z,
 			.cycle_t           = das_cycle_t++,
 			.channel_offset    = channel_offset,
-			.array_parameters  = cp->array_parameters.gpu_pointer + offsetof(BeamformerDASArrayParameters, focal_vectors),
+			.array_parameters  = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, FocalVectors),
 		};
 		mem_copy(pc.voxel_transform.E, cp->voxel_transform.E, sizeof(pc.voxel_transform));
 		mem_copy(pc.xdc_transform.E,   cp->xdc_transform.E,   sizeof(pc.xdc_transform));
