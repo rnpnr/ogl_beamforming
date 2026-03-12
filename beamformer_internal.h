@@ -195,8 +195,21 @@ DEBUG_IMPORT u64 *        vk_command_read_timestamps(VulkanTimeline timeline, Ar
 
 #if BEAMFORMER_RENDERDOC_HOOKS
 DEBUG_IMPORT void *       vk_renderdoc_instance_handle(void);
+
+DEBUG_IMPORT renderdoc_start_frame_capture_fn       *start_frame_capture;
+DEBUG_IMPORT renderdoc_set_capture_path_template_fn *set_capture_path_template;
+DEBUG_IMPORT renderdoc_end_frame_capture_fn         *end_frame_capture;
+#define start_renderdoc_capture()  do { \
+	if (set_capture_path_template) set_capture_path_template("captures/ogl.rdc"); \
+	if (start_frame_capture)       start_frame_capture(vk_renderdoc_instance_handle(), 0); \
+} while(0)
+#define end_renderdoc_capture()   if (end_frame_capture)   end_frame_capture(vk_renderdoc_instance_handle(), 0)
+#define renderdoc_attached(...)   (start_frame_capture != 0)
+
 #else
-#define vk_renderdoc_instance_handle() ((void *)0)
+#define start_renderdoc_capture(...)
+#define end_renderdoc_capture(...)
+#define renderdoc_attached(...) (0)
 #endif
 
 ///////////////////////////////
