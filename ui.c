@@ -3404,12 +3404,11 @@ scroll_interaction(Variable *var, f32 delta)
 	case VT_BEAMFORMER_VARIABLE:{
 		BeamformerVariable *bv = &var->beamformer_variable;
 		f32 value  = *bv->store + delta * bv->scroll_scale;
-		*bv->store = CLAMP(value, bv->limits.x, bv->limits.y);
+		*bv->store = Clamp(value, bv->limits.x, bv->limits.y);
 	}break;
 	case VT_CYCLER:{
-		if (delta > 0) *var->cycler.state += 1;
-		else           *var->cycler.state -= 1;
-		*var->cycler.state %= var->cycler.cycle_length;
+		u32 new_state = *var->cycler.state += delta;
+		*var->cycler.state = new_state % var->cycler.cycle_length;
 	}break;
 	case VT_UI_VIEW:{
 		var->view.rect.pos.h += UI_SCROLL_SPEED * delta;
@@ -3795,8 +3794,8 @@ ui_extra_actions(BeamformerUI *ui, Variable *var)
 		case VT_BEAMFORMER_FRAME_VIEW:{
 			u32 delta = ui_cycler_delta_for_frame();
 			BeamformerFrameView *old = view->child->generic;
-			BeamformerFrameView *new = view->child->generic = ui_beamformer_frame_view_new(ui, &ui->arena);
-			BeamformerFrameViewKind last_kind = (old->kind - delta) % BeamformerFrameViewKind_Count;
+			view->child->generic = ui_beamformer_frame_view_new(ui, &ui->arena);
+			BeamformerFrameViewKind last_kind = ((u32)old->kind - delta) % BeamformerFrameViewKind_Count;
 
 			/* NOTE(rnp): log_scale gets released below before its needed */
 			b32 log_scale = old->log_scale->bool32;
@@ -3804,8 +3803,6 @@ ui_extra_actions(BeamformerUI *ui, Variable *var)
 
 			ui_beamformer_frame_view_release_subresources(ui, old, last_kind);
 			ui_beamformer_frame_view_convert(ui, &ui->arena, view->child, view->menu, old->kind, old, log_scale);
-			if (new->kind == BeamformerFrameViewKind_Copy)
-				ui_beamformer_frame_view_copy_frame(ui, new, old);
 
 			DLLRemove(old);
 			SLLPushFreelist(old, ui->view_freelist);
