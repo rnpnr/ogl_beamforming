@@ -180,6 +180,12 @@ beamformer_init(BeamformerInput *input)
 	ctx->compute_worker.arena  = compute_arena;
 	ctx->upload_worker.arena   = upload_arena;
 
+	#if BEAMFORMER_RENDERDOC_HOOKS
+	start_frame_capture       = input->renderdoc_start_frame_capture;
+	end_frame_capture         = input->renderdoc_end_frame_capture;
+	set_capture_path_template = input->renderdoc_set_capture_file_path_template;
+	#endif
+
 	vk_load(input->vulkan_library_handle, &memory, &ctx->error_stream);
 
 	BeamformerComputeContext *cs = &ctx->compute_context;
