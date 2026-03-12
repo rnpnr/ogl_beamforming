@@ -10,7 +10,7 @@
   #define SAMPLE_TYPE_CAST(v) (v)
   #if OutputFloats
     #define OUT_DATA_TYPE       f32vec2
-    #define RESULT_TYPE_CAST(v) (clamp((v), -1.0, 1.0) * 32767.0f)
+    #define RESULT_TYPE_CAST(v) f32vec2(v)
   #else
     #define OUT_DATA_TYPE       f16vec2
     #define RESULT_TYPE_CAST(v) f16vec2(v)
