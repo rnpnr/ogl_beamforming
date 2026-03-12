@@ -200,19 +200,6 @@ push_compute_timing_info(ComputeTimingTable *t, ComputeTimingInfo info)
 	t->buffer[index] = info;
 }
 
-function b32
-fill_frame_compute_work(BeamformerCtx *ctx, BeamformWork *work, BeamformerViewPlaneTag plane,
-                        u32 parameter_block, b32 indirect)
-{
-	b32 result = work != 0;
-	if (result) {
-		work->kind = indirect? BeamformerWorkKind_ComputeIndirect : BeamformerWorkKind_Compute;
-		work->lock = BeamformerSharedMemoryLockKind_DispatchCompute;
-		work->compute_context.parameter_block = parameter_block;
-	}
-	return result;
-}
-
 function uv3
 layout_for_output(iv3 points)
 {
@@ -1081,12 +1068,9 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			beamformer_filter_update(cp->filters + slot, fctx->parameters, block, slot, *arena);
 		}break;
 
-		case BeamformerWorkKind_ComputeIndirect:{
-			fill_frame_compute_work(ctx, work, work->compute_indirect_context.view_plane,
-			                        work->compute_indirect_context.parameter_block, 1);
-		} /* FALLTHROUGH */
-
-		case BeamformerWorkKind_Compute:{
+		case BeamformerWorkKind_ComputeIndirect:
+		case BeamformerWorkKind_Compute:
+		{
 			push_compute_timing_info(ctx->compute_timing_table,
 			                         (ComputeTimingInfo){.kind = ComputeTimingInfoKind_ComputeFrameBegin});
 
@@ -1096,7 +1080,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				beamformer_commit_parameter_block(ctx, cp, block, *arena);
 			}
 
-			post_sync_barrier(ctx->shared_memory, work->lock);
+			post_sync_barrier(ctx->shared_memory, BeamformerSharedMemoryLockKind_DispatchCompute);
 
 			u32 dirty_programs = atomic_swap_u32(&cp->dirty_programs, 0);
 			static_assert(ISPOWEROF2(BeamformerMaxComputeShaderStages),
@@ -1134,6 +1118,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			BeamformerFrame *frame  = beamformer_frame_next(cs, cp->output_points, cp->iq_pipeline, reserved_frame_size);
 			frame->acquisition_kind = cp->acquisition_kind;
 			frame->compound_count   = cp->acquisition_count;
+			frame->view_plane_tag   = work->compute_context.view_plane;
 			mem_copy(frame->voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));
 
 			VulkanHandle cmd = vk_command_begin(VulkanTimeline_Compute);
@@ -1393,9 +1378,12 @@ beamformer_queue_compute(BeamformerCtx *ctx, BeamformerFrame *frame, u32 paramet
 	if (!sm->live_imaging_parameters.active && beamformer_shared_memory_take_lock(sm, (i32)dispatch_lock, 0))
 	{
 		BeamformWork *work = beamform_work_queue_push(ctx->beamform_work_queue);
-		BeamformerViewPlaneTag tag = frame ? frame->view_plane_tag : 0;
-		if (fill_frame_compute_work(ctx, work, tag, parameter_block, 0))
+		if (work) {
+			work->kind = BeamformerWorkKind_Compute;
+			work->compute_context.view_plane      = frame ? frame->view_plane_tag : 0;
+			work->compute_context.parameter_block = parameter_block;
 			beamform_work_queue_push_commit(ctx->beamform_work_queue);
+		}
 	}
 	os_wake_all_waiters(&ctx->compute_worker.sync_variable);
 }
