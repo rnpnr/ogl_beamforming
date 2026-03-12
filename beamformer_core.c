@@ -1131,21 +1131,22 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				GPUBuffer *backlog = cs->backlog.buffer;
 				u32 subgroup_size = vk_gpu_info()->subgroup_size;
 				BeamformerBufferClearPushConstants pc = {
-					.data       = backlog->gpu_pointer + frame->buffer_offset,
-					.clear_word = 0,
-					.words      = beamformer_frame_byte_size(frame->points, frame->data_kind) / sizeof(u32),
+					.data     = backlog->gpu_pointer + frame->buffer_offset,
+					.clear_v4 = (uv4){{0}},
+					.bins     = beamformer_frame_byte_size(frame->points, frame->data_kind) / sizeof(uv4),
 				};
 
 				u32 index = BeamformerShaderKind_BufferClear - BeamformerShaderKind_ComputeInternalFirst;
 				vk_command_bind_pipeline(cmd, cs->compute_internal_pipelines[index]);
 				vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
-				vk_command_dispatch_compute(cmd, (uv3){{(u32)ceil_f32((f32)pc.words / subgroup_size), 1, 1}});
+				vk_command_dispatch_compute(cmd, (uv3){{(u32)ceil_f32((f32)pc.bins / subgroup_size), 1, 1}});
 
 				if (das_coherent) {
-					pc.words = pc.words / beamformer_data_kind_element_count[frame->data_kind];
-					pc.data  = backlog->gpu_pointer + backlog->size - sizeof(u32) * pc.words;
+					assert((pc.bins % beamformer_data_kind_element_count[frame->data_kind]) == 0);
+					pc.bins  = pc.bins / beamformer_data_kind_element_count[frame->data_kind];
+					pc.data  = backlog->gpu_pointer + backlog->size - sizeof(uv4) * pc.bins;
 					vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
-					vk_command_dispatch_compute(cmd, (uv3){{(u32)ceil_f32((f32)pc.words / subgroup_size), 1, 1}});
+					vk_command_dispatch_compute(cmd, (uv3){{(u32)ceil_f32((f32)pc.bins / subgroup_size), 1, 1}});
 				}
 			}
 
