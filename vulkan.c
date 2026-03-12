@@ -340,7 +340,6 @@ global glslang_resource_t glslc_resource_constraints[1] = {{
 	},
 }};
 
-
 #if BEAMFORMER_RENDERDOC_HOOKS
 DEBUG_IMPORT void *
 vk_renderdoc_instance_handle(void)
@@ -897,7 +896,13 @@ vk_buffer_allocate_common(VulkanBuffer *vb, VulkanBufferAllocateInfo *ai)
 
 	// TODO(rnp): this probably should be handled, its usually 4GB. likely
 	// need to chain multiple allocations and handle it in shader code
-	u64 size = Min(ai->size, vk->memory_info.max_allocation_size & ~(vk->memory_info.non_coherent_atom_size - 1));
+	u64 clamp_size = vk->memory_info.max_allocation_size & ~(vk->memory_info.non_coherent_atom_size - 1);
+
+	// NOTE(rnp): renderdoc can't handle buffers that are too close to the allocation size limit
+	if (renderdoc_attached())
+		clamp_size -= MB(8);
+
+	u64 size = Min(ai->size, clamp_size);
 
 	VkBufferCreateInfo buffer_create_info = {
 		.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
