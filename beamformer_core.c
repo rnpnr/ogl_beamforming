@@ -1,5 +1,9 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: refactor: plan_compute should build its own "command graph" which tracks
+ *      dependencies better. It is very important that unnecessary barriers are
+ *      not placed between compute stages which requires knowledge of the entire
+ *      graph.
  * [ ]: refactor: DecodeMode_None should use a different mapping and optional conversion shader
  *      for rf only mode with no filter and demod/filter should gain the OutputFloats flag for iq
  *      case and rf mode with filter; this can also be used instead of first pass uniform
@@ -716,8 +720,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			cp->acquisition_count = pb->parameters.acquisition_count;
 			cp->acquisition_kind  = pb->parameters.acquisition_kind;
 
-			// NOTE(rnp): buffer size / 2 should be mutiple of 64
-			i64 buffer_size = round_up_to(2 * cp->rf_size, 128);
+			i64 buffer_size = PING_PONG_BUFFER_SLOTS * round_up_to(cp->rf_size, 64);
 			if (ctx->compute_context.ping_pong_buffer.size < buffer_size) {
 				GPUBufferAllocateInfo allocate_info = {.size = buffer_size, .label = s8("PingPongBuffer")};
 				vk_buffer_allocate(&ctx->compute_context.ping_pong_buffer, &allocate_info);
@@ -786,12 +789,16 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 {
 	BeamformerComputeContext *cc = &ctx->compute_context;
 
-	u32 output_index = !cc->ping_pong_input_index;
-	u32 input_index  =  cc->ping_pong_input_index;
+	u32 output_index     = !cc->ping_pong_input_index;
+	u32 input_index      =  cc->ping_pong_input_index;
+	u32 das_output_index =  PING_PONG_BUFFER_SLOTS - 1;
 
-	u64 pp_size = cc->ping_pong_buffer.size / 2;
-	u64 pp_input_pointer  = cc->ping_pong_buffer.gpu_pointer + input_index  * pp_size;
-	u64 pp_output_pointer = cc->ping_pong_buffer.gpu_pointer + output_index * pp_size;
+	u64 pp_size           = cc->ping_pong_buffer.size / PING_PONG_BUFFER_SLOTS;
+	u64 pp_input_pointer  = cc->ping_pong_buffer.gpu_pointer + input_index      * pp_size;
+	u64 pp_output_pointer = cc->ping_pong_buffer.gpu_pointer + output_index     * pp_size;
+	u64 pp_das_pointer    = cc->ping_pong_buffer.gpu_pointer + das_output_index * pp_size;
+
+	u32 das_index = cp->first_image_shader_index - 1;
 
 	uv3 dispatch = cp->shader_descriptors[shader_slot].dispatch;
 
@@ -803,39 +810,47 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 		BeamformerDecodeMode mode = cp->shader_descriptors[shader_slot].bake.Decode.decode_mode;
 		BeamformerDecodePushConstants pc = {
 			.hadamard_buffer = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, Hadamard),
-			.output_buffer   = pp_output_pointer,
 		};
+
+		if ((shader_slot + 1) == das_index) pc.output_buffer = pp_das_pointer;
+		else                                pc.output_buffer = pp_output_pointer;
 
 		if (shader_slot == 0 && mode != BeamformerDecodeMode_None) {
 			pc.output_rf_buffer = pp_input_pointer;
 			pc.rf_buffer        = rf_pointer;
 			pc.first_pass       = 1;
 
-			GPUMemoryBarrierInfo barrier = {
-				.gpu_buffer = &cc->ping_pong_buffer,
-				.offset     = pp_input_pointer - cc->ping_pong_buffer.gpu_pointer,
-				.size       = pp_size,
-			};
-
 			vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
 			vk_command_dispatch_compute(cmd, dispatch);
-			vk_command_buffer_memory_barriers(cmd, &barrier, 1);
 
 			pc.output_rf_buffer = 0;
+			pc.first_pass       = 0;
 		}
 
-		pc.rf_buffer  = pp_input_pointer;
-		pc.first_pass = 0;
+		pc.rf_buffer = pp_input_pointer;
 
-		GPUMemoryBarrierInfo barrier = {
-			.gpu_buffer = &cc->ping_pong_buffer,
-			.offset     = pp_output_pointer - cc->ping_pong_buffer.gpu_pointer,
-			.size       = pp_size,
+		GPUMemoryBarrierInfo memory_barriers[]= {
+			// NOTE(rnp): first pass or last stage output
+			{
+				.gpu_buffer = &cc->ping_pong_buffer,
+				.offset     = pp_output_pointer - cc->ping_pong_buffer.gpu_pointer,
+				.size       = pp_size,
+			},
+			// NOTE(rnp): output for DAS
+			{
+				.gpu_buffer = &cc->ping_pong_buffer,
+				.offset     = pp_das_pointer - cc->ping_pong_buffer.gpu_pointer,
+				.size       = pp_size,
+			},
 		};
 
+		u32 barrier_count = 1;
+		if (shader_slot + 1 == das_index)
+			barrier_count++;
+
+		vk_command_buffer_memory_barriers(cmd, memory_barriers, barrier_count);
 		vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		vk_command_dispatch_compute(cmd, dispatch);
-		vk_command_buffer_memory_barriers(cmd, &barrier, 1);
 
 		cc->ping_pong_input_index = !cc->ping_pong_input_index;
 	}break;
@@ -869,15 +884,36 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			.output_element_offset = output_index * pp_size / element_size,
 		};
 
-		GPUMemoryBarrierInfo barrier = {
-			.gpu_buffer = &cc->ping_pong_buffer,
-			.offset     = pp_output_pointer - cc->ping_pong_buffer.gpu_pointer,
-			.size       = pp_size,
+		GPUMemoryBarrierInfo memory_barriers[] = {
+			// NOTE(rnp): last stage output
+			{
+				.gpu_buffer = &cc->ping_pong_buffer,
+				.offset     = pp_output_pointer - cc->ping_pong_buffer.gpu_pointer,
+				.size       = pp_size,
+			},
+			// NOTE(rnp): output for DAS
+			{
+				.gpu_buffer = &cc->ping_pong_buffer,
+				.offset     = pp_das_pointer - cc->ping_pong_buffer.gpu_pointer,
+				.size       = pp_size,
+			},
 		};
+		GPUMemoryBarrierInfo *barriers = memory_barriers;
+
+		u32 barrier_count = 2;
+		if (shader_slot == 0) {
+			barriers++;
+			barrier_count--;
+		}
+
+		if ((shader_slot + 1) != das_index || channel_offset == 0)
+			barrier_count--;
+
+		if (barrier_count)
+			vk_command_buffer_memory_barriers(cmd, barriers, barrier_count);
 
 		vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		vk_command_dispatch_compute(cmd, dispatch);
-		vk_command_buffer_memory_barriers(cmd, &barrier, 1);
 
 		cc->ping_pong_input_index = !cc->ping_pong_input_index;
 	}break;
@@ -893,7 +929,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 
 		BeamformerDASPushConstants pc = {
 			.xdc_element_pitch = cp->xdc_element_pitch,
-			.rf_element_offset = input_index * pp_size / element_size,
+			.rf_element_offset = das_output_index * pp_size / element_size,
 			.output_frame      = b->gpu_pointer + frame->buffer_offset,
 			.incoherent_frame  = b->gpu_pointer + b->size - iframe_size,
 			.output_size_x     = cp->output_points.x,
@@ -908,7 +944,14 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 
 		b32 coherent = cp->shader_descriptors[shader_slot].bake.DAS.coherency_weighting;
 
-		GPUMemoryBarrierInfo memory_barriers[2] = {
+		GPUMemoryBarrierInfo memory_barriers[] = {
+			// NOTE(rnp): last stage data output barrier
+			{
+				.gpu_buffer = &cc->ping_pong_buffer,
+				.offset     = pp_das_pointer - cc->ping_pong_buffer.gpu_pointer,
+				.size       = pp_size,
+			},
+			// NOTE(rnp): output clearing pipeline barriers or last DAS pipeline write barriers
 			{
 				.gpu_buffer = b,
 				.offset     = frame->buffer_offset,
@@ -921,39 +964,46 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			},
 		};
 
-		// NOTE(rnp): barrier to wait for clear pipeline to complete
-		vk_command_buffer_memory_barriers(cmd, memory_barriers, 1 + coherent);
+		u32 barrier_count = countof(memory_barriers);
+		if (!coherent) barrier_count--;
 
+		vk_command_buffer_memory_barriers(cmd, memory_barriers, barrier_count);
 		vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		vk_command_dispatch_compute(cmd, dispatch);
-		vk_command_buffer_memory_barriers(cmd, memory_barriers, 1 + coherent);
 	}break;
 
 	case BeamformerShaderKind_CoherencyWeighting:{
 		GPUBuffer *b = cc->backlog.buffer;
 
-		u64 frame_size      = beamformer_frame_byte_size(frame->points, frame->data_kind);
-		u64 incoherent_size = frame_size / beamformer_data_kind_element_count[frame->data_kind];
+		u64 frame_size  = beamformer_frame_byte_size(frame->points, frame->data_kind);
+		u64 iframe_size = frame_size / beamformer_data_kind_element_count[frame->data_kind];
 
-		GPUMemoryBarrierInfo memory_barrier = {
-			.gpu_buffer = b,
-			.offset     = frame->buffer_offset,
-			.size       = frame_size,
-		};
-
-		BeamformerCoherencyWeightingPushConstants cwpc = {
+		BeamformerCoherencyWeightingPushConstants pc = {
 			.left_side_buffer  = b->gpu_pointer + frame->buffer_offset,
-			.right_side_buffer = b->gpu_pointer + b->size - incoherent_size,
-			.elements          = incoherent_size / beamformer_data_kind_element_size[frame->data_kind],
+			.right_side_buffer = b->gpu_pointer + b->size - iframe_size,
+			.elements          = iframe_size / beamformer_data_kind_element_size[frame->data_kind],
 			.scale             = 1.0f,
 			.output_size_x     = cp->output_points.x,
 			.output_size_y     = cp->output_points.y,
 			.output_size_z     = cp->output_points.z,
 		};
 
-		vk_command_push_constants(cmd, 0, sizeof(cwpc), &cwpc);
+		GPUMemoryBarrierInfo memory_barriers[] = {
+			{
+				.gpu_buffer = b,
+				.offset     = frame->buffer_offset,
+				.size       = frame_size,
+			},
+			{
+				.gpu_buffer = b,
+				.offset     = pc.right_side_buffer - b->gpu_pointer,
+				.size       = iframe_size,
+			},
+		};
+
+		vk_command_buffer_memory_barriers(cmd, memory_barriers, countof(memory_barriers));
+		vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		vk_command_dispatch_compute(cmd, dispatch);
-		vk_command_buffer_memory_barriers(cmd, &memory_barrier, 1);
 	}break;
 
 	// NOTE(rnp): invalid stages should be filtered in planning phase
