@@ -94,6 +94,8 @@ typedef struct {
 	u16 max_msaa_samples;
 	u16 subgroup_size;
 
+	b32 cooperative_matrix;
+
 	u32 max_image_dimension_2D;
 	// NOTE(rnp): vulkan compute will output to a buffer so this won't be relevant
 	u32 max_image_dimension_3D;
@@ -302,6 +304,7 @@ struct BeamformerComputePlan {
 	u32 rf_size;
 	i32 hadamard_order;
 	b32 iq_pipeline;
+	u32 q_rf_data_offset;
 
 	m4  voxel_transform;
 	m4  ui_voxel_transform;

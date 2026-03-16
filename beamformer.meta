@@ -1,4 +1,4 @@
-@Constant(16)   ChannelChunkCount
+@Constant(16)   ChunkChannelCount
 @Constant(4)    FilterSlots
 @Constant(4096) MaxBacklogFrames
 @Constant(256)  MaxChannelCount
@@ -292,17 +292,18 @@
 		@Bake
 		{
 			[DataKind             data_kind              U32]
-			[DilateOutput         dilate_output          U32]
-			[UseSharedMemory      use_shared_memory      U32]
+			[UseSharedMemory      use_shared_memory      B32]
 			[DecodeMode           decode_mode            U32]
-			[InputChannelStride   input_channel_stride   U32]
-			[InputSampleStride    input_sample_stride    U32]
-			[InputTransmitStride  input_transmit_stride  U32]
 			[OutputChannelStride  output_channel_stride  U32]
 			[OutputSampleStride   output_sample_stride   U32]
 			[OutputTransmitStride output_transmit_stride U32]
 			[ToProcess            to_process             U32]
 			[TransmitCount        transmit_count         U32]
+			[ChunkChannelCount    chunk_channel_count    U32]
+			[CooperativeMatrix    cooperative_matrix     B32]
+			[CooperativeMatrixM   cooperative_matrix_m   U32]
+			[CooperativeMatrixN   cooperative_matrix_n   U32]
+			[CooperativeMatrixK   cooperative_matrix_k   U32]
 		}
 
 		@PushConstants
@@ -338,6 +339,7 @@
 			[OutputSampleStride    output_sample_stride   U32]
 			[OutputTransmitStride  output_transmit_stride U32]
 			[SampleCount           sample_count           U32]
+			[BatchSampleCount      batch_sample_count     U32]
 
 			[DemodulationFrequency demodulation_frequency F32]
 			[SamplingFrequency     sampling_frequency     F32]
@@ -374,7 +376,7 @@
 			[AcquisitionCount           acquisition_count            U32]
 			[AcquisitionKind            acquisition_kind             U32]
 			[ChannelCount               channel_count                U32]
-			[ChannelChunkCount          channel_chunk_count          U32]
+			[ChunkChannelCount          chunk_channel_count          U32]
 			[InterpolationMode          interpolation_mode           U32]
 			[SampleCount                sample_count                 U32]
 			[TransmitReceiveOrientation transmit_receive_orientation U32]
@@ -447,6 +449,35 @@
 			[output_size_x     U32]
 			[output_size_y     U32]
 			[output_size_z     U32]
+		}
+	}
+
+	@Shader(reshape.glsl) Reshape
+	{
+		@Enumeration DataKind
+
+		@Bake
+		{
+			[InputDataKind  input_data_kind  U32]
+			[OutputDataKind output_data_kind U32]
+			[SizeX          size_x           U32]
+			[SizeY          size_y           U32]
+			[SizeZ          size_z           U32]
+			[InputStrideX   input_stride_x   U32]
+			[InputStrideY   input_stride_y   U32]
+			[InputStrideZ   input_stride_z   U32]
+			[OutputStrideX  output_stride_x  U32]
+			[OutputStrideY  output_stride_y  U32]
+			[OutputStrideZ  output_stride_z  U32]
+			[Interleave     interleave       B32]
+			[Deinterleave   deinterleave     B32]
+		}
+
+		@PushConstants
+		{
+			[output_buffer      U64]
+			[left_input_buffer  U64]
+			[right_input_buffer U64]
 		}
 	}
 }

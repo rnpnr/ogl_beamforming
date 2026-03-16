@@ -138,6 +138,8 @@ typedef enum {
 	VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2                                               = 1000337000,
 	VK_STRUCTURE_TYPE_BUFFER_COPY_2                                                    = 1000337006,
 	VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3                                              = 1000360000,
+	VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR                  = 1000506000,
+	VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR                                = 1000506001,
 	VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_RELAXED_EXTENDED_INSTRUCTION_FEATURES_KHR = 1000558000,
 	VK_STRUCTURE_TYPE_MAX_ENUM                                                         = 0x7FFFFFFF,
 } VkStructureType;
@@ -2969,6 +2971,55 @@ typedef struct {
 } VkWriteDescriptorSet;
 
 typedef enum {
+	VK_COMPONENT_TYPE_FLOAT16_KHR     = 0,
+	VK_COMPONENT_TYPE_FLOAT32_KHR     = 1,
+	VK_COMPONENT_TYPE_FLOAT64_KHR     = 2,
+	VK_COMPONENT_TYPE_SINT8_KHR       = 3,
+	VK_COMPONENT_TYPE_SINT16_KHR      = 4,
+	VK_COMPONENT_TYPE_SINT32_KHR      = 5,
+	VK_COMPONENT_TYPE_SINT64_KHR      = 6,
+	VK_COMPONENT_TYPE_UINT8_KHR       = 7,
+	VK_COMPONENT_TYPE_UINT16_KHR      = 8,
+	VK_COMPONENT_TYPE_UINT32_KHR      = 9,
+	VK_COMPONENT_TYPE_UINT64_KHR      = 10,
+	VK_COMPONENT_TYPE_BFLOAT16_KHR    = 1000141000,
+	VK_COMPONENT_TYPE_SINT8_PACKED_NV = 1000491000,
+	VK_COMPONENT_TYPE_UINT8_PACKED_NV = 1000491001,
+	VK_COMPONENT_TYPE_FLOAT8_E4M3_EXT = 1000491002,
+	VK_COMPONENT_TYPE_FLOAT8_E5M2_EXT = 1000491003,
+	VK_COMPONENT_TYPE_MAX_ENUM_KHR    = 0x7FFFFFFF
+} VkComponentTypeKHR;
+
+typedef enum {
+	VK_SCOPE_DEVICE_KHR       = 1,
+	VK_SCOPE_WORKGROUP_KHR    = 2,
+	VK_SCOPE_SUBGROUP_KHR     = 3,
+	VK_SCOPE_QUEUE_FAMILY_KHR = 5,
+	VK_SCOPE_MAX_ENUM_KHR     = 0x7FFFFFFF
+} VkScopeKHR;
+
+typedef struct {
+	VkStructureType    sType;
+	void *             pNext;
+	uint32_t           MSize;
+	uint32_t           NSize;
+	uint32_t           KSize;
+	VkComponentTypeKHR AType;
+	VkComponentTypeKHR BType;
+	VkComponentTypeKHR CType;
+	VkComponentTypeKHR ResultType;
+	VkBool32           saturatingAccumulation;
+	VkScopeKHR         scope;
+} VkCooperativeMatrixPropertiesKHR;
+
+typedef struct {
+	VkStructureType sType;
+	void *          pNext;
+	VkBool32        cooperativeMatrix;
+	VkBool32        cooperativeMatrixRobustBufferAccess;
+} VkPhysicalDeviceCooperativeMatrixFeaturesKHR;
+
+typedef enum {
 	VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT                      = 0,
 	VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_RESERVE_BINDING_SLOT_EXT = 1,
 	VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT                    = 2,
@@ -3022,12 +3073,12 @@ typedef struct {
 	X(vkEnumerateDeviceExtensionProperties,     VkResult, (VkPhysicalDevice physicalDevice, const char *pLayerName, uint32_t *pPropertyCount, VkExtensionProperties *pProperties)) \
 	X(vkEnumeratePhysicalDevices,               VkResult, (VkInstance instance, uint32_t *pPhysicalDeviceCount, VkPhysicalDevice *pPhysicalDevices)) \
 	X(vkGetDeviceProcAddr,                      void *,   (VkDevice device, const char *pName)) \
+	X(vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR, VkResult, (VkPhysicalDevice physicalDevice, uint32_t *pPropertyCount, VkCooperativeMatrixPropertiesKHR *pProperties)) \
 	X(vkGetPhysicalDeviceFeatures2,             void,     (VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures2 *pFeatures)) \
 	X(vkGetPhysicalDeviceFormatProperties2,     void,     (VkPhysicalDevice physicalDevice, VkFormat format, VkFormatProperties2 *pFormatProperties)) \
 	X(vkGetPhysicalDeviceMemoryProperties2,     void,     (VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties2 *pMemoryProperties)) \
 	X(vkGetPhysicalDeviceProperties2,           void,     (VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties2 *pProperties)) \
 	X(vkGetPhysicalDeviceQueueFamilyProperties, void,     (VkPhysicalDevice physicalDevice, uint32_t *pQueueFamilyPropertyCount, VkQueueFamilyProperties *pQueueFamilyProperties)) \
-
 
 /* X(name, ret, params) */
 #define VkDeviceProcedureList \

@@ -3,7 +3,7 @@
 // GENERATED CODE
 
 // NOTE: Constants (Integer)
-#define BeamformerChannelChunkCount        (16)
+#define BeamformerChunkChannelCount        (16)
 #define BeamformerFilterSlots              (4)
 #define BeamformerMaxBacklogFrames         (4096)
 #define BeamformerMaxChannelCount          (256)
@@ -105,16 +105,17 @@ typedef enum {
 	BeamformerShaderKind_Sum                = 6,
 	BeamformerShaderKind_MinMax             = 7,
 	BeamformerShaderKind_CoherencyWeighting = 8,
-	BeamformerShaderKind_BufferClear        = 9,
-	BeamformerShaderKind_RenderBeamformed   = 10,
+	BeamformerShaderKind_Reshape            = 9,
+	BeamformerShaderKind_BufferClear        = 10,
+	BeamformerShaderKind_RenderBeamformed   = 11,
 	BeamformerShaderKind_Count,
 
 	BeamformerShaderKind_ComputeFirst         = BeamformerShaderKind_CudaDecode,
 	BeamformerShaderKind_ComputeLast          = BeamformerShaderKind_MinMax,
 	BeamformerShaderKind_ComputeCount         = 8,
 	BeamformerShaderKind_ComputeHelpersFirst  = BeamformerShaderKind_CoherencyWeighting,
-	BeamformerShaderKind_ComputeHelpersLast   = BeamformerShaderKind_CoherencyWeighting,
-	BeamformerShaderKind_ComputeHelpersCount  = 1,
+	BeamformerShaderKind_ComputeHelpersLast   = BeamformerShaderKind_Reshape,
+	BeamformerShaderKind_ComputeHelpersCount  = 2,
 	BeamformerShaderKind_ComputeInternalFirst = BeamformerShaderKind_BufferClear,
 	BeamformerShaderKind_ComputeInternalLast  = BeamformerShaderKind_BufferClear,
 	BeamformerShaderKind_ComputeInternalCount = 1,
@@ -239,6 +240,12 @@ typedef struct {
 } BeamformerCoherencyWeightingPushConstants;
 
 typedef struct {
+	u64 output_buffer;
+	u64 left_input_buffer;
+	u64 right_input_buffer;
+} BeamformerReshapePushConstants;
+
+typedef struct {
 	uv4 clear_v4;
 	u64 data;
 	u32 bins;
@@ -262,17 +269,18 @@ typedef struct {
 
 typedef struct {
 	u32 data_kind;
-	u32 dilate_output;
-	u32 use_shared_memory;
+	b32 use_shared_memory;
 	u32 decode_mode;
-	u32 input_channel_stride;
-	u32 input_sample_stride;
-	u32 input_transmit_stride;
 	u32 output_channel_stride;
 	u32 output_sample_stride;
 	u32 output_transmit_stride;
 	u32 to_process;
 	u32 transmit_count;
+	u32 chunk_channel_count;
+	b32 cooperative_matrix;
+	u32 cooperative_matrix_m;
+	u32 cooperative_matrix_n;
+	u32 cooperative_matrix_k;
 } BeamformerDecodeBakeParameters;
 
 typedef struct {
@@ -289,6 +297,7 @@ typedef struct {
 	u32 output_sample_stride;
 	u32 output_transmit_stride;
 	u32 sample_count;
+	u32 batch_sample_count;
 	f32 demodulation_frequency;
 	f32 sampling_frequency;
 } BeamformerFilterBakeParameters;
@@ -302,7 +311,7 @@ typedef struct {
 	u32 acquisition_count;
 	u32 acquisition_kind;
 	u32 channel_count;
-	u32 channel_chunk_count;
+	u32 chunk_channel_count;
 	u32 interpolation_mode;
 	u32 sample_count;
 	u32 transmit_receive_orientation;
@@ -323,12 +332,29 @@ typedef struct {
 	u32 data_kind;
 } BeamformerCoherencyWeightingBakeParameters;
 
+typedef struct {
+	u32 input_data_kind;
+	u32 output_data_kind;
+	u32 size_x;
+	u32 size_y;
+	u32 size_z;
+	u32 input_stride_x;
+	u32 input_stride_y;
+	u32 input_stride_z;
+	u32 output_stride_x;
+	u32 output_stride_y;
+	u32 output_stride_z;
+	b32 interleave;
+	b32 deinterleave;
+} BeamformerReshapeBakeParameters;
+
 typedef union {
 	BeamformerDecodeBakeParameters             Decode;
 	BeamformerFilterBakeParameters             Filter;
 	BeamformerDASBakeParameters                DAS;
 	BeamformerSumBakeParameters                Sum;
 	BeamformerCoherencyWeightingBakeParameters CoherencyWeighting;
+	BeamformerReshapeBakeParameters            Reshape;
 } BeamformerShaderBakeParameters;
 
 typedef union {
@@ -546,6 +572,7 @@ read_only global s8 beamformer_shader_names[] = {
 	s8_comp("Sum"),
 	s8_comp("MinMax"),
 	s8_comp("CoherencyWeighting"),
+	s8_comp("Reshape"),
 	s8_comp("BufferClear"),
 	s8_comp("RenderBeamformed"),
 };
@@ -557,6 +584,7 @@ read_only global BeamformerShaderKind beamformer_reloadable_shader_kinds[] = {
 	BeamformerShaderKind_Sum,
 	BeamformerShaderKind_MinMax,
 	BeamformerShaderKind_CoherencyWeighting,
+	BeamformerShaderKind_Reshape,
 	BeamformerShaderKind_BufferClear,
 	BeamformerShaderKind_RenderBeamformed,
 };
@@ -568,6 +596,7 @@ read_only global s8 *beamformer_reloadable_shader_files[] = {
 	(s8 []){s8_comp("sum.glsl")},
 	(s8 []){s8_comp("min_max.glsl")},
 	(s8 []){s8_comp("coherency_weighting.glsl")},
+	(s8 []){s8_comp("reshape.glsl")},
 	(s8 []){s8_comp("buffer_clear.glsl")},
 	(s8 []){s8_comp("render_3d.vert.glsl"), s8_comp("render_3d.frag.glsl")},
 };
@@ -584,6 +613,7 @@ read_only global i32 beamformer_shader_reloadable_index_by_shader[] = {
 	5,
 	6,
 	7,
+	8,
 };
 
 read_only global i32 beamformer_reloadable_compute_shader_info_indices[] = {
@@ -596,14 +626,15 @@ read_only global i32 beamformer_reloadable_compute_shader_info_indices[] = {
 
 read_only global i32 beamformer_reloadable_compute_helpers_shader_info_indices[] = {
 	5,
-};
-
-read_only global i32 beamformer_reloadable_compute_internal_shader_info_indices[] = {
 	6,
 };
 
-read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
+read_only global i32 beamformer_reloadable_compute_internal_shader_info_indices[] = {
 	7,
+};
+
+read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
+	8,
 };
 
 read_only global s8 beamformer_shader_global_header_strings[] = {
@@ -710,6 +741,13 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 	s8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
+	"  uint64_t output_buffer;\n"
+	"  uint64_t left_input_buffer;\n"
+	"  uint64_t right_input_buffer;\n"
+	"};\n"
+	"\n"),
+	s8_comp(""
+	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  u32vec4  clear_v4;\n"
 	"  uint64_t data;\n"
 	"  uint32_t bins;\n"
@@ -742,10 +780,12 @@ read_only global b8 beamformer_shader_has_primitive[] = {
 	0,
 	0,
 	0,
+	0,
 	1,
 };
 
 read_only global b8 beamformer_shader_primitive_is_vertex[] = {
+	0,
 	0,
 	0,
 	0,
@@ -763,8 +803,9 @@ read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){0, 12},
 	0,
 	(i32 []){0, 13},
-	(i32 []){14},
-	(i32 []){0, 15},
+	(i32 []){0, 14},
+	(i32 []){15},
+	(i32 []){0, 16},
 };
 
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
@@ -774,6 +815,7 @@ read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	2,
 	0,
 	2,
+	2,
 	1,
 	2,
 };
@@ -781,17 +823,18 @@ read_only global i32 beamformer_shader_header_vector_lengths[] = {
 read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 	(s8 []){
 		s8_comp("DataKind"),
-		s8_comp("DilateOutput"),
 		s8_comp("UseSharedMemory"),
 		s8_comp("DecodeMode"),
-		s8_comp("InputChannelStride"),
-		s8_comp("InputSampleStride"),
-		s8_comp("InputTransmitStride"),
 		s8_comp("OutputChannelStride"),
 		s8_comp("OutputSampleStride"),
 		s8_comp("OutputTransmitStride"),
 		s8_comp("ToProcess"),
 		s8_comp("TransmitCount"),
+		s8_comp("ChunkChannelCount"),
+		s8_comp("CooperativeMatrix"),
+		s8_comp("CooperativeMatrixM"),
+		s8_comp("CooperativeMatrixN"),
+		s8_comp("CooperativeMatrixK"),
 	},
 	(s8 []){
 		s8_comp("DataKind"),
@@ -807,6 +850,7 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("OutputSampleStride"),
 		s8_comp("OutputTransmitStride"),
 		s8_comp("SampleCount"),
+		s8_comp("BatchSampleCount"),
 		s8_comp("DemodulationFrequency"),
 		s8_comp("SamplingFrequency"),
 	},
@@ -819,7 +863,7 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("AcquisitionCount"),
 		s8_comp("AcquisitionKind"),
 		s8_comp("ChannelCount"),
-		s8_comp("ChannelChunkCount"),
+		s8_comp("ChunkChannelCount"),
 		s8_comp("InterpolationMode"),
 		s8_comp("SampleCount"),
 		s8_comp("TransmitReceiveOrientation"),
@@ -838,14 +882,30 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 	(s8 []){
 		s8_comp("DataKind"),
 	},
+	(s8 []){
+		s8_comp("InputDataKind"),
+		s8_comp("OutputDataKind"),
+		s8_comp("SizeX"),
+		s8_comp("SizeY"),
+		s8_comp("SizeZ"),
+		s8_comp("InputStrideX"),
+		s8_comp("InputStrideY"),
+		s8_comp("InputStrideZ"),
+		s8_comp("OutputStrideX"),
+		s8_comp("OutputStrideY"),
+		s8_comp("OutputStrideZ"),
+		s8_comp("Interleave"),
+		s8_comp("Deinterleave"),
+	},
 	0,
 	0,
 };
 
 read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
 	0x00000000UL,
-	0x00006000UL,
+	0x0000c000UL,
 	0x0007f000UL,
+	0x00000000UL,
 	0x00000000UL,
 	0x00000000UL,
 	0x00000000UL,
@@ -854,12 +914,13 @@ read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
 };
 
 read_only global u8 beamformer_shader_bake_parameter_counts[] = {
-	12,
-	15,
+	13,
+	16,
 	19,
 	1,
 	0,
 	1,
+	13,
 	0,
 	0,
 };
@@ -871,6 +932,7 @@ read_only global u8 beamformer_shader_push_constant_sizes[] = {
 	sizeof(BeamformerSumPushConstants),
 	0,
 	sizeof(BeamformerCoherencyWeightingPushConstants),
+	sizeof(BeamformerReshapePushConstants),
 	sizeof(BeamformerBufferClearPushConstants),
 	sizeof(BeamformerRenderBeamformedPushConstants),
 };
