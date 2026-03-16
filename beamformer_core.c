@@ -981,7 +981,6 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 		BeamformerCoherencyWeightingPushConstants pc = {
 			.left_side_buffer  = b->gpu_pointer + frame->buffer_offset,
 			.right_side_buffer = b->gpu_pointer + b->size - iframe_size,
-			.elements          = iframe_size / beamformer_data_kind_element_size[frame->data_kind],
 			.scale             = 1.0f,
 			.output_size_x     = cp->output_points.x,
 			.output_size_y     = cp->output_points.y,
