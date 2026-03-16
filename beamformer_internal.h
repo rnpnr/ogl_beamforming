@@ -426,7 +426,13 @@ typedef struct {
 	VulkanHandle compute_internal_pipelines[BeamformerShaderKind_ComputeInternalCount];
 
 	/* NOTE(rnp): used to ping pong data between compute stages.
-	 * Half the buffer will be used for reading and the other for writing. */
+	 *
+	 * Allocate one extra slot for DAS output to allow overlap with the next
+	 * channel chunk batch. To obtain optimal overlap we need 2 extra slots
+	 * and we need to ping pong submissions between queues. This is not
+	 * implemented so we only do 1 extra slot for now.
+	 */
+	#define PING_PONG_BUFFER_SLOTS (2 + 1)
 	GPUBuffer ping_pong_buffer;
 	u32 ping_pong_input_index;
 
