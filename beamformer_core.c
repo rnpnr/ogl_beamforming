@@ -1014,9 +1014,10 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 	BeamformerComputeContext * cs = &ctx->compute_context;
 	BeamformerSharedMemory *   sm = ctx->shared_memory;
 
-	BeamformWork *work = beamform_work_queue_pop(q);
-	while (work) {
-		b32 can_commit = 1;
+	for (BeamformWork *work = beamform_work_queue_pop(q);
+	     work;
+	     beamform_work_queue_pop_commit(q), work = beamform_work_queue_pop(q))
+	{
 		switch (work->kind) {
 
 		case BeamformerWorkKind_ExportBuffer:{
@@ -1077,12 +1078,14 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			post_sync_barrier(ctx->shared_memory, BeamformerSharedMemoryLockKind_DispatchCompute);
 
 			u32 dirty_programs = atomic_swap_u32(&cp->dirty_programs, 0);
-			static_assert(ISPOWEROF2(BeamformerMaxComputeShaderStages),
-			              "max compute shader stages must be power of 2");
+			static_assert(IsPowerOfTwo(BeamformerMaxComputeShaderStages), "");
 			assert((dirty_programs & ~((u32)BeamformerMaxComputeShaderStages - 1)) == 0);
-			for EachBit(dirty_programs, slot) {
-				beamformer_reload_compute_pipeline(cp->vulkan_pipelines + slot, cp->pipeline.shaders[slot],
-				                                   cp->shader_descriptors + slot, *arena);
+			if unlikely(dirty_programs) {
+				for EachBit(dirty_programs, slot) {
+					beamformer_reload_compute_pipeline(cp->vulkan_pipelines + slot,
+					                                   cp->pipeline.shaders[slot],
+					                                   cp->shader_descriptors + slot, *arena);
+				}
 			}
 
 			atomic_store_u32(&cs->processing_compute, 1);
@@ -1231,11 +1234,6 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			end_renderdoc_capture();
 		}break;
 		InvalidDefaultCase;
-		}
-
-		if (can_commit) {
-			beamform_work_queue_pop_commit(q);
-			work = beamform_work_queue_pop(q);
 		}
 	}
 }
