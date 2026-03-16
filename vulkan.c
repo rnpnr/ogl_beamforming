@@ -188,16 +188,15 @@ read_only global const char *vk_required_instance_extensions[] = {
 	X("VK_KHR_timeline_semaphore") \
 	VK_OS_REQUIRED_DEVICE_EXTENSIONS_LIST
 
-#define X(str) str,
-read_only global const char *vk_required_device_extensions[] = {
-VK_REQUIRED_DEVICE_EXTENSIONS_LIST
-};
+#define X(str) s8_comp(str),
+read_only global s8 vk_required_device_extensions[] = {VK_REQUIRED_DEVICE_EXTENSIONS_LIST};
 #undef X
 
-#define X(str) sizeof(str) - 1,
-read_only global u32 vk_required_device_extension_name_lengths[] = {
-VK_REQUIRED_DEVICE_EXTENSIONS_LIST
-};
+#define VK_OPTIONAL_DEVICE_EXTENSIONS_LIST \
+	X(VK_KHR, cooperative_matrix) \
+
+#define X(p, s, ...) s8_comp(#p "_" #s),
+read_only global s8 vk_optional_device_extensions[] = {VK_OPTIONAL_DEVICE_EXTENSIONS_LIST};
 #undef X
 
 #define VK_REQUIRED_PHYSICAL_FEATURES \
@@ -211,6 +210,7 @@ VK_REQUIRED_DEVICE_EXTENSIONS_LIST
 	X(bufferDeviceAddress) \
 	X(shaderFloat16) \
 	X(timelineSemaphore) \
+	X(vulkanMemoryModel) \
 
 #define VK_REQUIRED_PHYSICAL_13_FEATURES \
 	X(dynamicRendering) \
@@ -220,11 +220,8 @@ VK_REQUIRED_DEVICE_EXTENSIONS_LIST
 	X(VK_KHR, shader_non_semantic_info) \
 	X(VK_KHR, shader_relaxed_extended_instruction) \
 
-#define X(p, s, ...) #p "_" #s,
-read_only global const char *vk_debug_extensions[] = {VK_DEBUG_EXTENSIONS};
-#undef X
-#define X(p, s, ...) sizeof(#p "_" #s) - 1,
-read_only global u32 vk_debug_extension_name_lengths[] = {VK_DEBUG_EXTENSIONS};
+#define X(p, s, ...) s8_comp(#p "_" #s),
+read_only global s8 vk_debug_extensions[] = {VK_DEBUG_EXTENSIONS};
 #undef X
 
 #define VK_INSTANCE_DEBUG_EXTENSIONS_LIST \
@@ -234,13 +231,24 @@ read_only global u32 vk_debug_extension_name_lengths[] = {VK_DEBUG_EXTENSIONS};
 read_only global s8 vk_instance_debug_extensions[] = {VK_INSTANCE_DEBUG_EXTENSIONS_LIST};
 #undef X
 
-global union {
-	struct {
-		#define X(_, name, ...) b8 name;
-		VK_DEBUG_EXTENSIONS
-		#undef X
-	};
-	b8 E[countof(vk_debug_extensions)];
+global struct {
+	union {
+		struct {
+			#define X(_, name, ...) b8 name;
+			VK_OPTIONAL_DEVICE_EXTENSIONS_LIST
+			#undef X
+		};
+		b8 E[countof(vk_optional_device_extensions)];
+	} optional;
+
+	union {
+		struct {
+			#define X(_, name, ...) b8 name;
+			VK_DEBUG_EXTENSIONS
+			#undef X
+		};
+		b8 E[countof(vk_debug_extensions)];
+	} debug;
 
 	union {
 		struct {
@@ -250,7 +258,12 @@ global union {
 		};
 		b8 E[countof(vk_instance_debug_extensions)];
 	} instance;
-} vulkan_debug;
+} vulkan_config;
+
+#define MAX_ENABLED_EXTENSIONS (  countof(vk_required_device_extensions) \
+                                + countof(vk_optional_device_extensions) \
+                                + countof(vk_debug_extensions) \
+                               )
 
 global VulkanContext vulkan_context[1];
 
@@ -355,7 +368,7 @@ vk_label_object_(VkObjectType kind, u64 handle, s8 label, s8 extra)
 {
 	local_persist u8 buffer[1024];
 	Stream sb = arena_stream(arena_from_memory(buffer, sizeof(buffer)));
-	if (vulkan_debug.instance.debug_utils && label.len > 0) {
+	if (vulkan_config.instance.debug_utils && label.len > 0) {
 		stream_append_s8s(&sb, label, s8(" ("), extra, s8(")"));
 		stream_append_byte(&sb, 0);
 		if (!sb.errors) {
@@ -473,7 +486,7 @@ glsl_to_spirv(Arena *arena, u32 kind, s8 shader_text, s8 name)
 		if (glslang_program_link(program, messages)) {
 			glslang_spv_options_t options = {.validate = 1,};
 
-			if (vulkan_debug.shader_non_semantic_info) {
+			if (vulkan_config.debug.shader_non_semantic_info) {
 				options.generate_debug_info                  = 1;
 				options.emit_nonsemantic_shader_debug_info   = 1;
 				options.emit_nonsemantic_shader_debug_source = 1;
@@ -1045,7 +1058,7 @@ vk_load_instance(Arena arena, Stream *err)
 				if (s8_equal(vk_instance_debug_extensions[it], instance_ext_s8s[i])) {
 					u32 index = enabled_instance_extensions_count++;
 					enabled_instance_extensions[index] = (char *)vk_instance_debug_extensions[it].data;
-					vulkan_debug.instance.E[it] = 1;
+					vulkan_config.instance.E[it] = 1;
 					break;
 				}
 			}
@@ -1147,15 +1160,9 @@ vk_load_physical_device(Arena arena, Stream *err)
 			ext_str8s[index] = c_str_to_s8(extensions[index].extensionName);
 
 		b8 *supported = push_array(&scratch, b8, countof(vk_required_device_extensions));
-		for (u32 index = 0; index < extension_count; index++) {
-			for EachElement(vk_required_device_extensions, it) {
-				s8 test = {
-					.data = (u8 *)vk_required_device_extensions[it],
-					.len  = vk_required_device_extension_name_lengths[it],
-				};
-				supported[it] |= s8_equal(test, ext_str8s[index]);
-			}
-		}
+		for EachIndex(extension_count, index)
+			for EachElement(vk_required_device_extensions, it)
+				supported[it] |= s8_equal(vk_required_device_extensions[it], ext_str8s[index]);
 
 		u32 supported_count = 0;
 		for EachElement(vk_required_device_extensions, it)
@@ -1167,26 +1174,21 @@ vk_load_physical_device(Arena arena, Stream *err)
 			                  missing_count > 1 ? s8("s") : s8(""), s8(":\n"));
 			for EachElement(vk_required_device_extensions, it) {
 				if (!supported[it]) {
-					s8 name = {
-						.data = (u8 *)vk_required_device_extensions[it],
-						.len  = vk_required_device_extension_name_lengths[it],
-					};
+					s8 name = vk_required_device_extensions[it];
 					stream_append_s8s(err, vulkan_info("    "), name, s8("\n"));
 				}
 			}
 			fatal(stream_to_s8(err));
 		}
 
+		for EachIndex(extension_count, index)
+			for EachElement(vk_optional_device_extensions, it)
+				vulkan_config.optional.E[it] |= s8_equal(vk_optional_device_extensions[it], ext_str8s[index]);
+
 		#if BEAMFORMER_DEBUG
-		for (u32 index = 0; index < extension_count; index++) {
-			for EachElement(vk_debug_extensions, it) {
-				s8 test = {
-					.data = (u8 *)vk_debug_extensions[it],
-					.len  = vk_debug_extension_name_lengths[it],
-				};
-				vulkan_debug.E[it] |= s8_equal(test, ext_str8s[index]);
-			}
-		}
+		for EachIndex(extension_count, index)
+			for EachElement(vk_debug_extensions, it)
+				vulkan_config.debug.E[it] |= s8_equal(vk_debug_extensions[it], ext_str8s[index]);
 		#endif
 	}
 
@@ -1258,6 +1260,39 @@ vk_load_physical_device(Arena arena, Stream *err)
 				#undef X
 				fatal(stream_to_s8(err));
 			}
+		}
+
+		if (vulkan_config.optional.cooperative_matrix) {
+			Arena scratch = arena;
+			u32 property_count = 0;
+			vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR(vk->physical_device, &property_count, 0);
+
+			VkCooperativeMatrixPropertiesKHR *mat = push_array(&scratch, VkCooperativeMatrixPropertiesKHR, property_count);
+
+			// NOTE(rnp): validation layer stupidity
+			for EachIndex(property_count, it)
+				mat[it].sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR;
+
+			vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR(vk->physical_device, &property_count, mat);
+			b32 supported = 0;
+			// TODO(rnp): for now the requirements are hardcoded, it is possible to support a couple
+			// variations if needed.
+			for EachIndex(property_count, it) {
+				b32 match = 1;
+				supported &= mat[it].scope == VK_SCOPE_SUBGROUP_KHR;
+
+				supported &= mat[it].MSize == 16;
+				supported &= mat[it].NSize == 16;
+				supported &= mat[it].KSize == 16;
+
+				supported &= mat[it].AType == VK_COMPONENT_TYPE_FLOAT16_KHR;
+				supported &= mat[it].BType == VK_COMPONENT_TYPE_FLOAT16_KHR;
+				supported &= mat[it].CType == VK_COMPONENT_TYPE_FLOAT32_KHR;
+				supported &= mat[it].ResultType == VK_COMPONENT_TYPE_FLOAT32_KHR;
+
+				supported |= match;
+			}
+			vk->gpu_info.cooperative_matrix = supported;
 		}
 	}
 
@@ -1498,64 +1533,85 @@ vk_load_queues(Arena *memory, Stream *err)
 		queue_info_filled[base_q] = 1;
 	}
 
-	VkPhysicalDeviceVulkan13Features v13f = {
-		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-		#define X(name, ...) .name = 1,
-		VK_REQUIRED_PHYSICAL_13_FEATURES
-		#undef X
+	u32 enabled_count = 0;
+	const char *enabled_extensions[MAX_ENABLED_EXTENSIONS];
+
+	for EachElement(vk_required_device_extensions, it)
+		enabled_extensions[enabled_count++] = (char *)vk_required_device_extensions[it].data;
+
+	for EachElement(vk_optional_device_extensions, it)
+		if (vulkan_config.optional.E[it])
+			enabled_extensions[enabled_count++] = (char *)vk_optional_device_extensions[it].data;
+
+	for EachElement(vk_debug_extensions, it)
+		if (vulkan_config.debug.E[it])
+			enabled_extensions[enabled_count++] = (char *)vk_debug_extensions[it].data;
+
+	VkDeviceCreateInfo device_create_info = {
+		.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+		.pQueueCreateInfos       = queue_create_infos,
+		.queueCreateInfoCount    = queue_create_index,
+		.ppEnabledExtensionNames = enabled_extensions,
+		.enabledExtensionCount   = enabled_count,
 	};
 
 	VkPhysicalDeviceShaderRelaxedExtendedInstructionFeaturesKHR pdsre = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_RELAXED_EXTENDED_INSTRUCTION_FEATURES_KHR,
 		.shaderRelaxedExtendedInstruction = 1,
 	};
-	if (vulkan_debug.shader_relaxed_extended_instruction) v13f.pNext = &pdsre;
+	if (vulkan_config.debug.shader_relaxed_extended_instruction) {
+		pdsre.pNext = (void *)device_create_info.pNext;
+		device_create_info.pNext = &pdsre;
+	}
+
+	VkPhysicalDeviceCooperativeMatrixFeaturesKHR coop_mat_features = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR,
+		.cooperativeMatrix = 1,
+		.cooperativeMatrixRobustBufferAccess = 0,
+	};
+	if (vk->gpu_info.cooperative_matrix) {
+		coop_mat_features.pNext = (void *)device_create_info.pNext;
+		device_create_info.pNext = &coop_mat_features;
+	}
+
+	VkPhysicalDeviceVulkan13Features v13f = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+		.pNext = (void *)device_create_info.pNext,
+		#define X(name, ...) .name = 1,
+		VK_REQUIRED_PHYSICAL_13_FEATURES
+		#undef X
+	};
+	device_create_info.pNext = &v13f;
 
 	VkPhysicalDeviceVulkan12Features v12f = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-		.pNext = &v13f,
+		.pNext = (void *)device_create_info.pNext,
 		#define X(name, ...) .name = 1,
 		VK_REQUIRED_PHYSICAL_12_FEATURES
 		#undef X
 	};
+	device_create_info.pNext = &v12f;
 
 	VkPhysicalDeviceVulkan11Features v11f = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
-		.pNext = &v12f,
+		.pNext = (void *)device_create_info.pNext,
 		#define X(name, ...) .name = 1,
 		VK_REQUIRED_PHYSICAL_11_FEATURES
 		#undef X
 	};
+	device_create_info.pNext = &v11f;
+
 	VkPhysicalDeviceFeatures2 device_features = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-		.pNext = &v11f,
+		.pNext = (void *)device_create_info.pNext,
 		.features = {
 			#define X(name, ...) .name = 1,
 			VK_REQUIRED_PHYSICAL_FEATURES
 			#undef X
 		},
 	};
+	device_create_info.pNext = &device_features;
 
-	Arena arena = *memory;
-	u32   enabled_count = countof(vk_required_device_extensions) + countof(vk_debug_extensions);
-	const char **enabled_extensions = push_array(&arena, const char *, enabled_count);
-
-	enabled_count = 0;
-	for EachElement(vk_required_device_extensions, it)
-		enabled_extensions[enabled_count++] = vk_required_device_extensions[it];
-
-	for EachElement(vk_debug_extensions, it)
-		if (vulkan_debug.E[it])
-			enabled_extensions[enabled_count++] = vk_debug_extensions[it];
-
-	VkDeviceCreateInfo device_create_info = {
-		.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-		.pNext                   = &device_features,
-		.pQueueCreateInfos       = queue_create_infos,
-		.queueCreateInfoCount    = queue_create_index,
-		.ppEnabledExtensionNames = enabled_extensions,
-		.enabledExtensionCount   = enabled_count,
-	};
 	vkCreateDevice(vk->physical_device, &device_create_info, 0, &vk->device);
 
 	#define X(name, ...) name = (name##_fn *)vkGetDeviceProcAddr(vk->device, #name);
