@@ -5,14 +5,14 @@
     #define RESULT_COHERENT_CAST(a)   (a).x
     #define RESULT_INCOHERENT_CAST(a) (a).y
   #endif
-  #define SAMPLE_TYPE  float
+  #define SAMPLE_TYPE f32
 #elif DataKind == DataKind_Float32Complex
   #if CoherencyWeighting
     #define RESULT_TYPE               vec3
     #define RESULT_COHERENT_CAST(a)   (a).xy
     #define RESULT_INCOHERENT_CAST(a) (a).z
   #endif
-  #define SAMPLE_TYPE  vec2
+  #define SAMPLE_TYPE f32vec2
 #else
   #error DataKind unsupported for DAS
 #endif
@@ -46,7 +46,6 @@ layout(std430, buffer_reference) buffer Output {
 layout(std430, buffer_reference) buffer IncoherentOutput {
 	f32 x[];
 };
-
 
 #define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
 #define TX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 4, 4)
@@ -89,19 +88,20 @@ SAMPLE_TYPE cubic(const int offset, const float t)
 	SAMPLE_TYPE T1 = C_SPLINE * (P2 - samples[0]);
 	SAMPLE_TYPE T2 = C_SPLINE * (samples[3] - P1);
 
-#if   DataKind == DataKind_Float32
+	#if   DataKind == DataKind_Float32
 	vec4 C = vec4(P1.x, P2.x, T1.x, T2.x);
 	float result = dot(S, h * C);
-#elif DataKind == DataKind_Float32Complex
+	#elif DataKind == DataKind_Float32Complex
 	mat2x4 C = mat2x4(vec4(P1.x, P2.x, T1.x, T2.x), vec4(P1.y, P2.y, T1.y, T2.y));
 	vec2 result = S * h * C;
-#endif
+	#endif
 	return result;
 }
 
 SAMPLE_TYPE sample_rf(const int rf_offset, const float index)
 {
 	SAMPLE_TYPE result = SAMPLE_TYPE(0);
+
 	switch (InterpolationMode) {
 	case InterpolationMode_Nearest:{
 		if (int(index) >= 0 && int(round(index)) < SampleCount)
@@ -215,7 +215,7 @@ RESULT_TYPE RCA(const vec3 world_point)
 
 		int rf_offset  = int(rf_element_offset) + acquisition * SampleCount;
 		rf_offset     -= int(InterpolationMode == InterpolationMode_Cubic);
-		for (int chunk_channel = 0; chunk_channel < ChannelChunkCount; chunk_channel++) {
+		for (int chunk_channel = 0; chunk_channel < ChunkChannelCount; chunk_channel++) {
 			int   rx_channel     = channel_offset + chunk_channel;
 			vec3  rx_center      = vec3(rx_channel * xdc_element_pitch, 0);
 			vec2  receive_vector = xdc_world_point - rca_plane_projection(rx_center, rx_rows);
@@ -246,8 +246,8 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 	const float apodization_test = 0.25f / (f_number_over_z * f_number_over_z);
 
 	RESULT_TYPE result = RESULT_TYPE(0);
-	for (float chunk_channel = 0; chunk_channel < float(ChannelChunkCount); chunk_channel += 1.0f) {
-		float rx_channel = float(channel_offset) + chunk_channel;
+	for (f32 chunk_channel = 0; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.0f) {
+		f32 rx_channel  = f32(channel_offset) + chunk_channel;
 		int rf_offset   = int(rf_element_offset) + int(chunk_channel) * SampleCount * AcquisitionCount + Sparse * SampleCount;
 		rf_offset      -= int(InterpolationMode == InterpolationMode_Cubic);
 
@@ -294,7 +294,7 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;
 	float transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
 
-	for (float chunk_channel = 0; chunk_channel < float(ChannelChunkCount); chunk_channel += 1.0f) {
+	for (f32 chunk_channel = 0; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.0f) {
 		float rx_channel      = float(channel_offset) + chunk_channel;
 		float receive_x_delta = xdc_world_point.x - rx_channel * xdc_element_pitch.x;
 		float a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);

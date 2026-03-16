@@ -1,36 +1,21 @@
 /* See LICENSE for license details. */
 
-/* NOTE(rnp): invoked with samples x channels x transmits
- * Each instance extracts a single time sample from a single channel for all transmits
- * and does a dot product with the appropriate row of the bound hadamard matrix
- * (unless decode_mode == DECODE_MODE_NONE). The result of this dot product is stored in the
- * output. In bulk this has the effect of computing a matrix multiply of the
- * sample-transmit plane with the bound hadamard matrix.
- */
+#if CooperativeMatrix
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#endif
 
 #if   DataKind == DataKind_Float32
-  #define INPUT_DATA_TYPE  float
-  #define SAMPLE_DATA_TYPE float
-#elif DataKind == DataKind_Float32Complex
-  #define INPUT_DATA_TYPE  vec2
-  #define SAMPLE_DATA_TYPE vec2
-#elif DataKind == DataKind_Float16Complex
-  #define INPUT_DATA_TYPE  f16vec2
-  #define SAMPLE_DATA_TYPE vec2
+  #define INPUT_DATA_TYPE  f32
 #elif DataKind == DataKind_Float16
-  #define INPUT_DATA_TYPE  float16_t
-  #define SAMPLE_DATA_TYPE float
-#elif DataKind == DataKind_Int16Complex
-  #define INPUT_DATA_TYPE  i16vec2
-  #define SAMPLE_DATA_TYPE vec2
+  #define INPUT_DATA_TYPE  f16
 #elif DataKind == DataKind_Int16
-  #define INPUT_DATA_TYPE  int16_t
-  #define SAMPLE_DATA_TYPE float
+  #define INPUT_DATA_TYPE  s16
 #else
   #error unsupported data kind for Decode
 #endif
 
-// TODO(rnp): fix DilateOutput
+#define SAMPLE_DATA_TYPE f32
 
 layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer RF {
 	INPUT_DATA_TYPE values[];
@@ -45,7 +30,7 @@ layout(std430, buffer_reference, buffer_reference_align = 64) restrict writeonly
 };
 
 layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer Hadamard {
-	float16_t values[];
+	f16 values[];
 };
 
 SAMPLE_DATA_TYPE sample_rf_data(uint index)
@@ -55,6 +40,7 @@ SAMPLE_DATA_TYPE sample_rf_data(uint index)
 }
 
 #if UseSharedMemory
+
 shared INPUT_DATA_TYPE rf[gl_WorkGroupSize.x * TransmitCount];
 void run_decode_large(void)
 {
@@ -69,7 +55,7 @@ void run_decode_large(void)
 	uint leftover_samples    = rf.length() % thread_count;
 	uint samples_this_thread = samples_per_thread + uint(thread_index < leftover_samples);
 
-	uint rf_offset = InputChannelStride * channel + TransmitCount * gl_WorkGroupID.x * gl_WorkGroupSize.x;
+	u32 rf_offset = TransmitCount * ChunkChannelCount * gl_WorkGroupID.x * gl_WorkGroupSize.x + TransmitCount * channel;
 
 	for (uint i = 0; i < samples_this_thread; i++) {
 		uint index = i * thread_count + thread_index;
@@ -107,11 +93,56 @@ void run_decode_large(void)
 }
 #endif
 
+#if CooperativeMatrix
+
+void run_decode_coop(void)
+{
+	#if UseSharedMemory
+	#else
+
+	u32vec2 tile_index  = gl_WorkGroupID.xy;
+	u32     time_sample = gl_WorkGroupID.z;
+
+	coopmat<f16, gl_ScopeSubgroup, CooperativeMatrixM, CooperativeMatrixK, gl_MatrixUseA>           rf_matrix;
+	coopmat<f16, gl_ScopeSubgroup, CooperativeMatrixK, CooperativeMatrixN, gl_MatrixUseB>           hadamard_matrix;
+	coopmat<f32, gl_ScopeSubgroup, CooperativeMatrixM, CooperativeMatrixN, gl_MatrixUseAccumulator> result;
+	result = coopmat<f32, gl_ScopeSubgroup, CooperativeMatrixM, CooperativeMatrixN, gl_MatrixUseAccumulator>(0.0f);
+
+	u32 result_row = CooperativeMatrixM * tile_index.y;
+	u32 result_col = CooperativeMatrixN * tile_index.x;
+
+	u32 offset = ChunkChannelCount * TransmitCount * time_sample;
+
+	for (u32 k = 0; k < TransmitCount; k += CooperativeMatrixK) {
+		u32 rf_tile_row = CooperativeMatrixM * tile_index.y;
+		u32 rf_tile_col = k;
+		coopMatLoad(rf_matrix, RF(rf_buffer).values, offset + TransmitCount * rf_tile_row + rf_tile_col,
+		            TransmitCount, gl_CooperativeMatrixLayoutRowMajor);
+
+		u32 hadamard_tile_row = k;
+		u32 hadamard_tile_col = CooperativeMatrixN * tile_index.x;
+		coopMatLoad(hadamard_matrix, Hadamard(hadamard_buffer).values,
+		            TransmitCount * hadamard_tile_row + hadamard_tile_col, TransmitCount,
+		            gl_CooperativeMatrixLayoutRowMajor);
+
+		result = coopMatMulAdd(rf_matrix, hadamard_matrix, result);
+	}
+
+	for (s32 i = 0; i < result.length(); i++)
+		result[i] = result[i] / f32(TransmitCount);
+
+	Output out_buffer = Output(output_buffer);
+	coopMatStore(result, out_buffer.values, offset + TransmitCount * result_row + result_col,
+	             TransmitCount, gl_CooperativeMatrixLayoutRowMajor);
+	#endif
+}
+#endif
+
 void run_decode_small(void)
 {
-	uint time_sample = gl_GlobalInvocationID.x;
-	uint channel     = gl_GlobalInvocationID.y;
-	uint rf_offset   = InputChannelStride * channel + TransmitCount * time_sample;
+	u32 time_sample = gl_GlobalInvocationID.x;
+	u32 channel     = gl_GlobalInvocationID.y;
+	u32 rf_offset   = TransmitCount * ChunkChannelCount * time_sample + TransmitCount * channel;
 
 	if (time_sample < OutputTransmitStride) {
 		INPUT_DATA_TYPE rf[TransmitCount];
@@ -142,50 +173,14 @@ void run_decode_small(void)
 void main()
 {
 	switch (DecodeMode) {
-	case DecodeMode_None:{
-		uint time_sample = gl_GlobalInvocationID.x;
-		uint channel     = gl_GlobalInvocationID.y;
-		uint transmit    = gl_GlobalInvocationID.z;
-
-		if (time_sample < OutputTransmitStride) {
-			uint in_off = InputChannelStride  * channel +
-			              InputTransmitStride * transmit +
-			              InputSampleStride   * time_sample;
-
-			uint out_off = OutputChannelStride  * channel +
-			               OutputTransmitStride * transmit +
-			               OutputSampleStride   * time_sample;
-
-			Output(output_buffer).values[out_off] = sample_rf_data(in_off);
-		}
-	}break;
 	case DecodeMode_Hadamard:{
-		if (first_pass) {
-			uint time_sample = gl_GlobalInvocationID.x;
-			uint channel     = gl_GlobalInvocationID.y;
-			uint transmit    = gl_GlobalInvocationID.z * ToProcess;
-			if (time_sample < InputTransmitStride) {
-				uint out_off = InputChannelStride * channel + TransmitCount     * time_sample;
-				uint in_off  = InputChannelStride * channel + InputSampleStride * time_sample;
-				#if UseSharedMemory
-					in_off  += InputTransmitStride * transmit;
-					out_off += transmit;
-					for (uint i = 0; i < ToProcess; i++, in_off += InputTransmitStride) {
-						if (transmit + i < TransmitCount)
-							OutputRF(output_rf_buffer).values[out_off + i] = RF(rf_buffer).values[in_off];
-					}
-				#else
-					for (uint i = 0; i < TransmitCount; i++, in_off += InputTransmitStride)
-						OutputRF(output_rf_buffer).values[out_off + i] = RF(rf_buffer).values[in_off];
-				#endif
-			}
-		} else {
-			#if UseSharedMemory
-				run_decode_large();
-			#else
-				run_decode_small();
-			#endif
-		}
+		#if CooperativeMatrix
+			run_decode_coop();
+		#elif UseSharedMemory
+			run_decode_large();
+		#else
+			run_decode_small();
+		#endif
 	}break;
 	}
 }
