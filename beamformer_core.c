@@ -361,6 +361,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				}
 
 				db->dilate_output = run_cuda_hilbert;
+				db->to_process    = 1;
 
 				if (db->decode_mode == BeamformerDecodeMode_None) {
 					sd->layout = (uv3){{subgroup_size, 1, 1}};
@@ -370,7 +371,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 					sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z);
 				} else if (db->transmit_count > 40) {
 					db->use_shared_memory = 1;
-					db->to_process        = 2;
 
 					if (db->transmit_count == 48)
 						db->to_process = db->transmit_count / 16;
@@ -383,8 +383,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 					sd->dispatch.y = (u32)ceil_f32((f32)channel_chunk_count              / (f32)sd->layout.y);
 					sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z / (f32)db->to_process);
 				} else {
-					db->to_process = 1;
-
 					/* NOTE(rnp): register caching. using more threads will cause the compiler to do
 					 * contortions to avoid spilling registers. using less gives higher performance */
 					sd->layout = (uv3){{subgroup_size / 2, 1, 1}};
