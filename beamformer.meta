@@ -435,7 +435,6 @@
 		{
 			[left_side_buffer  U64]
 			[right_side_buffer U64]
-			[elements          U32]
 			[scale             F32]
 			[output_size_x     U32]
 			[output_size_y     U32]

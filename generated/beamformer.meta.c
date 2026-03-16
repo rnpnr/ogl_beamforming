@@ -233,7 +233,6 @@ typedef struct {
 typedef struct {
 	u64 left_side_buffer;
 	u64 right_side_buffer;
-	u32 elements;
 	f32 scale;
 	u32 output_size_x;
 	u32 output_size_y;
@@ -687,7 +686,6 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  uint64_t  left_side_buffer;\n"
 	"  uint64_t  right_side_buffer;\n"
-	"  uint32_t  elements;\n"
 	"  float32_t scale;\n"
 	"  uint32_t  output_size_x;\n"
 	"  uint32_t  output_size_y;\n"

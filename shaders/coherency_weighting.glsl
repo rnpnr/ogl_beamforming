@@ -37,5 +37,5 @@ void main()
 	if (!all(lessThan(out_voxel, uvec3(output_size_x, output_size_y, output_size_z))))
 		return;
 	uint32_t index = output_index(out_voxel.x, out_voxel.y, out_voxel.z);
-  COHERENT_SAMPLE(index) *= COHERENT_SAMPLE(index) / INCOHERENT_SAMPLE(index);
+  COHERENT_SAMPLE(index) *= scale * COHERENT_SAMPLE(index) / INCOHERENT_SAMPLE(index);
 }
