@@ -560,13 +560,12 @@ b32
 beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t data_size,
                          void *out_data, int32_t timeout_ms)
 {
-	b32 result = validate_simple_parameters(bp);
+	b32 result = beamformer_push_simple_parameters(bp);
 	if (result) {
-		bp->output_points.E[0] = MAX(1, bp->output_points.E[0]);
-		bp->output_points.E[1] = MAX(1, bp->output_points.E[1]);
-		bp->output_points.E[2] = MAX(1, bp->output_points.E[2]);
-
-		result = beamformer_push_simple_parameters(bp);
+		iv3 output_points = bp->output_points;
+		output_points.E[0] = Max(1, output_points.E[0]);
+		output_points.E[1] = Max(1, output_points.E[1]);
+		output_points.E[2] = Max(1, output_points.E[2]);
 
 		b32 complex = 0;
 		for (u32 stage = 0; stage < bp->compute_stages_count; stage++) {
@@ -574,7 +573,7 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 			complex |= shader == BeamformerShaderKind_Demodulate || shader == BeamformerShaderKind_CudaHilbert;
 		}
 
-		iz output_size = bp->output_points.x * bp->output_points.y * bp->output_points.z * (i32)sizeof(f32);
+		iz output_size = output_points.x * output_points.y * output_points.z * (i32)sizeof(f32);
 		if (complex) output_size *= 2;
 
 		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
