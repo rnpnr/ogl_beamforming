@@ -566,7 +566,7 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 		bp->output_points.E[1] = MAX(1, bp->output_points.E[1]);
 		bp->output_points.E[2] = MAX(1, bp->output_points.E[2]);
 
-		beamformer_push_simple_parameters(bp);
+		result = beamformer_push_simple_parameters(bp);
 
 		b32 complex = 0;
 		for (u32 stage = 0; stage < bp->compute_stages_count; stage++) {
@@ -578,7 +578,7 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 		if (complex) output_size *= 2;
 
 		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
-		if (out_data) result = lib_error_check(output_size <= arena_capacity(&scratch, u8), ExportSpaceOverflow);
+		if (out_data) result &= lib_error_check(output_size <= arena_capacity(&scratch, u8), ExportSpaceOverflow);
 
 		if (result) {
 			result = beamformer_push_data_with_compute(data, data_size, 0, 0);
