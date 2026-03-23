@@ -562,7 +562,7 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 {
 	b32 result = beamformer_push_simple_parameters(bp);
 	if (result) {
-		iv3 output_points = bp->output_points;
+		iv3 output_points = bp->output_points.xyz;
 		output_points.E[0] = Max(1, output_points.E[0]);
 		output_points.E[1] = Max(1, output_points.E[1]);
 		output_points.E[2] = Max(1, output_points.E[2]);
