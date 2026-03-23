@@ -28,27 +28,13 @@ typedef struct {
 	i32    remaining_count;
 } Options;
 
-#define ZEMP_BP_MAGIC (uint64_t)0x5042504D455AFECAull
+#include "external/zemp_bp.h"
+
 typedef struct {
-	u64 magic;
-	u32 version;
-	u16 decode_mode;
-	u16 beamform_mode;
-	u32 raw_data_dim[4];
-	u32 decoded_data_dim[4];
-	f32 xdc_element_pitch[2];
-	f32 xdc_transform[16]; /* NOTE: column major order */
-	i16 channel_mapping[256];
-	f32 transmit_angles[256];
-	f32 focal_depths[256];
-	i16 sparse_elements[256];
-	i16 hadamard_rows[256];
-	f32 speed_of_sound;
-	f32 center_frequency;
-	f32 sampling_frequency;
-	f32 time_offset;
-	u32 transmit_mode;
-} zemp_bp_v1;
+	ZBP_DataKind            kind;
+	ZBP_DataCompressionKind compression_kind;
+	s8                      bytes;
+} ZBP_Data;
 
 global b32 g_should_exit;
 
@@ -159,34 +145,233 @@ decompress_zstd_data(s8 raw)
 	return out;
 }
 
-function zemp_bp_v1 *
-read_zemp_bp_v1(u8 *path)
+function b32
+beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char *path, ZBP_Data *raw_data)
 {
-	s8 raw = os_read_file_simp((char *)path);
-	zemp_bp_v1 *result = 0;
-	if (raw.len == sizeof(zemp_bp_v1) && *(u64 *)raw.data == ZEMP_BP_MAGIC) {
-		if (((zemp_bp_v1 *)raw.data)->version == 1)
-			result = (zemp_bp_v1 *)raw.data;
+	s8 raw = os_read_file_simp(path);
+	if (raw.len < (iz)sizeof(ZBP_BaseHeader) || ((ZBP_BaseHeader *)raw.data)->magic != ZBP_HeaderMagic)
+		return 0;
+
+	switch (((ZBP_BaseHeader *)raw.data)->major) {
+
+	case 1:{
+		ZBP_HeaderV1 *header       = (ZBP_HeaderV1 *)raw.data;
+
+		bp->sample_count           = header->sample_count;
+		bp->channel_count          = header->channel_count;
+		bp->acquisition_count      = header->receive_event_count;
+
+		bp->sampling_mode          = BeamformerSamplingMode_4X;
+		bp->acquisition_kind       = header->beamform_mode;
+		bp->decode_mode            = header->decode_mode;
+		bp->sampling_frequency     = header->sampling_frequency;
+		bp->demodulation_frequency = header->sampling_frequency / 4;
+		bp->speed_of_sound         = header->speed_of_sound;
+		bp->time_offset            = header->time_offset;
+
+		mem_copy(bp->channel_mapping,       header->channel_mapping,             sizeof(*bp->channel_mapping) * bp->channel_count);
+		mem_copy(bp->xdc_transform.E,       header->transducer_transform_matrix, sizeof(bp->xdc_transform));
+		mem_copy(bp->xdc_element_pitch.E,   header->transducer_element_pitch,    sizeof(bp->xdc_element_pitch));
+		// NOTE(rnp): ignores emission count and ensemble count
+		mem_copy(bp->raw_data_dimensions.E, header->raw_data_dimension,          sizeof(bp->raw_data_dimensions));
+
+		bp->data_kind              = ZBP_DataKind_Int16;
+		raw_data->kind             = ZBP_DataKind_Int16;
+		raw_data->compression_kind = ZBP_DataCompressionKind_ZSTD;
+
+		read_only local_persist u8 transmit_mode_to_orientation[] = {
+			[0] = (ZBP_RCAOrientation_Rows    << 4) | ZBP_RCAOrientation_Rows,
+			[1] = (ZBP_RCAOrientation_Rows    << 4) | ZBP_RCAOrientation_Columns,
+			[2] = (ZBP_RCAOrientation_Columns << 4) | ZBP_RCAOrientation_Rows,
+			[3] = (ZBP_RCAOrientation_Columns << 4) | ZBP_RCAOrientation_Columns,
+		};
+		if (header->transmit_mode >= countof(transmit_mode_to_orientation))
+			return 0;
+
+		bp->transmit_receive_orientation = transmit_mode_to_orientation[header->transmit_mode];
+
+		ZBP_AcquisitionKind acquisition_kind = header->beamform_mode;
+		if (acquisition_kind == ZBP_AcquisitionKind_FORCES   ||
+		    acquisition_kind == ZBP_AcquisitionKind_HERCULES ||
+		    acquisition_kind == ZBP_AcquisitionKind_UFORCES  ||
+		    acquisition_kind == ZBP_AcquisitionKind_UHERCULES)
+		{
+			bp->single_focus       = 1;
+			bp->single_orientation = 1;
+			bp->focal_vector.E[0]  = header->steering_angles[0];
+			bp->focal_vector.E[1]  = header->focal_depths[0];
+		}
+
+		if (acquisition_kind == ZBP_AcquisitionKind_UFORCES ||
+		    acquisition_kind == ZBP_AcquisitionKind_UHERCULES)
+		{
+			mem_copy(bp->sparse_elements, header->sparse_elements, sizeof(*bp->sparse_elements) * bp->acquisition_count);
+		}
+
+		if (acquisition_kind == ZBP_AcquisitionKind_RCA_TPW ||
+		    acquisition_kind == ZBP_AcquisitionKind_RCA_VLS)
+		{
+			mem_copy(bp->focal_depths,    header->focal_depths,    sizeof(*bp->focal_depths) * bp->acquisition_count);
+			mem_copy(bp->steering_angles, header->steering_angles, sizeof(*bp->steering_angles) * bp->acquisition_count);
+			for EachIndex(bp->acquisition_count, it)
+				bp->transmit_receive_orientations[it] = bp->transmit_receive_orientation;
+		}
+
+		bp->emission_kind = BeamformerEmissionKind_Sine;
+		bp->emission_parameters.sine.cycles    = 2;
+		bp->emission_parameters.sine.frequency = bp->demodulation_frequency;
+	}break;
+
+	case 2:{
+		ZBP_HeaderV2 *header       = (ZBP_HeaderV2 *)raw.data;
+
+		bp->sample_count           = header->sample_count;
+		bp->channel_count          = header->channel_count;
+		bp->acquisition_count      = header->receive_event_count;
+
+		read_only local_persist BeamformerSamplingMode zbp_sampling_mode_to_beamformer[] = {
+			[ZBP_SamplingMode_Standard] = BeamformerSamplingMode_4X,
+			[ZBP_SamplingMode_Bandpass] = BeamformerSamplingMode_2X,
+		};
+		bp->sampling_mode = zbp_sampling_mode_to_beamformer[header->sampling_mode];
+
+		bp->acquisition_kind       = header->acquisition_mode;
+		bp->decode_mode            = header->decode_mode;
+		bp->sampling_frequency     = header->sampling_frequency;
+		bp->speed_of_sound         = header->speed_of_sound;
+		bp->time_offset            = header->time_offset;
+
+		bp->demodulation_frequency = header->demodulation_frequency;
+		if (header->raw_data_kind == ZBP_DataKind_Float32Complex ||
+		    header->raw_data_kind == ZBP_DataKind_Float16Complex ||
+		    header->raw_data_kind == ZBP_DataKind_Int16Complex)
+			bp->demodulation_frequency = 0;
+
+		if (header->channel_mapping_offset != -1) {
+			mem_copy(bp->channel_mapping, raw.data + header->channel_mapping_offset,
+			         sizeof(*bp->channel_mapping) * bp->channel_count);
+		} else {
+			for EachIndex(bp->channel_count, it)
+				bp->channel_mapping[it] = it;
+		}
+
+		mem_copy(bp->xdc_transform.E,       header->transducer_transform_matrix, sizeof(bp->xdc_transform));
+		mem_copy(bp->xdc_element_pitch.E,   header->transducer_element_pitch,    sizeof(bp->xdc_element_pitch));
+		// NOTE(rnp): ignores group count and ensemble count
+		mem_copy(bp->raw_data_dimensions.E, header->raw_data_dimension,          sizeof(bp->raw_data_dimensions));
+
+		bp->data_kind              = header->raw_data_kind;
+		raw_data->kind             = header->raw_data_kind;
+		raw_data->compression_kind = header->raw_data_compression_kind;
+
+		if (header->raw_data_offset != -1) {
+			raw_data->bytes.data = raw.data + header->raw_data_offset;
+			if (raw_data->compression_kind == ZBP_DataCompressionKind_ZSTD) {
+				// NOTE(rnp): limitation in the header format
+				raw_data->bytes.len  = raw.len - header->raw_data_offset;
+			} else {
+				raw_data->bytes.len  = header->raw_data_dimension[0] * header->raw_data_dimension[1] *
+				                       header->raw_data_dimension[2] * header->raw_data_dimension[3];
+				raw_data->bytes.len *= beamformer_data_kind_byte_size[header->raw_data_kind];
+			}
+		}
+
+		// NOTE(rnp): only look at the first emission descriptor, other cases aren't currently relevant
+		{
+			ZBP_EmissionDescriptor *ed = (ZBP_EmissionDescriptor *)(raw.data + header->emission_descriptors_offset);
+			switch (ed->emission_kind) {
+
+			case ZBP_EmissionKind_Sine:{
+				ZBP_EmissionSineParameters *ep = (ZBP_EmissionSineParameters *)(raw.data + ed->parameters_offset);
+				bp->emission_kind = BeamformerEmissionKind_Sine;
+				bp->emission_parameters.sine.cycles    = ep->cycles;
+				bp->emission_parameters.sine.frequency = ep->frequency;
+			}break;
+
+			case ZBP_EmissionKind_Chirp:{
+				ZBP_EmissionChirpParameters *ep = (ZBP_EmissionChirpParameters *)(raw.data + ed->parameters_offset);
+				bp->emission_kind = BeamformerEmissionKind_Chirp;
+				bp->emission_parameters.chirp.duration      = ep->duration;
+				bp->emission_parameters.chirp.min_frequency = ep->min_frequency;
+				bp->emission_parameters.chirp.max_frequency = ep->max_frequency;
+			}break;
+
+			InvalidDefaultCase;
+			static_assert(ZBP_EmissionKind_Count == (ZBP_EmissionKind_Chirp + 1), "");
+			}
+		}
+
+		switch (header->acquisition_mode) {
+		case ZBP_AcquisitionKind_FORCES:{}break;
+
+		case ZBP_AcquisitionKind_HERCULES:{
+			ZBP_HERCULESParameters *p = (ZBP_HERCULESParameters *)(raw.data + header->acquisition_parameters_offset);
+			bp->transmit_receive_orientation = p->transmit_focus.transmit_receive_orientation;
+			bp->focal_vector.E[0] = p->transmit_focus.steering_angle;
+			bp->focal_vector.E[1] = p->transmit_focus.focal_depth;
+
+			bp->single_focus       = 1;
+			bp->single_orientation = 1;
+		}break;
+
+		case ZBP_AcquisitionKind_UFORCES:{
+			ZBP_uFORCESParameters *p = (ZBP_uFORCESParameters *)(raw.data + header->acquisition_parameters_offset);
+			mem_copy(bp->sparse_elements, raw.data + p->sparse_elements_offset,
+			         sizeof(*bp->sparse_elements) * bp->acquisition_count);
+		}break;
+
+		case ZBP_AcquisitionKind_UHERCULES:{
+			ZBP_uHERCULESParameters *p = (ZBP_uHERCULESParameters *)(raw.data + header->acquisition_parameters_offset);
+			bp->transmit_receive_orientation = p->transmit_focus.transmit_receive_orientation;
+			bp->focal_vector.E[0] = p->transmit_focus.steering_angle;
+			bp->focal_vector.E[1] = p->transmit_focus.focal_depth;
+
+			bp->single_focus       = 1;
+			bp->single_orientation = 1;
+
+			mem_copy(bp->sparse_elements, raw.data + p->sparse_elements_offset,
+			         sizeof(*bp->sparse_elements) * bp->acquisition_count);
+		}break;
+
+		case ZBP_AcquisitionKind_RCA_TPW:{
+			ZBP_TPWParameters *p = (ZBP_TPWParameters *)(raw.data + header->acquisition_parameters_offset);
+
+			mem_copy(bp->transmit_receive_orientations, raw.data + p->transmit_receive_orientations_offset,
+			         sizeof(*bp->transmit_receive_orientations) * bp->acquisition_count);
+			mem_copy(bp->steering_angles, raw.data + p->tilting_angles_offset,
+			         sizeof(*bp->steering_angles) * bp->acquisition_count);
+
+			for EachIndex(bp->acquisition_count, it)
+				bp->focal_depths[it] = F32_INFINITY;
+		}break;
+
+		case ZBP_AcquisitionKind_RCA_VLS:{
+			ZBP_VLSParameters *p = (ZBP_VLSParameters *)(raw.data + header->acquisition_parameters_offset);
+
+			mem_copy(bp->transmit_receive_orientations, raw.data + p->transmit_receive_orientations_offset,
+			         sizeof(*bp->transmit_receive_orientations) * bp->acquisition_count);
+
+			f32 *focal_depths   = (f32 *)(raw.data + p->focal_depths_offset);
+			f32 *origin_offsets = (f32 *)(raw.data + p->origin_offsets_offset);
+
+			for EachIndex(bp->acquisition_count, it) {
+				f32 sign   = Sign(focal_depths[it]);
+				f32 depth  = focal_depths[it];
+				f32 origin = origin_offsets[it];
+				bp->steering_angles[it] = atan2_f32(origin, -depth) * 180.0f / PI;
+				bp->focal_depths[it]    = sign * sqrt_f32(depth * depth + origin * origin);
+			}
+		}break;
+
+		InvalidDefaultCase;
+		}
+
+	}break;
+
+	default:{return 0;}break;
 	}
-	return result;
-}
 
-function void
-beamformer_parameters_from_zemp_bp_v1(zemp_bp_v1 *zbp, BeamformerParameters *out)
-{
-	mem_copy(out->xdc_transform.E,       zbp->xdc_transform,     sizeof(out->xdc_transform));
-	mem_copy(out->xdc_element_pitch.E,   zbp->xdc_element_pitch, sizeof(out->xdc_element_pitch));
-	mem_copy(out->raw_data_dimensions.E, zbp->raw_data_dim,      sizeof(out->raw_data_dimensions));
-
-	out->sample_count           = zbp->decoded_data_dim[0];
-	out->channel_count          = zbp->decoded_data_dim[1];
-	out->acquisition_count      = zbp->decoded_data_dim[2];
-	out->decode_mode            = (u8)zbp->decode_mode;
-	out->acquisition_kind       = zbp->beamform_mode;
-	out->time_offset            = zbp->time_offset;
-	out->sampling_frequency     = zbp->sampling_frequency;
-	out->demodulation_frequency = zbp->center_frequency;
-	out->speed_of_sound         = zbp->speed_of_sound;
+	return 1;
 }
 
 #define shift_n(v, c, n) v += n, c -= n
@@ -238,28 +423,12 @@ parse_argv(i32 argc, char *argv[])
 	return result;
 }
 
-function i16 *
-decompress_data_at_work_index(Stream *path_base, u32 index)
-{
-	stream_append_byte(path_base, '_');
-	stream_append_u64_width(path_base, index, 2);
-	stream_append_s8(path_base, s8(".zst"));
-	stream_ensure_termination(path_base, 0);
-
-	s8 compressed_data = os_read_file_simp((char *)path_base->data);
-	i16 *result = decompress_zstd_data(compressed_data);
-	if (!result)
-		die("failed to decompress data: %s\n", path_base->data);
-	free(compressed_data.data);
-
-	return result;
-}
-
 function b32
-send_frame(i16 *restrict i16_data, BeamformerParameters *restrict bp)
+send_frame(void *restrict data, BeamformerSimpleParameters *restrict bp)
 {
-	u32 data_size = bp->raw_data_dimensions.E[0] * bp->raw_data_dimensions.E[1] * sizeof(i16);
-	b32 result    = beamformer_push_data_with_compute(i16_data, data_size, BeamformerViewPlaneTag_XZ, 0);
+	u32 data_size = bp->raw_data_dimensions.E[0] * bp->raw_data_dimensions.E[1]
+	                * beamformer_data_kind_byte_size[bp->data_kind];
+	b32 result    = beamformer_push_data_with_compute(data, data_size, BeamformerViewPlaneTag_XZ, 0);
 	if (!result && !g_should_exit) printf("lib error: %s\n", beamformer_get_last_error_string());
 
 	return result;
@@ -270,7 +439,6 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 {
 	fprintf(stderr, "showing: %.*s\n", (i32)study.len, study.data);
 
-	stream_append_s8(&path, study);
 	stream_ensure_termination(&path, OS_PATH_SEPARATOR_CHAR);
 	stream_append_s8(&path, study);
 	i32 path_work_index = path.widx;
@@ -278,11 +446,10 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	stream_append_s8(&path, s8(".bp"));
 	stream_ensure_termination(&path, 0);
 
-	zemp_bp_v1 *zbp = read_zemp_bp_v1(path.data);
-	if (!zbp) die("failed to unpack parameters file\n");
-
-	BeamformerParameters bp = {0};
-	beamformer_parameters_from_zemp_bp_v1(zbp, &bp);
+	ZBP_Data raw_data = {0};
+	BeamformerSimpleParameters bp = {0};
+	if (!beamformer_simple_parameters_from_zbp_file(&bp, (char *)path.data, &raw_data))
+		die("failed to load parameters file: %s\n", (char *)path.data);
 
 	v3 min_coordinate = (v3){{g_lateral_extent.x, g_axial_extent.x, 0}};
 	v3 max_coordinate = (v3){{g_lateral_extent.y, g_axial_extent.y, 0}};
@@ -295,88 +462,80 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 	bp.interpolation_mode = BeamformerInterpolationMode_Cubic;
 
 	bp.decimation_rate = 1;
-	bp.demodulation_frequency = bp.sampling_frequency / 4;
 
-	/* NOTE(rnp): v1 files didn't specify sampling mode. it was almost always 4X */
-	bp.sampling_mode = BeamformerSamplingMode_4X;
-
-	#if 0
-	BeamformerFilterParameters kaiser = {0};
-	kaiser.kaiser.beta             = 5.65f;
-	kaiser.kaiser.cutoff_frequency = 2.0e6f;
-	kaiser.kaiser.length           = 36;
-
-	beamformer_create_filter(BeamformerFilterKind_Kaiser, (f32 *)&kaiser.kaiser,
-	                         sizeof(kaiser.kaiser), bp.sampling_frequency / 2, 0, 0, 0);
-	beamformer_set_pipeline_stage_parameters(0, 0);
-	#endif
-
-	#if 1
-	BeamformerFilterParameters matched = {0};
-	typeof(matched.matched_chirp) *mp = &matched.matched_chirp;
-	mp->duration      = 18e-6f;
-	mp->min_frequency = 2.9e6f - bp.demodulation_frequency;
-	mp->max_frequency = 6.0e6f - bp.demodulation_frequency;
-
-	bp.time_offset += mp->duration / 2;
-
-	beamformer_create_filter(BeamformerFilterKind_MatchedChirp, (f32 *)mp, sizeof(*mp),
-	                         bp.sampling_frequency / 2, 1, 0, 0);
-	beamformer_set_pipeline_stage_parameters(0, 0);
-	#endif
-
-	if (zbp->sparse_elements[0] == -1) {
-		for (i16 i = 0; i < countof(zbp->sparse_elements); i++)
-			zbp->sparse_elements[i] = i;
-	}
-
-	b32 tx_rows = (zbp->transmit_mode & (1 << 1)) == 0;
-	b32 rx_rows = (zbp->transmit_mode & (1 << 0)) == 0;
-	u8 packed_tx_rx = 0;
-	if (tx_rows) packed_tx_rx |= BeamformerRCAOrientation_Rows    << 4;
-	else         packed_tx_rx |= BeamformerRCAOrientation_Columns << 4;
-	if (rx_rows) packed_tx_rx |= BeamformerRCAOrientation_Rows    << 0;
-	else         packed_tx_rx |= BeamformerRCAOrientation_Columns << 0;
-
-	if (bp.acquisition_kind == BeamformerAcquisitionKind_HERCULES ||
-	    bp.acquisition_kind == BeamformerAcquisitionKind_UHERCULES)
+	if (bp.data_kind != BeamformerDataKind_Float32Complex &&
+	    bp.data_kind != BeamformerDataKind_Int16Complex)
 	{
-		bp.single_focus       = 1;
-		bp.single_orientation = 1;
+		bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_Demodulate;
+	}
+	if (options->cuda) bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_CudaDecode;
+	else               bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_Decode;
+	bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_DAS;
 
-		bp.transmit_receive_orientation = packed_tx_rx;
-		bp.focal_vector.E[0] = zbp->transmit_angles[0];
-		bp.focal_vector.E[1] = zbp->focal_depths[0];
-	} else {
-		alignas(64) v2 focal_vectors[BeamformerMaxChannelCount];
-		for (u32 i = 0; i < countof(focal_vectors); i++)
-			focal_vectors[i] = (v2){{zbp->transmit_angles[i], zbp->focal_depths[i]}};
-		beamformer_push_focal_vectors((f32 *)focal_vectors, countof(focal_vectors));
+	{
+		BeamformerFilterParameters filter = {0};
+		BeamformerFilterKind filter_kind  = 0;
+		b32 complex = 0;
+		u32 size    = 0;
 
-		alignas(64) u8 transmit_receive_orientations[BeamformerMaxChannelCount];
-		for (u32 i = 0; i < countof(transmit_receive_orientations); i++)
-			transmit_receive_orientations[i] = packed_tx_rx;
-		beamformer_push_transmit_receive_orientations(transmit_receive_orientations,
-		                                              countof(transmit_receive_orientations));
+		BeamformerEmissionParameters *ep = &bp.emission_parameters;
+		switch (bp.emission_kind) {
+
+		case BeamformerEmissionKind_Sine:{
+			filter_kind = BeamformerFilterKind_Kaiser;
+			filter.kaiser.beta             = 5.65f;
+			filter.kaiser.cutoff_frequency = 2.0e6; //0.5 * ep->sine.frequency;
+			filter.kaiser.length           = 36;
+			size = sizeof(filter.kaiser);
+		}break;
+
+		case BeamformerEmissionKind_Chirp:{
+			filter_kind = BeamformerFilterKind_MatchedChirp;
+
+			filter.matched_chirp.duration      = ep->chirp.duration;
+			filter.matched_chirp.min_frequency = ep->chirp.min_frequency - bp.demodulation_frequency;
+			filter.matched_chirp.max_frequency = ep->chirp.max_frequency - bp.demodulation_frequency;
+			size = sizeof(filter.matched_chirp);
+			complex = 1;
+
+			//bp.time_offset += ep->chirp.duration / 2;
+		}break;
+
+		InvalidDefaultCase;
+		}
+
+		beamformer_create_filter(filter_kind, (f32 *)&filter.kaiser, size, bp.sampling_frequency / 2,
+		                         complex, 0, 0);
+
+		bp.compute_stage_parameters[0] = 0;
 	}
 
-	beamformer_push_channel_mapping(zbp->channel_mapping, countof(zbp->channel_mapping));
-	beamformer_push_sparse_elements(zbp->sparse_elements, countof(zbp->sparse_elements));
-	beamformer_push_parameters(&bp);
-
-	i32 shader_stages[16];
-	u32 shader_stage_count = 0;
-	shader_stages[shader_stage_count++] = BeamformerShaderKind_Demodulate;
-	if (options->cuda) shader_stages[shader_stage_count++] = BeamformerShaderKind_CudaDecode;
-	else               shader_stages[shader_stage_count++] = BeamformerShaderKind_Decode;
-	shader_stages[shader_stage_count++] = BeamformerShaderKind_DAS;
-
-	beamformer_push_pipeline(shader_stages, shader_stage_count, BeamformerDataKind_Int16);
+	beamformer_push_simple_parameters(&bp);
 
 	beamformer_set_global_timeout(1000);
 
-	stream_reset(&path, path_work_index);
-	i16 *data = decompress_data_at_work_index(&path, options->frame_number);
+	void *data = 0;
+	if (raw_data.bytes.len == 0) {
+		stream_reset(&path, path_work_index);
+		stream_append_byte(&path, '_');
+		stream_append_u64_width(&path, options->frame_number, 2);
+		stream_append_s8(&path, s8(".zst"));
+		stream_ensure_termination(&path, 0);
+		s8 compressed_data = os_read_file_simp((char *)path.data);
+
+		data = decompress_zstd_data(compressed_data);
+		if (!data)
+			die("failed to decompress data: %s\n", path.data);
+		free(compressed_data.data);
+	} else {
+		if (raw_data.compression_kind == ZBP_DataCompressionKind_ZSTD) {
+			data = decompress_zstd_data(raw_data.bytes);
+			if (!data)
+				die("failed to decompress data: %s\n", path.data);
+		} else {
+			data = raw_data.bytes.data;
+		}
+	}
 
 	if (options->loop) {
 		BeamformerLiveImagingParameters lip = {.active = 1, .save_enabled = 1};
@@ -415,12 +574,8 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 		lip.active = 0;
 		beamformer_set_live_parameters(&lip);
 	} else {
-		for (u32 i = 0; i < zbp->raw_data_dim[2]; i++)
-			send_frame(data + i * bp.raw_data_dimensions.E[0] * bp.raw_data_dimensions.E[1], &bp);
+		send_frame(data, &bp);
 	}
-
-	free(zbp);
-	free(data);
 }
 
 function void
@@ -442,7 +597,6 @@ main(i32 argc, char *argv[])
 	Arena arena = os_alloc_arena(KB(8));
 	Stream path = stream_alloc(&arena, KB(4));
 	stream_append_s8(&path, c_str_to_s8(options.remaining[0]));
-	stream_ensure_termination(&path, OS_PATH_SEPARATOR_CHAR);
 
 	execute_study(c_str_to_s8(options.remaining[1]), arena, path, &options);
 

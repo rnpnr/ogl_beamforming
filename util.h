@@ -121,6 +121,7 @@ typedef u64    uptr;
 #define swap(a, b)       do {typeof(a) __tmp = (a); (a) = (b); (b) = __tmp;} while(0)
 
 #define Abs(a)           ((a) < 0 ? -(a) : (a))
+#define Sign(a)          ((a) < 0 ? -1 : 1)
 #define Between(x, a, b) ((x) >= (a) && (x) <= (b))
 #define Clamp(x, a, b)   ((x) < (a) ? (a) : (x) > (b) ? (b) : (x))
 #define Min(a, b)        ((a) < (b) ? (a) : (b))
