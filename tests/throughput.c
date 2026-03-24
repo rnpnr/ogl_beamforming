@@ -238,14 +238,9 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 		bp->acquisition_kind       = header->acquisition_mode;
 		bp->decode_mode            = header->decode_mode;
 		bp->sampling_frequency     = header->sampling_frequency;
+		bp->demodulation_frequency = header->demodulation_frequency;
 		bp->speed_of_sound         = header->speed_of_sound;
 		bp->time_offset            = header->time_offset;
-
-		bp->demodulation_frequency = header->demodulation_frequency;
-		if (header->raw_data_kind == ZBP_DataKind_Float32Complex ||
-		    header->raw_data_kind == ZBP_DataKind_Float16Complex ||
-		    header->raw_data_kind == ZBP_DataKind_Int16Complex)
-			bp->demodulation_frequency = 0;
 
 		if (header->channel_mapping_offset != -1) {
 			mem_copy(bp->channel_mapping, raw.data + header->channel_mapping_offset,
@@ -484,7 +479,7 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 		case BeamformerEmissionKind_Sine:{
 			filter_kind = BeamformerFilterKind_Kaiser;
 			filter.kaiser.beta             = 5.65f;
-			filter.kaiser.cutoff_frequency = 2.0e6; //0.5 * ep->sine.frequency;
+			filter.kaiser.cutoff_frequency = 0.5f * ep->sine.frequency;
 			filter.kaiser.length           = 36;
 			size = sizeof(filter.kaiser);
 		}break;
@@ -546,7 +541,8 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 
 		u32 frame = 0;
 		f32 times[32] = {0};
-		f32 data_size = (f32)(bp.raw_data_dimensions.E[0] * bp.raw_data_dimensions.E[1] * sizeof(*data));
+		f32 data_size = (f32)(bp.raw_data_dimensions.E[0] * bp.raw_data_dimensions.E[1]
+		                      * beamformer_data_kind_byte_size[bp.data_kind]);
 		u64 start = os_timer_count();
 		f64 frequency = os_timer_frequency();
 		for (;!g_should_exit;) {
