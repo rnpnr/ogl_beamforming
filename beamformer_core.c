@@ -351,10 +351,13 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 	if (demodulate) run_cuda_hilbert = 0;
 
-	cp->iq_pipeline = demodulate || run_cuda_hilbert;
+	BeamformerDataKind data_kind = pb->pipeline.data_kind;
+	cp->iq_pipeline = data_kind == BeamformerDataKind_Float32Complex ||
+	                  data_kind == BeamformerDataKind_Int16Complex   ||
+	                  demodulate || run_cuda_hilbert;
 
 	f32 sampling_frequency = pb->parameters.sampling_frequency;
-	u32 decimation_rate = MAX(pb->parameters.decimation_rate, 1);
+	u32 decimation_rate = Max(pb->parameters.decimation_rate, 1);
 	u32 sample_count    = pb->parameters.sample_count;
 	if (demodulate) {
 		sample_count       /= (2 * decimation_rate);
@@ -374,7 +377,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	// TODO(rnp): subgroup size
 	u32 subgroup_size = gl_parameters.vendor_id == GLVendor_NVIDIA ? 32 : 64;
 
-	BeamformerDataKind data_kind = pb->pipeline.data_kind;
 	cp->pipeline.shader_count = 0;
 	for (u32 i = 0; i < pb->pipeline.shader_count; i++) {
 		BeamformerShaderParameters *sp = pb->pipeline.parameters + i;
