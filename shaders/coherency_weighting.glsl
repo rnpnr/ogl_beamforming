@@ -15,10 +15,10 @@ layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Flo
 	vec2 values[];
 };
 
-#if   DataKind == DataKind_Float32
+#if   InputDataKind == DataKind_Float32
   #define COHERENT_SAMPLE(index)    Float32(left_side_buffer).values[index]
   #define INCOHERENT_SAMPLE(index)  Float32(right_side_buffer).values[index]
-#elif DataKind == DataKind_Float32Complex
+#elif InputDataKind == DataKind_Float32Complex
   #define COHERENT_SAMPLE(index)    Float32Complex(left_side_buffer).values[index]
   #define INCOHERENT_SAMPLE(index)  Float32(right_side_buffer).values[index]
 #else

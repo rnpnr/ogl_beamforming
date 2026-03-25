@@ -283,6 +283,8 @@ typedef struct {BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST} BeamformerComputeArray
 typedef struct {
 	uv3 layout;
 	uv3 dispatch;
+	BeamformerDataKind input_data_kind;
+	BeamformerDataKind output_data_kind;
 	BeamformerShaderBakeParameters bake;
 } BeamformerShaderDescriptor;
 
@@ -304,7 +306,6 @@ struct BeamformerComputePlan {
 	u32 rf_size;
 	i32 hadamard_order;
 	b32 iq_pipeline;
-	u32 q_rf_data_offset;
 
 	m4  voxel_transform;
 	m4  ui_voxel_transform;
