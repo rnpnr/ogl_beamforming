@@ -169,6 +169,9 @@ typedef u64      uptr;
 	asan_poison_region((v), sizeof(*(v))); \
 } while(0)
 
+#define DLLPushEnd(l, n) ((n)->prev = (l)->prev, ((l)->prev ? (l)->prev->next = (n) : (0)), (l)->prev = (n), (n)->next = (l))
+
+// TODO(rnp): cleanup
 #define DLLPushDown(v, list) do { \
 	(v)->next = (list);                   \
 	if ((v)->next) (v)->next->prev = (v); \
@@ -280,6 +283,11 @@ typedef union {
 	struct { uv3 xyz; u32 _w; };
 	u32 E[4];
 } uv4;
+
+typedef union {
+	struct { b32 x, y, z; };
+	b32 E[3];
+} bv3;
 
 typedef union {
 	struct { f32 x, y; };

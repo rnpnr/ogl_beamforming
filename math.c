@@ -160,6 +160,30 @@ iv3_dimension(iv3 points)
 	return result;
 }
 
+function bv3
+iv3_equal(iv3 a, iv3 b)
+{
+	bv3 result;
+	result.x = a.x == b.x;
+	result.y = a.y == b.y;
+	result.z = a.z == b.z;
+	return result;
+}
+
+function b32
+bv3_all(bv3 a)
+{
+	b32 result = a.x != 0 && a.y != 0 && a.z != 0;
+	return result;
+}
+
+function b32
+bv3_any(bv3 a)
+{
+	b32 result = a.x != 0 || a.y != 0 || a.z != 0;
+	return result;
+}
+
 function v2
 clamp_v2_rect(v2 v, Rect r)
 {

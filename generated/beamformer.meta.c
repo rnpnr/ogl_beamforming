@@ -198,8 +198,6 @@ typedef struct {
 	u64 hadamard_buffer;
 	u64 rf_buffer;
 	u64 output_buffer;
-	u64 output_rf_buffer;
-	b32 first_pass;
 } BeamformerDecodePushConstants;
 
 typedef struct {
@@ -268,7 +266,6 @@ typedef struct {
 } BeamformerRenderBeamformedPushConstants;
 
 typedef struct {
-	u32 data_kind;
 	b32 use_shared_memory;
 	u32 decode_mode;
 	u32 output_channel_stride;
@@ -284,10 +281,8 @@ typedef struct {
 } BeamformerDecodeBakeParameters;
 
 typedef struct {
-	u32 data_kind;
 	u32 demodulate;
 	u32 complex_filter;
-	u32 output_floats;
 	u32 decimation_rate;
 	u32 filter_length;
 	u32 input_channel_stride;
@@ -303,7 +298,6 @@ typedef struct {
 } BeamformerFilterBakeParameters;
 
 typedef struct {
-	u32 data_kind;
 	u32 coherency_weighting;
 	u32 single_focus;
 	u32 single_orientation;
@@ -325,16 +319,6 @@ typedef struct {
 } BeamformerDASBakeParameters;
 
 typedef struct {
-	u32 data_kind;
-} BeamformerSumBakeParameters;
-
-typedef struct {
-	u32 data_kind;
-} BeamformerCoherencyWeightingBakeParameters;
-
-typedef struct {
-	u32 input_data_kind;
-	u32 output_data_kind;
 	u32 size_x;
 	u32 size_y;
 	u32 size_z;
@@ -349,12 +333,10 @@ typedef struct {
 } BeamformerReshapeBakeParameters;
 
 typedef union {
-	BeamformerDecodeBakeParameters             Decode;
-	BeamformerFilterBakeParameters             Filter;
-	BeamformerDASBakeParameters                DAS;
-	BeamformerSumBakeParameters                Sum;
-	BeamformerCoherencyWeightingBakeParameters CoherencyWeighting;
-	BeamformerReshapeBakeParameters            Reshape;
+	BeamformerDecodeBakeParameters  Decode;
+	BeamformerFilterBakeParameters  Filter;
+	BeamformerDASBakeParameters     DAS;
+	BeamformerReshapeBakeParameters Reshape;
 } BeamformerShaderBakeParameters;
 
 typedef union {
@@ -507,6 +489,24 @@ read_only global b8 beamformer_data_kind_complex[] = {
 	1,
 };
 
+read_only global s8 beamformer_data_kind_glsl_type[] = {
+	s8_comp("int16_t"),
+	s8_comp("i16vec2"),
+	s8_comp("float32_t"),
+	s8_comp("f32vec2"),
+	s8_comp("float16_t"),
+	s8_comp("f16vec2"),
+};
+
+read_only global s8 beamformer_data_kind_s8[] = {
+	s8_comp("Int16"),
+	s8_comp("Int16Complex"),
+	s8_comp("Float32"),
+	s8_comp("Float32Complex"),
+	s8_comp("Float16"),
+	s8_comp("Float16Complex"),
+};
+
 read_only global u8 beamformer_contrast_mode_samples[] = {
 	1,
 	3,
@@ -639,14 +639,6 @@ read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
 
 read_only global s8 beamformer_shader_global_header_strings[] = {
 	s8_comp(""
-	"#define DataKind_Int16          0\n"
-	"#define DataKind_Int16Complex   1\n"
-	"#define DataKind_Float32        2\n"
-	"#define DataKind_Float32Complex 3\n"
-	"#define DataKind_Float16        4\n"
-	"#define DataKind_Float16Complex 5\n"
-	"\n"),
-	s8_comp(""
 	"#define DecodeMode_None     0\n"
 	"#define DecodeMode_Hadamard 1\n"
 	"\n"),
@@ -655,8 +647,6 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"  uint64_t hadamard_buffer;\n"
 	"  uint64_t rf_buffer;\n"
 	"  uint64_t output_buffer;\n"
-	"  uint64_t output_rf_buffer;\n"
-	"  bool     first_pass;\n"
 	"};\n"
 	"\n"),
 	s8_comp(""
@@ -797,32 +787,31 @@ read_only global b8 beamformer_shader_primitive_is_vertex[] = {
 };
 
 read_only global i32 *beamformer_shader_header_vectors[] = {
-	(i32 []){0, 1, 2},
-	(i32 []){0, 3, 4, 5},
-	(i32 []){6, 7, 0, 8, 9, 3, 4, 10, 11},
-	(i32 []){0, 12},
+	(i32 []){0, 1},
+	(i32 []){2, 3, 4},
+	(i32 []){5, 6, 7, 8, 2, 3, 9, 10},
+	(i32 []){11},
 	0,
-	(i32 []){0, 13},
-	(i32 []){0, 14},
+	(i32 []){12},
+	(i32 []){13},
+	(i32 []){14},
 	(i32 []){15},
-	(i32 []){0, 16},
 };
 
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
+	2,
 	3,
-	4,
-	9,
-	2,
-	0,
-	2,
-	2,
+	8,
 	1,
-	2,
+	0,
+	1,
+	1,
+	1,
+	1,
 };
 
 read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 	(s8 []){
-		s8_comp("DataKind"),
 		s8_comp("UseSharedMemory"),
 		s8_comp("DecodeMode"),
 		s8_comp("OutputChannelStride"),
@@ -837,10 +826,8 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("CooperativeMatrixK"),
 	},
 	(s8 []){
-		s8_comp("DataKind"),
 		s8_comp("Demodulate"),
 		s8_comp("ComplexFilter"),
-		s8_comp("OutputFloats"),
 		s8_comp("DecimationRate"),
 		s8_comp("FilterLength"),
 		s8_comp("InputChannelStride"),
@@ -855,7 +842,6 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("SamplingFrequency"),
 	},
 	(s8 []){
-		s8_comp("DataKind"),
 		s8_comp("CoherencyWeighting"),
 		s8_comp("SingleFocus"),
 		s8_comp("SingleOrientation"),
@@ -875,16 +861,10 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("TimeOffset"),
 		s8_comp("TransmitAngle"),
 	},
-	(s8 []){
-		s8_comp("DataKind"),
-	},
+	0,
+	0,
 	0,
 	(s8 []){
-		s8_comp("DataKind"),
-	},
-	(s8 []){
-		s8_comp("InputDataKind"),
-		s8_comp("OutputDataKind"),
 		s8_comp("SizeX"),
 		s8_comp("SizeY"),
 		s8_comp("SizeZ"),
@@ -903,8 +883,8 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 
 read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
 	0x00000000UL,
-	0x0000c000UL,
-	0x0007f000UL,
+	0x00003000UL,
+	0x0003f800UL,
 	0x00000000UL,
 	0x00000000UL,
 	0x00000000UL,
@@ -914,13 +894,13 @@ read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
 };
 
 read_only global u8 beamformer_shader_bake_parameter_counts[] = {
-	13,
-	16,
-	19,
-	1,
+	12,
+	14,
+	18,
 	0,
-	1,
-	13,
+	0,
+	0,
+	11,
 	0,
 	0,
 };
