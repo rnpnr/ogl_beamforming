@@ -1,63 +1,21 @@
 /* See LICENSE for license details. */
-#if   DataKind == DataKind_Float32Complex || (DataKind == DataKind_Float32 && Demodulate)
-  #define INPUT_TYPE  f32vec2
+#if  (InputDataKind == DataKind_Int16Complex          || \
+      (InputDataKind == DataKind_Int16 && Demodulate) || \
+      (InputDataKind == DataKind_Float16 && Demodulate))
+  #define SAMPLE_TYPE f16vec2
+#elif InputDataKind == DataKind_Int16
+  #define SAMPLE_TYPE f16
+#elif InputDataKind == DataKind_Float32 && Demodulate
   #define SAMPLE_TYPE f32vec2
-  #if BatchSampleCount
-    #define OUTPUT_TYPE f32
-  #else
-    #define OUTPUT_TYPE f32vec2
-  #endif
-#elif DataKind == DataKind_Float32
-  #define INPUT_TYPE  f32
-  #define SAMPLE_TYPE f32
-  #define OUTPUT_TYPE f32
-#elif DataKind == DataKind_Float16Complex || (DataKind == DataKind_Float16 && Demodulate)
-  #define INPUT_TYPE  f16vec2
-  #define SAMPLE_TYPE f16vec2
-  #if OutputFloats
-    #if BatchSampleCount
-      #define OUTPUT_TYPE f32
-    #else
-      #define OUTPUT_TYPE f32vec2
-    #endif
-  #else
-    #if BatchSampleCount
-      #define OUTPUT_TYPE f16
-    #else
-      #define OUTPUT_TYPE f16vec2
-    #endif
-  #endif
-#elif DataKind == DataKind_Float16
-  #define INPUT_TYPE  f16
-  #define SAMPLE_TYPE f16
-  #define OUTPUT_TYPE f16
-#elif DataKind == DataKind_Int16Complex   || (DataKind == DataKind_Int16   && Demodulate)
-  #define INPUT_TYPE  s16vec2
-  #define SAMPLE_TYPE f16vec2
-  #if OutputFloats
-    #if BatchSampleCount
-      #define OUTPUT_TYPE f32
-    #else
-      #define OUTPUT_TYPE f32vec2
-    #endif
-  #else
-    #if BatchSampleCount
-      #define OUTPUT_TYPE f16
-    #else
-      #define OUTPUT_TYPE f16vec2
-    #endif
-  #endif
-#elif DataKind == DataKind_Int16
-  #define INPUT_TYPE  s16
-  #define SAMPLE_TYPE f16
-  #define OUTPUT_TYPE f16
-#else
-  #error unsupported data kind
 #endif
 
-#define ComplexSampleType (DataKind == DataKind_Float32Complex || \
-                           DataKind == DataKind_Float16Complex || \
-                           DataKind == DataKind_Int16Complex || \
+#ifndef SAMPLE_TYPE
+  #define SAMPLE_TYPE InputDataType
+#endif
+
+#define ComplexSampleType (InputDataKind == DataKind_Float32Complex || \
+                           InputDataKind == DataKind_Float16Complex || \
+                           InputDataKind == DataKind_Int16Complex   || \
                            Demodulate)
 #if ComplexSampleType
   #define RESULT_TYPE f32vec2
@@ -78,11 +36,11 @@
 #endif
 
 layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer Input {
-	INPUT_TYPE x[];
+	InputDataType x[];
 };
 
 layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_PingPong) buffer Output {
-	OUTPUT_TYPE output_data[];
+	OutputDataType output_data[];
 };
 
 layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer Filter {
@@ -162,11 +120,11 @@ void main()
 
 		#if BatchSampleCount
 		// NOTE(rnp): deinterleave
-		output_data[output_element_offset + out_offset] = OUTPUT_TYPE(result.x);
+		output_data[output_element_offset + out_offset] = OutputDataType(result.x);
 		out_offset += BatchSampleCount;
-		output_data[output_element_offset + out_offset] = OUTPUT_TYPE(result.y);
+		output_data[output_element_offset + out_offset] = OutputDataType(result.y);
 		#else
-		output_data[output_element_offset + out_offset] = OUTPUT_TYPE(result);
+		output_data[output_element_offset + out_offset] = OutputDataType(result);
 		#endif
 	}
 }
