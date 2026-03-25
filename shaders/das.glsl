@@ -1,12 +1,12 @@
 /* See LICENSE for license details. */
-#if   DataKind == DataKind_Float32
+#if   InputDataKind == DataKind_Float32
   #if CoherencyWeighting
     #define RESULT_TYPE               vec2
     #define RESULT_COHERENT_CAST(a)   (a).x
     #define RESULT_INCOHERENT_CAST(a) (a).y
   #endif
   #define SAMPLE_TYPE f32
-#elif DataKind == DataKind_Float32Complex
+#elif InputDataKind == DataKind_Float32Complex
   #if CoherencyWeighting
     #define RESULT_TYPE               vec3
     #define RESULT_COHERENT_CAST(a)   (a).xy
@@ -14,7 +14,7 @@
   #endif
   #define SAMPLE_TYPE f32vec2
 #else
-  #error DataKind unsupported for DAS
+  #error InputDataKind unsupported for DAS
 #endif
 
 #ifndef RESULT_TYPE
@@ -32,7 +32,7 @@
 #endif
 
 layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_PingPong) readonly buffer RF {
-	SAMPLE_TYPE rf[];
+	InputDataType rf[];
 };
 
 layout(std430, buffer_reference) restrict readonly buffer ArrayParameters {
@@ -40,7 +40,7 @@ layout(std430, buffer_reference) restrict readonly buffer ArrayParameters {
 };
 
 layout(std430, buffer_reference) buffer Output {
-	SAMPLE_TYPE x[];
+	OutputDataType x[];
 };
 
 layout(std430, buffer_reference) buffer IncoherentOutput {
@@ -52,7 +52,7 @@ layout(std430, buffer_reference) buffer IncoherentOutput {
 
 #define C_SPLINE 0.5
 
-#if DataKind == DataKind_Float32Complex
+#if InputDataKind == DataKind_Float32Complex
 vec2 rotate_iq(const vec2 iq, const float time)
 {
 	float arg    = radians(360) * DemodulationFrequency * time;
@@ -88,12 +88,12 @@ SAMPLE_TYPE cubic(const int offset, const float t)
 	SAMPLE_TYPE T1 = C_SPLINE * (P2 - samples[0]);
 	SAMPLE_TYPE T2 = C_SPLINE * (samples[3] - P1);
 
-	#if   DataKind == DataKind_Float32
+	#if   InputDataKind == DataKind_Float32
 	vec4 C = vec4(P1.x, P2.x, T1.x, T2.x);
-	float result = dot(S, h * C);
-	#elif DataKind == DataKind_Float32Complex
+	SAMPLE_TYPE result = dot(S, h * C);
+	#elif InputDataKind == DataKind_Float32Complex
 	mat2x4 C = mat2x4(vec4(P1.x, P2.x, T1.x, T2.x), vec4(P1.y, P2.y, T1.y, T2.y));
-	vec2 result = S * h * C;
+	SAMPLE_TYPE result = S * h * C;
 	#endif
 	return result;
 }

@@ -37,14 +37,14 @@
 	4X
 }
 
-@Table([name size elements complex]) DataKindTable
+@Table([name size elements complex glsl]) DataKindTable
 {
-	[Int16          2 1 0]
-	[Int16Complex   2 2 1]
-	[Float32        4 1 0]
-	[Float32Complex 4 2 1]
-	[Float16        2 1 0]
-	[Float16Complex 2 2 1]
+	[Int16          2 1 0 int16_t  ]
+	[Int16Complex   2 2 1 i16vec2  ]
+	[Float32        4 1 0 float32_t]
+	[Float32Complex 4 2 1 f32vec2  ]
+	[Float16        2 1 0 float16_t]
+	[Float16Complex 2 2 1 f16vec2  ]
 }
 @Expand(DataKindTable) @Enumeration(`$(name)`) DataKind
 
@@ -250,6 +250,14 @@
 	@Expand(DataKindTable) `	$(complex),`
 	`};`
 	``
+	`read_only global s8 beamformer_data_kind_glsl_type[] = {`
+	@Expand(DataKindTable) `	s8_comp("$(glsl)"),`
+	`};`
+	``
+	`read_only global s8 beamformer_data_kind_s8[] = {`
+	@Expand(DataKindTable) `	s8_comp("$(name)"),`
+	`};`
+	``
 	`read_only global u8 beamformer_contrast_mode_samples[] = {`
 	@Expand(ContrastModeTable) `	$(samples),`
 	`};`
@@ -286,12 +294,10 @@
 
 	@Shader(decode.glsl) Decode
 	{
-		@Enumeration DataKind
 		@Enumeration DecodeMode
 
 		@Bake
 		{
-			[DataKind             data_kind              U32]
 			[UseSharedMemory      use_shared_memory      B32]
 			[DecodeMode           decode_mode            U32]
 			[OutputChannelStride  output_channel_stride  U32]
@@ -311,14 +317,11 @@
 			[hadamard_buffer  U64]
 			[rf_buffer        U64]
 			[output_buffer    U64]
-			[output_rf_buffer U64]
-			[first_pass       B32]
 		}
 	}
 
 	@Shader(filter.glsl) Filter
 	{
-		@Enumeration DataKind
 		@Enumeration ShaderBufferSlot
 		@Enumeration ShaderResourceKind
 
@@ -326,10 +329,8 @@
 
 		@Bake
 		{
-			[DataKind              data_kind              U32]
 			[Demodulate            demodulate             U32]
 			[ComplexFilter         complex_filter         U32]
-			[OutputFloats          output_floats          U32]
 			[DecimationRate        decimation_rate        U32]
 			[FilterLength          filter_length          U32]
 			[InputChannelStride    input_channel_stride   U32]
@@ -358,7 +359,6 @@
 		@Constant    MaxChannelCount
 
 		@Enumeration AcquisitionKind
-		@Enumeration DataKind
 		@Enumeration InterpolationMode
 		@Enumeration RCAOrientation
 		@Enumeration ShaderBufferSlot
@@ -368,7 +368,6 @@
 
 		@Bake
 		{
-			[DataKind                   data_kind                    U32]
 			[CoherencyWeighting         coherency_weighting          U32]
 			[SingleFocus                single_focus                 U32]
 			[SingleOrientation          single_orientation           U32]
@@ -409,13 +408,6 @@
 
 	@Shader(sum.glsl) Sum
 	{
-		@Enumeration DataKind
-
-		@Bake
-		{
-			[DataKind data_kind U32]
-		}
-
 		@PushConstants
 		{
 			[output_data    U64]
@@ -434,13 +426,6 @@
 {
 	@Shader(coherency_weighting.glsl) CoherencyWeighting
 	{
-		@Enumeration DataKind
-
-		@Bake
-		{
-			[DataKind data_kind U32]
-		}
-
 		@PushConstants
 		{
 			[left_side_buffer  U64]
@@ -454,12 +439,8 @@
 
 	@Shader(reshape.glsl) Reshape
 	{
-		@Enumeration DataKind
-
 		@Bake
 		{
-			[InputDataKind  input_data_kind  U32]
-			[OutputDataKind output_data_kind U32]
 			[SizeX          size_x           U32]
 			[SizeY          size_y           U32]
 			[SizeZ          size_z           U32]
@@ -500,8 +481,6 @@
 {
 	@RenderShader RenderBeamformed
 	{
-		@Enumeration DataKind
-
 		@VertexShader(render_3d.vert.glsl)
 		@FragmentShader(render_3d.frag.glsl)
 

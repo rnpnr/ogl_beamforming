@@ -1,7 +1,7 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
  * [ ]: bug? HERCULES might be broken, we may need to to chunk on transmits instead of channels
- * [ ]: refactor: plan_compute should build its own "command graph" which tracks
+ * [ ]: refactor: do_compute should build its own "command graph" which tracks
  *      dependencies better. It is very important that unnecessary barriers are
  *      not placed between compute stages which requires knowledge of the entire
  *      graph.
@@ -9,10 +9,6 @@
  *      use below to spin wait in library
  * [ ]: utilize umonitor/umwait (intel), monitorx/mwaitx (amd), and wfe/sev (aarch64)
  *      for power efficient low latency waiting
- * [ ]: refactor: split decode into reshape and decode
- *      - the check for first pass reshaping is the last non constant check
- *        in the shader
- *      - this will also remove the need for the channel mapping in the decode shader
  * [ ]: BeamformWorkQueue -> BeamformerWorkQueue
  * [ ]: refactor: work queue needs a cleanup, we should only have a single one
  *      - that queue isn't really considered hot so a lock is probably fine
@@ -28,6 +24,27 @@
 #include "beamformer_internal.h"
 
 global f32 dt_for_frame;
+
+typedef struct BeamformerComputeGraphNode BeamformerComputeGraphNode;
+struct BeamformerComputeGraphNode {
+	// NOTE(rnp): will be BeamformerShaderKind_Count for root node
+	BeamformerShaderKind kind;
+
+	// NOTE(rnp): when any of input or output stride is assigned it is assumed that
+	// the shader requires a fixed layout for input, output, or both. When two adjacent
+	// nodes require incompatible layouts the second pass over the graph will insert
+	// Reshape shaders in between.
+	BeamformerDataKind input_data_kind;
+	iv3                input_stride;
+
+	BeamformerDataKind output_data_kind;
+	iv3                output_stride;
+
+	i32                user_pipeline_index;
+
+	BeamformerComputeGraphNode *prev;
+	BeamformerComputeGraphNode *next;
+};
 
 read_only global u32 beamformer_compute_array_parameter_sizes[] = {
 	#define X(k, type, elements) sizeof(type) * elements,
@@ -246,32 +263,39 @@ dispatch_for_output(uv3 layout, iv3 points)
 	return result;
 }
 
-function uv3
-decode_data_stride(b32 input, u32 samples, u32 channels, u32 acquisitions)
-{
-	uv3 result;
-	result.x = input ? channels * acquisitions : 1;
-	result.y = input ? acquisitions            : samples * acquisitions;
-	result.z = input ? 1                       : samples;
-	return result;
-}
-
 function b32
-compute_plan_push_shader(BeamformerComputePlan *p, BeamformerShaderKind shader, BeamformerShaderParameters *sp)
+compute_plan_push_shader(BeamformerComputePlan *p, BeamformerComputeGraphNode *node, BeamformerShaderParameters *sp)
 {
 	b32 result = 0;
 	if (p->pipeline.shader_count < countof(p->pipeline.shaders)) {
 		u32 index = p->pipeline.shader_count++;
-		p->pipeline.shaders[index]    = shader;
-		p->pipeline.parameters[index] = *sp;
+		p->pipeline.shaders[index]    = node->kind;
 		zero_struct(p->shader_descriptors + index);
+		p->pipeline.parameters[index] = sp ? *sp : (BeamformerShaderParameters){0};
+
+		p->shader_descriptors[index].input_data_kind  = node->input_data_kind;
+		p->shader_descriptors[index].output_data_kind = node->output_data_kind;
+
 		result = 1;
 	}
 	return result;
 }
 
+function BeamformerComputeGraphNode *
+push_compute_graph_node(BeamformerComputeGraphNode *root, BeamformerShaderKind kind, Arena *arena)
+{
+	BeamformerComputeGraphNode *result = push_struct(arena, BeamformerComputeGraphNode);
+	DLLPushEnd(root, result);
+	result->kind = kind;
+	result->user_pipeline_index = -1;
+	// NOTE(rnp): initially don't care data kind
+	result->input_data_kind  = BeamformerDataKind_Count;
+	result->output_data_kind = BeamformerDataKind_Count;
+	return result;
+}
+
 function void
-plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
+plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, Arena scratch)
 {
 	b32 run_cuda_hilbert = 0;
 	b32 demodulate       = 0;
@@ -286,13 +310,38 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 	if (demodulate) run_cuda_hilbert = 0;
 
+	f32 sampling_frequency = pb->parameters.sampling_frequency;
+	u32 input_sample_count = pb->parameters.sample_count;
+	u32 acquisition_count  = pb->parameters.acquisition_count;
+	u32 decimation_rate    = Max(pb->parameters.decimation_rate, 1);
+
+	cp->raw_channel_byte_stride = pb->parameters.sample_count * pb->parameters.acquisition_count
+	                              * beamformer_data_kind_byte_size[pb->pipeline.data_kind];
+
 	BeamformerDataKind input_data_kind = pb->pipeline.data_kind;
-	cp->iq_pipeline = beamformer_data_kind_complex[input_data_kind] || demodulate || run_cuda_hilbert;
+	if (demodulate) {
+		switch (input_data_kind) {
+		case BeamformerDataKind_Int16:{  input_data_kind = BeamformerDataKind_Int16Complex;  }break;
+		case BeamformerDataKind_Float16:{input_data_kind = BeamformerDataKind_Float16Complex;}break;
+		case BeamformerDataKind_Float32:{input_data_kind = BeamformerDataKind_Float32Complex;}break;
+		default:{}break;
+		}
+		input_sample_count /= (2 * decimation_rate);
+		sampling_frequency /= (2 * decimation_rate);
+	}
+
+	cp->iq_pipeline = beamformer_data_kind_complex[input_data_kind] || run_cuda_hilbert;
 
 	BeamformerDataKind das_data_kind = cp->iq_pipeline ? BeamformerDataKind_Float32Complex
 	                                                   : BeamformerDataKind_Float32;
 
-	read_only local_persist BeamformerDataKind input_to_intermediate_data_kind[] = {
+	cp->channel_count = pb->parameters.channel_count;
+	u32 chunk_channel_count = Min(cp->channel_count, BeamformerChunkChannelCount);
+
+	cp->rf_size = input_sample_count * pb->parameters.acquisition_count * chunk_channel_count
+	              * beamformer_data_kind_byte_size[das_data_kind];
+
+	read_only local_persist BeamformerDataKind data_kind_to_element_kind[] = {
 		[BeamformerDataKind_Int16]          = BeamformerDataKind_Float16,
 		[BeamformerDataKind_Float16]        = BeamformerDataKind_Float16,
 		[BeamformerDataKind_Float32]        = BeamformerDataKind_Float32,
@@ -300,131 +349,187 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 		[BeamformerDataKind_Float16Complex] = BeamformerDataKind_Float16,
 		[BeamformerDataKind_Float32Complex] = BeamformerDataKind_Float32,
 	};
-	read_only local_persist b8 input_needs_deinterleave[] = {
-		[BeamformerDataKind_Int16]          = 0,
-		[BeamformerDataKind_Float16]        = 0,
-		[BeamformerDataKind_Float32]        = 0,
-		[BeamformerDataKind_Int16Complex]   = 1,
-		[BeamformerDataKind_Float16Complex] = 1,
-		[BeamformerDataKind_Float32Complex] = 1,
-	};
-	BeamformerDataKind intermediate_data_kind = input_to_intermediate_data_kind[input_data_kind];
 
-	cp->raw_channel_byte_stride = pb->parameters.sample_count * pb->parameters.acquisition_count
-	                              * beamformer_data_kind_byte_size[input_data_kind];
+	//////////////////////////////////////
+	// NOTE(rnp): First Pass: build initial graph and insert hard layout constraints
+	BeamformerComputeGraphNode *root_node = push_struct(&scratch, BeamformerComputeGraphNode);
+	root_node->kind = BeamformerShaderKind_Count;
+	root_node->input_data_kind  = input_data_kind;
+	root_node->input_stride.x   = 1;                                      // Sample Stride
+	root_node->input_stride.y   = input_sample_count * acquisition_count; // Channel Stride
+	root_node->input_stride.z   = input_sample_count;                     // Receive Event Stride
+	root_node->output_data_kind = input_data_kind;
+	root_node->output_stride.x  = 1;                                      // Sample Stride
+	root_node->output_stride.y  = input_sample_count * acquisition_count; // Channel Stride
+	root_node->output_stride.z  = input_sample_count;                     // Receive Event Stride
+	root_node->next = root_node->prev = root_node;
 
-	f32 sampling_frequency = pb->parameters.sampling_frequency;
-	u32 decimation_rate = Max(pb->parameters.decimation_rate, 1);
-	u32 sample_count    = pb->parameters.sample_count;
-	if (demodulate) {
-		sample_count       /= (2 * decimation_rate);
-		sampling_frequency /= 2 * (f32)decimation_rate;
+	for EachIndex(pb->pipeline.shader_count, it) {
+		// NOTE(rnp): skip unnecessary shaders
+		switch (pb->pipeline.shaders[it]) {
+		case BeamformerShaderKind_CudaHilbert:{if (!run_cuda_hilbert) continue;}break;
+
+		case BeamformerShaderKind_Decode:{
+			if (pb->parameters.decode_mode == BeamformerDecodeMode_None)
+				continue;
+		}break;
+
+		case BeamformerShaderKind_CudaDecode:
+		case BeamformerShaderKind_Sum:
+		case BeamformerShaderKind_MinMax:
+		{
+			// NOTE(rnp): currently unsupported
+			continue;
+		}break;
+
+		default:{}break;
+		}
+
+		BeamformerComputeGraphNode *node = push_compute_graph_node(root_node, pb->pipeline.shaders[it],
+		                                                           &scratch);
+		node->user_pipeline_index = (i32)it;
+		switch (pb->pipeline.shaders[it]) {
+		case BeamformerShaderKind_Decode:{
+			b32 low_precision   = beamformer_data_kind_element_size[input_data_kind] < 4;
+			b32 use_coop_matrix = vk_gpu_info()->cooperative_matrix &&
+			                      low_precision &&
+			                      (acquisition_count   % 16 == 0) &&
+			                      (chunk_channel_count % 16 == 0);
+
+			// NOTE(rnp): fixed input layout required for reasonable performance
+			if (low_precision && beamformer_data_kind_complex[input_data_kind])
+				node->input_data_kind = BeamformerDataKind_Float16Complex;
+			node->input_stride.x = chunk_channel_count * acquisition_count;
+			node->input_stride.y = acquisition_count;
+			node->input_stride.z = 1;
+
+			if (use_coop_matrix) {
+				node->input_data_kind  = BeamformerDataKind_Float16;
+				node->output_data_kind = data_kind_to_element_kind[das_data_kind];
+				node->output_stride    = node->input_stride;
+			}
+		}break;
+
+		case BeamformerShaderKind_DAS:{
+			node->input_data_kind  = das_data_kind;
+			node->input_stride.x   = 1;                                      // Sample Stride
+			node->input_stride.y   = input_sample_count * acquisition_count; // Channel Stride
+			node->input_stride.z   = input_sample_count;                     // Receive Event Stride
+			node->output_stride.x  = 1;
+			node->output_stride.y  = cp->output_points.x;
+			node->output_stride.z  = cp->output_points.x * cp->output_points.y;
+			node->output_data_kind = cp->iq_pipeline ? BeamformerDataKind_Float32Complex
+			                                         : BeamformerDataKind_Float32;
+
+			// NOTE(rnp): insert implicit CoherencyWeighting node
+			if (pb->parameters.coherency_weighting)
+				node = push_compute_graph_node(root_node, BeamformerShaderKind_CoherencyWeighting, &scratch);
+		}break;
+
+		default:{}break;
+		}
 	}
 
-	cp->channel_count = pb->parameters.channel_count;
+	//////////////////////////////////////
+	// NOTE(rnp): Second Pass: resolve layout constraints
+	for (BeamformerComputeGraphNode *node = root_node->next;
+	     node != root_node;
+	     node = node->next)
+	{
+		b32 needs_reshape = 0;
 
-	u32 chunk_channel_count = Min(cp->channel_count, BeamformerChunkChannelCount);
+		// NOTE(rnp): data strides
+		{
+			b32 input_dont_care       = bv3_any(iv3_equal(node->input_stride, (iv3){0}));
+			b32 prev_output_dont_care = bv3_any(iv3_equal(node->prev->output_stride, (iv3){0}));
 
-	cp->rf_size = sample_count * pb->parameters.acquisition_count * chunk_channel_count;
-	if (cp->iq_pipeline) cp->rf_size *= 8;
-	else                 cp->rf_size *= 4;
+			if (prev_output_dont_care && !input_dont_care)
+				node->prev->output_stride = node->input_stride;
 
-	u32 das_sample_stride   = 1;
-	u32 das_transmit_stride = sample_count;
-	u32 das_channel_stride  = sample_count * pb->parameters.acquisition_count;
+			if (!prev_output_dont_care && input_dont_care)
+				node->input_stride = node->prev->output_stride;
 
-	f32 time_offset = pb->parameters.time_offset;
+			if (prev_output_dont_care && input_dont_care)
+				node->input_stride = node->prev->output_stride = node->prev->input_stride;
 
+			needs_reshape |= !bv3_all(iv3_equal(node->input_stride, node->prev->output_stride));
+		}
+
+		// NOTE(rnp): data kinds
+		{
+			b32 input_dont_care       = node->input_data_kind        == BeamformerDataKind_Count;
+			b32 prev_output_dont_care = node->prev->output_data_kind == BeamformerDataKind_Count;
+
+			if (prev_output_dont_care && !input_dont_care)
+				node->prev->output_data_kind = node->input_data_kind;
+
+			if (!prev_output_dont_care && input_dont_care)
+				node->input_data_kind = node->prev->output_data_kind;
+
+			if (prev_output_dont_care && input_dont_care)
+				node->input_data_kind = node->prev->output_data_kind = node->prev->input_data_kind;
+
+			needs_reshape |= node->input_data_kind != node->prev->output_data_kind;
+		}
+
+		// NOTE(rnp): insert reshape if needed
+		if (needs_reshape) {
+			BeamformerComputeGraphNode *new = push_compute_graph_node(node, BeamformerShaderKind_Reshape,
+			                                                          &scratch);
+			new->input_data_kind  = new->prev->output_data_kind;
+			new->input_stride     = new->prev->output_stride;
+
+			new->output_data_kind = node->input_data_kind;
+			new->output_stride    = node->input_stride;
+		}
+	}
+
+	f32 time_offset   = pb->parameters.time_offset;
 	u32 subgroup_size = vk_gpu_info()->subgroup_size;
 
 	cp->first_image_shader_index = 0;
 	cp->pipeline.shader_count = 0;
-	for (u32 i = 0; i < pb->pipeline.shader_count; i++) {
-		BeamformerShaderParameters *sp = pb->pipeline.parameters + i;
-		u32 slot   = cp->pipeline.shader_count;
-		u32 shader = pb->pipeline.shaders[i];
 
-		BeamformerShaderDescriptor *ld = cp->shader_descriptors + slot - 1;
-		BeamformerShaderDescriptor *sd = cp->shader_descriptors + slot;
+	for (BeamformerComputeGraphNode *node = root_node->next;
+	     node != root_node;
+	     node = node->next)
+	{
+		assert(node->prev->output_data_kind == node->input_data_kind);
+		assert(bv3_all(iv3_equal(node->prev->output_stride, node->input_stride)));
 
-		switch (shader) {
+		BeamformerShaderParameters *sp = 0;
+		if (node->user_pipeline_index >= 0)
+			sp = pb->pipeline.parameters + node->user_pipeline_index;
 
-		case BeamformerShaderKind_CudaHilbert:{
-			if (run_cuda_hilbert)
-				compute_plan_push_shader(cp, shader, sp);
-		}break;
+		if (compute_plan_push_shader(cp, node, sp)) {
+			BeamformerShaderDescriptor *sd = cp->shader_descriptors + cp->pipeline.shader_count - 1;
 
-		case BeamformerShaderKind_Decode:{
-			/* TODO(rnp): rework decode first and demodulate after */
-			b32 first = slot == 0;
-
-			BeamformerShaderKind *last_shader = cp->pipeline.shaders + slot - 1;
-			assert(first || ((*last_shader == BeamformerShaderKind_Demodulate ||
-			                  *last_shader == BeamformerShaderKind_Filter)));
-			b32 decode = pb->parameters.decode_mode != BeamformerDecodeMode_None;
-			if (first && compute_plan_push_shader(cp, BeamformerShaderKind_Reshape, sp)) {
-				sd = cp->shader_descriptors + cp->pipeline.shader_count - 1;
-
-				sd->layout = (uv3){{subgroup_size, 1, 1}};
-
-				sd->dispatch.x = (u32)(ceil_f32((f32)pb->parameters.sample_count / sd->layout.x));
-				sd->dispatch.y = chunk_channel_count;
-				sd->dispatch.z = pb->parameters.acquisition_count;
-
-				uv3 output_stride = decode_data_stride(decode, pb->parameters.sample_count,
-				                                       chunk_channel_count, pb->parameters.acquisition_count);
-
-				BeamformerReshapeBakeParameters *rb = &sd->bake.Reshape;
-				rb->input_data_kind  = input_data_kind;
-				rb->output_data_kind = decode ? intermediate_data_kind : BeamformerDataKind_Float32;
-				rb->size_x           = pb->parameters.sample_count;
-				rb->size_y           = chunk_channel_count;
-				rb->size_z           = pb->parameters.acquisition_count;
-				rb->input_stride_x   = 1;
-				rb->input_stride_y   = pb->parameters.acquisition_count * pb->parameters.sample_count;
-				rb->input_stride_z   = pb->parameters.sample_count;
-				rb->output_stride_x  = output_stride.x;
-				rb->output_stride_y  = output_stride.y;
-				rb->output_stride_z  = output_stride.z;
-				rb->interleave       = 0;
-				rb->deinterleave     = decode ? input_needs_deinterleave[input_data_kind] : 0;
-			}
-
-			if (decode && compute_plan_push_shader(cp, shader, sp)) {
-				sd = cp->shader_descriptors + cp->pipeline.shader_count - 1;
-
+			switch (node->kind) {
+			case BeamformerShaderKind_Decode:{
 				BeamformerDecodeBakeParameters *db = &sd->bake.Decode;
-				db->data_kind = intermediate_data_kind;
 
-				u32 decode_sample_count = demodulate ? 2 * sample_count : sample_count;
+				u32 decode_sample_count = input_sample_count;
 				db->decode_mode         = pb->parameters.decode_mode;
 				db->transmit_count      = pb->parameters.acquisition_count;
 				db->chunk_channel_count = chunk_channel_count;
 
 				// NOTE(rnp): ignored when using coop matrices
-				db->output_sample_stride   = das_sample_stride;
-				db->output_channel_stride  = das_channel_stride;
-				db->output_transmit_stride = das_transmit_stride;
+				db->output_sample_stride   = node->output_stride.x;
+				db->output_channel_stride  = node->output_stride.y;
+				db->output_transmit_stride = node->output_stride.z;
 
 				db->to_process = 1;
 
 				b32 use_coop_matrix = vk_gpu_info()->cooperative_matrix &&
-				                      db->data_kind == BeamformerDataKind_Float16 &&
+				                      node->input_data_kind == BeamformerDataKind_Float16 &&
 				                      (db->transmit_count % 16 == 0) &&
 				                      (chunk_channel_count % 16 == 0);
-				b32 extra_reshape   = 0;
-
-				if (db->decode_mode == BeamformerDecodeMode_None) {
-					sd->layout = (uv3){{subgroup_size, 1, 1}};
-
-					sd->dispatch.x = (u32)ceil_f32((f32)decode_sample_count              / (f32)sd->layout.x);
-					sd->dispatch.y = (u32)ceil_f32((f32)chunk_channel_count              / (f32)sd->layout.y);
-					sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z);
-				} else if (use_coop_matrix) {
-					extra_reshape = 1;
+				if (use_coop_matrix) {
 					// TODO(rnp): shared memory for larger sizes
-
 					sd->layout = (uv3){{subgroup_size, 1, 1}};
+
+					if (demodulate)
+						decode_sample_count *= 2;
 
 					db->cooperative_matrix   = 1;
 					db->cooperative_matrix_m = 16;
@@ -440,13 +545,15 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 					if (db->transmit_count == 48)
 						db->to_process = db->transmit_count / 16;
 
-					b32 use_16z  = db->transmit_count == 48 || db->transmit_count == 80 ||
+					b32 use_16x  = db->transmit_count == 48 || db->transmit_count == 80 ||
 					               db->transmit_count == 96 || db->transmit_count == 160;
-					sd->layout = (uv3){{4, 1, use_16z? 16 : 32}};
+					sd->layout.x = use_16x ? 16 : 32;
+					sd->layout.y = 4;
+					sd->layout.z = 1;
 
-					sd->dispatch.x = (u32)ceil_f32((f32)decode_sample_count              / (f32)sd->layout.x);
+					sd->dispatch.x = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.x / (f32)db->to_process);
 					sd->dispatch.y = (u32)ceil_f32((f32)chunk_channel_count              / (f32)sd->layout.y);
-					sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z / (f32)db->to_process);
+					sd->dispatch.z = (u32)ceil_f32((f32)decode_sample_count              / (f32)sd->layout.z);
 				} else {
 					/* NOTE(rnp): register caching. using more threads will cause the compiler to do
 					 * contortions to avoid spilling registers. using less gives higher performance */
@@ -456,43 +563,12 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 					sd->dispatch.y = (u32)ceil_f32((f32)chunk_channel_count / (f32)sd->layout.y);
 					sd->dispatch.z = 1;
 				}
+			}break;
 
-				if (extra_reshape && compute_plan_push_shader(cp, BeamformerShaderKind_Reshape, sp)) {
-					cp->q_rf_data_offset = chunk_channel_count * sample_count * pb->parameters.acquisition_count *
-					                       beamformer_data_kind_byte_size[BeamformerDataKind_Float32];
-
-					sd = cp->shader_descriptors + cp->pipeline.shader_count - 1;
-					sd->layout.x = Min(subgroup_size, db->transmit_count);
-					sd->layout.y = subgroup_size / sd->layout.x;
-					sd->layout.z = 1;
-
-					sd->dispatch.x = (u32)(ceil_f32((f32)db->transmit_count  / sd->layout.x));
-					sd->dispatch.y = (u32)(ceil_f32((f32)chunk_channel_count / sd->layout.y));
-					sd->dispatch.z = sample_count;
-
-					BeamformerReshapeBakeParameters *rb = &sd->bake.Reshape;
-					rb->input_data_kind  = BeamformerDataKind_Float32;
-					rb->output_data_kind = BeamformerDataKind_Float32;
-					rb->size_x           = db->transmit_count;
-					rb->size_y           = chunk_channel_count;
-					rb->size_z           = sample_count;
-					rb->input_stride_x   = 1;
-					rb->input_stride_y   = db->transmit_count;
-					rb->input_stride_z   = chunk_channel_count * db->transmit_count;
-					rb->output_stride_x  = das_transmit_stride;
-					rb->output_stride_y  = das_channel_stride;
-					rb->output_stride_z  = das_sample_stride;
-					rb->interleave       = cp->iq_pipeline;
-				}
-			}
-		}break;
-
-		case BeamformerShaderKind_Demodulate:
-		case BeamformerShaderKind_Filter:
-		{
-			if (compute_plan_push_shader(cp, shader, sp)) {
-				b32 first = slot == 0;
-				b32 demod = shader == BeamformerShaderKind_Demodulate;
+			case BeamformerShaderKind_Demodulate:
+			case BeamformerShaderKind_Filter:
+			{
+				b32 demod = node->kind == BeamformerShaderKind_Demodulate;
 				BeamformerFilter *f = cp->filters + sp->filter_slot;
 
 				time_offset += f->time_delay;
@@ -502,12 +578,21 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				fb->demodulate     = demod;
 				fb->complex_filter = f->parameters.complex;
 
-				// NOTE(rnp): if we are decoding we need to deinterleave I and Q channels
-				if (pb->parameters.decode_mode != BeamformerDecodeMode_None)
-					fb->batch_sample_count = chunk_channel_count * sample_count * pb->parameters.acquisition_count;
+				fb->sample_count    = input_sample_count;
+				fb->decimation_rate = demod ? decimation_rate : 1;
 
-				fb->data_kind = input_data_kind;
-				if (!first) fb->data_kind = intermediate_data_kind;
+				b32 deinterleave =  beamformer_data_kind_complex[node->input_data_kind] &&
+				                   !beamformer_data_kind_complex[node->output_data_kind];
+				if (deinterleave)
+					fb->batch_sample_count = chunk_channel_count * input_sample_count * pb->parameters.acquisition_count;
+
+				fb->output_sample_stride   = node->output_stride.x;
+				fb->output_channel_stride  = node->output_stride.y;
+				fb->output_transmit_stride = node->output_stride.z;
+
+				fb->input_sample_stride    = node->input_stride.x;
+				fb->input_channel_stride   = node->input_stride.y;
+				fb->input_transmit_stride  = node->input_stride.z;
 
 				/* NOTE(rnp): when we are demodulating we pretend that the sampler was alternating
 				 * between sampling the I portion and the Q portion of an IQ signal. Therefore there
@@ -521,63 +606,25 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				if (demod) {
 					fb->demodulation_frequency = pb->parameters.demodulation_frequency;
 					fb->sampling_frequency     = pb->parameters.sampling_frequency / 2;
-					fb->decimation_rate        = decimation_rate;
-					fb->sample_count           = pb->parameters.sample_count;
-
-					fb->output_channel_stride  = das_channel_stride;
-					fb->output_sample_stride   = das_sample_stride;
-					fb->output_transmit_stride = das_transmit_stride;
-
-					if (first) {
-						fb->input_channel_stride  = pb->parameters.sample_count * pb->parameters.acquisition_count / 2;
-						fb->input_sample_stride   = 1;
-						fb->input_transmit_stride = pb->parameters.sample_count / 2;
-
-						if (pb->parameters.decode_mode == BeamformerDecodeMode_None) {
-							fb->output_floats = 1;
-						} else {
-							/* NOTE(rnp): output optimized layout for decoding */
-							fb->output_channel_stride  = pb->parameters.acquisition_count;
-							fb->output_sample_stride   = pb->parameters.acquisition_count * chunk_channel_count;
-							fb->output_transmit_stride = 1;
-						}
-					} else {
-						assert(cp->pipeline.shaders[slot - 1] == BeamformerShaderKind_Decode);
-						fb->input_channel_stride  = ld->bake.Decode.output_channel_stride;
-						fb->input_sample_stride   = ld->bake.Decode.output_sample_stride;
-						fb->input_transmit_stride = ld->bake.Decode.output_transmit_stride;
-					}
-				} else {
-					fb->decimation_rate        = 1;
-					fb->output_channel_stride  = sample_count * pb->parameters.acquisition_count;
-					fb->output_sample_stride   = 1;
-					fb->output_transmit_stride = sample_count;
-					fb->input_channel_stride   = sample_count * pb->parameters.acquisition_count;
-					fb->input_sample_stride    = 1;
-					fb->input_transmit_stride  = sample_count;
-					fb->sample_count           = sample_count;
 				}
 
 				sd->layout     = (uv3){{subgroup_size, 1, 1}};
-				sd->dispatch.x = (u32)ceil_f32((f32)sample_count                     / (f32)sd->layout.x);
+				sd->dispatch.x = (u32)ceil_f32((f32)input_sample_count               / (f32)sd->layout.x);
 				sd->dispatch.y = (u32)ceil_f32((f32)chunk_channel_count              / (f32)sd->layout.y);
 				sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z);
-			}
-		}break;
+			}break;
 
-		case BeamformerShaderKind_DAS:{
-			if (compute_plan_push_shader(cp, shader, sp)) {
+			case BeamformerShaderKind_DAS:{
 				cp->first_image_shader_index = cp->pipeline.shader_count;
 
 				BeamformerDASBakeParameters *db = &sd->bake.DAS;
-				db->data_kind              = das_data_kind;
 				db->sampling_frequency     = sampling_frequency;
 				db->demodulation_frequency = pb->parameters.demodulation_frequency;
 				db->speed_of_sound         = pb->parameters.speed_of_sound;
 				db->time_offset            = time_offset;
 				db->f_number               = pb->parameters.f_number;
 				db->acquisition_kind       = pb->parameters.acquisition_kind;
-				db->sample_count           = sample_count;
+				db->sample_count           = input_sample_count;
 				db->channel_count          = pb->parameters.channel_count;
 				db->acquisition_count      = pb->parameters.acquisition_count;
 				db->chunk_channel_count    = chunk_channel_count;
@@ -603,34 +650,61 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 
 				sd->layout   = layout_for_output(cp->output_points);
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
+			}break;
 
-				if (pb->parameters.coherency_weighting &&
-				    compute_plan_push_shader(cp, BeamformerShaderKind_CoherencyWeighting, sp))
-				{
-					BeamformerShaderDescriptor *shader_descriptor = cp->shader_descriptors + cp->pipeline.shader_count - 1;
-					shader_descriptor->layout   = sd->layout;
-					shader_descriptor->dispatch = sd->dispatch;
-					shader_descriptor->bake.CoherencyWeighting.data_kind = db->data_kind;
-				}
+			case BeamformerShaderKind_CoherencyWeighting:{
+				sd->layout   = layout_for_output(cp->output_points);
+				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
+			}break;
+
+			case BeamformerShaderKind_Reshape:{
+				BeamformerReshapeBakeParameters *rb = &sd->bake.Reshape;
+				rb->deinterleave =  beamformer_data_kind_complex[node->input_data_kind] &&
+				                   !beamformer_data_kind_complex[node->output_data_kind];
+				rb->interleave   = !beamformer_data_kind_complex[node->input_data_kind] &&
+				                    beamformer_data_kind_complex[node->output_data_kind];
+				assert(rb->interleave == 0 || (rb->interleave != rb->deinterleave));
+
+				rb->input_stride_x   = node->input_stride.x;
+				rb->input_stride_y   = node->input_stride.y;
+				rb->input_stride_z   = node->input_stride.z;
+				rb->output_stride_x  = node->output_stride.x;
+				rb->output_stride_y  = node->output_stride.y;
+				rb->output_stride_z  = node->output_stride.z;
+
+				// NOTE(rnp): order doesn't really matter here but it must match the dispatch layout
+				rb->size_x           = input_sample_count;
+				rb->size_y           = chunk_channel_count;
+				rb->size_z           = acquisition_count;
+
+				sd->layout.x = 1;
+				sd->layout.z = Min(subgroup_size, rb->size_z);
+				sd->layout.y = subgroup_size / sd->layout.z;
+
+				sd->dispatch.x = (u32)(ceil_f32((f32)rb->size_x / sd->layout.x));
+				sd->dispatch.y = (u32)(ceil_f32((f32)rb->size_y / sd->layout.y));
+				sd->dispatch.z = (u32)(ceil_f32((f32)rb->size_z / sd->layout.z));
+			}break;
+
+			default:{}break;
+
+			#if 0
+			case BeamformerShaderKind_Sum:{
+				sd->bake.data_kind = BeamformerDataKind_Float32;
+				if (cp->iq_pipeline)
+					sd->bake.data_kind = BeamformerDataKind_Float32Complex;
+
+				sd->layout   = layout_for_output(cp->output_points);
+				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
+
+				commit = 1;
+			}break;
+			#endif
+
 			}
-		}break;
-
-		#if 0
-		case BeamformerShaderKind_Sum:{
-			sd->bake.data_kind = BeamformerDataKind_Float32;
-			if (cp->iq_pipeline)
-				sd->bake.data_kind = BeamformerDataKind_Float32Complex;
-
-			sd->layout   = layout_for_output(cp->output_points);
-			sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
-
-			commit = 1;
-		}break;
-		#endif
-
-		default:{}break;
 		}
 	}
+
 	cp->pipeline.data_kind = input_data_kind;
 
 	if (cp->first_image_shader_index == 0)
@@ -669,7 +743,35 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDes
 		stream_append_s8(s,  s8(") in;\n\n"));
 	}
 
+	{
+		u32 max_length = 0;
+		for EachElement(beamformer_data_kind_s8, it)
+			max_length = Max(max_length, (u32)beamformer_data_kind_s8[it].len);
+
+		for EachElement(beamformer_data_kind_s8, it) {
+			stream_append_s8s(s, s8("#define DataKind_"), beamformer_data_kind_s8[it]);
+			stream_pad(s, ' ', max_length - beamformer_data_kind_s8[it].len + 1);
+			stream_append_u64(s, it);
+			stream_append_byte(s, '\n');
+		}
+		stream_append_byte(s, '\n');
+	}
+
 	if (sd) {
+		if (sd->input_data_kind != BeamformerDataKind_Count) {
+			stream_append_s8s(s, s8("#define InputDataType  "),
+			                  beamformer_data_kind_glsl_type[sd->input_data_kind], s8("\n"));
+			stream_append_s8s(s, s8("#define InputDataKind  DataKind_"),
+			                  beamformer_data_kind_s8[sd->input_data_kind], s8("\n"));
+		}
+		if (sd->output_data_kind != BeamformerDataKind_Count) {
+			stream_append_s8s(s, s8("#define OutputDataType "),
+			                  beamformer_data_kind_glsl_type[sd->output_data_kind], s8("\n"));
+			stream_append_s8s(s, s8("#define OutputDataKind DataKind_"),
+			                  beamformer_data_kind_s8[sd->output_data_kind], s8("\n"));
+		}
+		stream_append_byte(s, '\n');
+
 		u32 *parameters = (u32 *)&sd->bake;
 		s8  *names      = beamformer_shader_bake_parameter_names[reloadable_index];
 		u32  float_bits = beamformer_shader_bake_parameter_float_bits[reloadable_index];
@@ -788,7 +890,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			cp->output_points  = das_valid_points(pb->parameters.output_points.xyz);
 			cp->average_frames = pb->parameters.output_points.E[3];
 
-			plan_compute_pipeline(cp, pb);
+			plan_compute_pipeline(cp, pb, arena);
 
 			/* NOTE(rnp): these are both handled by plan_compute_pipeline() */
 			u32 mask = 1 << BeamformerParameterBlockRegion_ComputePipeline |
@@ -892,27 +994,13 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 	switch (cp->pipeline.shaders[shader_slot]) {
 
 	case BeamformerShaderKind_Decode:{
-		BeamformerDecodeMode mode = cp->shader_descriptors[shader_slot].bake.Decode.decode_mode;
 		BeamformerDecodePushConstants pc = {
 			.hadamard_buffer = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, Hadamard),
+			.rf_buffer       = pp_input_pointer,
 		};
 
 		if ((shader_slot + 1) == das_index) pc.output_buffer = pp_das_pointer;
 		else                                pc.output_buffer = pp_output_pointer;
-
-		if (shader_slot == 0 && mode != BeamformerDecodeMode_None) {
-			pc.output_rf_buffer = pp_input_pointer;
-			pc.rf_buffer        = rf_pointer;
-			pc.first_pass       = 1;
-
-			vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
-			vk_command_dispatch_compute(cmd, dispatch);
-
-			pc.output_rf_buffer = 0;
-			pc.first_pass       = 0;
-		}
-
-		pc.rf_buffer = pp_input_pointer;
 
 		GPUMemoryBarrierInfo memory_barriers[]= {
 			// NOTE(rnp): first pass or last stage output
@@ -952,22 +1040,18 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 	case BeamformerShaderKind_Filter:
 	case BeamformerShaderKind_Demodulate:
 	{
-		b32 demod = cp->pipeline.shaders[shader_slot] == BeamformerShaderKind_Demodulate;
-
-		BeamformerDataKind output_data_kind = cp->shader_descriptors[shader_slot].bake.Filter.data_kind;
-		if (demod) output_data_kind = BeamformerDataKind_Float16Complex;
-		if (cp->shader_descriptors[shader_slot].bake.Filter.output_floats) {
-			output_data_kind = demod ? BeamformerDataKind_Float32Complex
-			                         : BeamformerDataKind_Float32;
-		}
+		BeamformerDataKind output_data_kind = cp->shader_descriptors[shader_slot].output_data_kind;
 
 		u64 element_size = beamformer_data_kind_byte_size[output_data_kind];
 		u32 filter_slot  = cp->pipeline.parameters[shader_slot].filter_slot;
 		BeamformerFilterPushConstants pc = {
 			.filter_coefficients   = cp->filters[filter_slot].buffer.gpu_pointer,
 			.input_data            = shader_slot == 0 ? rf_pointer : pp_input_pointer,
-			.output_element_offset = 2 * output_index * pp_size / element_size,
+			.output_element_offset = output_index * pp_size / element_size,
 		};
+
+		if ((shader_slot + 1) == das_index)
+			pc.output_element_offset = das_output_index * pp_size / element_size;
 
 		GPUMemoryBarrierInfo memory_barriers[] = {
 			// NOTE(rnp): last stage output
@@ -991,7 +1075,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			barrier_count--;
 		}
 
-		if ((shader_slot + 1) != das_index || channel_offset == 0)
+		if ((shader_slot + 1) != das_index)
 			barrier_count--;
 
 		if (barrier_count)
@@ -1010,7 +1094,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 
 		u64 frame_size   = beamformer_frame_byte_size(frame->points, frame->data_kind);
 		u64 iframe_size  = frame_size / beamformer_data_kind_element_count[frame->data_kind];
-		u64 element_size = beamformer_data_kind_byte_size[cp->shader_descriptors[shader_slot].bake.DAS.data_kind];
+		u64 element_size = beamformer_data_kind_byte_size[cp->shader_descriptors[shader_slot].input_data_kind];
 
 		BeamformerDASPushConstants pc = {
 			.xdc_element_pitch = cp->xdc_element_pitch,
@@ -1091,9 +1175,13 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 	}break;
 
 	case BeamformerShaderKind_Reshape:{
+		BeamformerDataKind input_data_kind = cp->shader_descriptors[shader_slot].input_data_kind;
+		BeamformerReshapeBakeParameters *rb = &cp->shader_descriptors[shader_slot].bake.Reshape;
+		u64 input_pointer = shader_slot == 0 ? rf_pointer : pp_input_pointer;
 		BeamformerReshapePushConstants pc = {
-			.left_input_buffer  = pp_input_pointer,
-			.right_input_buffer = pp_input_pointer + cp->q_rf_data_offset,
+			.left_input_buffer  = input_pointer,
+			.right_input_buffer = input_pointer + rb->size_x * rb->size_y * rb->size_z
+			                                      * beamformer_data_kind_byte_size[input_data_kind],
 		};
 
 		if ((shader_slot + 1) == das_index) pc.output_buffer = pp_das_pointer;
