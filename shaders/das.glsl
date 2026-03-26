@@ -60,7 +60,7 @@ vec2 rotate_iq(const vec2 iq, const float time)
 #endif
 
 /* NOTE: See: https://cubic.org/docs/hermite.htm */
-SAMPLE_TYPE cubic(const int base_index, const float index)
+SAMPLE_TYPE cubic(const int base_index, const float t)
 {
 	const mat4 h = mat4(
 		 2, -3,  0, 1,
@@ -69,12 +69,11 @@ SAMPLE_TYPE cubic(const int base_index, const float index)
 		 1, -1,  0, 0
 	);
 
-	float tk, t = modf(index, tk);
 	SAMPLE_TYPE samples[4] = {
-		rf_data[base_index + int(tk) - 1],
-		rf_data[base_index + int(tk) + 0],
-		rf_data[base_index + int(tk) + 1],
-		rf_data[base_index + int(tk) + 2],
+		rf_data[base_index + 0],
+		rf_data[base_index + 1],
+		rf_data[base_index + 2],
+		rf_data[base_index + 3],
 	};
 
 	vec4        S  = vec4(t * t * t, t * t, t, 1);
@@ -111,8 +110,10 @@ SAMPLE_TYPE sample_rf(const int channel, const int transmit, const float index)
 		result = rotate_iq(result, index / SamplingFrequency);
 	}break;
 	case InterpolationMode_Cubic:{
-		if (index >= 0 && (int(index) + 2) < SampleCount)
-			result = rotate_iq(cubic(base_index, index), index / SamplingFrequency);
+		if (index > 0 && int(index) < SampleCount - 2) {
+			float tk, t = modf(index, tk);
+			result = rotate_iq(cubic(base_index + int(index) - 1, t), index / SamplingFrequency);
+		}
 	}break;
 	}
 	return result;
