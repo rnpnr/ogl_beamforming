@@ -219,41 +219,56 @@ RESULT_TYPE RCA(const vec3 world_point)
 
 RESULT_TYPE HERCULES(const vec3 world_point)
 {
-	const int   tx_rx_orientation = tx_rx_orientation_for_acquisition(0);
-	const bool  rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
-	const vec2  focal_vector      = focal_vector_for_acquisition(0);
-	const float transmit_distance = rca_transmit_distance(world_point, focal_vector, tx_rx_orientation);
-	const vec3  xdc_world_point   = (xdc_transform * vec4(world_point, 1)).xyz;
+	const int tx_rx_orientation  = tx_rx_orientation_for_acquisition(0);
+	const bool rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
+	const vec2 focal_vector      = focal_vector_for_acquisition(0);
+	const vec3 xdc_world_point   = (xdc_transform * vec4(world_point, 1)).xyz;
+
+	const float transmit_index   = sample_index(rca_transmit_distance(world_point, focal_vector, tx_rx_orientation));
+	const float z_delta_squared  = xdc_world_point.z * xdc_world_point.z;
+	const float f_number_over_z  = abs(FNumber / xdc_world_point.z);
+	const vec2  xy_world_point   = xdc_world_point.xy;
+	const float apodization_test = 0.25f / (f_number_over_z * f_number_over_z);
 
 	RESULT_TYPE result = RESULT_TYPE(0);
-	for (int transmit = Sparse; transmit < AcquisitionCount; transmit++) {
-		int tx_channel = bool(Sparse) ? imageLoad(sparse_elements, transmit - Sparse).x : transmit;
-		int rf_offset  = transmit * SampleCount;
-		rf_offset     -= int(InterpolationMode == InterpolationMode_Cubic);
-		#if Fast
-		const int rx_channel = u_channel;
-		rf_offset += rx_channel * SampleCount * AcquisitionCount;
-		#else
-		for (int rx_channel = 0; rx_channel < ChannelCount; rx_channel++)
-		#endif
-		{
-			vec3 element_position;
-			if (rx_cols) element_position = vec3(rx_channel, tx_channel, 0) * vec3(xdc_element_pitch, 0);
-			else         element_position = vec3(tx_channel, rx_channel, 0) * vec3(xdc_element_pitch, 0);
+	#if Fast
+	const int rx_channel = u_channel;
+	#else
+	for (int rx_channel = 0; rx_channel < ChannelCount; rx_channel++)
+	#endif
+	{
+		int rf_offset   = rx_channel * SampleCount * AcquisitionCount + Sparse * SampleCount;
+		rf_offset      -= int(InterpolationMode == InterpolationMode_Cubic);
 
-			float a_arg = abs(FNumber * distance(xdc_world_point.xy, element_position.xy) /
-			                  abs(xdc_world_point.z));
-			if (a_arg < 0.5f) {
-				float apodization = apodize(a_arg);
+		// NOTE(rnp): this wouldn't be so messy if we just forced an orientation like with FORCES
+		vec2 element_receive_delta_squared = xy_world_point;
+		if (rx_cols) element_receive_delta_squared.x -= rx_channel * xdc_element_pitch.x;
+		else         element_receive_delta_squared.y -= rx_channel * xdc_element_pitch.y;
+
+		if (rx_cols) element_receive_delta_squared.x *= element_receive_delta_squared.x;
+		else         element_receive_delta_squared.y *= element_receive_delta_squared.y;
+
+		for (int transmit = Sparse; transmit < AcquisitionCount; transmit++) {
+			int tx_channel = bool(Sparse) ? imageLoad(sparse_elements, transmit - Sparse).x : transmit;
+
+			if (rx_cols) element_receive_delta_squared.y  = xy_world_point.y - tx_channel * xdc_element_pitch.y;
+			else         element_receive_delta_squared.x  = xy_world_point.x - tx_channel * xdc_element_pitch.x;
+
+			if (rx_cols) element_receive_delta_squared.y *= element_receive_delta_squared.y;
+			else         element_receive_delta_squared.x *= element_receive_delta_squared.x;
+
+			float element_delta_squared = element_receive_delta_squared.x + element_receive_delta_squared.y;
+			if (element_delta_squared < apodization_test) {
 				/* NOTE: tribal knowledge */
-				if (transmit == 0) apodization *= inversesqrt(AcquisitionCount);
+				float apodization = transmit == 0 ? inversesqrt(float(AcquisitionCount)) : 1.0f;
+				apodization *= apodize(f_number_over_z * sqrt(element_delta_squared));
 
-				float       sidx  = sample_index(transmit_distance + distance(xdc_world_point, element_position));
-				SAMPLE_TYPE value = apodization * sample_rf(rf_offset, sidx);
+				float index = transmit_index + sqrt(z_delta_squared + element_delta_squared) * SamplingFrequency / SpeedOfSound;
+				SAMPLE_TYPE value = apodization * sample_rf(rf_offset, index);
 				result += RESULT_STORE(value, length(value));
 			}
 
-			rf_offset += SampleCount * AcquisitionCount;
+			rf_offset += SampleCount;
 		}
 	}
 	return result;
