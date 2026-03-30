@@ -86,6 +86,8 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 		zero_struct(result);
 		cc->compute_plans[block] = result;
 
+		result->ui_voxel_transform = m4_identity();
+
 		glCreateBuffers(countof(result->ubos), result->ubos);
 
 		Stream label = arena_stream(*arena);
@@ -565,6 +567,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 			// NOTE(rnp): old gcc will miscompile an assignment
 			mem_copy(du->voxel_transform.E, pb->parameters.das_voxel_transform.E, sizeof(du->voxel_transform));
 			mem_copy(du->xdc_transform.E,   pb->parameters.xdc_transform.E,       sizeof(du->xdc_transform));
+
+			du->voxel_transform = m4_mul(cp->ui_voxel_transform, du->voxel_transform);
 
 			u32 id = pb->parameters.acquisition_kind;
 
@@ -1125,7 +1129,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			if (!beamformer_frame_compatible(frame, cp->output_points, gl_kind))
 				alloc_beamform_frame(frame, cp->output_points, gl_kind, s8("Beamformed_Data"), *arena);
 
-			mem_copy(frame->voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));
+			m4 voxel_transform = m4_mul(cp->ui_voxel_transform, cp->voxel_transform);
+			mem_copy(frame->voxel_transform.E, voxel_transform.E, sizeof(voxel_transform));
 			frame->acquisition_kind = cp->acquisition_kind;
 			frame->compound_count   = cp->acquisition_count;
 

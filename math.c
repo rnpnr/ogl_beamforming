@@ -538,6 +538,13 @@ m4_mul_v4(m4 a, v4 v)
 	return result;
 }
 
+function v3
+m4_mul_v3(m4 a, v3 v)
+{
+	v3 result = m4_mul_v4(a, (v4){{v.x, v.y, v.z, 1.0f}}).xyz;
+	return result;
+}
+
 function m4
 orthographic_projection(f32 n, f32 f, f32 t, f32 r)
 {

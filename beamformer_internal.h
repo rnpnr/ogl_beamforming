@@ -162,6 +162,7 @@ struct BeamformerComputePlan {
 	b32 iq_pipeline;
 
 	m4  voxel_transform;
+	m4  ui_voxel_transform;
 
 	iv3 output_points;
 	i32 average_frames;
