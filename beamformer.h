@@ -24,8 +24,9 @@
  *   IMPORTANT: When the platform wants to reload the library at runtime it
  *   MUST NOT unload the old library immediately; the beamformer may still
  *   be executing code in old library. Instead the platform must first call
- *   `beamformer_debug_hot_reload` with the program's memory and the new library
- *   handle. Once that function has returned it is safe to close the old handle.
+ *   `beamformer_debug_hot_release` with the program's memory, then it may close the
+ *   old handle. Then `beamformer_debug_hot_reload` should be called with the new handle
+ *   so that the beamformer may resume operation.
  *
  * BEAMFORMER_RENDERDOC_HOOKS
  *   Add RenderDoc API calls to capture complete compute frames. As compute is performed
@@ -198,6 +199,7 @@ BEAMFORMER_EXPORT void beamformer_frame_step(BeamformerInput *);
 #endif
 
 #if BEAMFORMER_DEBUG
+BEAMFORMER_EXPORT void beamformer_debug_hot_release(BeamformerInput *);
 BEAMFORMER_EXPORT void beamformer_debug_hot_reload(OSLibrary new_library, BeamformerInput *);
 #endif
 

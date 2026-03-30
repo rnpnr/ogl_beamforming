@@ -23,7 +23,7 @@ BEAMFORMER_DEBUG_ENTRY_POINTS
 #undef X
 
 BEAMFORMER_EXPORT void
-beamformer_debug_hot_reload(OSLibrary library, BeamformerInput *input)
+beamformer_debug_hot_release(BeamformerInput *input)
 {
 	BeamformerCtx *ctx = BeamformerContextMemory(input->memory);
 
@@ -32,7 +32,11 @@ beamformer_debug_hot_reload(OSLibrary library, BeamformerInput *input)
 	 * never reload while compute is in progress but just incase). */
 	spin_wait(atomic_load_u32(&ctx->upload_worker.awake));
 	spin_wait(atomic_load_u32(&ctx->compute_worker.awake));
+}
 
+BEAMFORMER_EXPORT void
+beamformer_debug_hot_reload(OSLibrary library, BeamformerInput *input)
+{
 	#define X(name) name = os_lookup_symbol(library, #name);
 	BEAMFORMER_DEBUG_ENTRY_POINTS
 	#undef X

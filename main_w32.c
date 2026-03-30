@@ -254,16 +254,19 @@ function void
 debug_library_reload(BeamformerInput *input)
 {
 	local_persist OSLibrary beamformer_library_handle = {OSInvalidHandleValue};
-	OSLibrary new_handle = load_library(OS_DEBUG_LIB_NAME, OS_DEBUG_LIB_TEMP_NAME);
 
+	if ValidHandle(beamformer_library_handle) {
+		beamformer_debug_hot_release(input);
+		FreeLibrary(beamformer_library_handle.value[0]);
+		beamformer_library_handle = (OSLibrary){OSInvalidHandleValue};
+	}
+
+	OSLibrary new_handle = load_library(OS_DEBUG_LIB_NAME, OS_DEBUG_LIB_TEMP_NAME);
 	if (InvalidHandle(beamformer_library_handle) && InvalidHandle(new_handle))
 		fatal(s8("[os] failed to load: " OS_DEBUG_LIB_NAME "\n"));
 
 	if ValidHandle(new_handle) {
 		beamformer_debug_hot_reload(new_handle, input);
-
-		if ValidHandle(beamformer_library_handle)
-			FreeLibrary(beamformer_library_handle.value[0]);
 		beamformer_library_handle = new_handle;
 	}
 }
