@@ -29,31 +29,39 @@ global struct {
 	BeamformerSharedMemory *bp;
 	i32                     timeout_ms;
 	BeamformerLibErrorKind  last_error;
+	i64                     shared_memory_size;
 } g_beamformer_library_context;
 
 #if OS_LINUX
 
-function void *
+function s8
 os_open_shared_memory_area(char *name)
 {
-	void *result = 0;
+	s8 result = {0};
 	i32 fd = shm_open(name, O_RDWR, S_IRUSR|S_IWUSR);
 	if (fd > 0) {
-		void *new = mmap(0, BEAMFORMER_SHARED_MEMORY_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
-		if (new != MAP_FAILED) result = new;
+		struct stat sb;
+		if (fstat(fd, &sb) != -1) {
+			void *new = mmap(0, sb.st_size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+			if (new != MAP_FAILED) {
+				result.data = new;
+				result.len  = sb.st_size;
+			}
+		}
 		close(fd);
 	}
 	return result;
 }
 
 function void
-os_close_shared_memory_area(void *memory)
+os_close_shared_memory_area(void *memory, i64 size)
 {
-	munmap(memory, BEAMFORMER_SHARED_MEMORY_SIZE);
+	munmap(memory, size);
 }
 
 #elif OS_WINDOWS
 
+W32(b32) GetFileSizeEx(iptr, i64 *);
 W32(b32) UnmapViewOfFile(void *);
 
 function b32
@@ -84,24 +92,29 @@ os_reserve_region_locks(void)
 	return result;
 }
 
-function void *
+function s8
 os_open_shared_memory_area(char *name)
 {
+	s8 result = {0};
 	iptr h = OpenFileMappingA(FILE_MAP_ALL_ACCESS, 0, name);
-	void *result = 0;
 	if (h != INVALID_FILE) {
-		void *new = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, BEAMFORMER_SHARED_MEMORY_SIZE);
-		if (new && os_reserve_region_locks())
-			result = new;
-		if (new && !result)
-			UnmapViewOfFile(new);
+		i64 size;
+		if (GetFileSizeEx(h, &size)) {
+			void *new = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, size);
+			if (new && os_reserve_region_locks()) {
+				result.data = new;
+				result.len  = size;
+			}
+			if (new && !result.data)
+				UnmapViewOfFile(new);
+		}
 		CloseHandle(h);
 	}
 	return result;
 }
 
 function void
-os_close_shared_memory_area(void *memory)
+os_close_shared_memory_area(void *memory, i64 size)
 {
 	UnmapViewOfFile(memory);
 }
@@ -123,11 +136,16 @@ check_shared_memory(void)
 {
 	b32 result = g_beamformer_library_context.bp != 0;
 	if unlikely(!g_beamformer_library_context.bp) {
-		BeamformerSharedMemory *bp = os_open_shared_memory_area(OS_SHARED_MEMORY_NAME);
-		if (lib_error_check(bp != 0, SharedMemory)) {
+		s8 shared_memory = os_open_shared_memory_area(OS_SHARED_MEMORY_NAME);
+		if (lib_error_check(shared_memory.data != 0, SharedMemory)) {
+			BeamformerSharedMemory *bp = (BeamformerSharedMemory *)shared_memory.data;
 			result = lib_error_check(bp->version == BEAMFORMER_SHARED_MEMORY_VERSION, VersionMismatch);
-			if (result) g_beamformer_library_context.bp = bp;
-			else        os_close_shared_memory_area(bp);
+			if (result) {
+				g_beamformer_library_context.bp                 = bp;
+				g_beamformer_library_context.shared_memory_size = shared_memory.len;
+			} else {
+				os_close_shared_memory_area(shared_memory.data, shared_memory.len);
+			}
 		}
 	}
 
@@ -388,7 +406,8 @@ function b32
 beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 {
 	b32 result = 0;
-	Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
+	Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
+	                                                       g_beamformer_library_context.shared_memory_size);
 	BeamformerParameterBlock *b  = beamformer_parameter_block(g_beamformer_library_context.bp, block);
 	BeamformerParameters     *bp = &b->parameters;
 	BeamformerDataKind data_kind = b->pipeline.data_kind;
@@ -545,7 +564,8 @@ beamformer_export(BeamformerExportContext export, void *out, i32 timeout_ms)
 
 		if (lib_try_lock(BeamformerSharedMemoryLockKind_ExportSync, timeout_ms)) {
 			if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
-				Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
+				Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
+				                                                       g_beamformer_library_context.shared_memory_size);
 				mem_copy(out, scratch.beg, export.size);
 				lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
 				result = 1;
@@ -576,7 +596,8 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 		iz output_size = output_points.x * output_points.y * output_points.z * (i32)sizeof(f32);
 		if (complex) output_size *= 2;
 
-		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
+		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
+		                                                       g_beamformer_library_context.shared_memory_size);
 		if (out_data) result &= lib_error_check(output_size <= arena_capacity(&scratch, u8), ExportSpaceOverflow);
 
 		if (result) {
@@ -595,12 +616,10 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 b32
 beamformer_compute_timings(BeamformerComputeStatsTable *output, i32 timeout_ms)
 {
-	static_assert(sizeof(*output) <= BEAMFORMER_SHARED_MEMORY_MAX_SCRATCH_SIZE,
-	              "timing table size exceeds scratch space");
-
 	b32 result = 0;
 	if (check_shared_memory()) {
-		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp);
+		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
+		                                                       g_beamformer_library_context.shared_memory_size);
 		if (lib_error_check((iz)sizeof(*output) <= arena_capacity(&scratch, u8), ExportSpaceOverflow)) {
 			BeamformerExportContext export;
 			export.kind = BeamformerExportKind_Stats;

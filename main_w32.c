@@ -45,6 +45,8 @@ W32(b32)    InitializeSynchronizationBarrier(w32_synchronization_barrier *, i32,
 W32(void *) LoadLibraryA(const c8 *);
 W32(i32)    SetThreadDescription(u64, u16 *);
 
+#define OS_SHARED_MEMORY_SIZE  GB(2)
+
 #define OS_DEBUG_LIB_NAME      ".\\beamformer.dll"
 #define OS_DEBUG_LIB_TEMP_NAME ".\\beamformer_temp.dll"
 
@@ -396,7 +398,7 @@ main(void)
 	BeamformerInput *input = push_struct(&program_memory, BeamformerInput);
 	input->memory          = program_memory.beg;
 	input->memory_size     = program_memory.end - program_memory.beg;
-	input->shared_memory   = allocate_shared_memory(OS_SHARED_MEMORY_NAME, BEAMFORMER_SHARED_MEMORY_SIZE,
+	input->shared_memory   = allocate_shared_memory(OS_SHARED_MEMORY_NAME, OS_SHARED_MEMORY_SIZE,
 	                                                &input->shared_memory_size);
 	if (input->shared_memory) {
 		input->shared_memory_name        = s8(OS_SHARED_MEMORY_NAME).data;

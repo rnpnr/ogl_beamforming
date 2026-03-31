@@ -255,10 +255,11 @@ typedef struct {
 } ComputeTimingTable;
 
 typedef struct {
-	BeamformerRFBuffer *     rf_buffer;
-	BeamformerSharedMemory * shared_memory;
-	ComputeTimingTable *     compute_timing_table;
-	i32                *     compute_worker_sync;
+	BeamformerRFBuffer      *rf_buffer;
+	BeamformerSharedMemory  *shared_memory;
+	i64                      shared_memory_size;
+	ComputeTimingTable      *compute_timing_table;
+	i32                     *compute_worker_sync;
 } BeamformerUploadThreadContext;
 
 struct BeamformerFrame {
@@ -327,6 +328,7 @@ typedef struct {
 	ComputeTimingTable *compute_timing_table;
 
 	BeamformerSharedMemory *shared_memory;
+	i64                     shared_memory_size;
 
 	BeamformerFrame beamform_frames[BeamformerMaxSavedFrames];
 	BeamformerFrame *latest_frame;

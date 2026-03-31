@@ -1067,7 +1067,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 					u32 out_size = (u32)dim.x * (u32)dim.y * (u32)dim.z * 2 * sizeof(f32);
 					if (out_size <= ec->size) {
 						glGetTextureImage(texture, 0, GL_RG, GL_FLOAT, (i32)out_size,
-						                  beamformer_shared_memory_scratch_arena(sm).beg);
+						                  beamformer_shared_memory_scratch_arena(sm, ctx->shared_memory_size).beg);
 					}
 				}
 			}break;
@@ -1077,7 +1077,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 				spin_wait(table->write_index != atomic_load_u32(&table->read_index));
 				ComputeShaderStats *stats = ctx->compute_shader_stats;
 				if (sizeof(stats->table) <= ec->size)
-					mem_copy(beamformer_shared_memory_scratch_arena(sm).beg, &stats->table, sizeof(stats->table));
+					mem_copy(beamformer_shared_memory_scratch_arena(sm, ctx->shared_memory_size).beg,
+					         &stats->table, sizeof(stats->table));
 			}break;
 			InvalidDefaultCase;
 			}
@@ -1342,7 +1343,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		}
 
 		u32 size = bp->channel_count * bp->acquisition_count * bp->sample_count * beamformer_data_kind_byte_size[data_kind];
-		u8 *data = beamformer_shared_memory_scratch_arena(sm).beg;
+		u8 *data = beamformer_shared_memory_scratch_arena(sm, ctx->shared_memory_size).beg;
 
 		if (nvidia) glNamedBufferSubData(rf->ssbo, slot * rf->active_rf_size, (i32)size, data);
 		else        memory_copy_non_temporal(rf->buffer + slot * rf->active_rf_size, data, size);

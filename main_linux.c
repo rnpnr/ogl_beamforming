@@ -13,6 +13,8 @@
 #include "beamformer.c"
 #include "os_linux.c"
 
+#define OS_SHARED_MEMORY_SIZE  GB(2)
+
 #define OS_DEBUG_LIB_NAME      "./beamformer.so"
 #define OS_DEBUG_LIB_TEMP_NAME "./beamformer_temp.so"
 
@@ -314,7 +316,7 @@ main(void)
 	BeamformerInput *input = push_struct(&program_memory, BeamformerInput);
 	input->memory          = program_memory.beg;
 	input->memory_size     = program_memory.end - program_memory.beg;
-	input->shared_memory   = allocate_shared_memory(OS_SHARED_MEMORY_NAME, BEAMFORMER_SHARED_MEMORY_SIZE,
+	input->shared_memory   = allocate_shared_memory(OS_SHARED_MEMORY_NAME, OS_SHARED_MEMORY_SIZE,
 	                                                &input->shared_memory_size);
 	if (input->shared_memory) {
 		input->shared_memory_name        = s8(OS_SHARED_MEMORY_NAME).data;

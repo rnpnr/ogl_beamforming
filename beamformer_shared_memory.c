@@ -71,11 +71,6 @@ typedef struct {
 	BeamformWork work_items[1 << 6];
 } BeamformWorkQueue;
 
-#define BEAMFORMER_SHARED_MEMORY_SIZE             (GB(2))
-#define BEAMFORMER_SHARED_MEMORY_MAX_SCRATCH_SIZE (BEAMFORMER_SHARED_MEMORY_SIZE - \
-                                                   sizeof(BeamformerSharedMemory) - \
-                                                   sizeof(BeamformerParameterBlock))
-
 #define X(name, id) BeamformerLiveImagingDirtyFlags_##name = (1 << id),
 typedef enum {BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST} BeamformerLiveImagingDirtyFlags;
 #undef X
@@ -274,11 +269,11 @@ beamformer_parameter_block_unlock(BeamformerSharedMemory *sm, u32 block)
 }
 
 function Arena
-beamformer_shared_memory_scratch_arena(BeamformerSharedMemory *sm)
+beamformer_shared_memory_scratch_arena(BeamformerSharedMemory *sm, i64 shared_memory_size)
 {
 	assert(sm->reserved_parameter_blocks > 0);
 	BeamformerParameterBlock *last = beamformer_parameter_block(sm, sm->reserved_parameter_blocks);
-	Arena result = {.beg = (u8 *)(last + 1), .end = (u8 *)sm + BEAMFORMER_SHARED_MEMORY_SIZE};
+	Arena result = {.beg = (u8 *)(last + 1), .end = (u8 *)sm + shared_memory_size};
 	result.beg = arena_aligned_start(result, KB(4));
 	return result;
 }

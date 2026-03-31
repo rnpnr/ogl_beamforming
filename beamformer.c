@@ -323,8 +323,10 @@ beamformer_init(BeamformerInput *input)
 	ctx->compute_shader_stats = push_struct(&memory, ComputeShaderStats);
 	ctx->compute_timing_table = push_struct(&memory, ComputeTimingTable);
 
-	ctx->shared_memory = input->shared_memory;
-	if (!ctx->shared_memory) fatal(s8("Get more ram lol\n"));
+	ctx->shared_memory      = input->shared_memory;
+	ctx->shared_memory_size = input->shared_memory_size;
+	if (ctx->shared_memory_size < (i64)sizeof(*ctx->shared_memory))
+		fatal(s8("Get more ram lol\n"));
 	zero_struct(ctx->shared_memory);
 
 	ctx->shared_memory->version = BEAMFORMER_SHARED_MEMORY_VERSION;
@@ -366,13 +368,14 @@ beamformer_init(BeamformerInput *input)
 
 	GLWorkerThreadContext         *upload = &ctx->upload_worker;
 	BeamformerUploadThreadContext *upctx  = push_struct(&memory, typeof(*upctx));
-	upload->user_context = (iptr)upctx;
-	upctx->rf_buffer     = &cs->rf_buffer;
-	upctx->shared_memory = ctx->shared_memory;
+	upload->user_context        = (iptr)upctx;
+	upctx->rf_buffer            = &cs->rf_buffer;
+	upctx->shared_memory        = ctx->shared_memory;
+	upctx->shared_memory_size   = ctx->shared_memory_size;
 	upctx->compute_timing_table = ctx->compute_timing_table;
 	upctx->compute_worker_sync  = &ctx->compute_worker.sync_variable;
-	upload->window_handle = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
-	upload->handle        = os_create_thread("[upload]", upload, beamformer_upload_entry_point);
+	upload->window_handle       = glfwCreateWindow(1, 1, "", 0, raylib_window_handle);
+	upload->handle              = os_create_thread("[upload]", upload, beamformer_upload_entry_point);
 
 	glfwMakeContextCurrent(raylib_window_handle);
 
