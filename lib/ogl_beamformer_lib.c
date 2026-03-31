@@ -61,7 +61,7 @@ os_close_shared_memory_area(void *memory, i64 size)
 
 #elif OS_WINDOWS
 
-W32(b32) GetFileSizeEx(iptr, i64 *);
+W32(u64) VirtualQuery(void *base_address, void *memory_basic_info, u64 memory_basic_info_size);
 W32(b32) UnmapViewOfFile(void *);
 
 function b32
@@ -95,19 +95,34 @@ os_reserve_region_locks(void)
 function s8
 os_open_shared_memory_area(char *name)
 {
+	struct alignas(16) {
+		void *BaseAddress;
+		void *AllocationBase;
+		u32   AllocationProtect;
+		u32   __alignment1;
+		u64   RegionSize;
+		u32   State;
+		u32   Protect;
+		u32   Type;
+		u32   __alignment2;
+	} memory_basic_info;
+
 	s8 result = {0};
 	iptr h = OpenFileMappingA(FILE_MAP_ALL_ACCESS, 0, name);
 	if (h != INVALID_FILE) {
-		i64 size;
-		if (GetFileSizeEx(h, &size)) {
-			void *new = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, size);
-			if (new && os_reserve_region_locks()) {
-				result.data = new;
-				result.len  = size;
-			}
-			if (new && !result.data)
-				UnmapViewOfFile(new);
+		// NOTE(rnp): a size of 0 maps the whole region, we can determine its size after
+		void *new = MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, 0);
+		if (new &&
+		    VirtualQuery(new, &memory_basic_info, sizeof(memory_basic_info)) == sizeof(memory_basic_info) &&
+		    os_reserve_region_locks())
+		{
+			result.data = new;
+			result.len  = (i64)memory_basic_info.RegionSize;
 		}
+
+		if (new && !result.data)
+			UnmapViewOfFile(new);
+
 		CloseHandle(h);
 	}
 	return result;
