@@ -111,7 +111,7 @@ SAMPLE_TYPE sample_rf(const int rf_offset, const float index)
 	case InterpolationMode_Cubic:{
 		if (index > 0 && int(index) < SampleCount - 2) {
 			float tk, t = modf(index, tk);
-			result = rotate_iq(cubic(rf_offset + int(index) - 1, t), index / SamplingFrequency);
+			result = rotate_iq(cubic(rf_offset + int(index), t), index / SamplingFrequency);
 		}
 	}break;
 	}
@@ -199,7 +199,8 @@ RESULT_TYPE RCA(const vec3 world_point)
 		vec2  xdc_world_point   = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
 		float transmit_distance = rca_transmit_distance(world_point, focal_vector, tx_rx_orientation);
 
-		int rf_offset = acquisition * SampleCount;
+		int rf_offset  = acquisition * SampleCount;
+		rf_offset     -= int(InterpolationMode == InterpolationMode_Cubic);
 		for (int rx_channel = 0; rx_channel < ChannelCount; rx_channel++) {
 			vec3  rx_center      = vec3(rx_channel * xdc_element_pitch, 0);
 			vec2  receive_vector = xdc_world_point - rca_plane_projection(rx_center, rx_rows);
@@ -228,6 +229,7 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 	for (int transmit = Sparse; transmit < AcquisitionCount; transmit++) {
 		int tx_channel = bool(Sparse) ? imageLoad(sparse_elements, transmit - Sparse).x : transmit;
 		int rf_offset  = transmit * SampleCount;
+		rf_offset     -= int(InterpolationMode == InterpolationMode_Cubic);
 		#if Fast
 		const int rx_channel = u_channel;
 		rf_offset += rx_channel * SampleCount * AcquisitionCount;
@@ -263,20 +265,27 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 	const int rx_channel_end   = bool(Fast)? u_channel + 1 : ChannelCount;
 
 	RESULT_TYPE result = RESULT_TYPE(0);
+
+	float z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
+	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;
+	float transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
+
 	for (int rx_channel = rx_channel_start; rx_channel < rx_channel_end; rx_channel++) {
-		float receive_distance = distance(xdc_world_point.xz, vec2(rx_channel * xdc_element_pitch.x, 0));
-		float a_arg = abs(FNumber * (xdc_world_point.x - rx_channel * xdc_element_pitch.x) /
-		                  abs(xdc_world_point.z));
+		float receive_x_delta = xdc_world_point.x - rx_channel * xdc_element_pitch.x;
+		float a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
 
 		if (a_arg < 0.5f) {
-			int   rf_offset   = rx_channel * SampleCount * AcquisitionCount + Sparse * SampleCount;
-			float apodization = apodize(a_arg);
-			for (int transmit = Sparse; transmit < AcquisitionCount; transmit++) {
-				int   tx_channel      = bool(Sparse) ? imageLoad(sparse_elements, transmit - Sparse).x : transmit;
-				vec3  transmit_center = vec3(xdc_element_pitch * vec2(tx_channel, floor(ChannelCount / 2)), 0);
+			int rf_offset  = rx_channel * SampleCount * AcquisitionCount + Sparse * SampleCount;
+			rf_offset     -= int(InterpolationMode == InterpolationMode_Cubic);
 
-				float       sidx  = sample_index(distance(xdc_world_point, transmit_center) + receive_distance);
-				SAMPLE_TYPE value = apodization * sample_rf(rf_offset, sidx);
+			float receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
+			float apodization   = apodize(a_arg);
+			for (int transmit = Sparse; transmit < AcquisitionCount; transmit++) {
+				int   tx_channel       = bool(Sparse) ? imageLoad(sparse_elements, transmit - Sparse).x : transmit;
+				float transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_channel;
+				float transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
+
+				SAMPLE_TYPE value = apodization * sample_rf(rf_offset, receive_index + transmit_index);
 				result    += RESULT_STORE(value, length(value));
 				rf_offset += SampleCount;
 			}
