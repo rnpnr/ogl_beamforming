@@ -434,13 +434,12 @@ struct BeamformerUI {
 	b32                    flush_params;
 	u32 selected_parameter_block;
 
-	m4  das_transform;
+	m4  original_das_transform_inverse;
+	v3  original_das_normal;
 	v2  min_coordinate;
 	v2  max_coordinate;
 	f32 off_axis_position;
 	f32 beamform_plane;
-
-	BeamformerViewPlaneTag plane_layout;
 
 	FrameViewRenderContext *frame_view_render_context;
 
@@ -1332,12 +1331,11 @@ ui_beamformer_frame_view_convert(BeamformerUI *ui, Arena *arena, Variable *view,
 		axial->zoom_starting_coord   = F32_INFINITY;
 
 		b32 copy = kind == BeamformerFrameViewKind_Copy;
-		BeamformerViewPlaneTag plane = ui->plane_layout;
-		if (old && old->frame) {
-			v3 normal = cross(old->frame->voxel_transform.c[0].xyz, old->frame->voxel_transform.c[1].xyz);
-			plane = ui_plane_layout_from_normal(normal);
-		}
+		v3 normal = ui->original_das_normal;
+		if (old && old->frame)
+			normal = cross(old->frame->voxel_transform.c[0].xyz, old->frame->voxel_transform.c[1].xyz);
 
+		BeamformerViewPlaneTag plane = ui_plane_layout_from_normal(v3_normalize(normal));
 		switch (plane) {
 		case BeamformerViewPlaneTag_XY:{
 			lateral->min_value = copy ? &bv->min_coordinate.x : &ui->min_coordinate.x;
@@ -4104,38 +4102,42 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 		if (pb) {
 			ui->flush_params = 0;
 
+			m4 das_transform;
 			mem_copy(&ui->params, &pb->parameters_ui, sizeof(ui->params));
-			mem_copy(ui->das_transform.E, pb->parameters.das_voxel_transform.E, sizeof(ui->das_transform));
+			mem_copy(das_transform.E, pb->parameters.das_voxel_transform.E, sizeof(das_transform));
 
 			atomic_and_u32(&ctx->ui_dirty_parameter_blocks, ~selected_mask);
 			beamformer_parameter_block_unlock(ui->shared_memory, selected_block);
 
-			v3 normal = cross(ui->das_transform.c[0].xyz, ui->das_transform.c[1].xyz);
-			ui->plane_layout = ui_plane_layout_from_normal(normal);
+			BeamformerComputePlan *cp = ui->beamformer_context->compute_context.compute_plans[selected_block];
+			m4 identity = m4_identity();
+			b32 recompute = !m4_equal(identity, cp->ui_voxel_transform);
+			mem_copy(cp->ui_voxel_transform.E, identity.E, sizeof(identity));
 
-			v3 min_coordinate = m4_mul_v4(ui->das_transform, (v4){{0.0f, 0.0f, 0.0f, 1.0f}}).xyz;
-			v3 max_coordinate = m4_mul_v4(ui->das_transform, (v4){{1.0f, 1.0f, 1.0f, 1.0f}}).xyz;
-			switch (ui->plane_layout) {
-			case BeamformerViewPlaneTag_XY:{
-				ui->min_coordinate = min_coordinate.xy;
-				ui->max_coordinate = max_coordinate.xy;
-			}break;
-
-			case BeamformerViewPlaneTag_XZ:{
-				ui->min_coordinate = (v2){{min_coordinate.x, min_coordinate.z}};
-				ui->max_coordinate = (v2){{max_coordinate.x, max_coordinate.z}};
-			}break;
-
-			case BeamformerViewPlaneTag_YZ:{
-				ui->min_coordinate = min_coordinate.yz;
-				ui->max_coordinate = max_coordinate.yz;
-			}break;
-
-			default:{
-				ui->min_coordinate = (v2){{min_coordinate.x, min_coordinate.z}};
-				ui->max_coordinate = (v2){{max_coordinate.x, max_coordinate.z}};
-			}break;
+			if (recompute) {
+				mark_parameter_block_region_dirty(ui->shared_memory, selected_block,
+				                                  BeamformerParameterBlockRegion_Parameters);
+				beamformer_queue_compute(ctx, frame_to_draw, selected_block);
 			}
+
+			v3 U = v3_normalize(das_transform.c[0].xyz);
+			v3 V = v3_normalize(das_transform.c[1].xyz);
+			v3 N = cross(V, U);
+
+			ui->original_das_transform_inverse = m4_inverse(das_transform);
+			ui->original_das_normal = N;
+
+			ui->off_axis_position = v3_dot(N, das_transform.c[3].xyz);
+			ui->beamform_plane    = 0;
+
+			v3 min_coordinate = m4_mul_v3(das_transform, (v3){{0.0f, 0.0f, 0.0f}});
+			v3 max_coordinate = m4_mul_v3(das_transform, (v3){{1.0f, 1.0f, 1.0f}});
+
+			ui->min_coordinate.x = v3_dot(U, min_coordinate);
+			ui->min_coordinate.y = v3_dot(V, min_coordinate);
+
+			ui->max_coordinate.x = v3_dot(U, max_coordinate);
+			ui->max_coordinate.y = v3_dot(V, max_coordinate);
 		}
 	}
 
@@ -4160,17 +4162,19 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 				case 1:{}break;
 
 				case 2:{
-					v3 U = ui->das_transform.c[0].xyz;
-					v3 V = ui->das_transform.c[1].xyz;
-					v3 N = v3_normalize(cross(U, V));
+					new_transform = das_transform_2d_with_normal(ui->original_das_normal,
+					                                             ui->min_coordinate, ui->max_coordinate, 0);
 
-					f32 old_offset    = v3_dot(N, ui->das_transform.c[3].xyz);
-					v3  rotation_axis = v3_normalize(cross(U, N));
+					v3 U = v3_normalize(new_transform.c[0].xyz);
+					v3 V = v3_normalize(new_transform.c[1].xyz);
+					v3 N = cross(V, U);
+					v3 rotation_axis = cross(U, N);
 
-					m4 T_offset_inverse = m4_translation(v3_scale(N, -old_offset));
 					m4 R = m4_rotation_about_axis(rotation_axis, ui->beamform_plane);
-					m4 T = m4_translation(v3_scale(m4_mul_v3(R, N), ui->off_axis_position + old_offset));
-					new_transform = m4_mul(T, m4_mul(R, T_offset_inverse));
+					m4 T = m4_translation(v3_scale(m4_mul_v3(R, N), ui->off_axis_position));
+
+					new_transform = m4_mul(m4_mul(T, m4_mul(R, new_transform)),
+					                       ui->original_das_transform_inverse);
 				}break;
 
 				case 3:{}break;
@@ -4179,12 +4183,9 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 				// TODO(rnp): super janky code because of the retained mode parameters list.
 				// when this code is run in the correct place we can just decide inline
 				b32 recompute = !memory_equal(&pb->parameters_ui, &ui->params, sizeof(ui->params));
-				u32 selected_plan = ui->selected_parameter_block % BeamformerMaxParameterBlockSlots;
-				BeamformerComputePlan *cp = ui->beamformer_context->compute_context.compute_plans[selected_plan];
+				BeamformerComputePlan *cp = ui->beamformer_context->compute_context.compute_plans[selected_block];
 				if (cp) {
-					for EachElement(new_transform.E, it)
-						recompute |= !f32_equal(new_transform.E[it], cp->ui_voxel_transform.E[it]);
-
+					recompute |= !m4_equal(new_transform, cp->ui_voxel_transform);
 					mem_copy(cp->ui_voxel_transform.E, new_transform.E, sizeof(new_transform));
 				}
 

@@ -395,6 +395,15 @@ v4_lerp(v4 a, v4 b, f32 t)
 	return result;
 }
 
+function b32
+m4_equal(m4 a, m4 b)
+{
+	b32 result = 1;
+	for EachElement(a.E, it)
+		result &= f32_equal(a.E[it], b.E[it]);
+	return result;
+}
+
 function m4
 m4_identity(void)
 {
@@ -504,16 +513,9 @@ m4_rotation_about_axis(v3 axis, f32 turns)
 }
 
 function m4
-m4_rotation_about_z(f32 turns)
-{
-	m4 result = m4_rotation_about_axis((v3){{0, 0, 1.0f}}, turns);
-	return result;
-}
-
-function m4
 m4_rotation_about_y(f32 turns)
 {
-	m4 result = m4_rotation_about_axis((v3){{0, 1.0f, 0}}, turns);
+	m4 result = m4_rotation_about_axis((v3){.y = 1.0f}, turns);
 	return result;
 }
 
@@ -521,7 +523,7 @@ function m4
 y_aligned_volume_transform(v3 extent, v3 translation, f32 rotation_turns)
 {
 	m4 T = m4_translation(translation);
-	m4 R = m4_rotation_about_y(rotation_turns);
+	m4 R = m4_rotation_about_axis((v3){.y = 1.0f}, rotation_turns);
 	m4 S = m4_scale(extent);
 	m4 result = m4_mul(T, m4_mul(R, S));
 	return result;
@@ -773,41 +775,51 @@ das_transform_1d(v3 p1, v3 p2)
 }
 
 function m4
-das_transform_2d_xz(v2 min_coordinate, v2 max_coordinate, f32 y_off)
+das_transform_2d_with_normal(v3 normal, v2 min_coordinate, v2 max_coordinate, f32 offset)
 {
-	v2 extent = v2_sub(max_coordinate, min_coordinate);
+	v3 U = {{0, 1.0f, 0}};
+	if (f32_equal(v3_dot(U, normal), 1.0f))
+		U = (v3){{1.0f, 0, 0}};
+
+	v3 N = normal;
+	v3 V = cross(U, N);
+
+	v3 min = v3_add(v3_scale(U, min_coordinate.x), v3_scale(V, min_coordinate.y));
+	v3 max = v3_add(v3_scale(U, max_coordinate.x), v3_scale(V, max_coordinate.y));
+
+	v3 extent = v3_sub(max, min);
+	U = v3_scale(U, v3_dot(U, extent));
+	V = v3_scale(V, v3_dot(V, extent));
+
+	v3 t = v3_add(v3_scale(N, offset), min);
 
 	m4 result;
-	result.c[0] = (v4){{extent.x,         0.0f,  0.0f,             0.0f}};
-	result.c[1] = (v4){{0.0f,             0.0f,  extent.y,         0.0f}};
-	result.c[2] = (v4){{0.0f,             1.0f,  0.0f,             0.0f}};
-	result.c[3] = (v4){{min_coordinate.x, y_off, min_coordinate.y, 1.0f}};
+	result.c[0] = (v4){{U.x,  U.y,  U.z,  0.0f}};
+	result.c[1] = (v4){{V.x,  V.y,  V.z,  0.0f}};
+	result.c[2] = (v4){{N.x,  N.y,  N.z,  0.0f}};
+	result.c[3] = (v4){{t.x,  t.y,  t.z,  1.0f}};
+
+	return result;
+}
+
+function m4
+das_transform_2d_xz(v2 min_coordinate, v2 max_coordinate, f32 y_off)
+{
+	m4 result = das_transform_2d_with_normal((v3){.y = 1.0f}, min_coordinate, max_coordinate, y_off);
 	return result;
 }
 
 function m4
 das_transform_2d_yz(v2 min_coordinate, v2 max_coordinate, f32 x_off)
 {
-	v2 extent = v2_sub(max_coordinate, min_coordinate);
-
-	m4 result;
-	result.c[0] = (v4){{0.0f,  extent.x,         0.0f,             0.0f}};
-	result.c[1] = (v4){{0.0f,  0.0f,             extent.y,         0.0f}};
-	result.c[2] = (v4){{1.0f,  0.0f,             0.0f,             0.0f}};
-	result.c[3] = (v4){{x_off, min_coordinate.x, min_coordinate.y, 1.0f}};
+	m4 result = das_transform_2d_with_normal((v3){.x = 1.0f}, min_coordinate, max_coordinate, x_off);
 	return result;
 }
 
 function m4
 das_transform_2d_xy(v2 min_coordinate, v2 max_coordinate, f32 z_off)
 {
-	v2 extent = v2_sub(max_coordinate, min_coordinate);
-
-	m4 result;
-	result.c[0] = (v4){{extent.x,         0.0f,             0.0f,  0.0f}};
-	result.c[1] = (v4){{0.0f,             extent.y,         0.0f,  0.0f}};
-	result.c[2] = (v4){{0.0f,             0.0f,             1.0f,  0.0f}};
-	result.c[3] = (v4){{min_coordinate.x, min_coordinate.y, z_off, 1.0f}};
+	m4 result = das_transform_2d_with_normal((v3){.z = 1.0f}, min_coordinate, max_coordinate, z_off);
 	return result;
 }
 
