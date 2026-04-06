@@ -4165,10 +4165,8 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 					new_transform = das_transform_2d_with_normal(ui->original_das_normal,
 					                                             ui->min_coordinate, ui->max_coordinate, 0);
 
-					v3 U = v3_normalize(new_transform.c[0].xyz);
-					v3 V = v3_normalize(new_transform.c[1].xyz);
-					v3 N = cross(V, U);
-					v3 rotation_axis = cross(U, N);
+					v3 N = ui->original_das_normal;
+					v3 rotation_axis = cross(v3_normalize(new_transform.c[0].xyz), N);
 
 					m4 R = m4_rotation_about_axis(rotation_axis, ui->beamform_plane);
 					m4 T = m4_translation(v3_scale(m4_mul_v3(R, N), ui->off_axis_position));
