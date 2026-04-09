@@ -434,8 +434,6 @@ struct BeamformerUI {
 	b32                    flush_params;
 	u32 selected_parameter_block;
 
-	m4  original_das_transform_inverse;
-	v3  original_das_normal;
 	v2  min_coordinate;
 	v2  max_coordinate;
 	f32 off_axis_position;
@@ -1331,7 +1329,7 @@ ui_beamformer_frame_view_convert(BeamformerUI *ui, Arena *arena, Variable *view,
 		axial->zoom_starting_coord   = F32_INFINITY;
 
 		b32 copy = kind == BeamformerFrameViewKind_Copy;
-		v3 normal = ui->original_das_normal;
+		v3 normal = (v3){.y = 1.0f};
 		if (old && old->frame)
 			normal = cross(old->frame->voxel_transform.c[0].xyz, old->frame->voxel_transform.c[1].xyz);
 
@@ -4124,9 +4122,6 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 			v3 V = v3_normalize(das_transform.c[1].xyz);
 			v3 N = cross(V, U);
 
-			ui->original_das_transform_inverse = m4_inverse(das_transform);
-			ui->original_das_normal = N;
-
 			ui->off_axis_position = v3_dot(N, das_transform.c[3].xyz);
 			ui->beamform_plane    = 0;
 
@@ -4162,17 +4157,19 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 				case 1:{}break;
 
 				case 2:{
-					new_transform = das_transform_2d_with_normal(ui->original_das_normal,
-					                                             ui->min_coordinate, ui->max_coordinate, 0);
+					v3 U = v3_normalize(pb->parameters.das_voxel_transform.c[0].xyz);
+					v3 V = v3_normalize(pb->parameters.das_voxel_transform.c[1].xyz);
+					v3 N = cross(V, U);
 
-					v3 N = ui->original_das_normal;
+					new_transform = das_transform_2d_with_normal(N, ui->min_coordinate, ui->max_coordinate, 0);
+
 					v3 rotation_axis = cross(v3_normalize(new_transform.c[0].xyz), N);
 
 					m4 R = m4_rotation_about_axis(rotation_axis, ui->beamform_plane);
 					m4 T = m4_translation(v3_scale(m4_mul_v3(R, N), ui->off_axis_position));
 
 					new_transform = m4_mul(m4_mul(T, m4_mul(R, new_transform)),
-					                       ui->original_das_transform_inverse);
+					                       m4_inverse(pb->parameters.das_voxel_transform));
 				}break;
 
 				case 3:{}break;
