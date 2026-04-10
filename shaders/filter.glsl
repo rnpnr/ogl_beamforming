@@ -63,12 +63,6 @@ SAMPLE_TYPE rotate_iq(SAMPLE_TYPE iq, uint index)
 }
 #endif
 
-SAMPLE_TYPE sample_rf(uint index)
-{
-	SAMPLE_TYPE result = SAMPLE_TYPE(Input(input_data).x[index]);
-	return result;
-}
-
 shared SAMPLE_TYPE rf[DecimationRate * gl_WorkGroupSize.x + FilterLength - 1];
 
 void main()
@@ -77,7 +71,6 @@ void main()
 	uint channel    = gl_GlobalInvocationID.y;
 	uint transmit   = gl_GlobalInvocationID.z;
 
-	uint in_offset    = InputChannelStride * channel + InputTransmitStride * transmit;
 	uint thread_index = gl_LocalInvocationIndex;
 	uint thread_count = gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z;
 	/////////////////////////
@@ -85,7 +78,18 @@ void main()
 	{
 		bool offset_wraps = (DecimationRate * gl_WorkGroupID.x * gl_WorkGroupSize.x) < (FilterLength - 1);
 
-		in_offset += DecimationRate * gl_WorkGroupID.x * gl_WorkGroupSize.x - (FilterLength - 1);
+		u32 in_offset = InputDataKindByteSize * (InputChannelStride * channel + InputTransmitStride * transmit);
+		// NOTE(rnp): when demodulating we want to load 2 elements at a time but the
+		// input strides were specified in terms of a single element. therefore we
+		// must divide this by two. by doing this here we can gracefully handle
+		// the case where there are an odd number of samples (this drops the last one).
+		if (Demodulate != 0)
+			in_offset /= 2;
+
+		// NOTE(rnp): broken out to avoid overflow from the subtraction
+		u64 input_address = input_data + in_offset;
+		input_address += InputDataKindByteSize * (DecimationRate * gl_WorkGroupID.x * gl_WorkGroupSize.x);
+		input_address -= InputDataKindByteSize * (FilterLength - 1);
 
 		uint total_samples       = rf.length();
 		uint samples_per_thread  = total_samples / thread_count;
@@ -95,15 +99,14 @@ void main()
 		const SAMPLE_TYPE scale = SAMPLE_TYPE(bool(ComplexFilter) ? 1 : sqrt(2.0f));
 		for (uint i = 0; i < samples_this_thread; i++) {
 			uint index = thread_count * i + thread_index;
-			if (offset_wraps && index < FilterLength - 1) {
-				rf[index] = SAMPLE_TYPE(0);
-			} else {
+			SAMPLE_TYPE s = SAMPLE_TYPE(0);
+			if (!offset_wraps || index >= FilterLength - 1) {
+				s = SAMPLE_TYPE(Input(input_address).x[index]);
 				#if Demodulate
-					rf[index] = scale * rotate_iq(sample_rf(in_offset + index) * SAMPLE_TYPE(1, -1), index);
-				#else
-					rf[index] = sample_rf(in_offset + index);
+				s = scale * rotate_iq(s * SAMPLE_TYPE(1, -1), index);
 				#endif
 			}
+			rf[index] = s;
 		}
 	}
 	barrier();
@@ -116,15 +119,16 @@ void main()
 
 		u32 out_offset = OutputChannelStride  * channel +
 		                 OutputTransmitStride * transmit +
-		                 OutputSampleStride   * out_sample;
+		                 OutputSampleStride   * out_sample +
+		                 output_element_offset;
 
 		#if BatchSampleCount
 		// NOTE(rnp): deinterleave
-		output_data[output_element_offset + out_offset] = OutputDataType(result.x);
+		output_data[out_offset] = OutputDataType(result.x);
 		out_offset += BatchSampleCount;
-		output_data[output_element_offset + out_offset] = OutputDataType(result.y);
+		output_data[out_offset] = OutputDataType(result.y);
 		#else
-		output_data[output_element_offset + out_offset] = OutputDataType(result);
+		output_data[out_offset] = OutputDataType(result);
 		#endif
 	}
 }
