@@ -355,13 +355,13 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	BeamformerComputeGraphNode *root_node = push_struct(&scratch, BeamformerComputeGraphNode);
 	root_node->kind = BeamformerShaderKind_Count;
 	root_node->input_data_kind  = input_data_kind;
-	root_node->input_stride.x   = 1;                                      // Sample Stride
-	root_node->input_stride.y   = input_sample_count * acquisition_count; // Channel Stride
-	root_node->input_stride.z   = input_sample_count;                     // Receive Event Stride
+	root_node->input_stride.x   = 1;                                               // Sample Stride
+	root_node->input_stride.y   = pb->parameters.sample_count * acquisition_count; // Channel Stride
+	root_node->input_stride.z   = pb->parameters.sample_count;                     // Receive Event Stride
 	root_node->output_data_kind = input_data_kind;
-	root_node->output_stride.x  = 1;                                      // Sample Stride
-	root_node->output_stride.y  = input_sample_count * acquisition_count; // Channel Stride
-	root_node->output_stride.z  = input_sample_count;                     // Receive Event Stride
+	root_node->output_stride.x  = 1;                                               // Sample Stride
+	root_node->output_stride.y  = pb->parameters.sample_count * acquisition_count; // Channel Stride
+	root_node->output_stride.z  = pb->parameters.sample_count;                     // Receive Event Stride
 	root_node->next = root_node->prev = root_node;
 
 	for EachIndex(pb->pipeline.shader_count, it) {
@@ -720,6 +720,7 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDes
 	"#define f32     float32_t\n"
 	"#define f16     float16_t\n"
 	"#define s32     int32_t\n"
+	"#define u64     uint64_t\n"
 	"#define u32     uint32_t\n"
 	"#define s16     int16_t\n"
 	"#define u16     uint16_t\n"
@@ -757,17 +758,18 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDes
 	}
 
 	if (sd) {
-		if (sd->input_data_kind != BeamformerDataKind_Count) {
-			stream_append_s8s(s, s8("#define InputDataType  "),
-			                  beamformer_data_kind_glsl_type[sd->input_data_kind], s8("\n"));
-			stream_append_s8s(s, s8("#define InputDataKind  DataKind_"),
-			                  beamformer_data_kind_s8[sd->input_data_kind], s8("\n"));
-		}
-		if (sd->output_data_kind != BeamformerDataKind_Count) {
-			stream_append_s8s(s, s8("#define OutputDataType "),
-			                  beamformer_data_kind_glsl_type[sd->output_data_kind], s8("\n"));
-			stream_append_s8s(s, s8("#define OutputDataKind DataKind_"),
-			                  beamformer_data_kind_s8[sd->output_data_kind], s8("\n"));
+		BeamformerDataKind data_kinds[] = {sd->input_data_kind, sd->output_data_kind};
+		s8 line_prefixes[] = {s8_comp("Input"), s8_comp("Output")};
+		for EachElement(data_kinds, it) {
+			if (data_kinds[it] != BeamformerDataKind_Count) {
+				stream_append_s8s(s, s8("#define "), line_prefixes[it], s8("DataType "),
+				                  beamformer_data_kind_glsl_type[data_kinds[it]],
+				                  s8("\n#define "), line_prefixes[it], s8("DataKind DataKind_"),
+				                  beamformer_data_kind_s8[data_kinds[it]],
+				                  s8("\n#define "), line_prefixes[it], s8("DataKindByteSize "));
+				stream_append_u64(s, beamformer_data_kind_byte_size[data_kinds[it]]);
+				stream_append_byte(s, '\n');
+			}
 		}
 		stream_append_byte(s, '\n');
 
