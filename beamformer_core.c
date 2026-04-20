@@ -242,16 +242,16 @@ alloc_beamform_frame(BeamformerFrame *out, iv3 out_dim, GLenum gl_kind, s8 name,
 }
 
 function void
-update_hadamard_texture(BeamformerComputePlan *cp, i32 order, Arena arena)
+update_hadamard_texture(BeamformerComputePlan *cp, i32 order, b32 row_major, Arena arena)
 {
-	f32 *hadamard = make_hadamard_transpose(&arena, order);
+	f16 *hadamard = make_hadamard_transpose(&arena, order, row_major);
 	if (hadamard) {
 		cp->hadamard_order = order;
 		u32 *texture = cp->textures + BeamformerComputeTextureKind_Hadamard;
 		glDeleteTextures(1, texture);
 		glCreateTextures(GL_TEXTURE_2D, 1, texture);
-		glTextureStorage2D(*texture, 1, GL_R32F, order, order);
-		glTextureSubImage2D(*texture, 0, 0, 0, order, order, GL_RED, GL_FLOAT, hadamard);
+		glTextureStorage2D(*texture, 1, GL_R16F, order, order);
+		glTextureSubImage2D(*texture, 0, 0, 0, order, order, GL_RED, GL_SHORT, hadamard);
 
 		Stream label = arena_stream(arena);
 		stream_append_s8(&label, s8("Hadamard"));
@@ -788,7 +788,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 				alloc_shader_storage(ctx, decoded_data_size, arena);
 
 			if (cp->hadamard_order != (i32)cp->acquisition_count)
-				update_hadamard_texture(cp, (i32)cp->acquisition_count, arena);
+				update_hadamard_texture(cp, (i32)cp->acquisition_count, 0, arena);
 
 			mem_copy(cp->voxel_transform.E,  pb->parameters.das_voxel_transform.E, sizeof(cp->voxel_transform));
 
@@ -842,7 +842,7 @@ do_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, BeamformerFrame
 	uv3 dispatch = cp->shader_descriptors[shader_slot].dispatch;
 	switch (shader) {
 	case BeamformerShaderKind_Decode:{
-		glBindImageTexture(0, cp->textures[BeamformerComputeTextureKind_Hadamard], 0, 0, 0, GL_READ_ONLY, GL_R32F);
+		glBindImageTexture(0, cp->textures[BeamformerComputeTextureKind_Hadamard], 0, 0, 0, GL_READ_ONLY, GL_R16F);
 
 		BeamformerDecodeMode mode = cp->shader_descriptors[shader_slot].bake.Decode.decode_mode;
 		if (shader_slot == 0) {

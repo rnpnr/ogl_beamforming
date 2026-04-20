@@ -24,16 +24,17 @@
   typedef __INT8_TYPE__     i8;
 #endif
 
-typedef char   c8;
-typedef u8     b8;
-typedef u16    b16;
-typedef u32    b32;
-typedef float  f32;
-typedef double f64;
-typedef i64    iz;
-typedef u64    uz;
-typedef i64    iptr;
-typedef u64    uptr;
+typedef char     c8;
+typedef u8       b8;
+typedef u16      b16;
+typedef u32      b32;
+typedef _Float16 f16;
+typedef float    f32;
+typedef double   f64;
+typedef i64      iz;
+typedef u64      uz;
+typedef i64      iptr;
+typedef u64      uptr;
 
 #ifndef asm
 #define asm __asm__
@@ -126,6 +127,7 @@ typedef u64    uptr;
 #define Clamp(x, a, b)   ((x) < (a) ? (a) : (x) > (b) ? (b) : (x))
 #define Min(a, b)        ((a) < (b) ? (a) : (b))
 #define Max(a, b)        ((a) > (b) ? (a) : (b))
+#define IsPowerOfTwo(a)  (((a) & ((a) - 1)) == 0)
 
 #define ISDIGIT(c)       (BETWEEN((c), '0', '9'))
 #define ISUPPER(c)       (((c) & 0x20u) == 0)

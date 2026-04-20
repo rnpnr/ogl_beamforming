@@ -129,7 +129,7 @@ typedef enum {BEAMFORMER_COMPUTE_UBO_LIST BeamformerComputeUBOKind_Count} Beamfo
 
 #define BEAMFORMER_COMPUTE_TEXTURE_LIST_FULL \
 	BEAMFORMER_COMPUTE_TEXTURE_LIST \
-	X(Hadamard,       GL_R32F)
+	X(Hadamard,       GL_R16F)
 
 typedef enum {
 	#define X(k, ...) BeamformerComputeTextureKind_##k,
