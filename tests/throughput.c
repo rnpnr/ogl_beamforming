@@ -242,6 +242,8 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 		bp->speed_of_sound         = header->speed_of_sound;
 		bp->time_offset            = header->time_offset;
 
+		bp->contrast_mode          = header->contrast_mode;
+
 		if (header->channel_mapping_offset != -1) {
 			mem_copy(bp->channel_mapping, raw.data + header->channel_mapping_offset,
 			         sizeof(*bp->channel_mapping) * bp->channel_count);
@@ -375,7 +377,7 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 function void
 usage(char *argv0)
 {
-	die("%s [--loop] [--cuda] [--frame n] base_path study\n"
+	die("%s [--loop] [--cuda] [--frame n] parameters_file\n"
 	    "    --loop:    reupload data forever\n"
 	    "    --cuda:    use cuda for decoding\n"
 	    "    --frame n: use frame n of the data for display\n",
@@ -430,15 +432,9 @@ send_frame(void *restrict data, BeamformerSimpleParameters *restrict bp)
 }
 
 function void
-execute_study(s8 study, Arena arena, Stream path, Options *options)
+execute_study(Arena arena, Stream path, Options *options)
 {
-	fprintf(stderr, "showing: %.*s\n", (i32)study.len, study.data);
-
-	stream_ensure_termination(&path, OS_PATH_SEPARATOR_CHAR);
-	stream_append_s8(&path, study);
 	i32 path_work_index = path.widx;
-
-	stream_append_s8(&path, s8(".bp"));
 	stream_ensure_termination(&path, 0);
 
 	ZBP_Data raw_data = {0};
@@ -511,7 +507,9 @@ execute_study(s8 study, Arena arena, Stream path, Options *options)
 
 	void *data = 0;
 	if (raw_data.bytes.len == 0) {
-		stream_reset(&path, path_work_index);
+		// NOTE(rnp): strip ".bp"
+		stream_reset(&path, path_work_index - 3);
+
 		stream_append_byte(&path, '_');
 		stream_append_u64_width(&path, options->frame_number, 2);
 		stream_append_s8(&path, s8(".zst"));
@@ -585,7 +583,7 @@ main(i32 argc, char *argv[])
 {
 	Options options = parse_argv(argc, argv);
 
-	if (!BETWEEN(options.remaining_count, 1, 2))
+	if (options.remaining_count != 1)
 		usage(argv[0]);
 
 	signal(SIGINT, sigint);
@@ -594,7 +592,7 @@ main(i32 argc, char *argv[])
 	Stream path = stream_alloc(&arena, KB(4));
 	stream_append_s8(&path, c_str_to_s8(options.remaining[0]));
 
-	execute_study(c_str_to_s8(options.remaining[1]), arena, path, &options);
+	execute_study(arena, path, &options);
 
 	return 0;
 }
