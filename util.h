@@ -213,6 +213,7 @@ typedef struct { Arena *arena, original_arena; } TempArena;
 typedef struct { iz len; u8 *data; } s8;
 #define s8(s) (s8){.len = countof(s) - 1, .data = (u8 *)s}
 #define s8_comp(s) {sizeof(s) - 1, (u8 *)s}
+#define s8_struct(v) (s8){.len = sizeof(*v), .data = (u8 *)v}
 
 typedef struct { iz len; u16 *data; } s16;
 
