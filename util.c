@@ -5,9 +5,10 @@
   #pragma GCC diagnostic ignored "-Woverride-init"
 #endif
 
-#define zero_struct(s) mem_clear(s, 0, sizeof(*s))
+#define zero_struct(s) memory_clear(s, 0, sizeof(*s))
+#define mem_clear memory_clear
 function void *
-mem_clear(void *restrict p_, u8 c, iz size)
+memory_clear(void *restrict p_, u8 c, iz size)
 {
 	u8 *p = p_;
 	while (size > 0) p[--size] = c;
@@ -24,8 +25,9 @@ memory_equal(void *restrict left, void *restrict right, uz n)
 	return result;
 }
 
+#define mem_copy memory_copy
 function void
-mem_copy(void *restrict dest, void *restrict src, uz n)
+memory_copy(void *restrict dest, void *restrict src, uz n)
 {
 	u8 *s = src, *d = dest;
 	#ifdef __AVX512BW__
@@ -171,7 +173,7 @@ arena_alloc_(Arena *a, ArenaAllocateInfo info)
 		a->beg = start + info.count * info.size;
 		result = start;
 		if ((info.flags & ArenaAllocateFlags_NoZero) == 0)
-			result = mem_clear(start, 0, info.count * info.size);
+			result = memory_clear(start, 0, info.count * info.size);
 	}
 	return result;
 }
