@@ -354,9 +354,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 	if (demodulate) run_cuda_hilbert = 0;
 
 	BeamformerDataKind data_kind = pb->pipeline.data_kind;
-	cp->iq_pipeline = data_kind == BeamformerDataKind_Float32Complex ||
-	                  data_kind == BeamformerDataKind_Int16Complex   ||
-	                  demodulate || run_cuda_hilbert;
+	cp->iq_pipeline = beamformer_data_kind_complex[data_kind] || demodulate || run_cuda_hilbert;
 
 	f32 sampling_frequency = pb->parameters.sampling_frequency;
 	u32 decimation_rate = Max(pb->parameters.decimation_rate, 1);
