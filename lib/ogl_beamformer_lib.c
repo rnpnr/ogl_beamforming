@@ -488,6 +488,10 @@ beamformer_push_parameters_at(BeamformerParameters *bp, u32 block)
 		                                       BeamformerParameterBlockRegion_Parameters,
 		                                       offsetof(BeamformerParameterBlock, parameters),
 		                                       g_beamformer_library_context.timeout_ms);
+		if (result) {
+			BeamformerParameterBlock *pb = beamformer_parameter_block(g_beamformer_library_context.bp, block);
+			atomic_or_u32(&pb->region_update_flags, 1u << BeamformerParameterRegionFlag_NotifyUI);
+		}
 	}
 	return result;
 }

@@ -753,10 +753,14 @@ function void
 beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 block, Arena arena)
 {
 	BeamformerParameterBlock *pb = beamformer_parameter_block_lock(ctx->shared_memory, block, -1);
-	for EachBit(pb->dirty_regions, region) {
+	for EachBit(pb->region_update_flags, region) {
 		switch (region) {
-		case BeamformerParameterBlockRegion_ComputePipeline:
-		case BeamformerParameterBlockRegion_Parameters:
+		case BeamformerParameterRegionFlag_NotifyUI:{
+			atomic_store_u32(&ctx->ui_dirty_parameter_blocks, 1u << block);
+		}break;
+
+		case BeamformerParameterRegionFlag_ComputePipeline:
+		case BeamformerParameterRegionFlag_Parameters:
 		{
 			cp->output_points  = das_valid_points(pb->parameters.output_points.xyz);
 			cp->average_frames = pb->parameters.output_points.E[3];
@@ -766,7 +770,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			/* NOTE(rnp): these are both handled by plan_compute_pipeline() */
 			u32 mask = 1 << BeamformerParameterBlockRegion_ComputePipeline |
 			           1 << BeamformerParameterBlockRegion_Parameters;
-			pb->dirty_regions &= ~mask;
+			pb->region_update_flags &= ~mask;
 
 			for (u32 shader_slot = 0; shader_slot < cp->pipeline.shader_count; shader_slot++) {
 				u128 hash = u128_hash_from_data(cp->shader_descriptors + shader_slot, sizeof(BeamformerShaderDescriptor));
@@ -801,15 +805,15 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 		case BeamformerParameterBlockRegion_ChannelMapping:{
 			cuda_set_channel_mapping(pb->channel_mapping);
 		}break;
-		case BeamformerParameterBlockRegion_FocalVectors:
-		case BeamformerParameterBlockRegion_SparseElements:
-		case BeamformerParameterBlockRegion_TransmitReceiveOrientations:
+		case BeamformerParameterRegionFlag_FocalVectors:
+		case BeamformerParameterRegionFlag_SparseElements:
+		case BeamformerParameterRegionFlag_TransmitReceiveOrientations:
 		{
 			BeamformerComputeTextureKind texture_kind = 0;
 			u32 pixel_type = 0, texture_format = 0;
 			switch (region) {
 			#define X(kind, _gl, tf, pt, ...) \
-			case BeamformerParameterBlockRegion_## kind:{            \
+			case BeamformerParameterRegionFlag_##kind:{ \
 				texture_kind   = BeamformerComputeTextureKind_## kind; \
 				texture_format = tf;                                   \
 				pixel_type     = pt;                                   \
@@ -1109,7 +1113,6 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena, iptr gl_c
 			if (beamformer_parameter_block_dirty(sm, work->compute_context.parameter_block)) {
 				u32 block = work->compute_context.parameter_block;
 				beamformer_commit_parameter_block(ctx, cp, block, *arena);
-				atomic_store_u32(&ctx->ui_dirty_parameter_blocks, (u32)(ctx->beamform_work_queue != q) << block);
 			}
 
 			post_sync_barrier(ctx->shared_memory, work->lock);

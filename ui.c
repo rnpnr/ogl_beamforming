@@ -434,8 +434,6 @@ struct BeamformerUI {
 	b32                    flush_params;
 	u32 selected_parameter_block;
 
-	u64 parameters_update_timestamp;
-	u64 das_transform_hash;
 	v2  min_coordinate;
 	v2  max_coordinate;
 	f32 off_axis_position;
@@ -4109,42 +4107,32 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 			atomic_and_u32(&ctx->ui_dirty_parameter_blocks, ~selected_mask);
 			beamformer_parameter_block_unlock(ui->shared_memory, selected_block);
 
-			u64 timestamp       = os_timer_count();
-			f64 timestamp_delta = (f64)(timestamp - ui->parameters_update_timestamp)
-			                      / os_system_info()->timer_frequency;
-			ui->parameters_update_timestamp = timestamp;
+			BeamformerComputePlan *cp = ui->beamformer_context->compute_context.compute_plans[selected_block];
+			m4 identity = m4_identity();
+			b32 recompute = !m4_equal(identity, cp->ui_voxel_transform);
+			mem_copy(cp->ui_voxel_transform.E, identity.E, sizeof(identity));
 
-			u64 das_transform_hash = u64_hash_from_s8(s8_struct(&das_transform));
-			if (das_transform_hash != ui->das_transform_hash || timestamp_delta > 2.0) {
-				ui->das_transform_hash = das_transform_hash;
-
-				BeamformerComputePlan *cp = ui->beamformer_context->compute_context.compute_plans[selected_block];
-				m4 identity = m4_identity();
-				b32 recompute = !m4_equal(identity, cp->ui_voxel_transform);
-				mem_copy(cp->ui_voxel_transform.E, identity.E, sizeof(identity));
-
-				if (recompute) {
-					mark_parameter_block_region_dirty(ui->shared_memory, selected_block,
-					                                  BeamformerParameterBlockRegion_Parameters);
-					beamformer_queue_compute(ctx, frame_to_draw, selected_block);
-				}
-
-				v3 U = v3_normalize(das_transform.c[0].xyz);
-				v3 V = v3_normalize(das_transform.c[1].xyz);
-				v3 N = cross(V, U);
-
-				ui->off_axis_position = v3_dot(N, das_transform.c[3].xyz);
-				ui->beamform_plane    = 0;
-
-				v3 min_coordinate = m4_mul_v3(das_transform, (v3){{0.0f, 0.0f, 0.0f}});
-				v3 max_coordinate = m4_mul_v3(das_transform, (v3){{1.0f, 1.0f, 1.0f}});
-
-				ui->min_coordinate.x = v3_dot(U, min_coordinate);
-				ui->min_coordinate.y = v3_dot(V, min_coordinate);
-
-				ui->max_coordinate.x = v3_dot(U, max_coordinate);
-				ui->max_coordinate.y = v3_dot(V, max_coordinate);
+			if (recompute) {
+				mark_parameter_block_region_dirty(ui->shared_memory, selected_block,
+				                                  BeamformerParameterBlockRegion_Parameters);
+				beamformer_queue_compute(ctx, frame_to_draw, selected_block);
 			}
+
+			v3 U = v3_normalize(das_transform.c[0].xyz);
+			v3 V = v3_normalize(das_transform.c[1].xyz);
+			v3 N = cross(V, U);
+
+			ui->off_axis_position = v3_dot(N, das_transform.c[3].xyz);
+			ui->beamform_plane    = 0;
+
+			v3 min_coordinate = m4_mul_v3(das_transform, (v3){{0.0f, 0.0f, 0.0f}});
+			v3 max_coordinate = m4_mul_v3(das_transform, (v3){{1.0f, 1.0f, 1.0f}});
+
+			ui->min_coordinate.x = v3_dot(U, min_coordinate);
+			ui->min_coordinate.y = v3_dot(V, min_coordinate);
+
+			ui->max_coordinate.x = v3_dot(U, max_coordinate);
+			ui->max_coordinate.y = v3_dot(V, max_coordinate);
 		}
 	}
 
@@ -4201,8 +4189,6 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 				mark_parameter_block_region_dirty(ui->shared_memory, selected_block,
 				                                  BeamformerParameterBlockRegion_Parameters);
 				beamformer_parameter_block_unlock(ui->shared_memory, selected_block);
-
-				ui->parameters_update_timestamp = os_timer_count();
 
 				if (recompute)
 					beamformer_queue_compute(ctx, frame_to_draw, selected_block);

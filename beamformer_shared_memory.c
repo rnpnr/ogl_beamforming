@@ -1,5 +1,5 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (25UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (26UL)
 
 typedef struct BeamformerFrame BeamformerFrame;
 
@@ -80,7 +80,11 @@ typedef enum {BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST} BeamformerLiveImagingDirt
 	X(FocalVectors,                focal_vectors)   \
 	X(Parameters,                  parameters)      \
 	X(SparseElements,              sparse_elements) \
-	X(TransmitReceiveOrientations, transmit_receive_orientations)
+	X(TransmitReceiveOrientations, transmit_receive_orientations) \
+
+#define BEAMFORMER_PARAMETER_BLOCK_REGION_FLAG_LIST \
+	BEAMFORMER_PARAMETER_BLOCK_REGION_LIST \
+	X(NotifyUI) \
 
 typedef enum {
 	#define X(k, ...) BeamformerParameterBlockRegion_##k,
@@ -88,6 +92,13 @@ typedef enum {
 	#undef X
 	BeamformerParameterBlockRegion_Count
 } BeamformerParameterBlockRegions;
+
+typedef enum {
+	#define X(k, ...) BeamformerParameterRegionFlag_##k,
+	BEAMFORMER_PARAMETER_BLOCK_REGION_FLAG_LIST
+	#undef X
+	BeamformerParameterRegionFlag_Count,
+} BeamformerParameterRegionFlags;
 
 typedef union {
 	u8 filter_slot;
@@ -111,8 +122,8 @@ typedef struct {
 	};
 
 	/* NOTE(rnp): signals to the beamformer that a subregion of a block has been updated */
-	u32 dirty_regions;
-	static_assert(BeamformerParameterBlockRegion_Count <= 32, "only 32 parameter block regions supported");
+	u32 region_update_flags;
+	static_assert(BeamformerParameterRegionFlag_Count <= 32, "");
 
 	BeamformerComputePipeline pipeline;
 
@@ -247,7 +258,7 @@ beamformer_parameter_block(BeamformerSharedMemory *sm, u32 block)
 function b32
 beamformer_parameter_block_dirty(BeamformerSharedMemory *sm, u32 block)
 {
-	b32 result = beamformer_parameter_block(sm, block)->dirty_regions != 0;
+	b32 result = beamformer_parameter_block(sm, block)->region_update_flags != 0;
 	return result;
 }
 
@@ -282,7 +293,7 @@ function void
 mark_parameter_block_region_dirty(BeamformerSharedMemory *sm, u32 block, BeamformerParameterBlockRegions region)
 {
 	BeamformerParameterBlock *pb = beamformer_parameter_block(sm, block);
-	atomic_or_u32(&pb->dirty_regions, 1u << region);
+	atomic_or_u32(&pb->region_update_flags, 1u << region);
 }
 
 function void
