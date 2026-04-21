@@ -249,11 +249,24 @@ beamformer_reserve_parameter_blocks(uint32_t count)
 }
 
 function b32
+validate_parameters(BeamformerParameters *bp)
+{
+	if (!lib_error_check(Between(bp->contrast_mode, 0, BeamformerContrastMode_Count - 1), InvalidContrastMode))
+		return 0;
+
+	u32 contrast_raw_sample_count = bp->acquisition_count * bp->sample_count * beamformer_contrast_mode_samples[bp->contrast_mode];
+	if (!lib_error_check(contrast_raw_sample_count <= bp->raw_data_dimensions.x, DataSizeMismatch))
+		return 0;
+
+	return 1;
+}
+
+function b32
 validate_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data_kind)
 {
-	b32 data_kind_test = Between(data_kind, 0, BeamformerDataKind_Count - 1);
-	                     //data_kind != BeamformerDataKind_Float16 &&
-	                     //data_kind != BeamformerDataKind_Float16Complex;
+	b32 data_kind_test = Between(data_kind, 0, BeamformerDataKind_Count - 1) &&
+	                     data_kind != BeamformerDataKind_Float16 &&
+	                     data_kind != BeamformerDataKind_Float16Complex;
 	if (!lib_error_check(data_kind_test, InvalidDataKind))
 		return 0;
 
@@ -413,6 +426,31 @@ b32 beamformer_push_##name (dtype *data, u32 count) { \
 BEAMFORMER_UPLOAD_FNS
 #undef X
 
+#define BEAMFORMER_REDUCE_A1S2_CONTRAST_FN(name) void name(void *restrict output_v, \
+                                                           void *restrict input_v, \
+                                                           u32 sample_count)
+typedef BEAMFORMER_REDUCE_A1S2_CONTRAST_FN(beamformer_reduce_a1s2_contrast_fn);
+
+#define BEAMFORMER_REDUCE_A1S2_CONTRAST_LIST \
+	X(i16) \
+	X(f32) \
+	X(f16) \
+
+static_assert(BeamformerDataKind_Float16Complex == (BeamformerDataKind_Count - 1), "");
+
+#define X(type, ...) \
+function BEAMFORMER_REDUCE_A1S2_CONTRAST_FN(beamformer_reduce_a1s2_contrast_##type) \
+{ \
+	type *input_a = (type *)input_v + 0 * sample_count; \
+	type *input_b = (type *)input_v + 1 * sample_count; \
+	type *input_c = (type *)input_v + 2 * sample_count; \
+	type *output  = (type *)output_v; \
+	for (u32 sample = 0; sample < sample_count; sample++) \
+		output[sample] = input_a[sample] - input_b[sample] - input_c[sample]; \
+}
+BEAMFORMER_REDUCE_A1S2_CONTRAST_LIST
+#undef X
+
 function b32
 beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 {
@@ -421,7 +459,8 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 	                                                       g_beamformer_library_context.shared_memory_size);
 	BeamformerParameterBlock *b  = beamformer_parameter_block(g_beamformer_library_context.bp, block);
 	BeamformerParameters     *bp = &b->parameters;
-	BeamformerDataKind data_kind = b->pipeline.data_kind;
+	BeamformerDataKind     data_kind     = b->pipeline.data_kind;
+	BeamformerContrastMode contrast_mode = bp->contrast_mode;
 
 	u32 size     = bp->acquisition_count * bp->sample_count * bp->channel_count * beamformer_data_kind_byte_size[data_kind];
 	u32 raw_size = bp->raw_data_dimensions.x * bp->raw_data_dimensions.y * beamformer_data_kind_byte_size[data_kind];
@@ -439,9 +478,36 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 					u16 data_channel = (u16)b->channel_mapping[channel];
 					u32 out_off = out_channel_stride * channel;
 					u32 in_off  = in_channel_stride  * data_channel;
-					/* TODO(rnp): it would be better to do non temporal copy here, but we can't ensure
-					 * 64 byte boundaries. */
-					mem_copy(scratch.beg + out_off, (u8 *)data + in_off, out_channel_stride);
+					switch (contrast_mode) {
+					default:{
+						/* NOTE(rnp): non temporal copy would be better, but we can't ensure
+						 * 64 byte boundaries. */
+						memory_copy(scratch.beg + out_off, (u8 *)data + in_off, out_channel_stride);
+					}break;
+
+					case BeamformerContrastMode_A1S2:{
+						read_only local_persist u8 reduce_a1s2_index_map[] = {
+							[BeamformerDataKind_Int16]          = 0,
+							[BeamformerDataKind_Int16Complex]   = 0,
+							[BeamformerDataKind_Float32]        = 1,
+							[BeamformerDataKind_Float32Complex] = 1,
+							[BeamformerDataKind_Float16]        = 2,
+							[BeamformerDataKind_Float16Complex] = 2,
+						};
+						static_assert(BeamformerDataKind_Float16Complex == (BeamformerDataKind_Count - 1), "");
+
+						read_only local_persist beamformer_reduce_a1s2_contrast_fn *reduce_a1s2_fn_table[] = {
+							#define X(type, ...) beamformer_reduce_a1s2_contrast_##type,
+							BEAMFORMER_REDUCE_A1S2_CONTRAST_LIST
+							#undef X
+						};
+
+						u32 sample_count = bp->sample_count * (beamformer_data_kind_complex[data_kind] ? 2 : 1);
+						reduce_a1s2_fn_table[reduce_a1s2_index_map[data_kind]](scratch.beg + out_off,
+						                                                       (u8 *)data + in_off,
+						                                                       sample_count);
+					}break;
+					}
 				}
 
 				lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
@@ -482,7 +548,7 @@ beamformer_push_data_with_compute(void *data, u32 data_size, u32 image_plane_tag
 b32
 beamformer_push_parameters_at(BeamformerParameters *bp, u32 block)
 {
-	b32 result = check_shared_memory();
+	b32 result = check_shared_memory() && validate_parameters(bp);
 	if (result) {
 		result = parameter_block_region_upload(bp, sizeof(*bp), block,
 		                                       BeamformerParameterBlockRegion_Parameters,

@@ -44,10 +44,18 @@ typedef enum {
 } BeamformerAcquisitionKind;
 
 typedef enum {
+	BeamformerContrastMode_None = 0,
+	BeamformerContrastMode_A1S2 = 1,
+	BeamformerContrastMode_Count,
+} BeamformerContrastMode;
+
+typedef enum {
 	BeamformerDataKind_Int16          = 0,
 	BeamformerDataKind_Int16Complex   = 1,
 	BeamformerDataKind_Float32        = 2,
 	BeamformerDataKind_Float32Complex = 3,
+	BeamformerDataKind_Float16        = 4,
+	BeamformerDataKind_Float16Complex = 5,
 	BeamformerDataKind_Count,
 } BeamformerDataKind;
 
@@ -191,6 +199,7 @@ typedef struct {
 	u32 interpolation_mode;
 	u32 coherency_weighting;
 	u32 decimation_rate;
+	BeamformerContrastMode       contrast_mode;
 	BeamformerEmissionKind       emission_kind;
 	BeamformerEmissionParameters emission_parameters;
 } BeamformerParameters;
@@ -225,6 +234,7 @@ typedef struct {
 } BeamformerUIParameters;
 
 typedef struct {
+	BeamformerContrastMode       contrast_mode;
 	BeamformerEmissionKind       emission_kind;
 	BeamformerEmissionParameters emission_parameters;
 } BeamformerParametersExtra;
@@ -253,6 +263,7 @@ typedef struct {
 	u32 interpolation_mode;
 	u32 coherency_weighting;
 	u32 decimation_rate;
+	BeamformerContrastMode       contrast_mode;
 	BeamformerEmissionKind       emission_kind;
 	BeamformerEmissionParameters emission_parameters;
 	i16 channel_mapping[256];
@@ -289,9 +300,13 @@ read_only global u8 beamformer_data_kind_element_size[] = {
 	2,
 	4,
 	4,
+	2,
+	2,
 };
 
 read_only global u8 beamformer_data_kind_element_count[] = {
+	1,
+	2,
 	1,
 	2,
 	1,
@@ -303,6 +318,8 @@ read_only global u8 beamformer_data_kind_byte_size[] = {
 	2 * 2,
 	4 * 1,
 	4 * 2,
+	2 * 1,
+	2 * 2,
 };
 
 read_only global b8 beamformer_data_kind_complex[] = {
@@ -310,6 +327,13 @@ read_only global b8 beamformer_data_kind_complex[] = {
 	1,
 	0,
 	1,
+	0,
+	1,
+};
+
+read_only global u8 beamformer_contrast_mode_samples[] = {
+	1,
+	3,
 };
 
 read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
@@ -413,6 +437,8 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"#define DataKind_Int16Complex   1\n"
 	"#define DataKind_Float32        2\n"
 	"#define DataKind_Float32Complex 3\n"
+	"#define DataKind_Float16        4\n"
+	"#define DataKind_Float16Complex 5\n"
 	"\n"),
 	s8_comp(""
 	"#define DecodeMode_None     0\n"
