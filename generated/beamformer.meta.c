@@ -305,6 +305,13 @@ read_only global u8 beamformer_data_kind_byte_size[] = {
 	4 * 2,
 };
 
+read_only global b8 beamformer_data_kind_complex[] = {
+	0,
+	1,
+	0,
+	1,
+};
+
 read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
 	1,
 	0,

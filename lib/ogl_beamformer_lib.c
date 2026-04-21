@@ -251,9 +251,9 @@ beamformer_reserve_parameter_blocks(uint32_t count)
 function b32
 validate_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data_kind)
 {
-	b32 data_kind_test = Between(data_kind, 0, BeamformerDataKind_Count - 1) &&
-	                     data_kind != BeamformerDataKind_Float16 &&
-	                     data_kind != BeamformerDataKind_Float16Complex;
+	b32 data_kind_test = Between(data_kind, 0, BeamformerDataKind_Count - 1);
+	                     //data_kind != BeamformerDataKind_Float16 &&
+	                     //data_kind != BeamformerDataKind_Float16Complex;
 	if (!lib_error_check(data_kind_test, InvalidDataKind))
 		return 0;
 

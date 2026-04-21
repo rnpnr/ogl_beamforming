@@ -2,12 +2,12 @@
 @Enumeration(RCAOrientation [None Rows Columns])
 @Enumeration(SamplingMode [2X 4X])
 
-@Table([name size elements]) DataKind
+@Table([name size elements complex]) DataKind
 {
-	[Int16          2 1]
-	[Int16Complex   2 2]
-	[Float32        4 1]
-	[Float32Complex 4 2]
+	[Int16          2 1 0]
+	[Int16Complex   2 2 1]
+	[Float32        4 1 0]
+	[Float32Complex 4 2 1]
 }
 
 @Enumeration(EmissionKind [Sine Chirp])
@@ -194,6 +194,10 @@
 	``
 	`read_only global u8 beamformer_data_kind_byte_size[] = {`
 	@Expand(DataKind) `	$(size) * $(elements),`
+	`};`
+	``
+	`read_only global b8 beamformer_data_kind_complex[] = {`
+	@Expand(DataKind) `	$(complex),`
 	`};`
 	``
 	`read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {`
