@@ -18,14 +18,14 @@
 	X(InvalidStartShader,            7, "starting shader not Decode or Demodulate")          \
 	X(InvalidDemodulationDataKind,   8, "data kind for demodulation not Int16 or Float")     \
 	X(InvalidImagePlane,             9, "invalid image plane")                               \
-	X(BufferOverflow,               10, "passed buffer size exceeds available space")        \
-	X(DataSizeMismatch,             11, "data size doesn't match the size specified in parameters")  \
-	X(WorkQueueFull,                12, "work queue full")                                   \
-	X(ExportSpaceOverflow,          13, "not enough space for data export")                  \
-	X(SharedMemory,                 14, "failed to open shared memory region")               \
-	X(SyncVariable,                 15, "failed to acquire lock within timeout period")      \
-	X(InvalidFilterKind,            16, "invalid filter kind")                               \
-	X(InvalidSimpleParameters,      17, "invalid simple parameters struct")
+	X(InvalidFilterKind,            10, "invalid filter kind")                               \
+	X(InvalidDataKind,              11, "invalid data kind")                                 \
+	X(BufferOverflow,               12, "passed buffer size exceeds available space")        \
+	X(DataSizeMismatch,             13, "data size doesn't match the size specified in parameters") \
+	X(WorkQueueFull,                14, "work queue full")                                   \
+	X(ExportSpaceOverflow,          15, "not enough space for data export")                  \
+	X(SharedMemory,                 16, "failed to open shared memory region")               \
+	X(SyncVariable,                 17, "failed to acquire lock within timeout period")      \
 
 #define X(type, num, string) BeamformerLibErrorKind_##type = num,
 typedef enum {BEAMFORMER_LIB_ERRORS} BeamformerLibErrorKind;
@@ -95,9 +95,6 @@ BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_simple_parameters_at(BeamformerSi
                                                                     uint32_t parameter_slot);
 
 BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_parameters(BeamformerParameters *);
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_parameters_ui(BeamformerUIParameters *);
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_parameters_head(BeamformerParametersHead *);
-
 BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_parameters_at(BeamformerParameters *,
                                                              uint32_t parameter_slot);
 

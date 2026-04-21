@@ -22,9 +22,8 @@ typedef enum {
 } BeamformerSamplingMode;
 
 typedef enum {
-	BeamformerEmissionKind_Sine   = 0,
-	BeamformerEmissionKind_SineAM = 1,
-	BeamformerEmissionKind_Chirp  = 2,
+	BeamformerEmissionKind_Sine  = 0,
+	BeamformerEmissionKind_Chirp = 1,
 	BeamformerEmissionKind_Count,
 } BeamformerEmissionKind;
 
@@ -162,11 +161,6 @@ typedef union {
 		f32 frequency;
 	} sine;
 	struct {
-		f32 cycles;
-		f32 frequency;
-		u32 emissions;
-	} sine_am;
-	struct {
 		f32 duration;
 		f32 min_frequency;
 		f32 max_frequency;
@@ -229,6 +223,11 @@ typedef struct {
 	u32 coherency_weighting;
 	u32 decimation_rate;
 } BeamformerUIParameters;
+
+typedef struct {
+	BeamformerEmissionKind       emission_kind;
+	BeamformerEmissionParameters emission_parameters;
+} BeamformerParametersExtra;
 
 typedef struct {
 	m4  das_voxel_transform;

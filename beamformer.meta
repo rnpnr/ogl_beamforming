@@ -10,19 +10,12 @@
 	[Float32Complex 4 2]
 }
 
-@Enumeration(EmissionKind [Sine SineAM Chirp])
+@Enumeration(EmissionKind [Sine Chirp])
 
 @Table([type name]) SineParameters
 {
 	[F32 cycles   ]
 	[F32 frequency]
-}
-
-@Table([type name]) SineAMParameters
-{
-	[F32 cycles   ]
-	[F32 frequency]
-	[U32 emissions]
 }
 
 @Table([type name]) ChirpParameters
@@ -34,7 +27,6 @@
 
 @MUnion(EmissionKind [
 	SineParameters
-	SineAMParameters
 	ChirpParameters
 ]) Emission
 
@@ -149,9 +141,6 @@
 		@Expand(SineParameters)   `		$(%type)$(|)$(name);`
 	`	} sine;`
 	`	struct {`
-		@Expand(SineAMParameters) `		$(%type)$(|)$(name);`
-	`	} sine_am;`
-	`	struct {`
 		@Expand(ChirpParameters)  `		$(%type)$(|)$(name);`
 	`	} chirp;`
 	`} BeamformerEmissionParameters;`
@@ -169,6 +158,10 @@
 	`typedef struct {`
 	@Expand(ParametersUI) `	$(%type)$(|)$(name);`
 	`} BeamformerUIParameters;`
+	``
+	`typedef struct {`
+	@Expand(ParametersExtra) `	$(c_type)$(|)$(name);`
+	`} BeamformerParametersExtra;`
 	``
 	`typedef struct {`
 	@Expand(ParametersHead)   `	$(%type)$(|)$(name);`
@@ -313,9 +306,6 @@
 	`	struct {`
 		@Expand(SineParameters)   `		$(%type)$(|)$(name);`
 	`	} sine;`
-	`	struct {`
-		@Expand(SineAMParameters) `		$(%type)$(|)$(name);`
-	`	} sine_am;`
 	`	struct {`
 		@Expand(ChirpParameters)  `		$(%type)$(|)$(name);`
 	`	} chirp;`

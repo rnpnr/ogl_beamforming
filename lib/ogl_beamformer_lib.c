@@ -251,37 +251,33 @@ beamformer_reserve_parameter_blocks(uint32_t count)
 function b32
 validate_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data_kind)
 {
-	b32 result = lib_error_check(shader_count <= BeamformerMaxComputeShaderStages, ComputeStageOverflow);
-	if (result) {
-		for (u32 i = 0; i < shader_count; i++)
-			result &= BETWEEN(shaders[i], BeamformerShaderKind_ComputeFirst, BeamformerShaderKind_ComputeLast);
-		if (!result) {
-			g_beamformer_library_context.last_error = BeamformerLibErrorKind_InvalidComputeStage;
-		} else if (shaders[0] != BeamformerShaderKind_Demodulate &&
-		           shaders[0] != BeamformerShaderKind_Decode)
+	b32 data_kind_test = Between(data_kind, 0, BeamformerDataKind_Count - 1) &&
+	                     data_kind != BeamformerDataKind_Float16 &&
+	                     data_kind != BeamformerDataKind_Float16Complex;
+	if (!lib_error_check(data_kind_test, InvalidDataKind))
+		return 0;
+
+	if (!lib_error_check(shader_count <= BeamformerMaxComputeShaderStages, ComputeStageOverflow))
+		return 0;
+
+	for (u32 i = 0; i < shader_count; i++) {
+		b32 stage_test = Between(shaders[i], BeamformerShaderKind_ComputeFirst, BeamformerShaderKind_ComputeLast);
+		if (!lib_error_check(stage_test, InvalidComputeStage))
+			return 0;
+
+		if (shaders[i] == BeamformerShaderKind_Demodulate &&
+		    !lib_error_check(!beamformer_data_kind_complex[data_kind], InvalidDemodulationDataKind))
 		{
-			g_beamformer_library_context.last_error = BeamformerLibErrorKind_InvalidStartShader;
-			result = 0;
-		} else if (shaders[0] == BeamformerShaderKind_Demodulate &&
-		           !(data_kind == BeamformerDataKind_Int16 || data_kind == BeamformerDataKind_Float32))
-		{
-			g_beamformer_library_context.last_error = BeamformerLibErrorKind_InvalidDemodulationDataKind;
-			result = 0;
+			return 0;
 		}
 	}
-	return result;
-}
 
-function b32
-validate_simple_parameters(BeamformerSimpleParameters *bp)
-{
-	b32 result = check_shared_memory();
-	if (result) {
-		result &= bp->channel_count <= BeamformerMaxChannelCount;
-		if (!result)
-			g_beamformer_library_context.last_error = BeamformerLibErrorKind_InvalidSimpleParameters;
-	}
-	return result;
+	b32 start_stage_test = shaders[0] == BeamformerShaderKind_Demodulate ||
+	                       shaders[0] == BeamformerShaderKind_Decode;
+	if (!lib_error_check(start_stage_test, InvalidStartShader))
+		return 0;
+
+	return 1;
 }
 
 function b32
@@ -486,10 +482,13 @@ beamformer_push_data_with_compute(void *data, u32 data_size, u32 image_plane_tag
 b32
 beamformer_push_parameters_at(BeamformerParameters *bp, u32 block)
 {
-	b32 result = parameter_block_region_upload(bp, sizeof(*bp), block,
-	                                           BeamformerParameterBlockRegion_Parameters,
-	                                           offsetof(BeamformerParameterBlock, parameters),
-	                                           g_beamformer_library_context.timeout_ms);
+	b32 result = check_shared_memory();
+	if (result) {
+		result = parameter_block_region_upload(bp, sizeof(*bp), block,
+		                                       BeamformerParameterBlockRegion_Parameters,
+		                                       offsetof(BeamformerParameterBlock, parameters),
+		                                       g_beamformer_library_context.timeout_ms);
+	}
 	return result;
 }
 
@@ -503,7 +502,7 @@ beamformer_push_parameters(BeamformerParameters *bp)
 b32
 beamformer_push_simple_parameters_at(BeamformerSimpleParameters *bp, u32 block)
 {
-	b32 result = validate_simple_parameters(bp);
+	b32 result = check_shared_memory();
 	if (result) {
 		alignas(64) v2 focal_vectors[countof(bp->steering_angles)];
 		for (u32 i = 0; i < countof(bp->steering_angles); i++)
@@ -532,24 +531,6 @@ b32
 beamformer_push_simple_parameters(BeamformerSimpleParameters *bp)
 {
 	b32 result = beamformer_push_simple_parameters_at(bp, 0);
-	return result;
-}
-
-b32
-beamformer_push_parameters_ui(BeamformerUIParameters *bp)
-{
-	b32 result = parameter_block_region_upload(bp, sizeof(*bp), 0, BeamformerParameterBlockRegion_Parameters,
-	                                           offsetof(BeamformerParameterBlock, parameters_ui),
-	                                           g_beamformer_library_context.timeout_ms);
-	return result;
-}
-
-b32
-beamformer_push_parameters_head(BeamformerParametersHead *bp)
-{
-	b32 result = parameter_block_region_upload(bp, sizeof(*bp), 0, BeamformerParameterBlockRegion_Parameters,
-	                                           offsetof(BeamformerParameterBlock, parameters_head),
-	                                           g_beamformer_library_context.timeout_ms);
 	return result;
 }
 

@@ -1,5 +1,5 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (24UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (25UL)
 
 typedef struct BeamformerFrame BeamformerFrame;
 
@@ -8,7 +8,6 @@ typedef enum {
 	BeamformerWorkKind_ComputeIndirect,
 	BeamformerWorkKind_CreateFilter,
 	BeamformerWorkKind_ExportBuffer,
-	BeamformerWorkKind_UploadBuffer,
 } BeamformerWorkKind;
 
 typedef struct {
@@ -105,8 +104,9 @@ typedef struct {
 	alignas(16) union {
 		BeamformerParameters parameters;
 		struct {
-			BeamformerParametersHead parameters_head;
-			BeamformerUIParameters   parameters_ui;
+			BeamformerParametersHead  parameters_head;
+			BeamformerUIParameters    parameters_ui;
+			BeamformerParametersExtra parameters_extra;
 		};
 	};
 
