@@ -8,6 +8,14 @@
 	[Int16Complex   2 2 1]
 	[Float32        4 1 0]
 	[Float32Complex 4 2 1]
+	[Float16        2 1 0]
+	[Float16Complex 2 2 1]
+}
+
+@Table([name samples]) ContrastMode
+{
+	[None 1]
+	[A1S2 3]
 }
 
 @Enumeration(EmissionKind [Sine Chirp])
@@ -111,6 +119,7 @@
 
 @Table([name c_type m_type m_size]) ParametersExtra
 {
+	[contrast_mode       BeamformerContrastMode       uint32  1]
 	[emission_kind       BeamformerEmissionKind       uint32  1]
 	[emission_parameters BeamformerEmissionParameters uint8  12]
 }
@@ -130,6 +139,7 @@
 }
 
 @Expand(AcquisitionKind)   @Enumeration(AcquisitionKind   `$(name)`)
+@Expand(ContrastMode)      @Enumeration(ContrastMode      `$(name)`)
 @Expand(DataKind)          @Enumeration(DataKind          `$(name)`)
 @Expand(FilterKind)        @Enumeration(FilterKind        `$(name)`)
 @Expand(InterpolationMode) @Enumeration(InterpolationMode `$(name)`)
@@ -198,6 +208,10 @@
 	``
 	`read_only global b8 beamformer_data_kind_complex[] = {`
 	@Expand(DataKind) `	$(complex),`
+	`};`
+	``
+	`read_only global u8 beamformer_contrast_mode_samples[] = {`
+	@Expand(ContrastMode) `	$(samples),`
 	`};`
 	``
 	`read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {`

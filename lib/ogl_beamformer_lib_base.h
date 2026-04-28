@@ -20,12 +20,13 @@
 	X(InvalidImagePlane,             9, "invalid image plane")                               \
 	X(InvalidFilterKind,            10, "invalid filter kind")                               \
 	X(InvalidDataKind,              11, "invalid data kind")                                 \
-	X(BufferOverflow,               12, "passed buffer size exceeds available space")        \
-	X(DataSizeMismatch,             13, "data size doesn't match the size specified in parameters") \
-	X(WorkQueueFull,                14, "work queue full")                                   \
-	X(ExportSpaceOverflow,          15, "not enough space for data export")                  \
-	X(SharedMemory,                 16, "failed to open shared memory region")               \
-	X(SyncVariable,                 17, "failed to acquire lock within timeout period")      \
+	X(InvalidContrastMode,          12, "invalid contrast mode")                             \
+	X(BufferOverflow,               13, "passed buffer size exceeds available space")        \
+	X(DataSizeMismatch,             14, "data size doesn't match the size specified in parameters") \
+	X(WorkQueueFull,                15, "work queue full")                                   \
+	X(ExportSpaceOverflow,          16, "not enough space for data export")                  \
+	X(SharedMemory,                 17, "failed to open shared memory region")               \
+	X(SyncVariable,                 18, "failed to acquire lock within timeout period")      \
 
 #define X(type, num, string) BeamformerLibErrorKind_##type = num,
 typedef enum {BEAMFORMER_LIB_ERRORS} BeamformerLibErrorKind;

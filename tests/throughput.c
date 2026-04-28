@@ -242,7 +242,7 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 		bp->speed_of_sound         = header->speed_of_sound;
 		bp->time_offset            = header->time_offset;
 
-		//bp->contrast_mode          = header->contrast_mode;
+		bp->contrast_mode          = header->contrast_mode;
 
 		if (header->channel_mapping_offset != -1) {
 			mem_copy(bp->channel_mapping, raw.data + header->channel_mapping_offset,

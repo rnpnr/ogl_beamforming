@@ -24,8 +24,9 @@ memory_equal(void *restrict left, void *restrict right, uz n)
 	return result;
 }
 
+#define mem_copy memory_copy
 function void
-mem_copy(void *restrict dest, void *restrict src, uz n)
+memory_copy(void *restrict dest, void *restrict src, uz n)
 {
 	u8 *s = src, *d = dest;
 	#ifdef __AVX512BW__
