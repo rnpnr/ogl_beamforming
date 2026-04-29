@@ -1,5 +1,5 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (27UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (28UL)
 
 typedef struct BeamformerFrame BeamformerFrame;
 
@@ -250,7 +250,7 @@ beamformer_shared_memory_release_lock(BeamformerSharedMemory *sm, i32 lock)
 function BeamformerParameterBlock *
 beamformer_parameter_block(BeamformerSharedMemory *sm, u32 block)
 {
-	assert(sm->reserved_parameter_blocks >= block);
+	assert(sm->reserved_parameter_blocks > block);
 	BeamformerParameterBlock *result = (typeof(result))((u8 *)(sm + 1) + block * sizeof(*result));
 	return result;
 }
@@ -283,7 +283,7 @@ function Arena
 beamformer_shared_memory_scratch_arena(BeamformerSharedMemory *sm, i64 shared_memory_size)
 {
 	assert(sm->reserved_parameter_blocks > 0);
-	BeamformerParameterBlock *last = beamformer_parameter_block(sm, sm->reserved_parameter_blocks);
+	BeamformerParameterBlock *last = beamformer_parameter_block(sm, sm->reserved_parameter_blocks - 1);
 	Arena result = {.beg = (u8 *)(last + 1), .end = (u8 *)sm + shared_memory_size};
 	result.beg = arena_aligned_start(result, KB(4));
 	return result;
