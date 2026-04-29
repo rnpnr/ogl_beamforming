@@ -1232,7 +1232,7 @@ coalesce_timing_table(ComputeTimingTable *t, ComputeShaderStats *stats)
 			assert(t->compute_frame_active == 0);
 			t->compute_frame_active = 1;
 			/* NOTE(rnp): allow multiple instances of same shader to accumulate */
-			mem_clear(stats->table.times[stats_index], 0, sizeof(stats->table.times[stats_index]));
+			memory_clear(stats->table.times[stats_index], 0, sizeof(stats->table.times[stats_index]));
 		}break;
 		case ComputeTimingInfoKind_ComputeFrameEnd:{
 			assert(t->compute_frame_active == 1);

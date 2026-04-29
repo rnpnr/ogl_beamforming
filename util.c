@@ -6,7 +6,6 @@
 #endif
 
 #define zero_struct(s) memory_clear(s, 0, sizeof(*s))
-#define mem_clear memory_clear
 function void *
 memory_clear(void *restrict p_, u8 c, iz size)
 {
