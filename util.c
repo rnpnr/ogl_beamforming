@@ -5,9 +5,9 @@
   #pragma GCC diagnostic ignored "-Woverride-init"
 #endif
 
-#define zero_struct(s) memory_clear(s, 0, sizeof(*s))
+#define zero_struct(s) memory_clear((s), 0, sizeof(*(s)))
 function void *
-memory_clear(void *restrict p_, u8 c, iz size)
+memory_clear(void *restrict p_, u8 c, u64 size)
 {
 	u8 *p = p_;
 	while (size > 0) p[--size] = c;
@@ -230,10 +230,10 @@ enum { DA_INITIAL_CAP = 16 };
 } while (0)
 
 #define da_push(a, s) \
-  ((s)->count == (s)->capacity  \
+  ((typeof((s)->data))memory_clear((s)->count == (s)->capacity  \
     ? da_reserve(a, s, 1),      \
       (s)->data + (s)->count++  \
-    : (s)->data + (s)->count++)
+    : (s)->data + (s)->count++, 0, sizeof(*(s)->data)))
 
 function void *
 da_reserve_(Arena *a, void *data, iz *capacity, iz needed, uz align, iz size)
