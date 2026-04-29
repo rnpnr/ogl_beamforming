@@ -297,18 +297,18 @@ push_compute_graph_node(BeamformerComputeGraphNode *root, BeamformerShaderKind k
 function void
 plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, Arena scratch)
 {
-	b32 run_cuda_hilbert = 0;
-	b32 demodulate       = 0;
+	b32 run_hilbert = 0;
+	b32 demodulate  = 0;
 
 	for (u32 i = 0; i < pb->pipeline.shader_count; i++) {
 		switch (pb->pipeline.shaders[i]) {
-		case BeamformerShaderKind_CudaHilbert:{ run_cuda_hilbert = 1; }break;
-		case BeamformerShaderKind_Demodulate:{  demodulate = 1;       }break;
+		case BeamformerShaderKind_Hilbert:{run_hilbert = 1;}break;
+		case BeamformerShaderKind_Demodulate:{demodulate = 1;}break;
 		default:{}break;
 		}
 	}
 
-	if (demodulate) run_cuda_hilbert = 0;
+	if (demodulate) run_hilbert = 0;
 
 	f32 sampling_frequency = pb->parameters.sampling_frequency;
 	u32 input_sample_count = pb->parameters.sample_count;
@@ -330,7 +330,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		sampling_frequency /= (2 * decimation_rate);
 	}
 
-	cp->iq_pipeline = beamformer_data_kind_complex[input_data_kind] || run_cuda_hilbert;
+	cp->iq_pipeline = beamformer_data_kind_complex[input_data_kind] || run_hilbert;
 
 	BeamformerDataKind das_data_kind = cp->iq_pipeline ? BeamformerDataKind_Float32Complex
 	                                                   : BeamformerDataKind_Float32;
@@ -367,14 +367,13 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	for EachIndex(pb->pipeline.shader_count, it) {
 		// NOTE(rnp): skip unnecessary shaders
 		switch (pb->pipeline.shaders[it]) {
-		case BeamformerShaderKind_CudaHilbert:{if (!run_cuda_hilbert) continue;}break;
+		case BeamformerShaderKind_Hilbert:{if (!run_hilbert) continue;}break;
 
 		case BeamformerShaderKind_Decode:{
 			if (pb->parameters.decode_mode == BeamformerDecodeMode_None)
 				continue;
 		}break;
 
-		case BeamformerShaderKind_CudaDecode:
 		case BeamformerShaderKind_Sum:
 		case BeamformerShaderKind_MinMax:
 		{
@@ -1030,11 +1029,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 		cc->ping_pong_input_index = !cc->ping_pong_input_index;
 	}break;
 
-	case BeamformerShaderKind_CudaDecode:{
-		cuda_decode(0, output_index, 0);
-		cc->ping_pong_input_index = !cc->ping_pong_input_index;
-	}break;
-	case BeamformerShaderKind_CudaHilbert:{
+	case BeamformerShaderKind_Hilbert:{
 		cuda_hilbert(input_index, output_index);
 		cc->ping_pong_input_index = !cc->ping_pong_input_index;
 	}break;
