@@ -289,9 +289,6 @@
 
 @ShaderGroup Compute
 {
-	@Shader CudaDecode
-	@Shader CudaHilbert
-
 	@Shader(decode.glsl) Decode
 	{
 		@Enumeration DecodeMode
@@ -418,6 +415,8 @@
 	}
 
 	@Shader(min_max.glsl) MinMax
+
+	@Shader Hilbert
 }
 
 // NOTE: shaders which need to be baked into the beamforming pipeline

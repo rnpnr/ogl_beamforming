@@ -21,7 +21,6 @@ global f32 g_f_number         = 0.5f;
 
 typedef struct {
 	b32 loop;
-	b32 cuda;
 	u32 frame_number;
 
 	char **remaining;
@@ -377,9 +376,8 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 function void
 usage(char *argv0)
 {
-	die("%s [--loop] [--cuda] [--frame n] parameters_file\n"
+	die("%s [--loop] [--frame n] parameters_file\n"
 	    "    --loop:    reupload data forever\n"
-	    "    --cuda:    use cuda for decoding\n"
 	    "    --frame n: use frame n of the data for display\n",
 	    argv0);
 }
@@ -398,9 +396,6 @@ parse_argv(i32 argc, char *argv[])
 		if (s8_equal(arg, s8("--loop"))) {
 			shift(argv, argc);
 			result.loop = 1;
-		} else if (s8_equal(arg, s8("--cuda"))) {
-			shift(argv, argc);
-			result.cuda = 1;
 		} else if (s8_equal(arg, s8("--frame"))) {
 			shift(argv, argc);
 			if (argc) {
@@ -459,8 +454,7 @@ execute_study(Arena arena, Stream path, Options *options)
 	{
 		bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_Demodulate;
 	}
-	if (options->cuda) bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_CudaDecode;
-	else               bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_Decode;
+	bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_Decode;
 	bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_DAS;
 
 	{

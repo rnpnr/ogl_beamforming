@@ -670,7 +670,7 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 		b32 complex = 0;
 		for (u32 stage = 0; stage < bp->compute_stages_count; stage++) {
 			BeamformerShaderKind shader = (BeamformerShaderKind)bp->compute_stages[stage];
-			complex |= shader == BeamformerShaderKind_Demodulate || shader == BeamformerShaderKind_CudaHilbert;
+			complex |= shader == BeamformerShaderKind_Demodulate || shader == BeamformerShaderKind_Hilbert;
 		}
 
 		u64 output_size = output_points.x * output_points.y * output_points.z * sizeof(f32);
