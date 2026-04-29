@@ -225,10 +225,6 @@ CUDA_INIT_FN(cuda_init_stub) {}
 typedef CUDA_REGISTER_BUFFERS_FN(cuda_register_buffers_fn);
 CUDA_REGISTER_BUFFERS_FN(cuda_register_buffers_stub) {}
 
-#define CUDA_DECODE_FN(name) void name(size_t input_offset, u32 output_buffer_idx, u32 rf_channel_offset)
-typedef CUDA_DECODE_FN(cuda_decode_fn);
-CUDA_DECODE_FN(cuda_decode_stub) {}
-
 #define CUDA_HILBERT_FN(name) void name(u32 input_buffer_idx, u32 output_buffer_idx)
 typedef CUDA_HILBERT_FN(cuda_hilbert_fn);
 CUDA_HILBERT_FN(cuda_hilbert_stub) {}
@@ -238,7 +234,6 @@ typedef CUDA_SET_CHANNEL_MAPPING_FN(cuda_set_channel_mapping_fn);
 CUDA_SET_CHANNEL_MAPPING_FN(cuda_set_channel_mapping_stub) {}
 
 #define CUDALibraryProcedureList \
-	X(decode,              "cuda_decode")              \
 	X(hilbert,             "cuda_hilbert")             \
 	X(init,                "init_cuda_configuration")  \
 	X(register_buffers,    "register_cuda_buffers")    \

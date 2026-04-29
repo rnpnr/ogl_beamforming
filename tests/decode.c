@@ -17,7 +17,6 @@ read_only global u32 decode_transmit_counts[] = {
 
 typedef struct {
 	b32 loop;
-	b32 cuda;
 	b32 once;
 	b32 dump;
 	b32 full_aperture;
@@ -77,11 +76,10 @@ os_make_directory(char *name)
 function void
 usage(char *argv0)
 {
-	die("%s [--loop] [--once] [--full-aperture] [--cuda] [--warmup n] [--dump dir]\n"
+	die("%s [--loop] [--once] [--full-aperture] [--warmup n] [--dump dir]\n"
 	    "    --loop:          reupload data forever\n"
 	    "    --once:          only run a single frame\n"
 	    "    --full-aperture: recieve on full 256 channel aperture\n"
-	    "    --cuda:          use cuda for decoding\n"
 	    "    --warmup:        warmup with n runs\n"
 	    "    --dump:          dump output stats files to dir\n",
 	    argv0);
@@ -103,8 +101,6 @@ parse_argv(i32 argc, char *argv[])
 			result.loop = 1;
 		} else if (s8_equal(arg, s8("--full-aperture"))) {
 			result.full_aperture = 1;
-		} else if (s8_equal(arg, s8("--cuda"))) {
-			result.cuda = 1;
 		} else if (s8_equal(arg, s8("--dump"))) {
 			if (argc) {
 				result.outdir = *argv;
@@ -181,7 +177,6 @@ dump_stats(BeamformerComputeStatsTable *stats, Options *options, u32 transmit_co
 	char path_buffer[1024];
 	Stream sb = {.data = (u8 *)path_buffer, .cap = sizeof(path_buffer)};
 	stream_append_s8s(&sb, c_str_to_s8(options->outdir), s8(OS_PATH_SEPARATOR), s8("decode_"));
-	if (options->cuda) stream_append_s8(&sb, s8("cuda_"));
 	stream_append_u64(&sb, transmit_count);
 	stream_append_s8(&sb, s8(".bin"));
 	stream_append_byte(&sb, 0);
@@ -223,10 +218,8 @@ send_parameters(Options *options, u32 transmit_count)
 	};
 	beamformer_push_channel_mapping(channel_mapping, countof(channel_mapping));
 
-	i32 shader_stages[1];
-	if (options->cuda) shader_stages[0] = BeamformerShaderKind_CudaDecode;
-	else               shader_stages[0] = BeamformerShaderKind_Decode;
-	beamformer_push_pipeline(shader_stages, 1, BeamformerDataKind_Int16);
+	i32 shader_stages = BeamformerShaderKind_Decode;
+	beamformer_push_pipeline(&shader_stages, 1, BeamformerDataKind_Int16);
 	beamformer_set_global_timeout(1000);
 }
 
