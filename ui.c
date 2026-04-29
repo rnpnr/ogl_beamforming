@@ -2928,9 +2928,9 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 			cell_rect.size.w = t->widths[column];
 			text_spec.limits.size.w = r.size.w - (cell_rect.pos.x - it->start_x);
 
-			if (column == 0 && row_index < stages && vk_pipeline_valid(cp->vulkan_pipelines[row_index]) == 0 &&
-			    stats->table.shader_ids[row_index] != BeamformerShaderKind_CudaHilbert &&
-			    stats->table.shader_ids[row_index] != BeamformerShaderKind_CudaDecode)
+			if (column == 0 && row_index < stages &&
+			    vk_pipeline_valid(cp->vulkan_pipelines[row_index]) == 0 &&
+			    stats->table.shader_ids[row_index] != BeamformerShaderKind_Hilbert)
 			{
 				text_spec.colour = v4_lerp(FG_COLOUR, FOCUSED_COLOUR, ease_in_out_quartic(csv->blink.t));
 			} else {
