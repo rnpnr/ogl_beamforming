@@ -28,6 +28,7 @@
 	X(SharedMemory,                 17, "failed to open shared memory region")               \
 	X(SyncVariable,                 18, "failed to acquire lock within timeout period")      \
 	X(FrameSizeOverflow,            19, "maximum frame size exceeded")                       \
+	X(RFDataSizeOverflow,           20, "raw rf size exceeds available GPU space")           \
 
 #define X(type, num, string) BeamformerLibErrorKind_##type = num,
 typedef enum {BEAMFORMER_LIB_ERRORS} BeamformerLibErrorKind;
@@ -39,8 +40,16 @@ BEAMFORMER_LIB_EXPORT BeamformerLibErrorKind beamformer_get_last_error(void);
 BEAMFORMER_LIB_EXPORT const char *beamformer_get_last_error_string(void);
 BEAMFORMER_LIB_EXPORT const char *beamformer_error_string(BeamformerLibErrorKind kind);
 
-// NOTE: returns U64_MAX if shared memory could not be opened
-BEAMFORMER_LIB_EXPORT uint64_t beamformer_maximum_frame_size(void);
+// NOTE: returns the maximum number of frames which may be beamformed with the provided
+// parameters before old frames are overwritten.
+//
+// returns U64_MAX on error. use beamformer_get_last_error() to determine why
+BEAMFORMER_LIB_EXPORT uint64_t beamformer_maximum_frames_for_parameters(BeamformerParameters *);
+BEAMFORMER_LIB_EXPORT uint64_t beamformer_maximum_frames_for_simple_parameters(BeamformerSimpleParameters *);
+
+// NOTE: returns the maximum single rf dataset size that can be uploaded to the beamformer
+// returns U64_MAX on error. use beamformer_get_last_error() to determine why
+BEAMFORMER_LIB_EXPORT uint64_t beamformer_maximum_rf_data_size(void);
 
 ///////////////////////////
 // NOTE: Simple API
