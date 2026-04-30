@@ -229,15 +229,6 @@ beamformer_get_last_error_string(void)
 	return beamformer_error_string(beamformer_get_last_error());
 }
 
-u64
-beamformer_maximum_frame_size(void)
-{
-	u64 result = U64_MAX;
-	if (check_shared_memory())
-		result = g_beamformer_library_context.bp->max_beamformed_data_size;
-	return result;
-}
-
 void
 beamformer_set_global_timeout(u32 timeout_ms)
 {
@@ -267,6 +258,20 @@ validate_parameters(BeamformerParameters *bp)
 	if (!lib_error_check(contrast_raw_sample_count <= bp->raw_data_dimensions.x, DataSizeMismatch))
 		return 0;
 
+	// NOTE(rnp): frame size checks
+	{
+		// TODO(rnp): this check is overly conservative, what if we are exporting something smaller than Float32Complex
+		u64 buffer_size     = g_beamformer_library_context.bp->beamformed_frame_buffer_size;
+		u64 frame_size      = Max(1, bp->output_points.x) * Max(1, bp->output_points.y) * Max(1, bp->output_points.z)
+		                      * beamformer_data_kind_byte_size[BeamformerDataKind_Float32Complex];
+		u64 incoherent_size = frame_size / 2;
+		if (bp->coherency_weighting)
+			buffer_size -= incoherent_size;
+
+		if (!lib_error_check(frame_size <= buffer_size, FrameSizeOverflow))
+			return 0;
+	}
+
 	return 1;
 }
 
@@ -285,6 +290,10 @@ validate_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data_kind)
 		if (!lib_error_check(stage_test, InvalidComputeStage))
 			return 0;
 
+		if (shaders[i] == BeamformerShaderKind_Hilbert &&
+		    !lib_error_check(g_beamformer_library_context.bp->capabilities.hilbert != 0, InvalidComputeStage))
+			return 0;
+
 		if (shaders[i] == BeamformerShaderKind_Demodulate &&
 		    !lib_error_check(!beamformer_data_kind_complex[data_kind], InvalidDemodulationDataKind))
 		{
@@ -298,6 +307,30 @@ validate_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data_kind)
 		return 0;
 
 	return 1;
+}
+
+u64
+beamformer_maximum_frames_for_parameters(BeamformerParameters *bp)
+{
+	u64 result = U64_MAX;
+	if (check_shared_memory() && validate_parameters(bp)) {
+		// TODO(rnp): overly conservative frame size check
+		u64 buffer_size     = g_beamformer_library_context.bp->beamformed_frame_buffer_size;
+		u64 frame_size      = Max(1, bp->output_points.x) * Max(1, bp->output_points.y) * Max(1, bp->output_points.z)
+		                      * beamformer_data_kind_byte_size[BeamformerDataKind_Float32Complex];
+		u64 incoherent_size = frame_size / 2;
+		if (bp->coherency_weighting)
+			buffer_size -= incoherent_size;
+		result = buffer_size / frame_size;
+	}
+	return result;
+}
+
+u64
+beamformer_maximum_frames_for_simple_parameters(BeamformerSimpleParameters *bp)
+{
+	u64 result = beamformer_maximum_frames_for_parameters((BeamformerParameters *)bp);
+	return result;
 }
 
 function b32
@@ -469,11 +502,15 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 	BeamformerDataKind     data_kind     = b->pipeline.data_kind;
 	BeamformerContrastMode contrast_mode = bp->contrast_mode;
 
-	u32 size     = bp->acquisition_count * bp->sample_count * bp->channel_count * beamformer_data_kind_byte_size[data_kind];
-	u32 raw_size = bp->raw_data_dimensions.x * bp->raw_data_dimensions.y * beamformer_data_kind_byte_size[data_kind];
 
-	if (lib_error_check(size <= arena_capacity(&scratch, u8), BufferOverflow) &&
-	    lib_error_check(size <= data_size && data_size == raw_size, DataSizeMismatch))
+	u64 max_rf_size = g_beamformer_library_context.bp->capabilities.max_rf_data_size;
+	u32 rf_size     = bp->acquisition_count * bp->sample_count * bp->channel_count * beamformer_data_kind_byte_size[data_kind];
+	u32 raw_size    = bp->raw_data_dimensions.x * bp->raw_data_dimensions.y * beamformer_data_kind_byte_size[data_kind];
+
+	// TODO(rnp): support multi push upload so that max_rf_size is actual limit
+	if (lib_error_check(rf_size <= arena_capacity(&scratch, u8), BufferOverflow) &&
+	    lib_error_check(rf_size <= max_rf_size, RFDataSizeOverflow) &&
+	    lib_error_check(rf_size <= data_size && data_size == raw_size, DataSizeMismatch))
 	{
 		if (lib_try_lock(BeamformerSharedMemoryLockKind_UploadRF, timeout_ms)) {
 			if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
@@ -526,7 +563,7 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 
 				lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
 				/* TODO(rnp): need a better way to communicate this */
-				u64 rf_block_rf_size = (u64)block << 32ULL | (u64)size;
+				u64 rf_block_rf_size = (u64)block << 32ULL | (u64)rf_size;
 				atomic_store_u64(&g_beamformer_library_context.bp->rf_block_rf_size, rf_block_rf_size);
 				result = 1;
 			}
@@ -675,8 +712,6 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 
 		u64 output_size = output_points.x * output_points.y * output_points.z * sizeof(f32);
 		if (complex) output_size *= 2;
-
-		result = lib_error_check(output_size <= g_beamformer_library_context.bp->max_beamformed_data_size, FrameSizeOverflow);
 
 		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
 		                                                       g_beamformer_library_context.shared_memory_size);
