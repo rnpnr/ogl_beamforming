@@ -70,6 +70,8 @@
 #define MENU_PLUS_COLOUR       (v4){{0.33f, 0.42f, 1.00f, 1.00f}}
 #define MENU_CLOSE_COLOUR      FOCUSED_COLOUR
 
+#define UI_HASH_TABLE_COUNT 4096
+
 read_only global v4 g_colour_palette[] = {
 	{{0.32f, 0.20f, 0.50f, 1.00f}},
 	{{0.14f, 0.39f, 0.61f, 1.00f}},
@@ -97,6 +99,231 @@ read_only global v4 g_colour_palette[] = {
 #define LISTING_LINE_PAD    6.0f
 #define TITLE_BAR_PAD       6.0f
 
+typedef enum {
+	UINodeFlag_MouseClickable            = 1ull << 0,
+	UINodeFlag_KeyboardClickable         = 1ull << 1,
+	UINodeFlag_DropSite                  = 1ull << 2,
+	UINodeFlag_ClickToFocus              = 1ull << 3,
+	UINodeFlag_Scroll                    = 1ull << 4,
+	UINodeFlag_FocusHot                  = 1ull << 5,
+	UINodeFlag_FocusActive               = 1ull << 6,
+	UINodeFlag_FocusHotDisabled          = 1ull << 7,
+	UINodeFlag_FocusActiveDisabled       = 1ull << 8,
+	UINodeFlag_Disabled                  = 1ull << 9,
+
+	UINodeFlag_FloatingX                 = 1ull << 10,
+	UINodeFlag_FloatingY                 = 1ull << 11,
+	UINodeFlag_FixedWidth                = 1ull << 12,
+	UINodeFlag_FixedHeight               = 1ull << 13,
+	UINodeFlag_AllowOverflowX            = 1ull << 14,
+	UINodeFlag_AllowOverflowY            = 1ull << 15,
+
+	// NOTE(rnp): for scrollable containers
+	UINodeFlag_ViewScrollX               = 1ull << 16,
+	UINodeFlag_ViewScrollY               = 1ull << 17,
+	UINodeFlag_ViewClamp                 = 1ull << 18,
+
+	UINodeFlag_DrawDropShadow            = 1ull << 19,
+	UINodeFlag_DrawBackgroundBlur        = 1ull << 20,
+	UINodeFlag_DrawBackground            = 1ull << 21,
+	UINodeFlag_DrawBorder                = 1ull << 22,
+	UINodeFlag_DrawText                  = 1ull << 23,
+	UINodeFlag_DrawHotEffects            = 1ull << 24,
+	UINodeFlag_DrawActiveEffects         = 1ull << 25,
+	UINodeFlag_DrawOverlay               = 1ull << 26,
+	UINodeFlag_Clip                      = 1ull << 27,
+	UINodeFlag_DisableTextTrunc          = 1ull << 28,
+	UINodeFlag_DisableFocusBorder        = 1ull << 29,
+	UINodeFlag_DisableFocusOverlay       = 1ull << 30,
+
+	UINodeFlag_Clickable           = UINodeFlag_MouseClickable|UINodeFlag_KeyboardClickable,
+	UINodeFlag_Floating            = UINodeFlag_FloatingX|UINodeFlag_FloatingY,
+	UINodeFlag_FixedSize           = UINodeFlag_FixedWidth|UINodeFlag_FixedHeight,
+	UINodeFlag_AllowOverflow       = UINodeFlag_AllowOverflowX|UINodeFlag_AllowOverflowY,
+	UINodeFlag_DisableFocusEffects = UINodeFlag_DisableFocusBorder|UINodeFlag_DisableFocusOverlay,
+	UINodeFlag_ViewScroll          = UINodeFlag_ViewScrollX|UINodeFlag_ViewScrollY,
+} UINodeFlags;
+
+typedef struct UINodeFlagsNode UINodeFlagsNode;
+struct UINodeFlagsNode {UINodeFlagsNode *next; UINodeFlags v;};
+
+typedef enum {
+	Axis2_X = 0,
+	Axis2_Y = 1,
+	Axis2_Count,
+} Axis2;
+
+typedef struct Axis2Node Axis2Node;
+struct Axis2Node {Axis2Node *next; Axis2 v;};
+
+typedef enum {
+	UISizeKind_Nil,
+	UISizeKind_Pixels,
+	UISizeKind_TextContent,
+	UISizeKind_PercentOfParent,
+	UISizeKind_ChildrenSum,
+} UISizeKind;
+
+typedef struct {
+	UISizeKind kind;
+	f32        value;
+	f32        strictness;
+} UISize;
+
+typedef struct UISizeNode UISizeNode;
+struct UISizeNode {UISizeNode *next; UISize v;};
+
+typedef enum {
+	UITextAlign_Left,
+	UITextAlign_Right,
+	UITextAlign_Center,
+	UITextAlign_Count,
+} UITextAlign;
+
+typedef struct UITextAlignNode UITextAlignNode;
+struct UITextAlignNode {UITextAlignNode *next; UITextAlign v;};
+
+typedef struct {u64 value;} UINodeKey;
+
+typedef struct UINode UINode;
+struct UINode {
+	UINode *parent;
+	UINode *first_child;
+	UINode *last_child;
+	UINode *previous_sibling;
+	UINode *next_sibling;
+
+	u32     child_count;
+
+	UINodeFlags flags;
+	str8        string;
+	// NOTE(rnp): desired sizing info from build step
+	union {
+		struct {
+			UISize semantic_width;
+			UISize semantic_height;
+		};
+		UISize semantic_size[Axis2_Count];
+	};
+	Axis2       child_layout_axis;
+	f32         font_size;
+	UITextAlign text_alignment;
+
+	u64        last_frame_active_index;
+	UINodeKey  key;
+	UINode    *hash_prev;
+	UINode    *hash_next;
+
+	// NOTE(rnp): recomputed every frame before drawing. also
+	// used on next frame for mouse collision detection.
+	f32  computed_position[Axis2_Count];
+	f32  computed_size[Axis2_Count];
+
+	// NOTE(rnp): persistent data
+	f32 active_t;
+	f32 hot_t;
+
+	v2  view_scroll_offset;
+};
+
+typedef struct {UINode *first, *last;} UINodeHashBucket;
+
+typedef struct UIParentNode UIParentNode;
+struct UIParentNode {UIParentNode *next; UINode *v;};
+
+typedef enum {
+	UIMouseButtonKind_Left   = 0,
+	UIMouseButtonKind_Middle = 1,
+	UIMouseButtonKind_Right  = 2,
+	UIMouseButtonKind_Count,
+} UIMouseButtonKind;
+
+typedef enum {
+	UISignalFlag_LeftPressed          = (1 << 0),
+	UISignalFlag_MiddlePressed        = (1 << 1),
+	UISignalFlag_RightPressed         = (1 << 2),
+
+	UISignalFlag_LeftDragging         = (1 << 3),
+	UISignalFlag_MiddleDragging       = (1 << 4),
+	UISignalFlag_RightDragging        = (1 << 5),
+
+	UISignalFlag_LeftDoubleDragging   = (1 << 6),
+	UISignalFlag_MiddleDoubleDragging = (1 << 7),
+	UISignalFlag_RightDoubleDragging  = (1 << 8),
+
+	UISignalFlag_LeftTripleDragging   = (1 << 9),
+	UISignalFlag_MiddleTripleDragging = (1 << 10),
+	UISignalFlag_RightTripleDragging  = (1 << 11),
+
+	UISignalFlag_LeftReleased         = (1 << 12),
+	UISignalFlag_MiddleReleased       = (1 << 13),
+	UISignalFlag_RightReleased        = (1 << 14),
+
+	UISignalFlag_LeftClicked          = (1 << 15),
+	UISignalFlag_MiddleClicked        = (1 << 16),
+	UISignalFlag_RightClicked         = (1 << 17),
+
+	UISignalFlag_LeftDoubleClicked    = (1 << 18),
+	UISignalFlag_MiddleDoubleClicked  = (1 << 19),
+	UISignalFlag_RightDoubleClicked   = (1 << 20),
+
+	UISignalFlag_LeftTripleClicked    = (1 << 21),
+	UISignalFlag_MiddleTripleClicked  = (1 << 22),
+	UISignalFlag_RightTripleClicked   = (1 << 23),
+
+	UISignalFlag_ScrolledX            = (1 << 24),
+	UISignalFlag_ScrolledY            = (1 << 25),
+
+	UISignalFlag_KeyboardPressed      = (1 << 26),
+
+	UISignalFlag_Hovering             = (1 << 27),
+
+	UISignalFlag_TextCommit           = (1 << 28),
+
+	UISignalFlag_Scrolled             = UISignalFlag_ScrolledX|UISignalFlag_ScrolledY,
+	UISignalFlag_Pressed              = UISignalFlag_LeftPressed|UISignalFlag_KeyboardPressed,
+	UISignalFlag_Released             = UISignalFlag_LeftReleased,
+	UISignalFlag_Clicked              = UISignalFlag_LeftClicked|UISignalFlag_KeyboardPressed,
+	UISignalFlag_DoubleClicked        = UISignalFlag_LeftDoubleClicked,
+	UISignalFlag_TripleClicked        = UISignalFlag_LeftTripleClicked,
+	UISignalFlag_Dragging             = UISignalFlag_LeftDragging,
+} UISignalFlags;
+
+typedef struct {
+	UINode        *node;
+	v2             scroll;
+	UISignalFlags  flags;
+} UISignal;
+
+typedef enum {
+	UIPanelKind_Nil,
+	UIPanelKind_ComputeStats,
+	UIPanelKind_FrameView,
+	UIPanelKind_LiveImagingControls,
+	UIPanelKind_ParameterListing,
+	UIPanelKind_Split,
+	UIPanelKind_TabContainer,
+	UIPanelKind_Count,
+} UIPanelKind;
+
+typedef struct {
+	UIPanelKind kind;
+	union {
+		struct {
+			b32 bar_graph;
+		} compute_stats;
+
+		struct {
+			u32 parameter_block;
+		} parameter_listing;
+
+		struct {
+			Axis2 axis;
+			f32   fraction;
+		} split;
+	};
+} UIPanel;
+
 typedef struct v2_sll {
 	struct v2_sll *next;
 	v2             v;
@@ -111,14 +338,16 @@ typedef struct BeamformerUI BeamformerUI;
 typedef struct Variable     Variable;
 
 typedef struct {
-	u8   buf[128];
-	i32  count;
-	i32  cursor;
-	b32  numeric;
-	UIBlinker cursor_blink;
-	Font *font, *hot_font;
-	Variable *container;
-} InputState;
+	UINodeKey node_key;
+	iv2       cursor_range;
+	i16       count;
+	i16       last_buffer_count;
+	b32       numeric;
+	// TODO(rnp): animation key
+	UIBlinker blinker;
+	u8        buffer[256];
+	u8        last_buffer[256];
+} UITextInputState;
 
 typedef enum {
 	RulerState_None,
@@ -147,17 +376,18 @@ typedef struct {
 
 typedef struct { f32 val, scale; } scaled_f32;
 
-typedef enum {
-	RSD_VERTICAL,
-	RSD_HORIZONTAL,
-} RegionSplitDirection;
+typedef struct UITreeNode UITreeNode;
+struct UITreeNode {
+	UITreeNode *parent;
+	UITreeNode *last_child;
+	UITreeNode *first_child;
+	UITreeNode *previous_sibling;
+	UITreeNode *next_sibling;
 
-typedef struct {
-	Variable *left;
-	Variable *right;
-	f32       fraction;
-	RegionSplitDirection direction;
-} RegionSplit;
+	u64         child_count;
+
+	UIPanel     panel;
+};
 
 #define COMPUTE_STATS_VIEW_LIST \
 	X(Average, "Average") \
@@ -287,7 +517,6 @@ struct Variable {
 		BeamformerVariable  beamformer_variable;
 		ComputeProgressBar  compute_progress_bar;
 		ComputeStatsView    compute_stats_view;
-		RegionSplit         region_split;
 		ScaleBar            scale_bar;
 		UIButtonID          button;
 		UIView              view;
@@ -410,13 +639,27 @@ typedef struct {
 
 #define auto_interaction(r, v) (Interaction){.kind = InteractionKind_Auto, .var = v, .rect = r}
 
+typedef struct UIFontSizeNode UIFontSizeNode;
+struct UIFontSizeNode {UIFontSizeNode *next; f32 v;};
+
+#define UI_STACK_LIST \
+	X(Axis2Node,       child_layout_axis, Axis2,       0) \
+	X(UIFontSizeNode,  font_size,        	f32,         0) \
+	X(UINodeFlagsNode, flags,             UINodeFlags, 0) \
+	X(UIParentNode,    parent,            UINode *,    (&ui_node_nil)) \
+	X(UISizeNode,      semantic_height,   UISize,      {0}) \
+	X(UISizeNode,      semantic_width,    UISize,      {0}) \
+	X(UITextAlignNode, text_alignment,    UITextAlign, 0) \
+
 struct BeamformerUI {
+	u64   current_frame_index;
 	Arena arena;
+
+	v2    current_mouse;
 
 	Font font;
 	Font small_font;
 
-	Variable *regions;
 	Variable *variable_freelist;
 
 	Variable floating_widget_sentinal;
@@ -427,8 +670,6 @@ struct BeamformerUI {
 	Interaction interaction;
 	Interaction hot_interaction;
 	Interaction next_interaction;
-
-	InputState  text_input_state;
 
 	VulkanHandle    pipelines[BeamformerShaderKind_RenderCount];
 
@@ -456,6 +697,29 @@ struct BeamformerUI {
 
 	BeamformerSharedMemory * shared_memory;
 	BeamformerCtx *          beamformer_context;
+
+	UITreeNode      *tree;
+	UITreeNode      *tree_node_freelist;
+
+	// NOTE(rnp): User Interaction
+	UINodeKey        hot_node_key;
+	UINodeKey        active_node_key[UIMouseButtonKind_Count];
+	UINodeKey        text_active_node_key;
+	// TODO(rnp): click timestamp history (double/triple press)
+
+	// NOTE(rnp): Builder State
+	UINode          *node_freelist;
+	UINode          *root_node;
+	Arena            build_arenas[2];
+	TempArena        build_arena_savepoints[2];
+	// NOTE(rnp): Builder Stacks
+	#define X(type, name, ...) struct {type *top; type *free; u64 count;} name##_node_stack;
+	UI_STACK_LIST
+	#undef X
+
+	UINodeHashBucket node_hash_table[UI_HASH_TABLE_COUNT];
+
+	UITextInputState text_input_state;
 };
 
 typedef enum {
@@ -562,6 +826,118 @@ typedef struct {
 	Rect          cell_rect;
 } TableIterator;
 
+global BeamformerUI *ui_context;
+
+read_only global UINode ui_node_nil = {
+	.parent           = &ui_node_nil,
+	.first_child      = &ui_node_nil,
+	.last_child       = &ui_node_nil,
+	.previous_sibling = &ui_node_nil,
+	.next_sibling     = &ui_node_nil,
+};
+
+#define X(type, name, _t, impl) read_only global type ui_##name##_node_nil = {.v = impl};
+UI_STACK_LIST
+#undef X
+
+#define ui_node_is_nil(n) ((n) == 0 || (n) == &ui_node_nil)
+#define ui_build_arena()  (ui_context->build_arenas + (ui_context->current_frame_index % countof(ui_context->build_arenas)))
+
+#define UIStackPushBody(name_upper, name_lower, type, new_value) \
+	name_upper *node = SLLPop(ui_context->name_lower##_node_stack.free, next); \
+	if (!node) node = push_struct_no_zero(ui_build_arena(), name_upper); \
+	node->v = new_value; \
+	type result = ui_context->name_lower##_node_stack.top->v; \
+	SLLStackPush(ui_context->name_lower##_node_stack.top, node); \
+	ui_context->name_lower##_node_stack.count++; \
+	return result
+
+#define UIStackPopBody(name_upper, name_lower, type) \
+	name_upper *node = ui_context->name_lower##_node_stack.top; \
+	type result = node->v; \
+	if (node != &ui_##name_lower##_node_nil) { \
+		node = SLLPop(ui_context->name_lower##_node_stack.top, next); \
+		SLLStackPush(ui_context->name_lower##_node_stack.free, node); \
+	} \
+	return result
+
+#define UIChildLayoutAxis(v) DeferLoop(ui_push_child_layout_axis(v), ui_pop_child_layout_axis())
+#define UIFlags(v)           DeferLoop(ui_push_flags(v), ui_pop_flags())
+#define UIParent(v)          DeferLoop(ui_push_parent(v), ui_pop_parent())
+#define UIPrefHeight(v)      DeferLoop(ui_push_semantic_height(v), ui_pop_semantic_height())
+#define UIPrefWidth(v)       DeferLoop(ui_push_semantic_width(v), ui_pop_semantic_width())
+#define UITextAlign(v)       DeferLoop(ui_push_text_alignment(UITextAlign_##v), ui_pop_text_alignment())
+#define UISize(v)            DeferLoop(ui_push_size(v), ui_pop_size())
+
+#define X(type, name, value_type, ...) \
+	function value_type ui_push_##name(value_type v) {UIStackPushBody(type, name, value_type, v);} \
+	function value_type ui_pop_##name(void)          {UIStackPopBody(type, name, value_type);} \
+	function value_type ui_top_##name(void)          {return ui_context->name##_node_stack.top->v;}
+UI_STACK_LIST
+#undef X
+
+#define ui_size(k, v, s) (UISize){.kind = UISizeKind_##k, .value = (v), .strictness = (s)}
+#define ui_em(value, strictness)         ui_size(Pixels, (value) * ui_top_font_size(), (strictness))
+#define ui_px(value, strictness)         ui_size(Pixels, (value), (strictness))
+#define ui_pct(value, strictness)        ui_size(PercentOfParent, (value), (strictness))
+#define ui_children_sum(strictness)      ui_size(ChildrenSum, 0.0f, (strictness))
+#define ui_text_dim(padding, strictness) ui_size(TextContent, (padding), (strictness))
+
+#define ui_node_key_zero() (UINodeKey){0}
+
+#define axis2_flip(v) (!(v))
+
+function UISize
+ui_push_size(UISize v)
+{
+	UISize result = {0};
+	switch (ui_top_child_layout_axis()) {
+	case Axis2_X:{result = ui_push_semantic_width(v); }break;
+	case Axis2_Y:{result = ui_push_semantic_height(v);}break;
+	InvalidDefaultCase;
+	}
+	return result;
+}
+
+function UISize
+ui_pop_size(void)
+{
+	UISize result = {0};
+	switch (ui_top_child_layout_axis()) {
+	case Axis2_X:{result = ui_pop_semantic_width(); }break;
+	case Axis2_Y:{result = ui_pop_semantic_height();}break;
+	InvalidDefaultCase;
+	}
+	return result;
+}
+
+#define ui_node_key_nil(a) ui_node_key_equal((a), ui_node_key_zero())
+function b32
+ui_node_key_equal(UINodeKey a, UINodeKey b)
+{
+	b32 result = a.value == b.value;
+	return result;
+}
+
+function UINodeKey
+ui_node_ancestor_key(void)
+{
+	UINode *node = ui_top_parent();
+	while (!ui_node_is_nil(node) && ui_node_key_equal(node->key, ui_node_key_zero()))
+		node = node->parent;
+	UINodeKey result = node->key;
+	return result;
+}
+
+function Rect
+ui_node_rect(UINode *node)
+{
+	Rect result = {0};
+	result.size = (v2){{node->computed_size[0], node->computed_size[1]}};
+	result.pos  = (v2){{node->computed_position[0], node->computed_position[1]}};
+	return result;
+}
+
 function Vector2
 rl_v2(v2 a)
 {
@@ -615,23 +991,23 @@ measure_glyph(Font font, u32 glyph)
 }
 
 function v2
-measure_text(Font font, s8 text)
+measure_text(Font font, str8 text)
 {
 	v2 result = {.y = (f32)font.baseSize};
-	for (iz i = 0; i < text.len; i++)
+	for (i64 i = 0; i < text.length; i++)
 		result.x += measure_glyph(font, text.data[i]).x;
 	return result;
 }
 
-function s8
-clamp_text_to_width(Font font, s8 text, f32 limit)
+function str8
+clamp_text_to_width(Font font, str8 text, f32 limit)
 {
-	s8  result = text;
-	f32 width  = 0;
-	for (iz i = 0; i < text.len; i++) {
+	str8 result = text;
+	f32  width  = 0;
+	for (i64 i = 0; i < text.length; i++) {
 		f32 next = measure_glyph(font, text.data[i]).w;
 		if (width + next > limit) {
-			result.len = i;
+			result.length = i;
 			break;
 		}
 		width += next;
@@ -640,7 +1016,7 @@ clamp_text_to_width(Font font, s8 text, f32 limit)
 }
 
 function v2
-align_text_in_rect(s8 text, Rect r, Font font)
+align_text_in_rect(str8 text, Rect r, Font font)
 {
 	v2 size   = measure_text(font, text);
 	v2 pos    = v2_add(r.pos, v2_scale(v2_sub(r.size, size), 0.5));
@@ -880,7 +1256,7 @@ table_extent(Table *t, Arena arena, Font *font)
 			if (!cell->text.len && cell->var && cell->var->flags & V_RADIO_BUTTON) {
 				cell->width = (f32)font->baseSize;
 			} else {
-				cell->width = measure_text(*font, cell->text).w;
+				cell->width = measure_text(*font, str8_from_s8(cell->text)).w;
 			}
 			it->frame.table->widths[i] = MAX(cell->width, it->frame.table->widths[i]);
 		}
@@ -1033,7 +1409,7 @@ ui_variable_free(BeamformerUI *ui, Variable *var)
 					/* TODO(rnp): instead there should be a way of linking these up */
 					BeamformerFrameView *bv = var->generic;
 					ui_beamformer_frame_view_release_subresources(ui, bv, bv->kind);
-					DLLRemove(bv);
+					//DLLRemove(bv);
 					/* TODO(rnp): hack; use a sentinal */
 					if (bv == ui->views)
 						ui->views = bv->next;
@@ -1065,16 +1441,6 @@ ui_variable_free_group_items(BeamformerUI *ui, Variable *group)
 	group->group.first = group->group.last = 0;
 }
 
-function void
-ui_view_free(BeamformerUI *ui, Variable *view)
-{
-	assert(view->type == VT_UI_VIEW);
-	ui_variable_free(ui, view->view.child);
-	ui_variable_free(ui, view->view.close);
-	ui_variable_free(ui, view->view.menu);
-	ui_variable_free(ui, view);
-}
-
 function Variable *
 fill_variable(Variable *var, Variable *group, s8 name, u32 flags, VariableType type, Font font)
 {
@@ -1082,7 +1448,7 @@ fill_variable(Variable *var, Variable *group, s8 name, u32 flags, VariableType t
 	var->type       = type;
 	var->name       = name;
 	var->parent     = group;
-	var->name_width = measure_text(font, name).x;
+	var->name_width = measure_text(font, str8_from_s8(name)).x;
 
 	if (group && group->type == VT_GROUP) {
 		if (group->group.last) group->group.last = group->group.last->next = var;
@@ -1108,13 +1474,6 @@ add_variable_group(BeamformerUI *ui, Variable *group, Arena *arena, s8 name, Var
 	Variable *result   = add_variable(ui, group, arena, name, V_INPUT, VT_GROUP, font);
 	result->group.kind = kind;
 	return result;
-}
-
-function Variable *
-end_variable_group(Variable *group)
-{
-	ASSERT(group->type == VT_GROUP);
-	return group->parent;
 }
 
 function void
@@ -1145,11 +1504,9 @@ add_button(BeamformerUI *ui, Variable *group, Arena *arena, s8 name, UIButtonID 
 
 function Variable *
 add_ui_split(BeamformerUI *ui, Variable *parent, Arena *arena, s8 name, f32 fraction,
-             RegionSplitDirection direction, Font font)
+             Axis2 direction, Font font)
 {
 	Variable *result = add_variable(ui, parent, arena, name, V_HIDES_CURSOR, VT_UI_REGION_SPLIT, font);
-	result->region_split.direction = direction;
-	result->region_split.fraction  = fraction;
 	return result;
 }
 
@@ -1209,85 +1566,6 @@ fill_beamformer_variable(Variable *var, s8 suffix, f32 *store, v2 limits, f32 di
 	bv->display_scale = display_scale;
 	bv->scroll_scale  = scroll_scale;
 	bv->limits        = limits;
-}
-
-function void
-add_beamformer_variable(BeamformerUI *ui, Variable *group, Arena *arena, s8 name, s8 suffix, f32 *store,
-                        v2 limits, f32 display_scale, f32 scroll_scale, u32 flags, Font font)
-{
-	Variable *var = add_variable(ui, group, arena, name, flags, VT_BEAMFORMER_VARIABLE, font);
-	fill_beamformer_variable(var, suffix, store, limits, display_scale, scroll_scale);
-}
-
-function Variable *
-add_beamformer_parameters_view(Variable *parent, BeamformerCtx *ctx)
-{
-	BeamformerUI *ui           = ctx->ui;
-	BeamformerUIParameters *bp = &ui->params;
-
-	v2 v2_inf = {.x = -F32_INFINITY, .y = F32_INFINITY};
-
-	/* TODO(rnp): this can be closable once we have a way of opening new views */
-	Variable *result = add_ui_view(ui, parent, &ui->arena, s8("Parameters"), 0, 1, 0);
-	Variable *group  = result->view.child = add_variable(ui, result, &ui->arena, s8(""), 0,
-	                                                     VT_GROUP, ui->font);
-
-	add_beamformer_variable(ui, group, &ui->arena, s8("Sampling Frequency:"), s8("[MHz]"),
-	                        &bp->sampling_frequency, (v2){0}, 1e-6f, 0, 0, ui->font);
-
-	add_beamformer_variable(ui, group, &ui->arena, s8("Demodulation Frequency:"), s8("[MHz]"),
-	                        &bp->demodulation_frequency, (v2){.y = 100e6f}, 1e-6f, 0, 0, ui->font);
-
-	add_beamformer_variable(ui, group, &ui->arena, s8("Speed of Sound:"), s8("[m/s]"),
-	                        &bp->speed_of_sound, (v2){.y = 1e6f}, 1.0f, 10.0f,
-	                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
-
-	group = add_variable_group(ui, group, &ui->arena, s8("Lateral Extent:"),
-	                           VariableGroupKind_Vector, ui->font);
-	{
-		add_beamformer_variable(ui, group, &ui->arena, s8("Min:"), s8("[mm]"),
-		                        &ui->min_coordinate.x, v2_inf, 1e3f, 0.5e-3f,
-		                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
-
-		add_beamformer_variable(ui, group, &ui->arena, s8("Max:"), s8("[mm]"),
-		                        &ui->max_coordinate.x, v2_inf, 1e3f, 0.5e-3f,
-		                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
-	}
-	group = end_variable_group(group);
-
-	group = add_variable_group(ui, group, &ui->arena, s8("Axial Extent:"),
-	                           VariableGroupKind_Vector, ui->font);
-	{
-		add_beamformer_variable(ui, group, &ui->arena, s8("Min:"), s8("[mm]"),
-		                        &ui->min_coordinate.y, v2_inf, 1e3f, 0.5e-3f,
-		                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
-
-		add_beamformer_variable(ui, group, &ui->arena, s8("Max:"), s8("[mm]"),
-		                        &ui->max_coordinate.y, v2_inf, 1e3f, 0.5e-3f,
-		                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
-	}
-	group = end_variable_group(group);
-
-	add_beamformer_variable(ui, group, &ui->arena, s8("Off Axis Position:"), s8("[mm]"),
-	                        &ui->off_axis_position, v2_inf, 1e3f, 0.5e-3f,
-	                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
-
-	add_beamformer_variable(ui, group, &ui->arena, s8("Beamform Plane:"), s8(""),
-	                        &ui->beamform_plane, (v2){{0, 1.0f}}, 1.0f, 0.025f,
-	                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
-
-	add_beamformer_variable(ui, group, &ui->arena, s8("F#:"), s8(""), &bp->f_number, (v2){.y = 1e3f},
-	                        1, 0.1f, V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
-
-	add_variable_cycler(ui, group, &ui->arena, V_CAUSES_COMPUTE, ui->font, s8("Interpolation:"),
-	                    &bp->interpolation_mode, beamformer_interpolation_mode_strings,
-	                    countof(beamformer_interpolation_mode_strings));
-
-	read_only local_persist s8 true_false_labels[] = {s8_comp("False"), s8_comp("True")};
-	add_variable_cycler(ui, group, &ui->arena, V_CAUSES_COMPUTE, ui->font, s8("Coherency Weighting:"),
-	                    &bp->coherency_weighting, true_false_labels, countof(true_false_labels));
-
-	return result;
 }
 
 function void
@@ -1430,7 +1708,7 @@ ui_beamformer_frame_view_new(BeamformerUI *ui, Arena *arena)
 	if (!result) result = push_struct_no_zero(arena, typeof(*result));
 	zero_struct(result);
 	result->export_handle.value[0] = OSInvalidHandleValue;
-	DLLPushDown(result, ui->views);
+	//DLLPushDown(result, ui->views);
 	return result;
 }
 
@@ -1447,45 +1725,6 @@ add_beamformer_frame_view(BeamformerUI *ui, Variable *parent, Arena *arena,
 	menu->parent = result;
 	var->generic = ui_beamformer_frame_view_new(ui, arena);
 	ui_beamformer_frame_view_convert(ui, arena, var, menu, kind, old, old? old->log_scale->bool32 : 0);
-	return result;
-}
-
-function Variable *
-add_compute_progress_bar(Variable *parent, BeamformerCtx *ctx)
-{
-	BeamformerUI *ui = ctx->ui;
-	/* TODO(rnp): this can be closable once we have a way of opening new views */
-	Variable *result = add_ui_view(ui, parent, &ui->arena, s8(""), UIViewFlag_CustomText, 1, 0);
-	result->view.child = add_variable(ui, result, &ui->arena, s8(""), 0,
-	                                  VT_COMPUTE_PROGRESS_BAR, ui->small_font);
-	ComputeProgressBar *bar = &result->view.child->compute_progress_bar;
-	bar->progress   = &ctx->compute_context.processing_progress;
-	bar->processing = &ctx->compute_context.processing_compute;
-
-	return result;
-}
-
-function Variable *
-add_compute_stats_view(BeamformerUI *ui, Variable *parent, Arena *arena, BeamformerCtx *ctx)
-{
-	/* TODO(rnp): this can be closable once we have a way of opening new views */
-	Variable *result   = add_ui_view(ui, parent, arena, s8(""), UIViewFlag_CustomText, 0, 0);
-	result->view.child = add_variable(ui, result, &ui->arena, s8(""), 0,
-	                                  VT_COMPUTE_STATS_VIEW, ui->small_font);
-
-	Variable *menu = result->view.menu = add_variable_group(ui, 0, arena, s8(""),
-	                                                        VariableGroupKind_List, ui->small_font);
-	menu->parent = result;
-
-	#define X(_k, label) s8_comp(label),
-	read_only local_persist s8 labels[] = {COMPUTE_STATS_VIEW_LIST};
-	#undef X
-
-	ComputeStatsView *csv = &result->view.child->compute_stats_view;
-	csv->compute_shader_stats = ctx->compute_shader_stats;
-	csv->cycler = add_variable_cycler(ui, menu, arena, 0, ui->small_font, s8("Stats View:"),
-	                                  (u32 *)&csv->kind, labels, countof(labels));
-	add_global_menu_to_group(ui, arena, menu);
 	return result;
 }
 
@@ -1526,28 +1765,20 @@ add_live_controls_view(BeamformerUI *ui, Variable *parent, Arena *arena)
 }
 
 function Variable *
-ui_split_region(BeamformerUI *ui, Variable *region, Variable *split_side, RegionSplitDirection direction)
+ui_split_region(BeamformerUI *ui, Variable *region, Variable *split_side, Axis2 direction)
 {
 	Variable *result = add_ui_split(ui, region, &ui->arena, s8(""), 0.5, direction, ui->small_font);
-	if (split_side == region->region_split.left) {
-		region->region_split.left  = result;
-	} else {
-		region->region_split.right = result;
-	}
 	split_side->parent = result;
-	result->region_split.left = split_side;
 	return result;
 }
 
 function void
-ui_add_live_frame_view(BeamformerUI *ui, Variable *view, RegionSplitDirection direction,
-                       BeamformerFrameViewKind kind)
+ui_add_live_frame_view(BeamformerUI *ui, Variable *view, Axis2 direction, BeamformerFrameViewKind kind)
 {
 	Variable *region = view->parent;
 	assert(region->type == VT_UI_REGION_SPLIT);
 	assert(view->type   == VT_UI_VIEW);
-	Variable *new_region = ui_split_region(ui, region, view, direction);
-	new_region->region_split.right = add_beamformer_frame_view(ui, new_region, &ui->arena, kind, 1, 0);
+	ui_split_region(ui, region, view, direction);
 }
 
 function void
@@ -1579,7 +1810,7 @@ ui_beamformer_frame_view_copy_frame(BeamformerUI *ui, BeamformerFrameView *new, 
 }
 
 function void
-ui_copy_frame(BeamformerUI *ui, Variable *view, RegionSplitDirection direction)
+ui_copy_frame(BeamformerUI *ui, Variable *view, Axis2 direction)
 {
 	Variable *region = view->parent;
 	assert(region->type == VT_UI_REGION_SPLIT);
@@ -1587,11 +1818,10 @@ ui_copy_frame(BeamformerUI *ui, Variable *view, RegionSplitDirection direction)
 
 	BeamformerFrameView *old = view->view.child->generic;
 	Variable *new_region = ui_split_region(ui, region, view, direction);
-	new_region->region_split.right = add_beamformer_frame_view(ui, new_region, &ui->arena,
-	                                                           BeamformerFrameViewKind_Copy, 1, old);
+	Variable *new_frame  = add_beamformer_frame_view(ui, new_region, &ui->arena,
+	                                                 BeamformerFrameViewKind_Copy, 1, old);
 
-	BeamformerFrameView *bv = new_region->region_split.right->view.child->generic;
-	ui_beamformer_frame_view_copy_frame(ui, bv, old);
+	ui_beamformer_frame_view_copy_frame(ui, new_frame->view.child->generic, old);
 }
 
 function v3
@@ -1878,11 +2108,11 @@ fade(Color a, f32 visibility)
 }
 
 function v2
-draw_text_base(Font font, s8 text, v2 pos, Color colour)
+draw_text_base(Font font, str8 text, v2 pos, Color colour)
 {
 	v2 off = v2_floor(pos);
 	f32 glyph_pad = (f32)font.glyphPadding;
-	for (iz i = 0; i < text.len; i++) {
+	for (i64 i = 0; i < text.length; i++) {
 		/* NOTE: assumes font glyphs are ordered ASCII */
 		i32 idx = text.data[i] - 0x20;
 		Rectangle dst = {
@@ -1909,7 +2139,7 @@ draw_text_base(Font font, s8 text, v2 pos, Color colour)
 
 /* NOTE(rnp): expensive but of the available options in raylib this gives the best results */
 function v2
-draw_outlined_text(s8 text, v2 pos, TextSpec *ts)
+draw_outlined_text(str8 text, v2 pos, TextSpec *ts)
 {
 	f32 ow = ts->outline_thick;
 	Color outline = colour_from_normalized(ts->outline_colour);
@@ -1925,7 +2155,7 @@ draw_outlined_text(s8 text, v2 pos, TextSpec *ts)
 }
 
 function v2
-draw_text(s8 text, v2 pos, TextSpec *ts)
+draw_text(str8 text, v2 pos, TextSpec *ts)
 {
 	if (ts->flags & TF_ROTATED) {
 		rlPushMatrix();
@@ -1936,15 +2166,15 @@ draw_text(s8 text, v2 pos, TextSpec *ts)
 
 	v2 result   = measure_text(*ts->font, text);
 	/* TODO(rnp): the size of this should be stored for each font */
-	s8 ellipsis = s8("...");
+	str8 ellipsis = str8("...");
 	b32 clamped = ts->flags & TF_LIMITED && result.w > ts->limits.size.w;
 	if (clamped) {
 		f32 ellipsis_width = measure_text(*ts->font, ellipsis).x;
 		if (ellipsis_width < ts->limits.size.w) {
 			text = clamp_text_to_width(*ts->font, text, ts->limits.size.w - ellipsis_width);
 		} else {
-			text.len     = 0;
-			ellipsis.len = 0;
+			text.length     = 0;
+			ellipsis.length = 0;
 		}
 	}
 
@@ -2131,7 +2361,7 @@ draw_title_bar(BeamformerUI *ui, Arena arena, Variable *ui_view, Rect r, v2 mous
 	title_pos.y += 0.5f * TITLE_BAR_PAD;
 	TextSpec text_spec = {.font = &ui->small_font, .flags = TF_LIMITED, .colour = FG_COLOUR,
 	                      .limits.size = title_rect.size};
-	draw_text(title, title_pos, &text_spec);
+	draw_text(str8_from_s8(title), title_pos, &text_spec);
 
 	return result;
 }
@@ -2169,7 +2399,8 @@ draw_ruler(BeamformerUI *ui, Arena arena, v2 start_point, v2 end_point,
 		if (draw_plus && value > 0) stream_append_byte(&buf, '+');
 		stream_append_f64(&buf, value, Abs(value_inc) < 1 ? 100 : 10);
 		stream_append_s8(&buf, suffix);
-		draw_text(stream_to_s8(&buf), tp, &text_spec);
+		s8 s = stream_to_s8(&buf);
+		draw_text(str8_from_s8(s), tp, &text_spec);
 
 		value += value_inc;
 		sp.x  += inc;
@@ -2197,7 +2428,7 @@ do_scale_bar(BeamformerUI *ui, Arena arena, Variable *scale_bar, v2 mouse, Rect 
 	assert(scale_bar->type == VT_SCALE_BAR);
 	ScaleBar *sb = &scale_bar->scale_bar;
 
-	v2 txt_s = measure_text(ui->small_font, s8("-288.8 mm"));
+	v2 txt_s = measure_text(ui->small_font, str8("-288.8 mm"));
 
 	Rect tick_rect = draw_rect;
 	v2   start_pos = tick_rect.pos;
@@ -2304,15 +2535,15 @@ draw_fancy_button(BeamformerUI *ui, Variable *var, s8 label, Rect r, v4 border_c
 	DrawRectangleRoundedLinesEx(rl_rect(border), 0.6f, 0, border_thick, colour_from_normalized(border_colour));
 
 	/* TODO(rnp): teach draw_text() about alignment */
-	v2 at = align_text_in_rect(label, inner, *ts.font);
+	v2 at = align_text_in_rect(str8_from_s8(label), inner, *ts.font);
 	at = v2_add(at, (v2){{3.0f, 3.0f}});
 	v4 base_colour = ts.colour;
 	ts.colour = (v4){{0, 0, 0, 0.8f}};
-	draw_text(label, at, &ts);
+	draw_text(str8_from_s8(label), at, &ts);
 
 	at = v2_sub(at, (v2){{3.0f, 3.0f}});
 	ts.colour = v4_lerp(base_colour, HOVERED_COLOUR, var->hover_t);
-	draw_text(label, at, &ts);
+	draw_text(str8_from_s8(label), at, &ts);
 
 	v2 result = v2_add(r.size, border_size);
 	return result;
@@ -2328,17 +2559,17 @@ draw_variable(BeamformerUI *ui, Arena arena, Variable *var, v2 at, v2 mouse, v4 
 		Stream buf = arena_stream(arena);
 		stream_append_variable(&buf, var);
 		s8 text = arena_stream_commit(&arena, &buf);
-		result = measure_text(*text_spec.font, text);
+		result = measure_text(*text_spec.font, str8_from_s8(text));
 
 		if (var->flags & V_INPUT) {
 			Rect text_rect = {.pos = at, .size = result};
 			text_rect = extend_rect_centered(text_rect, (v2){.x = 8});
-			if (hover_interaction(ui, mouse, auto_interaction(text_rect, var)) && (var->flags & V_TEXT))
-				ui->text_input_state.hot_font = text_spec.font;
+			//if (hover_interaction(ui, mouse, auto_interaction(text_rect, var)) && (var->flags & V_TEXT))
+			//	ui->text_input_state.hot_font = text_spec.font;
 			text_spec.colour = v4_lerp(base_colour, HOVERED_COLOUR, var->hover_t);
 		}
 
-		draw_text(text, at, &text_spec);
+		draw_text(str8_from_s8(text), at, &text_spec);
 	}
 	return result;
 }
@@ -2354,17 +2585,17 @@ draw_table_cell(BeamformerUI *ui, Arena arena, TableCell *cell, Rect cell_rect,
 
 	/* TODO(rnp): push truncated text for hovering */
 	switch (cell->kind) {
-	case TableCellKind_None:{ draw_text(cell->text, cell_at, &ts); }break;
+	case TableCellKind_None:{ draw_text(str8_from_s8(cell->text), cell_at, &ts); }break;
 	case TableCellKind_Variable:{
 		if (cell->var->flags & V_INPUT) {
 			draw_variable(ui, arena, cell->var, cell_at, mouse, ts.colour, ts);
 		} else if (cell->text.len) {
-			draw_text(cell->text, cell_at, &ts);
+			draw_text(str8_from_s8(cell->text), cell_at, &ts);
 		}
 	}break;
 	case TableCellKind_VariableGroup:{
 		Variable *v = cell->var->group.first;
-		f32 dw = draw_text(s8("{"), cell_at, &ts).x;
+		f32 dw = draw_text(str8("{"), cell_at, &ts).x;
 		while (v) {
 			cell_at.x        += dw;
 			ts.limits.size.w -= dw;
@@ -2374,12 +2605,12 @@ draw_table_cell(BeamformerUI *ui, Arena arena, TableCell *cell, Rect cell_rect,
 			if (v) {
 				cell_at.x        += dw;
 				ts.limits.size.w -= dw;
-				dw = draw_text(s8(", "), cell_at, &ts).x;
+				dw = draw_text(str8(", "), cell_at, &ts).x;
 			}
 		}
 		cell_at.x        += dw;
 		ts.limits.size.w -= dw;
-		draw_text(s8("}"), cell_at, &ts);
+		draw_text(str8("}"), cell_at, &ts);
 	}break;
 	}
 }
@@ -2464,15 +2695,16 @@ draw_view_ruler(BeamformerFrameView *view, Arena a, Rect view_rect, TextSpec ts)
 	stream_append_f64(&buf, 1e3 * v3_magnitude(v3_sub(view->ruler.end, view->ruler.start)), 100);
 	stream_append_s8(&buf, s8(" mm"));
 
+	s8 s = stream_to_s8(&buf);
 	v2 txt_p = start_p;
-	v2 txt_s = measure_text(*ts.font, stream_to_s8(&buf));
+	v2 txt_s = measure_text(*ts.font, str8_from_s8(s));
 	v2 pixel_delta = v2_sub(start_p, end_p);
 	if (pixel_delta.y < 0) txt_p.y -= txt_s.y;
 	if (pixel_delta.x < 0) txt_p.x -= txt_s.x;
 	if (txt_p.x < view_rect.pos.x) txt_p.x = view_rect.pos.x;
 	if (txt_p.x + txt_s.x > vr_max_p.x) txt_p.x -= (txt_p.x + txt_s.x) - vr_max_p.x;
 
-	draw_text(stream_to_s8(&buf), txt_p, &ts);
+	draw_text(str8_from_s8(s), txt_p, &ts);
 }
 
 function v2
@@ -2570,7 +2802,7 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 
 	b32 is_1d = iv3_dimension(frame->points) == 1;
 
-	f32 txt_w = measure_text(ui->small_font, s8("-288.8 mm")).w;
+	f32 txt_w = measure_text(ui->small_font, str8("-288.8 mm")).w;
 	f32 scale_bar_size = 1.2f * txt_w + RULER_TICK_LENGTH;
 
 	v3 U = frame->voxel_transform.c[0].xyz;
@@ -2693,14 +2925,15 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 		stream_append_f64(&buf, world.y, 100);
 		stream_append_s8(&buf, s8("}"));
 
+		s8 s = stream_to_s8(&buf);
 		text_spec.limits.size.w -= 4.0f;
-		v2 txt_s = measure_text(*text_spec.font, stream_to_s8(&buf));
+		v2 txt_s = measure_text(*text_spec.font, str8_from_s8(s));
 		v2 txt_p = {
 			.x = vr.pos.x + vr.size.w - txt_s.w - 4.0f,
 			.y = vr.pos.y + vr.size.h - txt_s.h - 4.0f,
 		};
 		txt_p.x = Max(vr.pos.x, txt_p.x);
-		draw_table_width -= draw_text(stream_to_s8(&buf), txt_p, &text_spec).w;
+		draw_table_width -= draw_text(str8_from_s8(s), txt_p, &text_spec).w;
 		text_spec.limits.size.w += 4.0f;
 	}
 
@@ -2709,13 +2942,14 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 		s8 shader  = push_acquisition_kind(&buf, frame->acquisition_kind, frame->compound_count);
 		text_spec.font = &ui->font;
 		text_spec.limits.size.w -= 16;
-		v2 txt_s  = measure_text(*text_spec.font, shader);
+		v2 txt_s  = measure_text(*text_spec.font, str8_from_s8(shader));
 		v2 txt_p  = {
 			.x = vr.pos.x + vr.size.w - txt_s.w - 16,
 			.y = vr.pos.y + 4,
 		};
+		s8 s = stream_to_s8(&buf);
 		txt_p.x = Max(vr.pos.x, txt_p.x);
-		draw_text(stream_to_s8(&buf), txt_p, &text_spec);
+		draw_text(str8_from_s8(s), txt_p, &text_spec);
 		text_spec.font = &ui->small_font;
 		text_spec.limits.size.w += 16;
 	}
@@ -2823,7 +3057,7 @@ draw_compute_stats_bar_view(BeamformerUI *ui, Arena arena, ComputeShaderStats *s
 		ts.flags |=  (u32)TF_OUTLINED;
 		ts.outline_colour = (v4){.a = 1};
 		ts.outline_thick  = 1;
-		draw_text(mouse_text, text_pos, &ts);
+		draw_text(str8_from_s8(mouse_text), text_pos, &ts);
 	}
 
 	return result;
@@ -2966,13 +3200,13 @@ draw_live_controls_view(BeamformerUI *ui, Variable *var, Rect r, v2 mouse, Arena
 	v2 at = {{text_off, r.pos.y}};
 
 	v4 hsv_power_slider = {{0.35f * ease_in_out_cubic(1.0f - lip->transmit_power), 0.65f, 0.65f, 1}};
-	at.y += draw_text(s8("Power:"), at, &text_spec).y;
+	at.y += draw_text(str8("Power:"), at, &text_spec).y;
 	at.x  = slider_off;
 	at.y += draw_variable_slider(ui, &lv->transmit_power, (Rect){.pos = at, .size = slider_size},
 	                             lip->transmit_power, hsv_to_rgb(hsv_power_slider), mouse);
 
 	at.x  = text_off;
-	at.y += draw_text(s8("TGC:"), at, &text_spec).y;
+	at.y += draw_text(str8("TGC:"), at, &text_spec).y;
 	at.x  = slider_off;
 	for (u32 i = 0; i < countof(lip->tgc_control_points); i++) {
 		Variable *v = lv->tgc_control_points + i;
@@ -2998,7 +3232,7 @@ draw_live_controls_view(BeamformerUI *ui, Variable *var, Rect r, v2 mouse, Arena
 		if (active) border_colour = v4_lerp(BORDER_COLOUR, FOCUSED_COLOUR, ease_in_out_cubic(save_t));
 
 		at.x  = text_off;
-		at.y += draw_text(s8("File Tag:"), at, &text_spec).y;
+		at.y += draw_text(str8("File Tag:"), at, &text_spec).y;
 		at.x += (f32)text_spec.font->baseSize / 2;
 		text_spec.limits.size.w -= (f32)text_spec.font->baseSize;
 
@@ -3239,107 +3473,6 @@ draw_ui_view(BeamformerUI *ui, Variable *ui_view, Rect r, v2 mouse, TextSpec tex
 }
 
 function void
-draw_layout_variable(BeamformerUI *ui, Variable *var, Rect draw_rect, v2 mouse)
-{
-	if (var->type != VT_UI_REGION_SPLIT) {
-		v2 shrink = {.x = UI_REGION_PAD, .y = UI_REGION_PAD};
-		draw_rect = shrink_rect_centered(draw_rect, shrink);
-		draw_rect.size = v2_floor(draw_rect.size);
-		BeginScissorMode((i32)draw_rect.pos.x, (i32)draw_rect.pos.y, (i32)draw_rect.size.w, (i32)draw_rect.size.h);
-		draw_rect = draw_title_bar(ui, ui->arena, var, draw_rect, mouse);
-		EndScissorMode();
-	}
-
-	/* TODO(rnp): post order traversal of the ui tree will remove the need for this */
-	if (!CheckCollisionPointRec(rl_v2(mouse), rl_rect(draw_rect)))
-		mouse = (v2){.x = F32_INFINITY, .y = F32_INFINITY};
-
-	draw_rect.size = v2_floor(draw_rect.size);
-	BeginScissorMode((i32)draw_rect.pos.x, (i32)draw_rect.pos.y, (i32)draw_rect.size.w, (i32)draw_rect.size.h);
-	switch (var->type) {
-	case VT_UI_VIEW: {
-		hover_interaction(ui, mouse, auto_interaction(draw_rect, var));
-		TextSpec text_spec = {.font = &ui->font, .colour = FG_COLOUR, .flags = TF_LIMITED};
-		draw_ui_view(ui, var, draw_rect, mouse, text_spec);
-	} break;
-	case VT_UI_REGION_SPLIT: {
-		RegionSplit *rs = &var->region_split;
-
-		Rect split = {0}, hover = {0};
-		switch (rs->direction) {
-		case RSD_VERTICAL: {
-			split_rect_vertical(draw_rect, rs->fraction, 0, &split);
-			split.pos.x  += UI_REGION_PAD;
-			split.pos.y  -= UI_SPLIT_HANDLE_THICK / 2;
-			split.size.h  = UI_SPLIT_HANDLE_THICK;
-			split.size.w -= 2 * UI_REGION_PAD;
-			hover = extend_rect_centered(split, (v2){.y = 0.75f * UI_REGION_PAD});
-		} break;
-		case RSD_HORIZONTAL: {
-			split_rect_horizontal(draw_rect, rs->fraction, 0, &split);
-			split.pos.x  -= UI_SPLIT_HANDLE_THICK / 2;
-			split.pos.y  += UI_REGION_PAD;
-			split.size.w  = UI_SPLIT_HANDLE_THICK;
-			split.size.h -= 2 * UI_REGION_PAD;
-			hover = extend_rect_centered(split, (v2){.x = 0.75f * UI_REGION_PAD});
-		} break;
-		}
-
-		Interaction drag = {.kind = InteractionKind_Drag, .rect = hover, .var = var};
-		hover_interaction(ui, mouse, drag);
-
-		v4 colour = HOVERED_COLOUR;
-		colour.a  = var->hover_t;
-		DrawRectangleRounded(rl_rect(split), 0.6f, 0, colour_from_normalized(colour));
-	} break;
-	InvalidDefaultCase;
-	}
-	EndScissorMode();
-}
-
-function void
-draw_ui_regions(BeamformerUI *ui, Rect window, v2 mouse)
-{
-	struct region_frame {
-		Variable *var;
-		Rect      rect;
-	} init[16];
-
-	struct {
-		struct region_frame *data;
-		da_count             count;
-		da_count             capacity;
-	} stack = {init, 0, countof(init)};
-
-	TempArena arena_savepoint = begin_temp_arena(&ui->arena);
-
-	*da_push(&ui->arena, &stack) = (struct region_frame){ui->regions, window};
-	while (stack.count) {
-		struct region_frame *top = stack.data + --stack.count;
-		Rect rect = top->rect;
-		draw_layout_variable(ui, top->var, rect, mouse);
-
-		if (top->var->type == VT_UI_REGION_SPLIT) {
-			Rect first, second;
-			RegionSplit *rs = &top->var->region_split;
-			switch (rs->direction) {
-			case RSD_VERTICAL: {
-				split_rect_vertical(rect, rs->fraction, &first, &second);
-			} break;
-			case RSD_HORIZONTAL: {
-				split_rect_horizontal(rect, rs->fraction, &first, &second);
-			} break;
-			}
-
-			*da_push(&ui->arena, &stack) = (struct region_frame){rs->right, second};
-			*da_push(&ui->arena, &stack) = (struct region_frame){rs->left,  first};
-		}
-	}
-
-	end_temp_arena(arena_savepoint);
-}
-
-function void
 draw_floating_widgets(BeamformerUI *ui, Rect window_rect, v2 mouse)
 {
 	TextSpec text_spec = {.font = &ui->small_font, .colour = FG_COLOUR};
@@ -3350,20 +3483,20 @@ draw_floating_widgets(BeamformerUI *ui, Rect window_rect, v2 mouse)
 	{
 		if (var->type == VT_UI_TEXT_BOX) {
 			UIView *fw = &var->view;
-			InputState *is = &ui->text_input_state;
+			UITextInputState *is = &ui->text_input_state;
 
 			draw_ui_view_container(ui, var, mouse, fw->rect);
 
-			f32 cursor_width = (is->cursor == is->count) ? 0.55f * (f32)is->font->baseSize : 4.0f;
-			s8 text      = {.len = is->count, .data = is->buf};
-			v2 text_size = measure_text(*is->font, text);
+			f32 cursor_width = (is->cursor_range.y == is->count) ? 0.55f * (f32)ui->small_font.baseSize : 4.0f;
+			str8 text      = {.length = is->count, .data = is->buffer};
+			v2   text_size = measure_text(ui->small_font, text);
 
 			f32 text_pad = 4.0f;
 			f32 desired_width = text_pad + text_size.w + cursor_width;
 			fw->rect.size = (v2){{MAX(desired_width, fw->rect.size.w), text_size.h + text_pad}};
 
 			v2 text_position   = {{fw->rect.pos.x + text_pad / 2, fw->rect.pos.y + text_pad / 2}};
-			f32 cursor_offset  = measure_text(*is->font, (s8){is->cursor, text.data}).w;
+			f32 cursor_offset  = measure_text(ui->small_font, (str8){.length = is->cursor_range.y, .data = text.data}).w;
 			cursor_offset     += text_position.x;
 
 			Rect cursor;
@@ -3371,10 +3504,10 @@ draw_floating_widgets(BeamformerUI *ui, Rect window_rect, v2 mouse)
 			cursor.size = (v2){{cursor_width,  text_size.h}};
 
 			v4 cursor_colour = FOCUSED_COLOUR;
-			cursor_colour.a  = ease_in_out_cubic(is->cursor_blink.t);
+			cursor_colour.a  = ease_in_out_cubic(is->blinker.t);
 			v4 text_colour   = v4_lerp(FG_COLOUR, HOVERED_COLOUR, fw->child->hover_t);
 
-			TextSpec input_text_spec = {.font = is->font, .colour = text_colour};
+			TextSpec input_text_spec = {.font = &ui->small_font, .colour = text_colour};
 			draw_text(text, text_position, &input_text_spec);
 			DrawRectanglePro(rl_rect(cursor), (Vector2){0}, 0, colour_from_normalized(cursor_colour));
 		} else {
@@ -3414,14 +3547,13 @@ scroll_interaction(Variable *var, f32 delta)
 }
 
 function void
-begin_text_input(InputState *is, Rect r, Variable *container, v2 mouse)
+begin_text_input(UITextInputState *is, Rect r, Variable *container, v2 mouse)
 {
 	assert(container->type == VT_UI_TEXT_BOX);
-	Font *font = is->font = is->hot_font;
-	Stream s = {.cap = countof(is->buf), .data = is->buf};
+	Font *font = &ui_context->small_font;
+	Stream s = {.cap = countof(is->buffer), .data = is->buffer};
 	stream_append_variable(&s, container->view.child);
 	is->count = s.widx;
-	is->container = container;
 
 	is->numeric = container->view.child->type != VT_LIVE_CONTROLS_STRING;
 	if (container->view.child->type == VT_LIVE_CONTROLS_STRING) {
@@ -3437,20 +3569,20 @@ begin_text_input(InputState *is, Rect r, Variable *container, v2 mouse)
 	f32 x_off = text_half_char_width, x_bounds = r.size.w * hover_p;
 	for (i = 0; i < is->count && x_off < x_bounds; i++) {
 		/* NOTE: assumes font glyphs are ordered ASCII */
-		i32 idx  = is->buf[i] - 0x20;
+		i32 idx  = is->buffer[i] - 0x20;
 		x_off   += (f32)font->glyphs[idx].advanceX;
 		if (font->glyphs[idx].advanceX == 0)
 			x_off += font->recs[idx].width;
 	}
-	is->cursor = i;
+	is->cursor_range.y = i;
 }
 
 function void
-end_text_input(InputState *is, Variable *var)
+end_text_input(UITextInputState *is, Variable *var)
 {
 	f32 value = 0;
 	if (is->numeric) {
-		NumberConversion number = number_from_s8((s8){.len = is->count, .data = is->buf});
+		NumberConversion number = number_from_s8((s8){.len = is->count, .data = is->buffer});
 		value = number.F64;
 	}
 
@@ -3464,7 +3596,7 @@ end_text_input(InputState *is, Variable *var)
 	}break;
 	case VT_LIVE_CONTROLS_STRING:{
 		BeamformerLiveImagingParameters *lip = var->generic;
-		mem_copy(lip->save_name_tag, is->buf, (uz)is->count % countof(lip->save_name_tag));
+		mem_copy(lip->save_name_tag, is->buffer, (uz)is->count % countof(lip->save_name_tag));
 		lip->save_name_tag_length = is->count % countof(lip->save_name_tag);
 	}break;
 	InvalidDefaultCase;
@@ -3472,48 +3604,48 @@ end_text_input(InputState *is, Variable *var)
 }
 
 function b32
-update_text_input(InputState *is, Variable *var)
+update_text_input(UITextInputState *is, Variable *var)
 {
-	assert(is->cursor != -1);
+	assert(is->cursor_range.y != -1);
 
-	ui_blinker_update(&is->cursor_blink, BLINK_SPEED);
+	ui_blinker_update(&is->blinker, BLINK_SPEED);
 
 	var->hover_t -= 2 * HOVER_SPEED * dt_for_frame;
 	var->hover_t  = CLAMP01(var->hover_t);
 
 	/* NOTE: handle multiple input keys on a single frame */
 	for (i32 key = GetCharPressed();
-	     is->count < countof(is->buf) && key > 0;
+	     is->count < countof(is->buffer) && key > 0;
 	     key = GetCharPressed())
 	{
 		b32 allow_key = !is->numeric || (BETWEEN(key, '0', '9') || (key == '.') ||
-		                 (key == '-' && is->cursor == 0));
+		                 (key == '-' && is->cursor_range.y == 0));
 		if (allow_key) {
-			mem_move(is->buf + is->cursor + 1,
-			         is->buf + is->cursor,
-			         (uz)(is->count - is->cursor));
-			is->buf[is->cursor++] = (u8)key;
+			mem_move(is->buffer + is->cursor_range.y + 1,
+			         is->buffer + is->cursor_range.y,
+			         (uz)(is->count - is->cursor_range.y));
+			is->buffer[is->cursor_range.y++] = (u8)key;
 			is->count++;
 		}
 	}
 
-	is->cursor -= (IsKeyPressed(KEY_LEFT)  || IsKeyPressedRepeat(KEY_LEFT))  && is->cursor > 0;
-	is->cursor += (IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT)) && is->cursor < is->count;
+	is->cursor_range.y -= (IsKeyPressed(KEY_LEFT)  || IsKeyPressedRepeat(KEY_LEFT))  && is->cursor_range.y > 0;
+	is->cursor_range.y += (IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT)) && is->cursor_range.y < is->count;
 
-	if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE)) && is->cursor > 0) {
-		is->cursor--;
-		if (is->cursor < countof(is->buf) - 1) {
-			mem_move(is->buf + is->cursor,
-			         is->buf + is->cursor + 1,
-			         (uz)(is->count - is->cursor - 1));
+	if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE)) && is->cursor_range.y > 0) {
+		is->cursor_range.y--;
+		if (is->cursor_range.y < countof(is->buffer) - 1) {
+			mem_move(is->buffer + is->cursor_range.y,
+			         is->buffer + is->cursor_range.y + 1,
+			         (uz)(is->count - is->cursor_range.y - 1));
 		}
 		is->count--;
 	}
 
-	if ((IsKeyPressed(KEY_DELETE) || IsKeyPressedRepeat(KEY_DELETE)) && is->cursor < is->count) {
-		mem_move(is->buf + is->cursor,
-		         is->buf + is->cursor + 1,
-		         (uz)(is->count - is->cursor - 1));
+	if ((IsKeyPressed(KEY_DELETE) || IsKeyPressedRepeat(KEY_DELETE)) && is->cursor_range.y < is->count) {
+		mem_move(is->buffer + is->cursor_range.y,
+		         is->buffer + is->cursor_range.y + 1,
+		         (uz)(is->count - is->cursor_range.y - 1));
 		is->count--;
 	}
 
@@ -3611,6 +3743,7 @@ ui_view_close(BeamformerUI *ui, Variable *view)
 		SLLPushFreelist(view, ui->variable_freelist);
 	}break;
 	case VT_UI_VIEW:{
+		#if 0
 		assert(view->parent->type == VT_UI_REGION_SPLIT);
 		Variable *region = view->parent;
 
@@ -3629,6 +3762,7 @@ ui_view_close(BeamformerUI *ui, Variable *view)
 		remaining->parent = parent;
 
 		SLLPushFreelist(region, ui->variable_freelist);
+		#endif
 	}break;
 	InvalidDefaultCase;
 	}
@@ -3641,16 +3775,16 @@ ui_button_interaction(BeamformerUI *ui, Variable *button)
 	switch (button->button) {
 	case UI_BID_VIEW_CLOSE:{ ui_view_close(ui, button->parent); }break;
 	case UI_BID_FV_COPY_HORIZONTAL:{
-		ui_copy_frame(ui, button->parent->parent, RSD_HORIZONTAL);
+		ui_copy_frame(ui, button->parent->parent, Axis2_X);
 	}break;
 	case UI_BID_FV_COPY_VERTICAL:{
-		ui_copy_frame(ui, button->parent->parent, RSD_VERTICAL);
+		ui_copy_frame(ui, button->parent->parent, Axis2_Y);
 	}break;
 	case UI_BID_GM_OPEN_VIEW_RIGHT:{
-		ui_add_live_frame_view(ui, button->parent->parent, RSD_HORIZONTAL, BeamformerFrameViewKind_Latest);
+		ui_add_live_frame_view(ui, button->parent->parent, Axis2_X, BeamformerFrameViewKind_Latest);
 	}break;
 	case UI_BID_GM_OPEN_VIEW_BELOW:{
-		ui_add_live_frame_view(ui, button->parent->parent, RSD_VERTICAL, BeamformerFrameViewKind_Latest);
+		ui_add_live_frame_view(ui, button->parent->parent, Axis2_Y, BeamformerFrameViewKind_Latest);
 	}break;
 	}
 }
@@ -3799,7 +3933,7 @@ ui_extra_actions(BeamformerUI *ui, Variable *var)
 			ui_beamformer_frame_view_release_subresources(ui, old, last_kind);
 			ui_beamformer_frame_view_convert(ui, &ui->arena, view->child, view->menu, old->kind, old, log_scale);
 
-			DLLRemove(old);
+			//DLLRemove(old);
 			SLLPushFreelist(old, ui->view_freelist);
 		}break;
 		InvalidDefaultCase;
@@ -3874,7 +4008,7 @@ ui_end_interact(BeamformerUI *ui, v2 mouse)
 	}break;
 	case InteractionKind_Button:{ ui_button_interaction(ui, it->var); }break;
 	case InteractionKind_Scroll:{ scroll_interaction(it->var, GetMouseWheelMoveV().y); }break;
-	case InteractionKind_Text:{ ui_view_close(ui, ui->text_input_state.container); }break;
+	case InteractionKind_Text:{ ui_view_close(ui, 0); }break;
 	InvalidDefaultCase;
 	}
 
@@ -3914,7 +4048,7 @@ ui_sticky_interaction_check_end(BeamformerUI *ui, v2 mouse)
 			ui_end_interact(ui, mouse);
 	}break;
 	case InteractionKind_Text:{
-		Interaction text_box = auto_interaction({0}, ui->text_input_state.container);
+		Interaction text_box = auto_interaction({0}, 0);
 		if (!interactions_equal(text_box, ui->hot_interaction))
 			ui_end_interact(ui, mouse);
 	}break;
@@ -3996,6 +4130,7 @@ ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 				*pos = clamp_v2_rect(v2_add(*pos, dMouse), window_rect);
 			}break;
 			case VT_UI_REGION_SPLIT:{
+				#if 0
 				f32 min_fraction = 0;
 				dMouse = v2_mul(dMouse, (v2){{1.0f / ws.w, 1.0f / ws.h}});
 				RegionSplit *rs = &ui->interaction.var->region_split;
@@ -4010,6 +4145,7 @@ ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 				} break;
 				}
 				rs->fraction = CLAMP(rs->fraction, min_fraction, 1 - min_fraction);
+				#endif
 			}break;
 			default:{}break;
 			}
@@ -4021,6 +4157,930 @@ ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 	}
 
 	ui->next_interaction = (Interaction){.kind = InteractionKind_None};
+}
+
+function UINode *
+ui_node_from_key(UINodeKey key)
+{
+	UINodeHashBucket *hb     = ui_context->node_hash_table + (key.value % UI_HASH_TABLE_COUNT);
+	UINode           *result = &ui_node_nil;
+
+	for (UINode *b = hb->first; !ui_node_is_nil(b); b = b->hash_next) {
+		if (ui_node_key_equal(b->key, key)) {
+			result = b;
+			break;
+		}
+	}
+
+	return result;
+}
+
+function str8
+ui_draw_part_from_key_string(str8 string)
+{
+	str8 result = string;
+	i64 index = str8_find_needle(string, str8("##"), 0);
+	if (index < string.length)
+		result.length = index;
+	return result;
+}
+function str8
+ui_hash_part_from_key_string(str8 string)
+{
+	str8 result = string;
+	// NOTE(rnp): for xxx###yyy only use the ###yyy otherwise the whole string is hashed
+	i64 index = str8_find_needle(string, str8("###"), 0);
+	if (index < string.length)
+		result = str8_skip(string, index);
+	return result;
+}
+
+function UINodeKey
+ui_key_from_string(str8 string, UINodeKey seed)
+{
+	UINodeKey result = {0};
+	if (string.length > 0) {
+		str8 hash_string = ui_hash_part_from_key_string(string);
+		result.value     = u64_hash_from_str8_seed(hash_string, seed.value);
+	}
+	return result;
+}
+
+function UISignal
+ui_signal_from_node(UINode *node)
+{
+	UISignal result = {.node = node};
+	Rect nr = ui_node_rect(node);
+
+	b32  view_scrolled = 0;
+
+	// TODO(rnp): filter when floating menu is over this node
+
+	b32 collides = !!point_in_rect(ui_context->current_mouse, nr);
+
+	result.flags |= collides * UISignalFlag_Hovering;
+
+	// TODO(rnp): for (event in events)
+	{
+		// TODO(rnp): feed in through event system (these b32s are completely unecessary)
+		b32 mouse_any_pressed = IsMouseButtonPressed(MOUSE_BUTTON_LEFT) ||
+		                        IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE) ||
+		                        IsMouseButtonPressed(MOUSE_BUTTON_RIGHT);
+		b32 mouse_any_released = IsMouseButtonReleased(MOUSE_BUTTON_LEFT) ||
+		                         IsMouseButtonReleased(MOUSE_BUTTON_MIDDLE) ||
+		                         IsMouseButtonReleased(MOUSE_BUTTON_RIGHT);
+		UIMouseButtonKind mouse_click = (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)   ? UIMouseButtonKind_Left  :
+		                                 IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE) ? UIMouseButtonKind_Middle :
+		                                 IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)  ? UIMouseButtonKind_Right :
+		                                 (0)); // TODO(rnp): emit left click for key press when text box not active
+
+		UIMouseButtonKind mouse_release = (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)   ? UIMouseButtonKind_Left  :
+		                                   IsMouseButtonReleased(MOUSE_BUTTON_MIDDLE) ? UIMouseButtonKind_Middle :
+		                                   IsMouseButtonReleased(MOUSE_BUTTON_RIGHT)  ? UIMouseButtonKind_Right :
+		                                   (0));
+
+
+		if ((node->flags & UINodeFlag_MouseClickable) && mouse_any_pressed && collides) {
+			ui_context->hot_node_key                 = node->key;
+			ui_context->active_node_key[mouse_click] = node->key;
+
+			// TODO(rnp): store timestamp
+			// TODO(rnp): check with timestamp for double/triple click
+
+			result.flags |= UISignalFlag_LeftPressed << mouse_click;
+		}
+
+		// NOTE(rnp): release, applies whenever this node is active regardless of in bounds or not.
+		if ((node->flags & UINodeFlag_MouseClickable) &&
+		     mouse_any_released &&
+		     ui_node_key_equal(ui_context->active_node_key[mouse_release], node->key))
+		{
+			ui_context->hot_node_key                   = ui_node_key_zero();
+			ui_context->active_node_key[mouse_release] = ui_node_key_zero();
+			result.flags |= UISignalFlag_LeftReleased << mouse_release;
+		}
+
+		// NOTE(rnp): custom scroll handling
+		if (node->flags & UINodeFlag_Scroll && collides) {
+			Vector2 rl_scroll = GetMouseWheelMoveV();
+			v2  delta      = {{rl_scroll.x, rl_scroll.y}};
+			b32 shift_down = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+			if (shift_down) swap(delta.x, delta.y);
+			result.scroll = v2_add(result.scroll, delta);
+		}
+
+		// NOTE(rnp): scrollable container handling
+		if (node->flags & UINodeFlag_ViewScroll && collides) {
+			Vector2 rl_scroll = GetMouseWheelMoveV();
+			v2  delta      = {{rl_scroll.x, rl_scroll.y}};
+			b32 shift_down = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+			if (shift_down) swap(delta.x, delta.y);
+
+			// NOTE(rnp): if the view only has scroll in one direction we ignore the delta's direction
+
+			if ((node->flags & UINodeFlag_ViewScrollX) == 0) {
+				if f32_equal(delta.y, 0)
+					delta.y = delta.x;
+				delta.x = 0;
+			}
+
+			if ((node->flags & UINodeFlag_ViewScrollY) == 0) {
+				if f32_equal(delta.x, 0)
+					delta.x = delta.y;
+				delta.y = 0;
+			}
+
+			node->view_scroll_offset = v2_add(node->view_scroll_offset, delta);
+			view_scrolled = 1;
+		}
+
+
+		// TODO(rnp): drop target
+
+		// TODO(rnp): clipboard
+	}
+
+	// NOTE(rnp): single click dragging
+	if (node->flags & UINodeFlag_MouseClickable) {
+		for EachEnumValue(UIMouseButtonKind, k) {
+			if (ui_node_key_equal(ui_context->active_node_key[k], node->key) ||
+	        result.flags & (UISignalFlag_LeftPressed << k))
+			{
+				result.flags |= (UISignalFlag_LeftDragging << k);
+			}
+		}
+	}
+
+	// TODO(rnp): double click dragging
+
+	// TODO(rnp): triple click dragging
+
+	if (view_scrolled && node->flags & UINodeFlag_ViewClamp) {
+		// TODO(rnp): the target size is not stored currently stored.
+		// we need `node->view_scroll_offset + node->computed_size` to be
+		// in bounds of the target size (ie what the size would be if
+		// we could display the entire contents of the container)
+	}
+
+	result.flags |= (!f32_equal(0, result.scroll.x) * UISignalFlag_ScrolledX);
+	result.flags |= (!f32_equal(0, result.scroll.y) * UISignalFlag_ScrolledY);
+
+	if (node->flags & UINodeFlag_MouseClickable && collides &&
+	    (ui_node_key_equal(ui_context->hot_node_key, ui_node_key_zero()) || ui_node_key_equal(ui_context->hot_node_key, node->key)) &&
+	    (ui_node_key_equal(ui_context->active_node_key[UIMouseButtonKind_Left],   ui_node_key_zero()) || ui_node_key_equal(ui_context->active_node_key[UIMouseButtonKind_Left],   node->key)) &&
+	    (ui_node_key_equal(ui_context->active_node_key[UIMouseButtonKind_Middle], ui_node_key_zero()) || ui_node_key_equal(ui_context->active_node_key[UIMouseButtonKind_Middle], node->key)) &&
+	    (ui_node_key_equal(ui_context->active_node_key[UIMouseButtonKind_Right],  ui_node_key_zero()) || ui_node_key_equal(ui_context->active_node_key[UIMouseButtonKind_Right],  node->key)))
+	{
+		ui_context->hot_node_key = node->key;
+	}
+
+	// TODO(rnp): u
+	//if (node->flags & UINodeFlags
+
+	// TODO(rnp): check if context menu is active and context menu is not an ancestor of node
+	// and the signal has a pressed bit set -> kill context menu
+
+	// TODO(rnp): move this to after UI building is complete
+	b32 hot = ui_node_key_equal(ui_context->hot_node_key, node->key);
+	if (hot) node->hot_t += HOVER_SPEED * dt_for_frame;
+	else     node->hot_t -= HOVER_SPEED * dt_for_frame;
+	node->hot_t = Clamp01(node->hot_t);
+
+	return result;
+}
+
+function UINode *
+ui_build_node_from_key(UINodeFlags flags, UINodeKey key)
+{
+	UINode *result = ui_node_from_key(key);
+
+	b32 first_frame = ui_node_is_nil(result);
+	b32 transient   = ui_node_key_equal(key, ui_node_key_zero());
+
+	assert(first_frame || result->last_frame_active_index != ui_context->current_frame_index);
+
+	if (first_frame) {
+		result = transient ? 0 : ui_context->node_freelist;
+		if (!ui_node_is_nil(result)) {
+			SLLStackPop(ui_context->node_freelist, next_sibling);
+		} else {
+			result = push_struct_no_zero(transient ? ui_build_arena() : &ui_context->arena, UINode);
+		}
+		zero_struct(result);
+	}
+
+	// NOTE(rnp): reassigned per frame
+	{
+		result->parent = result->first_child = result->last_child = &ui_node_nil;
+		result->next_sibling = result->previous_sibling = result;
+		result->child_count = 0;
+		result->flags = 0;
+	}
+
+	if (first_frame && !transient) {
+		UINodeHashBucket *hb = ui_context->node_hash_table + (key.value % UI_HASH_TABLE_COUNT);
+		DLLInsert(&ui_node_nil, hb->last, hb->first, result, hash_next, hash_prev);
+	}
+
+	#define X(type, name, value_type, ...) result->name = ui_top_##name();
+	UI_STACK_LIST
+	#undef X
+
+	result->last_frame_active_index = ui_context->current_frame_index;
+	result->key = key;
+	result->flags |= flags;
+
+	if (!ui_node_is_nil(result->parent)) {
+		UINode *p = result->parent;
+		DLLInsert(&ui_node_nil, p->last_child, p->first_child, result, previous_sibling, next_sibling);
+		p->child_count++;
+	}
+
+	return result;
+}
+
+function UINode *
+ui_node_from_string(UINodeFlags flags, str8 string)
+{
+	UINode *result = ui_build_node_from_key(flags, ui_key_from_string(string, ui_node_ancestor_key()));
+	if (flags & UINodeFlag_DrawText)
+		result->string = string;
+	return result;
+}
+
+function print_format(2, 3) UINode *
+ui_node_from_stringf(UINodeFlags flags, const char *format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	str8 string = push_str8_fv(ui_build_arena(), format, args);
+	va_end(args);
+	UINode *result = ui_node_from_string(flags, string);
+	return result;
+}
+
+function UISignal
+ui_label(str8 string)
+{
+	UINode *node = ui_node_from_string(UINodeFlag_DrawText, string);
+	UISignal result = ui_signal_from_node(node);
+	return result;
+}
+
+function print_format(1, 2) UISignal
+ui_labelf(const char *format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	str8 string = push_str8_fv(ui_build_arena(), format, args);
+	va_end(args);
+	UISignal result = ui_label(string);
+	return result;
+}
+
+function UISignal
+ui_label_button(str8 string)
+{
+	UINode *node = ui_node_from_string(UINodeFlag_DrawText|
+	                                   UINodeFlag_Clickable|
+	                                   UINodeFlag_DrawHotEffects|
+	                                   UINodeFlag_DrawActiveEffects,
+	                                   string);
+	UISignal result = ui_signal_from_node(node);
+	return result;
+}
+
+function print_format(1, 2) UISignal
+ui_label_buttonf(const char *format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	str8 string = push_str8_fv(ui_build_arena(), format, args);
+	va_end(args);
+	UISignal result = ui_label_button(string);
+	return result;
+}
+
+function UISignal
+ui_text_box(b32 numeric, str8 string)
+{
+	UINode *node = ui_node_from_string(UINodeFlag_DrawText|
+	                                   UINodeFlag_Clickable|
+	                                   UINodeFlag_DrawHotEffects|
+	                                   UINodeFlag_DrawActiveEffects,
+	                                   string);
+	UISignal result = ui_signal_from_node(node);
+	if (result.flags) {
+
+	}
+	return result;
+}
+
+function print_format(2, 3) UISignal
+ui_text_boxf(b32 numeric, const char *format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	str8 string = push_str8_fv(ui_build_arena(), format, args);
+	va_end(args);
+	UISignal result = ui_text_box(numeric, string);
+	return result;
+}
+
+function UISignal
+ui_button(str8 string)
+{
+	UINode *node = ui_node_from_string(UINodeFlag_Clickable|
+	                                   UINodeFlag_DrawBackground|
+	                                   UINodeFlag_DrawBorder|
+	                                   UINodeFlag_DrawText|
+	                                   UINodeFlag_DrawHotEffects|
+	                                   UINodeFlag_DrawActiveEffects,
+	                                   string);
+	UISignal result = ui_signal_from_node(node);
+	return result;
+}
+
+function u64
+u64_circular_add(u64 a, i64 b)
+{
+	u64 result = a + b;
+	return result;
+}
+
+function void
+ui_build_regions(void)
+{
+	BeamformerUI *ui = ui_context;
+
+	UITreeNode split_handle_node = {0};
+
+	struct tree_frame {
+		UITreeNode *node;
+		union {
+			UITreeNode *parent;
+			b32         visited;
+		};
+		f32 split_fraction;
+	} init[64];
+
+	struct {
+		struct tree_frame *data;
+		da_count           count;
+		da_count           capacity;
+	} stack = {init, 0, countof(init)};
+
+	*da_push(&ui->arena, &stack) = (struct tree_frame){
+		.node           = ui->tree->first_child,
+		.split_fraction = 1.0f,
+	};
+	while (stack.count) {
+		struct tree_frame *top = stack.data + --stack.count;
+
+		ui_push_size(ui_pct(top->split_fraction, 0.0f));
+
+		switch (top->node->panel.kind) {
+
+		case UIPanelKind_Split:{
+			// NOTE(rnp): on the way down the stack push a new semantic layout,
+			// on the way up the stack pop the semantic layout
+
+			UITreeNode *node = top->node;
+			Axis2 axis = node->panel.split.axis;
+			if (top->visited == 0) {
+				ui_push_child_layout_axis(axis);
+				ui_push_parent(ui_node_from_stringf(0, "%p", node));
+				UIChildLayoutAxis(axis2_flip(axis)) ui_push_size(ui_pct(1.0f, 0.0f));
+
+				// NOTE(rnp): keep this frame
+				stack.count++;
+				top->visited = 1;
+
+				assert(node->child_count == 2);
+
+				*da_push(&ui->arena, &stack) = (struct tree_frame){
+					.node           = node->last_child,
+					.split_fraction = 1.0f - node->panel.split.fraction,
+				};
+
+				*da_push(&ui->arena, &stack) = (struct tree_frame){
+					.node   = &split_handle_node,
+					.parent = node,
+				};
+
+				*da_push(&ui->arena, &stack) = (struct tree_frame){
+					.node           = node->first_child,
+					.split_fraction = node->panel.split.fraction,
+				};
+			} else {
+				ui_pop_semantic_width();
+				ui_pop_semantic_height();
+				ui_pop_child_layout_axis();
+				ui_pop_parent();
+			}
+		}break;
+
+
+		case UIPanelKind_Nil:{ // NOTE(rnp): split resizer
+			UISize(ui_px(5.0f, 1.0f))
+			UIParent(ui_build_node_from_key(0, ui_node_key_zero()))
+			{
+				UISize(ui_pct(1.0f, 0.0f))
+				{
+					UISignal signal = ui_button(str8("###divider"));
+					signal.node->flags &= ~UINodeFlag_DrawText;
+					if (signal.flags & UISignalFlag_Dragging) {
+						UINode *node = signal.node;
+						Rect nr = ui_node_rect(node->parent->parent);
+						v2   uv = rect_uv(clamp_v2_rect(ui_context->current_mouse, nr), nr);
+						top->parent->panel.split.fraction = uv.E[top->parent->panel.split.axis];
+					}
+				}
+			}
+		}break;
+
+		case UIPanelKind_ComputeStats:{
+			UISignal signal = ui_button(str8("###compute"));
+			if (signal.flags & UISignalFlag_Pressed) {
+				str8 msg = str8("compute stats pressed\n");
+				os_console_log(msg.data, msg.length);
+			}
+		}break;
+
+		case UIPanelKind_FrameView:{
+			UISignal signal = ui_button(str8("###frame_view"));
+			if (signal.flags & UISignalFlag_Pressed) {
+				str8 msg = str8("frame view pressed\n");
+				os_console_log(msg.data, msg.length);
+			}
+		}break;
+
+		case UIPanelKind_ParameterListing:{
+			// TODO(rnp): Table
+			// Take a 2 column table for example
+			//   UINode (table container)
+			//   UINode (column 1)
+			//   UINode (optional divider if individual columns can be resized)
+			//   UINode (column 2)
+			// Container has the following properties
+			//   child_layout_axis = Axis2_X
+			//   semantic_size = SumOfChildren
+			//   Scrollable
+			// Each column has the following properties
+			//   child_layout_axis = Axis2_Y
+			//   semantic_size = SumOfChildren
+			// For interior cells which should overflow instead of causing the
+			// column to expand:
+			//   semantic_size = PercentOfParent (1.0f)
+			// For filling in we need to preacquire each column node
+			// then fill in row by row.
+			//   number of rows to use and starting row must be calculated from the table
+			//   container node since it depends on the scroll offset and the size of
+			//   the container on the last frame
+			#if 0
+			group = add_variable_group(ui, group, &ui->arena, s8("Lateral Extent:"),
+			                           VariableGroupKind_Vector, ui->font);
+			{
+				add_beamformer_variable(ui, group, &ui->arena, s8("Min:"), s8("[mm]"),
+				                        &ui->min_coordinate.x, v2_inf, 1e3f, 0.5e-3f,
+				                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
+
+				add_beamformer_variable(ui, group, &ui->arena, s8("Max:"), s8("[mm]"),
+				                        &ui->max_coordinate.x, v2_inf, 1e3f, 0.5e-3f,
+				                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
+			}
+			group = end_variable_group(group);
+
+			group = add_variable_group(ui, group, &ui->arena, s8("Axial Extent:"),
+			                           VariableGroupKind_Vector, ui->font);
+			{
+				add_beamformer_variable(ui, group, &ui->arena, s8("Min:"), s8("[mm]"),
+				                        &ui->min_coordinate.y, v2_inf, 1e3f, 0.5e-3f,
+				                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
+
+				add_beamformer_variable(ui, group, &ui->arena, s8("Max:"), s8("[mm]"),
+				                        &ui->max_coordinate.y, v2_inf, 1e3f, 0.5e-3f,
+				                        V_INPUT|V_TEXT|V_CAUSES_COMPUTE, ui->font);
+			}
+			group = end_variable_group(group);
+			#endif
+
+			UIParent(ui_build_node_from_key(0, ui_node_key_zero()))
+			{
+				UIPrefWidth(ui_pct(1.0f, 0.0f))
+				UIPrefHeight(ui_text_dim(1.0f, 1.0f))
+				ui_label(str8("Parameters Listing"));
+
+				UIPrefWidth(ui_children_sum(1.0f))
+				UIPrefHeight(ui_children_sum(1.0f))
+				UIChildLayoutAxis(Axis2_X)
+				UIParent(ui_node_from_string(UINodeFlag_AllowOverflow|
+				                             UINodeFlag_ViewScroll,
+				                             str8("###parameter_listing_container")))
+				{
+					UINode *label_column, *value_column, *unit_column;
+					UIChildLayoutAxis(Axis2_Y)
+					{
+						UITextAlign(Left)   label_column = ui_node_from_string(0, str8("###labels"));
+						UITextAlign(Center) value_column = ui_node_from_string(0, str8("###values"));
+						UITextAlign(Right)  unit_column  = ui_node_from_string(0, str8("###units"));
+					}
+
+					UIPrefWidth(ui_text_dim(1.0f, 1.0f))
+					UIPrefHeight(ui_text_dim(1.05f, 1.0f))
+					{
+						BeamformerUIParameters *bp = &ui_context->params;
+						UIParent(label_column) ui_label(str8("Sampling Frequency"));
+						UIParent(value_column) ui_labelf("%0.2f##sampling", bp->sampling_frequency * 1e6);
+						UIParent(unit_column)  ui_label(str8("[MHz]##sampling"));
+
+						UIParent(label_column) ui_label(str8("Demodulation Frequency"));
+						UIParent(value_column) ui_labelf("%0.2f##demod", bp->demodulation_frequency * 1e6);
+						UIParent(unit_column)  ui_label(str8("[MHz]##demod"));
+
+						UIParent(label_column) ui_label(str8("Speed of Sound"));
+						UIParent(value_column) ui_labelf("%0.2f##sound", bp->speed_of_sound);
+						UIParent(unit_column)  ui_label(str8("[m/s]"));
+
+						UIParent(label_column) ui_label(str8("Off Axis Position"));
+						UIParent(value_column) ui_labelf("%0.2f##off_axis", ui->off_axis_position * 1e3f);
+						UIParent(unit_column)  ui_label(str8("[mm]"));
+
+						UIParent(label_column) ui_label(str8("Beamform Plane"));
+						UIParent(unit_column)  UIPrefHeight(ui_em(1.0f, 1.0f)) ui_build_node_from_key(0, ui_node_key_zero());
+						UIParent(value_column)
+						UIFlags(UINodeFlag_Scroll)
+						{
+							UISignal signal = ui_label_buttonf("%0.2f###beamform_plane", ui->beamform_plane);
+							if (signal.flags & UISignalFlag_ScrolledY) {
+								ui->beamform_plane += 0.025f * signal.scroll.y;
+								ui->beamform_plane  = Clamp01(ui->beamform_plane);
+								// TODO(rnp): flag compute trigger
+							}
+						}
+
+
+						UIParent(label_column) ui_label(str8("F#"));
+						UIParent(unit_column)  UIPrefHeight(ui_em(1.0f, 1.0f)) ui_build_node_from_key(0, ui_node_key_zero());
+						UIParent(value_column)
+						UIFlags(UINodeFlag_Scroll)
+						{
+							f32 f_number = bp->f_number;
+							UISignal signal = ui_label_buttonf("%0.2f###f_number", f_number);
+							if (signal.flags & UISignalFlag_ScrolledY) {
+								f_number += 0.05f * signal.scroll.y;
+								f_number  = Max(0, f_number);
+								bp->f_number = f_number;
+								// TODO(rnp): flag compute trigger
+							}
+						}
+
+						UIParent(label_column) ui_label(str8("Interpolation"));
+						UIParent(unit_column)  ui_build_node_from_key(0, ui_node_key_zero());
+						UIParent(value_column)
+						UIFlags(UINodeFlag_Scroll)
+						{
+							str8 label = str8_from_s8(beamformer_interpolation_mode_strings[bp->interpolation_mode]);
+							UISignal signal = ui_label_button(push_str8_from_parts(ui_build_arena(), str8(""), label,
+							                                                       str8("###interpolation_mode")));
+							if (signal.flags & UISignalFlag_Pressed) {
+								bp->interpolation_mode++;
+								bp->interpolation_mode %= countof(beamformer_interpolation_mode_strings);
+								// TODO(rnp): flag compute trigger
+							}
+
+							if (signal.flags & UISignalFlag_ScrolledY) {
+								bp->interpolation_mode = circular_add(bp->interpolation_mode, signal.scroll.y,
+								                                      countof(beamformer_interpolation_mode_strings));
+								// TODO(rnp): flag compute trigger
+							}
+						}
+
+						UIParent(label_column) ui_label(str8("Coherency Weighting"));
+						UIParent(unit_column)  UIPrefHeight(ui_em(1.0f, 1.0f)) ui_build_node_from_key(0, ui_node_key_zero());
+						UIParent(value_column)
+						UIFlags(UINodeFlag_Scroll)
+						{
+							UISignal signal = ui_label_button(bp->coherency_weighting ?
+							                                  str8("True###coherency_weighting") :
+							                                  str8("False###coherency_weighting"));
+							if (signal.flags & (UISignalFlag_Pressed|UISignalFlag_Scrolled))
+								bp->coherency_weighting = !bp->coherency_weighting;
+								// TODO(rnp): flag compute trigger
+						}
+					}
+				}
+			}
+		}break;
+
+		InvalidDefaultCase;
+		}
+
+		ui_pop_size();
+	}
+}
+
+function f32
+ui_node_axis_child_sum(UINode *node, Axis2 axis)
+{
+	f32 result = 0;
+
+	if (!ui_node_is_nil(node->first_child)) {
+		UINode *child = node->first_child;
+		do {
+			result += child->computed_size[axis];
+			child = child->next_sibling;
+		} while (child != node->first_child);
+	}
+
+	return result;
+}
+
+function void
+ui_layout_constrain(UINode *root)
+{
+	assert(!ui_node_is_nil(root->first_child));
+
+	// NOTE(rnp): for violations in non-layout axis all we can do is clamp
+	{
+		Axis2   axis  = axis2_flip(root->child_layout_axis);
+		UINode *child = root->first_child;
+		for (u64 it = 0; it < root->child_count; it++, child = child->next_sibling)
+			child->computed_size[axis] = Min(child->computed_size[axis], root->computed_size[axis]);
+	}
+
+	{
+		Axis2   axis  = root->child_layout_axis;
+		UINode *child = root->first_child;
+
+		f32 allowed_size        = root->computed_size[axis];
+		f32 total_size          = 0;
+		f32 total_weighted_size = 0;
+
+		for (u64 it = 0; it < root->child_count; it++, child = child->next_sibling) {
+			total_size          += child->computed_size[axis];
+			total_weighted_size += child->computed_size[axis] * (1.0f - child->semantic_size[axis].strictness);
+		}
+
+		f32 remaining_size = root->computed_size[axis];
+		f32 violation = total_size - allowed_size;
+		if (violation > 0 && total_weighted_size > 0) {
+			f32 fixup_fraction = Clamp01(violation / total_weighted_size);
+			for (u64 it = 0; it < root->child_count; it++, child = child->next_sibling) {
+				f32 fixup = Max(0, child->computed_size[axis] * (1.0f - child->semantic_size[axis].strictness));
+				child->computed_size[axis] -= fixup * fixup_fraction;
+
+				if (child->semantic_size[axis].kind != UISizeKind_PercentOfParent)
+					remaining_size -= child->computed_size[axis];
+			}
+		}
+
+		// NOTE(rnp): fixup sizes dependant on parent
+		for (u64 it = 0; it < root->child_count; it++, child = child->next_sibling)
+			if (child->semantic_size[axis].kind == UISizeKind_PercentOfParent)
+				child->computed_size[axis] = remaining_size * child->semantic_size[axis].value;
+	}
+}
+
+function void
+ui_layout_nodes(void)
+{
+	BeamformerUI *ui = ui_context;
+
+	struct node_frame {
+		UINode *node;
+		// NOTE(rnp): for post order traversal
+		b32     visited;
+	} init[64] = {0};
+
+	struct {
+		struct node_frame *data;
+		da_count           count;
+		da_count           capacity;
+	} stack = {init, 0, countof(init)};
+
+	///////////////////////
+	// NOTE(rnp): First Pass: non dependant sizes
+	da_push(ui_build_arena(), &stack)->node = ui->root_node;
+	while (stack.count) {
+		struct node_frame *top = stack.data + --stack.count;
+		UINode *node = top->node;
+
+		for EachElement(node->semantic_size, it) {
+			switch (node->semantic_size[it].kind) {
+			case UISizeKind_Pixels:{node->computed_size[it] = node->semantic_size[it].value;}break;
+
+			case UISizeKind_TextContent:{
+				str8 string = ui_draw_part_from_key_string(node->string);
+				// TODO(rnp): cleanup. won't be done with raylib
+				Font font = node->font_size < 28.0f ? ui->small_font : ui->font;
+				node->computed_size[it] = node->semantic_size[it].value * measure_text(font, string).E[it];
+			}break;
+
+			default:{}break;
+			}
+		}
+
+		// NOTE(rnp): push children
+		UINode *child = node->first_child;
+		for (u64 it = 0; it < node->child_count; it++, child = child->next_sibling)
+			da_push(ui_build_arena(), &stack)->node = child;
+	}
+
+	///////////////////////
+	// NOTE(rnp): Second Pass (Pre Order): parent dependant sizes
+	da_push(ui_build_arena(), &stack)->node = ui->root_node;
+	while (stack.count) {
+		struct node_frame *top = stack.data + --stack.count;
+		UINode *node = top->node;
+
+		for EachElement(node->semantic_size, it) {
+			if (node->semantic_size[it].kind == UISizeKind_PercentOfParent) {
+				f32 parent_size = node->parent->computed_size[it];
+				node->computed_size[it] = node->semantic_size[it].value * parent_size;
+			}
+		}
+
+		// NOTE(rnp): push children
+		UINode *child = node->first_child;
+		for (u64 it = 0; it < node->child_count; it++, child = child->next_sibling)
+			da_push(ui_build_arena(), &stack)->node = child;
+	}
+
+	///////////////////////
+	// NOTE(rnp): Third Pass (Post Order): child dependant sizes
+	da_push(ui_build_arena(), &stack)->node = ui->root_node;
+	while (stack.count) {
+		struct node_frame *top = stack.data + stack.count - 1;
+
+		UINode *node = top->node;
+		if (!top->visited && node->child_count) {
+			top->visited = 1;
+
+			// NOTE(rnp): push children
+			UINode *child = node->first_child;
+			for (u64 it = 0; it < node->child_count; it++, child = child->next_sibling)
+				da_push(ui_build_arena(), &stack)->node = child;
+		} else {
+			// NOTE(rnp): pop
+			stack.count--;
+
+			for EachElement(node->semantic_size, it) {
+				if (node->semantic_size[it].kind == UISizeKind_ChildrenSum) {
+					f32 size_sum = 0;
+					UINode *child = node->first_child;
+					for (u64 child_index = 0;
+					     child_index< node->child_count;
+					     child_index++, child = child->next_sibling)
+					{
+						if (it == node->child_layout_axis) {
+							size_sum += child->computed_size[it];
+						} else {
+							size_sum = Max(size_sum, child->computed_size[it]);
+						}
+					}
+					node->computed_size[it] = size_sum;
+				}
+			}
+		}
+	}
+
+	///////////////////////
+	// NOTE(rnp): Fourth Pass (Pre Order): solve violations
+	da_push(ui_build_arena(), &stack)->node = ui->root_node;
+	while (stack.count) {
+		struct node_frame *top = stack.data + --stack.count;
+
+		UINode *node = top->node;
+		if (node->child_count)
+			ui_layout_constrain(node);
+
+		// NOTE(rnp): push children
+		UINode *child = node->first_child;
+		for (u64 it = 0; it < node->child_count; it++, child = child->next_sibling)
+			da_push(ui_build_arena(), &stack)->node = child;
+	}
+
+	///////////////////////
+	// NOTE(rnp): Final Pass (Pre Order): fill positions
+	da_push(&ui->arena, &stack)->node = ui->root_node;
+	while (stack.count) {
+		struct node_frame *top = stack.data + --stack.count;
+
+		UINode *node  = top->node;
+		UINode *child = node->first_child;
+
+		Axis2 layout_axis  = node->child_layout_axis;
+		Axis2 flipped_axis = axis2_flip(layout_axis);
+		f32   offset       = 0;
+		for (u64 it = 0; it < node->child_count; it++, child = child->next_sibling) {
+			child->computed_position[flipped_axis] = node->computed_position[flipped_axis];
+			child->computed_position[layout_axis]  = offset + node->computed_position[layout_axis];
+			offset += child->computed_size[layout_axis];
+		}
+
+		for (u64 it = 0; it < node->child_count; it++, child = child->next_sibling) {
+			if (child->semantic_size[flipped_axis].kind == UISizeKind_TextContent) {
+				f32 size_delta = node->computed_size[Axis2_X] - child->computed_size[Axis2_X];
+				f32 correction = 0;
+				switch (node->text_alignment) {
+				InvalidDefaultCase;
+				case UITextAlign_Left:{  correction = 0;                }break;
+				case UITextAlign_Center:{correction = 0.5f * size_delta;}break;
+				case UITextAlign_Right:{ correction = size_delta;       }break;
+				}
+				child->computed_position[Axis2_X] += correction;
+			}
+		}
+
+		// NOTE(rnp): push children
+		for (u64 it = 0; it < node->child_count; it++, child = child->next_sibling)
+			if (child->child_count > 0)
+				da_push(ui_build_arena(), &stack)->node = child;
+	}
+}
+
+function void
+ui_draw_nodes(void)
+{
+	BeamformerUI *ui = ui_context;
+
+	struct node_frame {UINode *node;} init[64];
+
+	struct {
+		struct node_frame *data;
+		da_count           count;
+		da_count           capacity;
+	} stack = {init, 0, countof(init)};
+
+	u32 colour_index = 0;
+
+	da_push(ui_build_arena(), &stack)->node = ui->root_node;
+	while (stack.count) {
+		struct node_frame *top = stack.data + --stack.count;
+		UINode *node = top->node;
+
+		// TODO(rnp): push colour and hover colour into node
+
+		v4   colour = g_colour_palette[(colour_index++) % countof(g_colour_palette)];
+		Rect r      = ui_node_rect(node);
+
+		if (node->flags & UINodeFlag_DrawHotEffects)
+			colour = v4_lerp(colour, HOVERED_COLOUR, node->hot_t);
+
+		if (node->flags & UINodeFlag_DrawBackground)
+			DrawRectangleRec(rl_rect(r), colour_from_normalized(colour));
+
+		if (node->flags & UINodeFlag_DrawBorder)
+			DrawRectangleLinesEx(rl_rect(r), 4.0f, colour_from_normalized(colour));
+
+		if (node->flags & UINodeFlag_DrawText) {
+			str8 string = ui_draw_part_from_key_string(node->string);
+			// TODO(rnp): cleanup. won't be done with raylib
+			Font font = node->font_size < 28.0f ? ui->small_font : ui->font;
+
+			v4 colour = FG_COLOUR;
+			if (node->flags & UINodeFlag_DrawHotEffects)
+				colour = v4_lerp(colour, HOVERED_COLOUR, node->hot_t);
+
+			TextSpec text_spec = {.font = &font, .flags = TF_LIMITED, .colour = colour, .limits.size = r.size};
+			draw_text(string, r.pos, &text_spec);
+		}
+
+		// NOTE(rnp): push children
+		UINode *child = node->first_child;
+		for (u64 it = 0; it < node->child_count; it++, child = child->next_sibling)
+			da_push(ui_build_arena(), &stack)->node = child;
+	}
+
+}
+
+function UITreeNode *
+ui_push_tree_node(UITreeNode *parent)
+{
+	BeamformerUI *ui = ui_context;
+	UITreeNode *result = ui->tree_node_freelist;
+	if (!result) result = push_struct_no_zero(&ui->arena, UITreeNode);
+	zero_struct(result);
+
+	result->previous_sibling = result->next_sibling = result;
+	result->parent = parent;
+
+	if (parent) {
+		DLLInsert(0, parent->last_child, parent->first_child, result, next_sibling, previous_sibling);
+		parent->child_count++;
+		if (!parent->first_child) parent->first_child = result;
+	}
+
+	return result;
+}
+
+function UITreeNode *
+ui_push_panel(UITreeNode *parent, UIPanelKind kind)
+{
+	UITreeNode *result = ui_push_tree_node(parent);
+	result->panel.kind = kind;
+	return result;
 }
 
 /* NOTE(rnp): this only exists to make asan less annoying. do not waste
@@ -4038,12 +5098,18 @@ DEBUG_EXPORT BEAMFORMER_DEBUG_UI_DEINIT_FN(beamformer_debug_ui_deinit)
 function void
 ui_init(BeamformerCtx *ctx, Arena store)
 {
-	BeamformerUI *ui = ctx->ui;
+	BeamformerUI *ui = ui_context = ctx->ui;
 	if (!ui) {
-		ui = ctx->ui = push_struct(&store, typeof(*ui));
+		ui = ui_context = ctx->ui = push_struct(&store, typeof(*ui));
 		ui->arena = store;
-		ui->shared_memory   = ctx->shared_memory;
+		ui->shared_memory      = ctx->shared_memory;
 		ui->beamformer_context = ctx;
+
+		for EachElement(ui->build_arenas, it) {
+			ui->build_arenas[it] = sub_arena(&ui->arena, KB(64), KB(4));
+			ui->build_arena_savepoints[it] = begin_temp_arena(ui->build_arenas + it);
+		}
+		ui->node_freelist = &ui_node_nil;
 
 		/* TODO(rnp): better font, this one is jank at small sizes */
 		ui->font       = LoadFontFromMemory(".ttf", beamformer_base_font, sizeof(beamformer_base_font), 28, 0, 0);
@@ -4052,6 +5118,25 @@ ui_init(BeamformerCtx *ctx, Arena store)
 		ui->floating_widget_sentinal.parent = &ui->floating_widget_sentinal;
 		ui->floating_widget_sentinal.next   = &ui->floating_widget_sentinal;
 
+		UITreeNode *tree_root = ui->tree = ui_push_tree_node(0);
+		// NOTE(rnp): push default UI layout
+		// TODO(rnp): load last layout from file and only load default if not present
+		{
+			UITreeNode *node = ui_push_panel(tree_root, UIPanelKind_Split);
+			node->panel.split.fraction = 0.35f;
+			node->panel.split.axis     = Axis2_X;
+
+			DeferLoop(node = ui_push_panel(node, UIPanelKind_Split), node = node->parent)
+			{
+				node->panel.split.fraction = 0.65f;
+				node->panel.split.axis     = Axis2_Y;
+				ui_push_panel(node, UIPanelKind_ParameterListing);
+				ui_push_panel(node, UIPanelKind_ComputeStats);
+			}
+			ui_push_panel(node, UIPanelKind_FrameView);
+		}
+
+		#if 0
 		Variable *split = ui->regions = add_ui_split(ui, 0, &ui->arena, s8("UI Root"), 0.36f,
 		                                             RSD_HORIZONTAL, ui->font);
 		split->region_split.left = add_ui_split(ui, split, &ui->arena, s8(""), 0.475f,
@@ -4074,6 +5159,7 @@ ui_init(BeamformerCtx *ctx, Arena store)
 
 		split->region_split.left  = add_compute_progress_bar(split, ctx);
 		split->region_split.right = add_compute_stats_view(ui, split, &ui->arena, ctx);
+		#endif
 
 		u32 samples = vk_gpu_info()->max_msaa_samples;
 		vk_image_allocate(&ui->render_3d_image,       FRAME_VIEW_RENDER_TARGET_SIZE, 1, samples, VulkanImageUsage_Colour,       0, 0, s8("Render Target Colour"));
@@ -4189,9 +5275,6 @@ ui_init(BeamformerCtx *ctx, Arena store)
 		vk_render_model_allocate(&rm->model, unit_cube_indices, countof(unit_cube_indices), model_size, s8("unit_cube_model"));
 		vk_render_model_range_upload(&rm->model, unit_cube_vertices, 0,                  sizeof(unit_cube_vertices), 0);
 		vk_render_model_range_upload(&rm->model, unit_cube_normals,  rm->normals_offset, sizeof(unit_cube_normals),  0);
-
-		/* NOTE(rnp): shrink variable size once this fires */
-		assert((uz)(ui->arena.beg - (u8 *)ui) < KB(64));
 	}
 
 	for EachElement(beamformer_reloadable_render_shader_info_indices, it) {
@@ -4213,7 +5296,7 @@ validate_ui_parameters(BeamformerUI *ui)
 function void
 draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_draw, BeamformerViewPlaneTag frame_plane)
 {
-	BeamformerUI *ui = ctx->ui;
+	BeamformerUI *ui = ui_context = ctx->ui;
 
 	if (frame_to_draw) {
 		mem_copy(ui->latest_plane + BeamformerViewPlaneTag_Count, frame_to_draw, sizeof(*frame_to_draw));
@@ -4273,7 +5356,10 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 	/* NOTE: process interactions first because the user interacted with
 	 * the ui that was presented last frame */
 	Rect window_rect = {.size = {{(f32)ctx->window_size.w, (f32)ctx->window_size.h}}};
-	ui_interact(ui, input, window_rect);
+	//ui_interact(ui, input, window_rect);
+
+	ui->current_mouse.x = input->mouse_x;
+	ui->current_mouse.y = input->mouse_y;
 
 	if (ui->flush_params) {
 		validate_ui_parameters(ui);
@@ -4333,12 +5419,75 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 	/* NOTE(rnp): can't render to a different framebuffer in the middle of BeginDrawing()... */
 	update_frame_views(ui, window_rect);
 
-	BeginDrawing();
-		v2 mouse = {{input->mouse_x, input->mouse_y}};
-		glClearNamedFramebufferfv(0, GL_COLOR, 0, BG_COLOUR.E);
-		glClearNamedFramebufferfv(0, GL_DEPTH, 0, (f32 []){1});
+	// TODO(rnp): remove last frames dead nodes, build ui signal data for frame
+	{
+	}
 
-		draw_ui_regions(ui, window_rect, mouse);
-		draw_floating_widgets(ui, window_rect, mouse);
-	EndDrawing();
+	if (!ui_node_key_nil(ui->text_input_state.node_key)) {
+		UINode *node = ui_node_from_key(ui->text_input_state.node_key);
+		if (!ui_node_is_nil(node)) {
+			UITextInputState *tis    = &ui->text_input_state;
+			UISignal          signal = ui_signal_from_node(node);
+
+			if (signal.flags & UISignalFlag_DoubleClicked) {
+				// TODO(rnp): select word
+			}
+
+			if (signal.flags & UISignalFlag_TripleClicked) {
+				tis->cursor_range.x = 0;
+				tis->cursor_range.y = tis->count;
+			}
+			// TODO(rnp): update text input, possibly ending for the selected node.
+			// new node will get selected in ui_signal_from_node()
+		}
+	}
+
+	{
+		////////////////////////////
+		// NOTE(rnp): Build Pass
+		end_temp_arena(ui->build_arena_savepoints[ui->current_frame_index % countof(ui->build_arenas)]);
+		// NOTE(rnp): reset last frames build stacks
+		{
+			#define X(type, name, ...) \
+				ui_context->name##_node_stack.top   = &ui_##name##_node_nil; \
+				ui_context->name##_node_stack.free  = 0; \
+				ui_context->name##_node_stack.count = 0;
+			UI_STACK_LIST
+			#undef X
+
+			ui_push_semantic_width(ui_px(window_rect.size.x, 1.0f));
+			ui_push_semantic_height(ui_px(window_rect.size.y, 1.0f));
+			ui->root_node = ui_node_from_string(0, str8("UI Root Node"));
+			ui_push_parent(ui->root_node);
+			ui_push_font_size(28.0f);
+			ui_push_semantic_width(ui_pct(1.0f, 0.0f));
+			ui_push_semantic_height(ui_pct(1.0f, 0.0f));
+		}
+
+		// NOTE(rnp): clear hot node if there are no active nodes
+		{
+			b32 active = 0;
+			for EachEnumValue(UIMouseButtonKind, k)
+				active |= !ui_node_key_equal(ui->active_node_key[k], ui_node_key_zero());
+			if (!active) ui->hot_node_key = ui_node_key_zero();
+		}
+
+		ui_build_regions();
+
+		// TODO(rnp): disable and prune dead nodes
+
+		////////////////////////////
+		// NOTE(rnp): Layout Pass
+		ui_layout_nodes();
+
+		BeginDrawing();
+			glClearNamedFramebufferfv(0, GL_COLOR, 0, BG_COLOUR.E);
+			glClearNamedFramebufferfv(0, GL_DEPTH, 0, (f32 []){1});
+			ui_draw_nodes();
+
+			//draw_floating_widgets(ui, window_rect, mouse);
+		EndDrawing();
+
+		ui->current_frame_index++;
+	}
 }

@@ -37,7 +37,7 @@ global char *g_argv0;
   #define COMMON_FLAGS     "-pipe", "-Wall"
   #define DEBUG_FLAGS      "-O0", "-D_DEBUG", "-Wno-unused-function"
   #define OPTIMIZED_FLAGS  "-O3"
-  #define EXTRA_FLAGS_BASE "-Werror", "-Wextra", "-Wshadow", "-Wno-unused-parameter", \
+  #define EXTRA_FLAGS_BASE "-Werror", "-Wextra", "-Wno-unused-parameter", \
                            "-Wno-error=unused-function", "-fno-builtin"
   #if COMPILER_GCC
     #define EXTRA_FLAGS EXTRA_FLAGS_BASE, "-Wno-unused-variable"

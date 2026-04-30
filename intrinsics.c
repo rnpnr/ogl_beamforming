@@ -26,6 +26,8 @@
   #define likely(x)      (x)
   #define unlikely(x)    (x)
 
+  #define print_format(f, va)
+
   #define assume(x)      __assume(x)
   #define debugbreak()   __debugbreak()
   #define unreachable()  __assume(0)
@@ -66,6 +68,8 @@
 
   #define likely(x)        (__builtin_expect(!!(x), 1))
   #define unlikely(x)      (__builtin_expect(!!(x), 0))
+
+  #define print_format(f, va) __attribute__((format(printf, f, va)))
 
   #if COMPILER_CLANG
     #define assume(x)      __builtin_assume(x)
