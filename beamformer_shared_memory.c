@@ -1,5 +1,5 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (30UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (31UL)
 
 typedef enum {
 	BeamformerWorkKind_Compute,
@@ -153,7 +153,15 @@ typedef struct {
 	/* TODO(rnp): this is really sucky. we need a better way to communicate this */
 	u64 rf_block_rf_size;
 
-	u64 max_beamformed_data_size;
+	// NOTE(rnp): currently this cannot be directly user readable. its interpretation
+	// requires beamformer implementation details
+	u64 beamformed_frame_buffer_size;
+
+	struct {
+		u64 max_rf_data_size;
+		b8  cuda;
+		b8  hilbert;
+	} capabilities;
 
 	BeamformerLiveImagingParameters live_imaging_parameters;
 	BeamformerLiveImagingDirtyFlags live_imaging_dirty_flags;

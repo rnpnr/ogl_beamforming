@@ -258,7 +258,17 @@ beamformer_init(BeamformerInput *input)
 
 	ctx->shared_memory->version = BEAMFORMER_SHARED_MEMORY_VERSION;
 	ctx->shared_memory->reserved_parameter_blocks = 1;
-	ctx->shared_memory->max_beamformed_data_size = cs->backlog.buffer->size;
+
+	ctx->shared_memory->beamformed_frame_buffer_size = cs->backlog.buffer->size;
+
+	// TODO(rnp): dynamic rf data buffer slot usage
+	// NOTE(rnp): will be same as the max size we were able to get for the frame buffer
+	ctx->shared_memory->capabilities.max_rf_data_size = cs->backlog.buffer->size
+	                                                    / BeamformerMaxRawDataFramesInFlight;
+
+	ctx->shared_memory->capabilities.cuda    = cuda_init != cuda_init_stub;
+	// TODO(rnp): re-enable hilbert support, with and without cuda
+	ctx->shared_memory->capabilities.hilbert = 0;
 
 	/* TODO(rnp): I'm not sure if its a good idea to pre-reserve a bunch of semaphores
 	 * on w32 but thats what we are doing for now */
