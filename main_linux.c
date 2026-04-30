@@ -345,7 +345,9 @@ main(void)
 		if (fds[0].revents & POLLIN)
 			dispatch_file_watch_events(input);
 
-		Vector2 new_mouse = GetMousePosition();
+		Vector2 new_mouse = {-1, -1};
+		if (IsWindowFocused()) new_mouse = GetMousePosition();
+
 		input->last_mouse_x = input->mouse_x;
 		input->last_mouse_y = input->mouse_y;
 		input->mouse_x      = new_mouse.x;
