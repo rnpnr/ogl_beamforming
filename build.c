@@ -735,9 +735,8 @@ build_raylib(Arena a)
 {
 	b32 result = 1, shared = config.debug;
 	char *libraylib = shared ? OS_SHARED_LINK_LIB("raylib") : OUTPUT_LIB(OS_STATIC_LIB("raylib"));
-	if (needs_rebuild(libraylib, "external/include/rlgl.h", "external/raylib")) {
+	if (needs_rebuild(libraylib, "external/raylib")) {
 		git_submodule_update(a, "external/raylib");
-		os_copy_file("external/raylib/src/rlgl.h", "external/include/rlgl.h");
 
 		CommandList cc = {0};
 		cmd_base(&a, &cc, 0, config.debug);
@@ -746,16 +745,17 @@ build_raylib(Arena a)
 		if (!is_msvc) cmd_append(&a, &cc, "-Wno-unused-but-set-variable");
 		cmd_append(&a, &cc, "-Iexternal/include", "-Iexternal/raylib/src", "-Iexternal/raylib/src/external/glfw/include");
 		#define RAYLIB_SOURCES \
+			X(rcore)     \
 			X(rglfw)     \
 			X(rshapes)   \
 			X(rtext)     \
 			X(rtextures) \
 			X(utils)
 		#define X(name) "external/raylib/src/" #name ".c",
-		char *srcs[] = {"external/rcore_extended.c", RAYLIB_SOURCES};
+		char *srcs[] = {RAYLIB_SOURCES};
 		#undef X
 		#define X(name) OUTPUT(OBJECT(#name)),
-		char *outs[] = {OUTPUT(OBJECT("rcore_extended")), RAYLIB_SOURCES};
+		char *outs[] = {RAYLIB_SOURCES};
 		#undef X
 
 		if (shared) {
@@ -1037,14 +1037,17 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 	X(EndScope) \
 	X(Enumeration) \
 	X(Expand) \
+	X(FragmentShader) \
 	X(MUnion) \
 	X(PushConstants) \
+	X(RenderShader) \
 	X(Shader) \
 	X(ShaderAlias) \
 	X(ShaderGroup) \
 	X(String) \
 	X(Struct) \
 	X(Table) \
+	X(VertexShader) \
 
 typedef enum {
 	#define X(k, ...) MetaEntryKind_## k,
@@ -1070,14 +1073,14 @@ typedef enum {
 } MetaEmitLang;
 
 #define META_KIND_LIST \
-	X(M4,  m4,  mat4,      float,    single, 64, 16) \
-	X(V4,  v4,  vec4,      float,    single, 16,  4) \
-	X(SV4, iv4, ivec4,     int32_t,  int32,  16,  4) \
-	X(UV4, uv4, uvec4,     uint32_t, uint32, 16,  4) \
-	X(UV2, uv2, uvec2,     uint32_t, uint32,  8,  2) \
-	X(V3,  v3,  vec3,      float,    single, 12,  3) \
-	X(V2,  v2,  vec2,      float,    single,  8,  2) \
-	X(F32, f32, float,     float,    single,  4,  1) \
+	X(M4,  m4,  f32mat4,   float,    single, 64, 16) \
+	X(V4,  v4,  f32vec4,   float,    single, 16,  4) \
+	X(SV4, iv4, i32vec4,   int32_t,  int32,  16,  4) \
+	X(UV4, uv4, u32vec4,   uint32_t, uint32, 16,  4) \
+	X(UV2, uv2, u32vec2,   uint32_t, uint32,  8,  2) \
+	X(V3,  v3,  f32vec3,   float,    single, 12,  3) \
+	X(V2,  v2,  f32vec2,   float,    single,  8,  2) \
+	X(F32, f32, float32_t, float,    single,  4,  1) \
 	X(S32, i32, int32_t,   int32_t,  int32,   4,  1) \
 	X(S16, i16, int16_t,   int16_t,  int16,   2,  1) \
 	X(S8,  i8,  int8_t,    int8_t,   int8,    1,  1) \
@@ -1749,14 +1752,28 @@ typedef struct { da_count value; } MetaEntityID;
 typedef enum {
 	MetaShaderKind_Alias,
 	MetaShaderKind_Compute,
+	MetaShaderKind_Render,
 	MetaShaderKind_Count,
 } MetaShaderKind;
+
+typedef enum {
+	MetaShaderPrimitiveKind_Mesh,
+	MetaShaderPrimitiveKind_Vertex,
+	MetaShaderPrimitiveKind_Count,
+} MetaShaderPrimitiveKind;
+
+typedef struct {
+	MetaShaderPrimitiveKind kind;
+} MetaRenderShader;
 
 typedef struct {
 	MetaShaderKind kind;
 	MetaIDList     entity_reference_ids;
-	s8             file;
-	MetaEntityID   alias_parent_id;
+	s8             files[2];
+	union {
+		MetaEntityID      alias_parent_id;
+		MetaRenderShader  render;
+	};
 } MetaShader;
 
 #define META_STRUCT_FIELDS \
@@ -2223,6 +2240,44 @@ meta_pack_shader_common(MetaContext *ctx, MetaEntityID shader_id, MetaEntry *e, 
 }
 
 function i64
+meta_pack_render_shader(MetaContext *ctx, MetaEntry *entries, i64 entry_count, MetaEntityID group_entity_id)
+{
+	assert(entries[0].kind == MetaEntryKind_RenderShader);
+
+	MetaEntityID entity_id = meta_intern_entity(ctx, entries->name, MetaEntityKind_Shader,
+	                                            group_entity_id, entries->location, 0);
+	meta_entity(ctx, entity_id)->shader.kind = MetaShaderKind_Render;
+
+	meta_entry_argument_expected(entries);
+
+	MetaEntryScope scope = meta_entry_extract_scope(entries, entry_count);
+	if (scope.consumed > 1) {
+		for (MetaEntry *e = scope.start; e < scope.one_past_last; e++) {
+			switch (e->kind) {
+
+			case MetaEntryKind_VertexShader:{
+				if (meta_entity(ctx, entity_id)->shader.files[0].len)
+					meta_entry_error(e, "primitive shader file redefined\n");
+				meta_entity(ctx, entity_id)->shader.files[0] = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
+				meta_entity(ctx, entity_id)->shader.render.kind = MetaShaderPrimitiveKind_Vertex;
+			}break;
+
+			case MetaEntryKind_FragmentShader:{
+				if (meta_entity(ctx, entity_id)->shader.files[1].len)
+					meta_entry_error(e, "fragment shader file redefined\n");
+				meta_entity(ctx, entity_id)->shader.files[1] = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
+			}break;
+
+			default:{
+				e += meta_pack_shader_common(ctx, entity_id, e, scope.one_past_last - e, group_entity_id);
+			}break;
+			}
+		}
+	}
+	return scope.consumed;
+}
+
+function i64
 meta_pack_compute_shader(MetaContext *ctx, MetaEntry *entries, i64 entry_count, MetaEntityID group_entity_id)
 {
 	assert(entries[0].kind == MetaEntryKind_Shader);
@@ -2235,7 +2290,7 @@ meta_pack_compute_shader(MetaContext *ctx, MetaEntry *entries, i64 entry_count, 
 		meta_entry_argument_expected(entries, s8("[file_name]"));
 	} else if (entries->argument_count == 1) {
 		s8 shader_file = meta_entry_argument_expect(entries, 0, MetaEntryArgumentKind_String).string;
-		meta_entity(ctx, entity_id)->shader.file = shader_file;
+		meta_entity(ctx, entity_id)->shader.files[0] = shader_file;
 	}
 
 	MetaEntryScope scope = meta_entry_extract_scope(entries, entry_count);
@@ -2263,6 +2318,9 @@ meta_pack_shader_group(MetaContext *ctx, MetaEntry *entries, i64 entry_count)
 	if (scope.consumed > 1) {
 		for (MetaEntry *e = scope.start; e < scope.one_past_last; e++) {
 			switch (e->kind) {
+			case MetaEntryKind_RenderShader:{
+				e += meta_pack_render_shader(ctx, e, scope.one_past_last - e, entity_id);
+			}break;
 			case MetaEntryKind_Shader:{
 				e += meta_pack_compute_shader(ctx, e, scope.one_past_last - e, entity_id);
 			}break;
@@ -3126,12 +3184,15 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 		}
 	} meta_end_scope(m, s8("};\n"));
 
-	meta_begin_scope(m, s8("read_only global s8 " META_NAMESPACE_LOWER "_reloadable_shader_files[] = {"));
+	meta_begin_scope(m, s8("read_only global s8 *" META_NAMESPACE_LOWER "_reloadable_shader_files[] = {"));
 	{
 		for (da_count shader = 0; shader < ctx->base_shader_count; shader++) {
 			da_count    id = ctx->base_shader_ids[shader];
 			MetaShader *s  = &ctx->entities.data[id].shader;
-			meta_push_line(m, s8("s8_comp(\""), s->file, s8("\"),"));
+			meta_begin_line(m, s8("(s8 []){s8_comp(\""), s->files[0], s8("\")"));
+			if (s->files[1].len)
+				meta_push(m, s8(", s8_comp(\""), s->files[1], s8("\")"));
+			meta_end_line(m, s8("},"));
 		}
 	} meta_end_scope(m, s8("};\n"));
 
@@ -3206,7 +3267,7 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 
 			case MetaEntityKind_PushConstants:{
 				meta_push_line(m, s8("s8_comp(\"\""));
-				meta_push_line(m, s8("\"layout(std140, binding = 0) uniform PushConstants {\\n\""));
+				meta_push_line(m, s8("\"layout(push_constant, std430) uniform PushConstants {\\n\""));
 				metagen_push_struct_body(m, &e->table, meta_kind_glsl_types, e->table.entries[MetaStructField_Name],
 				                         e->table.entries[MetaStructField_Elements], s8("\"  "), s8("\\n\""), s8(""));
 				meta_push_line(m, s8("\"};\\n\""));
@@ -3227,6 +3288,21 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 			m->scratch = ctx->scratch;
 		}
 	} meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global b8 " META_NAMESPACE_LOWER "_shader_has_primitive[] = {"));
+	for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
+		MetaShader *s = &ctx->entities.data[ctx->base_shader_ids[bs]].shader;
+		meta_push_line(m, s->kind == MetaShaderKind_Render ? s8("1,") : s8("0,"));
+	}
+	meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global b8 " META_NAMESPACE_LOWER "_shader_primitive_is_vertex[] = {"));
+	for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
+		MetaShader *s = &ctx->entities.data[ctx->base_shader_ids[bs]].shader;
+		b8 vertex = s->kind == MetaShaderKind_Render && s->render.kind == MetaShaderPrimitiveKind_Vertex;
+		meta_push_line(m, vertex ? s8("1,") : s8("0,"));
+	}
+	meta_end_scope(m, s8("};\n"));
 }
 
 function void
@@ -3237,30 +3313,67 @@ meta_push_shader_bake(MetaprogramContext *m, MetaContext *ctx)
 
 		s8 shader_name = ctx->entity_names.data[ctx->base_shader_ids[bs]];
 
-		meta_begin_line(m, s8("read_only global u8 " META_NAMESPACE_LOWER  "_shader_"));
-		for (i64 i = 0; i < shader_name.len; i++)
-			stream_append_byte(&m->stream, ToLower(shader_name.data[i]));
+		for EachElement(s->files, it) {
+			if (s->files[it].len > 0) {
+				meta_begin_line(m, s8("read_only global u8 " META_NAMESPACE_LOWER  "_shader_"));
+				for (i64 i = 0; i < shader_name.len; i++)
+					stream_append_byte(&m->stream, ToLower(shader_name.data[i]));
 
-		meta_begin_scope(m, s8("_bytes[] = {")); {
-			Arena scratch = m->scratch;
-			s8 filename = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), s8("shaders"), s->file);
-			s8 file     = read_entire_file((c8 *)filename.data, &scratch);
-			metagen_push_byte_array(m, file);
-		} meta_end_scope(m, s8("};\n"));
+				if (s->kind == MetaShaderKind_Render)
+					meta_push(m, it == 0 ? s8("_primitive") : s8("_fragment"));
+
+				meta_begin_scope(m, s8("_bytes[] = {")); {
+					Arena scratch = m->scratch;
+					s8 filename = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), s8("shaders"), s->files[it]);
+					s8 file     = read_entire_file((c8 *)filename.data, &scratch);
+					metagen_push_byte_array(m, file);
+				} meta_end_scope(m, s8("};\n"));
+			}
+		}
 	}
 
-	meta_begin_scope(m, s8("read_only global s8 " META_NAMESPACE_LOWER "_shader_data[] = {")); {
+	meta_begin_scope(m, s8("read_only global s8 *" META_NAMESPACE_LOWER "_shader_data[] = {")); {
 		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
+			MetaShader *s = &ctx->entities.data[ctx->base_shader_ids[bs]].shader;
+
 			s8 shader_name = ctx->entity_names.data[ctx->base_shader_ids[bs]];
 
-			meta_begin_line(m, s8("{.data = " META_NAMESPACE_LOWER "_shader_"));
-			for (iz i = 0; i < shader_name.len; i++)
+			if (s->kind == MetaShaderKind_Render) {
+				meta_begin_scope(m, s8("(s8 []){"));
+				meta_indent(m);
+			} else {
+				meta_begin_line(m,  s8("(s8 []){"));
+			}
+
+			meta_push(m, s8("{.data = " META_NAMESPACE_LOWER "_shader_"));
+			for (i64 i = 0; i < shader_name.len; i++)
 				stream_append_byte(&m->stream, ToLower(shader_name.data[i]));
 
+			if (s->kind == MetaShaderKind_Render)
+				meta_push(m, s8("_primitive"));
+
 			meta_push(m, s8("_bytes, .len = countof(" META_NAMESPACE_LOWER "_shader_"));
-			for (iz i = 0; i < shader_name.len; i++)
+			for (i64 i = 0; i < shader_name.len; i++)
 				stream_append_byte(&m->stream, ToLower(shader_name.data[i]));
-			meta_end_line(m,  s8("_bytes)},"));
+
+			if (s->kind == MetaShaderKind_Render)
+				meta_push(m, s8("_primitive"));
+			meta_push(m, s8("_bytes)}"));
+
+			if (s->kind == MetaShaderKind_Render) {
+				meta_end_line(m, s8(","));
+				meta_begin_line(m, s8("{.data = " META_NAMESPACE_LOWER "_shader_"));
+				for (i64 i = 0; i < shader_name.len; i++)
+					stream_append_byte(&m->stream, ToLower(shader_name.data[i]));
+
+				meta_push(m, s8("_fragment_bytes, .len = countof(" META_NAMESPACE_LOWER "_shader_"));
+				for (i64 i = 0; i < shader_name.len; i++)
+					stream_append_byte(&m->stream, ToLower(shader_name.data[i]));
+				meta_end_line(m, s8("_fragment_bytes)}"));
+			}
+
+			if (s->kind == MetaShaderKind_Render) meta_end_scope(m, s8("},"));
+			else                                  meta_end_line(m,  s8("},"));
 		}
 	} meta_end_scope(m, s8("};\n"));
 }
@@ -3296,7 +3409,9 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		u32 dep_count = 0;
 		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
 			MetaShader *s = &ctx->entities.data[ctx->base_shader_ids[bs]].shader;
-			deps[dep_count++] = (c8 *)push_s8_from_parts(&m->scratch, s8(OS_PATH_SEPARATOR), s8("shaders"), s->file).data;
+			deps[dep_count++] = (c8 *)push_s8_from_parts(&m->scratch, s8(OS_PATH_SEPARATOR), s8("shaders"), s->files[0]).data;
+			if (s->files[1].len > 0)
+				deps[dep_count++] = (c8 *)push_s8_from_parts(&m->scratch, s8(OS_PATH_SEPARATOR), s8("shaders"), s->files[1]).data;
 		}
 		if (needs_rebuild_(out_shaders, deps, dep_count)) {
 			build_log_generate("Bake Shaders");
@@ -3567,6 +3682,19 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 			meta_end_line(m, s8(","));
 		}
 	} meta_end_scope(m, s8("};\n"));
+
+	meta_begin_scope(m, s8("read_only global u8 " META_NAMESPACE_LOWER "_shader_push_constant_sizes[] = {"));
+	for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
+		da_count    id = ctx->base_shader_ids[bs];
+		MetaEntity *e  = ctx->entities.data + id;
+		MetaEntityID pc_id = meta_entity_first_child_of_kind(ctx, e, MetaEntityKind_PushConstants);
+		if (pc_id.value != 0) {
+			meta_push_line(m, s8("sizeof(" META_NAMESPACE_UPPER), ctx->entity_names.data[id], s8("PushConstants),"));
+		} else {
+			meta_push_line(m, s8("0,"));
+		}
+	}
+	meta_end_scope(m, s8("};\n"));
 
 	//fprintf(stderr, "%.*s\n", (i32)m.stream.widx, m.stream.data);
 
@@ -4073,7 +4201,7 @@ metagen_load_context(Arena *arena, char *filename)
 	{
 		for (da_count shader = 0; shader < ctx->entity_kind_counts[MetaEntityKind_Shader]; shader++) {
 			MetaEntity *e = ctx->entities.data + ctx->entity_kind_ids[MetaEntityKind_Shader][shader];
-			if (e->shader.file.len > 0)
+			if (e->shader.files[0].len > 0)
 				ctx->base_shader_count++;
 		}
 
@@ -4083,14 +4211,14 @@ metagen_load_context(Arena *arena, char *filename)
 		da_count base_shader_ids_index = 0;
 		for (da_count shader = 0; shader < ctx->entity_kind_counts[MetaEntityKind_Shader]; shader++) {
 			da_count id = ctx->entity_kind_ids[MetaEntityKind_Shader][shader];
-			if (ctx->entities.data[id].shader.file.len > 0)
+			if (ctx->entities.data[id].shader.files[0].len > 0)
 				ctx->base_shader_ids[base_shader_ids_index++] = id;
 		}
 
 		// NOTE(rnp): first pass to resolve real shaders
 		for (da_count shader = 0; shader < ctx->entity_kind_counts[MetaEntityKind_Shader]; shader++) {
 			da_count id = ctx->entity_kind_ids[MetaEntityKind_Shader][shader];
-			if (ctx->entities.data[id].shader.file.len > 0) {
+			if (ctx->entities.data[id].shader.files[0].len > 0) {
 				ctx->base_shader_id_map[shader] = meta_lookup_id_slow(ctx->base_shader_ids,
 				                                                      ctx->base_shader_count,
 				                                                      id);

@@ -4,7 +4,7 @@
 
 // NOTE: Constants (Integer)
 #define BeamformerFilterSlots              (4)
-#define BeamformerMaxBacklogFrames         (16)
+#define BeamformerMaxBacklogFrames         (4096)
 #define BeamformerMaxChannelCount          (256)
 #define BeamformerMaxEmmissionsCount       (256)
 #define BeamformerMaxComputeShaderStages   (16)
@@ -84,23 +84,31 @@ typedef enum {
 } BeamformerAcquisitionKind;
 
 typedef enum {
-	BeamformerShaderKind_CudaDecode  = 0,
-	BeamformerShaderKind_CudaHilbert = 1,
-	BeamformerShaderKind_Decode      = 2,
-	BeamformerShaderKind_Filter      = 3,
-	BeamformerShaderKind_Demodulate  = 4,
-	BeamformerShaderKind_DAS         = 5,
-	BeamformerShaderKind_MinMax      = 6,
-	BeamformerShaderKind_Sum         = 7,
-	BeamformerShaderKind_Render3D    = 8,
+	BeamformerShaderKind_CudaDecode         = 0,
+	BeamformerShaderKind_CudaHilbert        = 1,
+	BeamformerShaderKind_Decode             = 2,
+	BeamformerShaderKind_Filter             = 3,
+	BeamformerShaderKind_Demodulate         = 4,
+	BeamformerShaderKind_DAS                = 5,
+	BeamformerShaderKind_Sum                = 6,
+	BeamformerShaderKind_MinMax             = 7,
+	BeamformerShaderKind_CoherencyWeighting = 8,
+	BeamformerShaderKind_BufferClear        = 9,
+	BeamformerShaderKind_RenderBeamformed   = 10,
 	BeamformerShaderKind_Count,
 
-	BeamformerShaderKind_ComputeFirst = BeamformerShaderKind_CudaDecode,
-	BeamformerShaderKind_ComputeLast  = BeamformerShaderKind_Sum,
-	BeamformerShaderKind_ComputeCount = 8,
-	BeamformerShaderKind_RenderFirst  = BeamformerShaderKind_Render3D,
-	BeamformerShaderKind_RenderLast   = BeamformerShaderKind_Render3D,
-	BeamformerShaderKind_RenderCount  = 1,
+	BeamformerShaderKind_ComputeFirst         = BeamformerShaderKind_CudaDecode,
+	BeamformerShaderKind_ComputeLast          = BeamformerShaderKind_MinMax,
+	BeamformerShaderKind_ComputeCount         = 8,
+	BeamformerShaderKind_ComputeHelpersFirst  = BeamformerShaderKind_CoherencyWeighting,
+	BeamformerShaderKind_ComputeHelpersLast   = BeamformerShaderKind_CoherencyWeighting,
+	BeamformerShaderKind_ComputeHelpersCount  = 1,
+	BeamformerShaderKind_ComputeInternalFirst = BeamformerShaderKind_BufferClear,
+	BeamformerShaderKind_ComputeInternalLast  = BeamformerShaderKind_BufferClear,
+	BeamformerShaderKind_ComputeInternalCount = 1,
+	BeamformerShaderKind_RenderFirst          = BeamformerShaderKind_RenderBeamformed,
+	BeamformerShaderKind_RenderLast           = BeamformerShaderKind_RenderBeamformed,
+	BeamformerShaderKind_RenderCount          = 1,
 } BeamformerShaderKind;
 
 typedef struct {
@@ -168,10 +176,78 @@ typedef struct {
 } BeamformerParametersSimple;
 
 typedef struct {
-	m4 xdc_transform;
-	m4 voxel_transform;
-	v2 xdc_element_pitch;
+	v2  focal_vectors[BeamformerMaxChannelCount];
+	i16 sparse_elements[BeamformerMaxChannelCount];
+	u16 transmit_receive_orientations[BeamformerMaxChannelCount];
+} BeamformerDASArrayParameters;
+
+typedef struct {
+	u64 hadamard_buffer;
+	u64 rf_buffer;
+	u64 output_buffer;
+	u64 output_rf_buffer;
+	b32 first_pass;
+} BeamformerDecodePushConstants;
+
+typedef struct {
+	u64 input_data;
+	u64 output_data;
+	u64 filter_coefficients;
+} BeamformerFilterPushConstants;
+
+typedef struct {
+	m4  xdc_transform;
+	m4  voxel_transform;
+	v2  xdc_element_pitch;
+	u64 rf_data;
+	u64 output_data;
+	u64 incoherent_output;
+	u64 array_parameters;
+	u32 output_size_x;
+	u32 output_size_y;
+	u32 output_size_z;
+	u32 cycle_t;
+	i32 channel_t;
 } BeamformerDASPushConstants;
+
+typedef struct {
+	u64 output_data;
+	u64 input_data;
+	u32 image_elements;
+	f32 scale;
+} BeamformerSumPushConstants;
+
+typedef struct {
+	u64 left_side_buffer;
+	u64 right_side_buffer;
+	u32 elements;
+	f32 scale;
+	u32 output_size_x;
+	u32 output_size_y;
+	u32 output_size_z;
+} BeamformerCoherencyWeightingPushConstants;
+
+typedef struct {
+	u64 data;
+	u32 clear_word;
+	u32 words;
+} BeamformerBufferClearPushConstants;
+
+typedef struct {
+	m4  mvp_matrix;
+	u64 positions;
+	u64 normals;
+	v4  bounding_box_colour;
+	f32 bounding_box_fraction;
+	f32 db_cutoff;
+	f32 threshold;
+	f32 gamma;
+	u64 input_data;
+	u32 input_size_x;
+	u32 input_size_y;
+	u32 input_size_z;
+	u32 data_kind;
+} BeamformerRenderBeamformedPushConstants;
 
 typedef struct {
 	u32 data_kind;
@@ -211,7 +287,6 @@ typedef struct {
 	u32 coherency_weighting;
 	u32 single_focus;
 	u32 single_orientation;
-	u32 fast;
 	u32 sparse;
 	u32 acquisition_count;
 	u32 acquisition_kind;
@@ -228,10 +303,15 @@ typedef struct {
 	f32 transmit_angle;
 } BeamformerDASBakeParameters;
 
+typedef struct {
+	u32 data_kind;
+} BeamformerCoherencyWeightingBakeParameters;
+
 typedef union {
-	BeamformerDecodeBakeParameters Decode;
-	BeamformerFilterBakeParameters Filter;
-	BeamformerDASBakeParameters    DAS;
+	BeamformerDecodeBakeParameters             Decode;
+	BeamformerFilterBakeParameters             Filter;
+	BeamformerDASBakeParameters                DAS;
+	BeamformerCoherencyWeightingBakeParameters CoherencyWeighting;
 } BeamformerShaderBakeParameters;
 
 typedef union {
@@ -437,27 +517,33 @@ read_only global s8 beamformer_shader_names[] = {
 	s8_comp("Filter"),
 	s8_comp("Demodulate"),
 	s8_comp("DAS"),
-	s8_comp("MinMax"),
 	s8_comp("Sum"),
-	s8_comp("Render3D"),
+	s8_comp("MinMax"),
+	s8_comp("CoherencyWeighting"),
+	s8_comp("BufferClear"),
+	s8_comp("RenderBeamformed"),
 };
 
 read_only global BeamformerShaderKind beamformer_reloadable_shader_kinds[] = {
 	BeamformerShaderKind_Decode,
 	BeamformerShaderKind_Filter,
 	BeamformerShaderKind_DAS,
-	BeamformerShaderKind_MinMax,
 	BeamformerShaderKind_Sum,
-	BeamformerShaderKind_Render3D,
+	BeamformerShaderKind_MinMax,
+	BeamformerShaderKind_CoherencyWeighting,
+	BeamformerShaderKind_BufferClear,
+	BeamformerShaderKind_RenderBeamformed,
 };
 
-read_only global s8 beamformer_reloadable_shader_files[] = {
-	s8_comp("decode.glsl"),
-	s8_comp("filter.glsl"),
-	s8_comp("das.glsl"),
-	s8_comp("min_max.glsl"),
-	s8_comp("sum.glsl"),
-	s8_comp("render_3d.frag.glsl"),
+read_only global s8 *beamformer_reloadable_shader_files[] = {
+	(s8 []){s8_comp("decode.glsl")},
+	(s8 []){s8_comp("filter.glsl")},
+	(s8 []){s8_comp("das.glsl")},
+	(s8 []){s8_comp("sum.glsl")},
+	(s8 []){s8_comp("min_max.glsl")},
+	(s8 []){s8_comp("coherency_weighting.glsl")},
+	(s8 []){s8_comp("buffer_clear.glsl")},
+	(s8 []){s8_comp("render_3d.vert.glsl"), s8_comp("render_3d.frag.glsl")},
 };
 
 read_only global i32 beamformer_shader_reloadable_index_by_shader[] = {
@@ -470,6 +556,8 @@ read_only global i32 beamformer_shader_reloadable_index_by_shader[] = {
 	3,
 	4,
 	5,
+	6,
+	7,
 };
 
 read_only global i32 beamformer_reloadable_compute_shader_info_indices[] = {
@@ -480,8 +568,16 @@ read_only global i32 beamformer_reloadable_compute_shader_info_indices[] = {
 	4,
 };
 
-read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
+read_only global i32 beamformer_reloadable_compute_helpers_shader_info_indices[] = {
 	5,
+};
+
+read_only global i32 beamformer_reloadable_compute_internal_shader_info_indices[] = {
+	6,
+};
+
+read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
+	7,
 };
 
 read_only global s8 beamformer_shader_global_header_strings[] = {
@@ -497,6 +593,23 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"#define DecodeMode_None     0\n"
 	"#define DecodeMode_Hadamard 1\n"
 	"\n"),
+	s8_comp(""
+	"layout(push_constant, std430) uniform PushConstants {\n"
+	"  uint64_t hadamard_buffer;\n"
+	"  uint64_t rf_buffer;\n"
+	"  uint64_t output_buffer;\n"
+	"  uint64_t output_rf_buffer;\n"
+	"  bool     first_pass;\n"
+	"};\n"
+	"\n"),
+	s8_comp(""
+	"layout(push_constant, std430) uniform PushConstants {\n"
+	"  uint64_t input_data;\n"
+	"  uint64_t output_data;\n"
+	"  uint64_t filter_coefficients;\n"
+	"};\n"
+	"\n"),
+	s8_comp("#define MaxChannelCount (256)\n\n"),
 	s8_comp(""
 	"#define AcquisitionKind_FORCES         0\n"
 	"#define AcquisitionKind_UFORCES        1\n"
@@ -522,30 +635,115 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"#define RCAOrientation_Columns 2\n"
 	"\n"),
 	s8_comp(""
-	"layout(std140, binding = 0) uniform PushConstants {\n"
-	"  mat4 xdc_transform;\n"
-	"  mat4 voxel_transform;\n"
-	"  vec2 xdc_element_pitch;\n"
+	"struct DASArrayParameters {\n"
+	"  f32vec2  focal_vectors[MaxChannelCount];\n"
+	"  int16_t  sparse_elements[MaxChannelCount];\n"
+	"  uint16_t transmit_receive_orientations[MaxChannelCount];\n"
+	"};\n"
+	"\n"),
+	s8_comp(""
+	"layout(push_constant, std430) uniform PushConstants {\n"
+	"  f32mat4  xdc_transform;\n"
+	"  f32mat4  voxel_transform;\n"
+	"  f32vec2  xdc_element_pitch;\n"
+	"  uint64_t rf_data;\n"
+	"  uint64_t output_data;\n"
+	"  uint64_t incoherent_output;\n"
+	"  uint64_t array_parameters;\n"
+	"  uint32_t output_size_x;\n"
+	"  uint32_t output_size_y;\n"
+	"  uint32_t output_size_z;\n"
+	"  uint32_t cycle_t;\n"
+	"  int32_t  channel_t;\n"
+	"};\n"
+	"\n"),
+	s8_comp(""
+	"layout(push_constant, std430) uniform PushConstants {\n"
+	"  uint64_t  output_data;\n"
+	"  uint64_t  input_data;\n"
+	"  uint32_t  image_elements;\n"
+	"  float32_t scale;\n"
+	"};\n"
+	"\n"),
+	s8_comp(""
+	"layout(push_constant, std430) uniform PushConstants {\n"
+	"  uint64_t  left_side_buffer;\n"
+	"  uint64_t  right_side_buffer;\n"
+	"  uint32_t  elements;\n"
+	"  float32_t scale;\n"
+	"  uint32_t  output_size_x;\n"
+	"  uint32_t  output_size_y;\n"
+	"  uint32_t  output_size_z;\n"
+	"};\n"
+	"\n"),
+	s8_comp(""
+	"layout(push_constant, std430) uniform PushConstants {\n"
+	"  uint64_t data;\n"
+	"  uint32_t clear_word;\n"
+	"  uint32_t words;\n"
+	"};\n"
+	"\n"),
+	s8_comp(""
+	"layout(push_constant, std430) uniform PushConstants {\n"
+	"  f32mat4   mvp_matrix;\n"
+	"  uint64_t  positions;\n"
+	"  uint64_t  normals;\n"
+	"  f32vec4   bounding_box_colour;\n"
+	"  float32_t bounding_box_fraction;\n"
+	"  float32_t db_cutoff;\n"
+	"  float32_t threshold;\n"
+	"  float32_t gamma;\n"
+	"  uint64_t  input_data;\n"
+	"  uint32_t  input_size_x;\n"
+	"  uint32_t  input_size_y;\n"
+	"  uint32_t  input_size_z;\n"
+	"  uint32_t  data_kind;\n"
 	"};\n"
 	"\n"),
 };
 
+read_only global b8 beamformer_shader_has_primitive[] = {
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	1,
+};
+
+read_only global b8 beamformer_shader_primitive_is_vertex[] = {
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	0,
+	1,
+};
+
 read_only global i32 *beamformer_shader_header_vectors[] = {
-	(i32 []){0, 1},
-	(i32 []){0},
-	(i32 []){2, 0, 3, 4, 5},
+	(i32 []){0, 1, 2},
+	(i32 []){0, 3},
+	(i32 []){4, 5, 0, 6, 7, 8, 9},
+	(i32 []){0, 10},
 	0,
-	0,
-	0,
+	(i32 []){0, 11},
+	(i32 []){12},
+	(i32 []){0, 13},
 };
 
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
+	3,
+	2,
+	7,
+	2,
+	0,
 	2,
 	1,
-	5,
-	0,
-	0,
-	0,
+	2,
 };
 
 read_only global s8 *beamformer_shader_bake_parameter_names[] = {
@@ -585,7 +783,6 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("CoherencyWeighting"),
 		s8_comp("SingleFocus"),
 		s8_comp("SingleOrientation"),
-		s8_comp("Fast"),
 		s8_comp("Sparse"),
 		s8_comp("AcquisitionCount"),
 		s8_comp("AcquisitionKind"),
@@ -603,13 +800,19 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 	},
 	0,
 	0,
+	(s8 []){
+		s8_comp("DataKind"),
+	},
+	0,
 	0,
 };
 
 read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
 	0x00000000UL,
 	0x00006000UL,
-	0x0007f000UL,
+	0x0003f800UL,
+	0x00000000UL,
+	0x00000000UL,
 	0x00000000UL,
 	0x00000000UL,
 	0x00000000UL,
@@ -618,9 +821,22 @@ read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
 read_only global u8 beamformer_shader_bake_parameter_counts[] = {
 	12,
 	15,
-	19,
+	18,
 	0,
 	0,
+	1,
 	0,
+	0,
+};
+
+read_only global u8 beamformer_shader_push_constant_sizes[] = {
+	sizeof(BeamformerDecodePushConstants),
+	sizeof(BeamformerFilterPushConstants),
+	sizeof(BeamformerDASPushConstants),
+	sizeof(BeamformerSumPushConstants),
+	0,
+	sizeof(BeamformerCoherencyWeightingPushConstants),
+	sizeof(BeamformerBufferClearPushConstants),
+	sizeof(BeamformerRenderBeamformedPushConstants),
 };
 

@@ -1,5 +1,5 @@
 @Constant(4)    FilterSlots
-@Constant(16)   MaxBacklogFrames
+@Constant(4096) MaxBacklogFrames
 @Constant(256)  MaxChannelCount
 @Constant(256)  MaxEmmissionsCount
 @Constant(16)   MaxComputeShaderStages
@@ -169,6 +169,12 @@
 	[data_kind                     S32    1]
 }
 
+@Struct DASArrayParameters
+{
+	[focal_vectors                 V2  MaxChannelCount]
+	[sparse_elements               S16 MaxChannelCount]
+	[transmit_receive_orientations U16 MaxChannelCount]
+}
 
 @Emit
 {
@@ -278,6 +284,15 @@
 			[ToProcess            to_process             U32]
 			[TransmitCount        transmit_count         U32]
 		}
+
+		@PushConstants
+		{
+			[hadamard_buffer  U64]
+			[rf_buffer        U64]
+			[output_buffer    U64]
+			[output_rf_buffer U64]
+			[first_pass       B32]
+		}
 	}
 
 	@Shader(filter.glsl) Filter
@@ -305,14 +320,25 @@
 			[DemodulationFrequency demodulation_frequency F32]
 			[SamplingFrequency     sampling_frequency     F32]
 		}
+
+		@PushConstants
+		{
+			[input_data          U64]
+			[output_data         U64]
+			[filter_coefficients U64]
+		}
 	}
 
 	@Shader(das.glsl) DAS
 	{
+		@Constant    MaxChannelCount
+
 		@Enumeration AcquisitionKind
 		@Enumeration DataKind
 		@Enumeration InterpolationMode
 		@Enumeration RCAOrientation
+
+		@Struct      DASArrayParameters
 
 		@Bake
 		{
@@ -320,7 +346,6 @@
 			[CoherencyWeighting         coherency_weighting          U32]
 			[SingleFocus                single_focus                 U32]
 			[SingleOrientation          single_orientation           U32]
-			[Fast                       fast                         U32]
 			[Sparse                     sparse                       U32]
 			[AcquisitionCount           acquisition_count            U32]
 			[AcquisitionKind            acquisition_kind             U32]
@@ -340,19 +365,103 @@
 
 		@PushConstants
 		{
-			[xdc_transform     M4]
-			[voxel_transform   M4]
-			[xdc_element_pitch V2]
+			[xdc_transform      M4]
+			[voxel_transform    M4]
+			[xdc_element_pitch  V2]
+			[rf_data           U64]
+			[output_data       U64]
+			[incoherent_output U64]
+			[array_parameters  U64]
+			[output_size_x     U32]
+			[output_size_y     U32]
+			[output_size_z     U32]
+			[cycle_t           U32]
+			[channel_t         S32]
+		}
+	}
+
+	@Shader(sum.glsl) Sum
+	{
+		@Enumeration DataKind
+		@PushConstants
+		{
+			[output_data    U64]
+			[input_data     U64]
+			[image_elements U32]
+			[scale          F32]
 		}
 	}
 
 	@Shader(min_max.glsl) MinMax
-	@Shader(sum.glsl) Sum
+}
+
+// NOTE: shaders which need to be baked into the beamforming pipeline
+// but should not be visible to the external interface
+@ShaderGroup ComputeHelpers
+{
+	@Shader(coherency_weighting.glsl) CoherencyWeighting
+	{
+		@Enumeration DataKind
+
+		@Bake
+		{
+			[DataKind data_kind U32]
+		}
+
+		@PushConstants
+		{
+			[left_side_buffer  U64]
+			[right_side_buffer U64]
+			[elements          U32]
+			[scale             F32]
+			[output_size_x     U32]
+			[output_size_y     U32]
+			[output_size_z     U32]
+		}
+	}
+}
+
+// NOTE: general compute shaders which do not need baking
+@ShaderGroup ComputeInternal
+{
+	@Shader(buffer_clear.glsl) BufferClear
+	{
+		@PushConstants
+		{
+			[data       U64]
+			[clear_word U32]
+			[words      U32]
+		}
+	}
 }
 
 @ShaderGroup Render
 {
-	@Shader(render_3d.frag.glsl) Render3D
+	@RenderShader RenderBeamformed
+	{
+		@Enumeration DataKind
+
+		@VertexShader(render_3d.vert.glsl)
+		@FragmentShader(render_3d.frag.glsl)
+
+		@PushConstants
+		{
+			[mvp_matrix             M4]
+			[positions             U64]
+			[normals               U64]
+
+			[bounding_box_colour    V4]
+			[bounding_box_fraction F32]
+			[db_cutoff             F32]
+			[threshold             F32]
+			[gamma                 F32]
+			[input_data            U64]
+			[input_size_x          U32]
+			[input_size_y          U32]
+			[input_size_z          U32]
+			[data_kind             U32]
+		}
+	}
 }
 
 /////////////////

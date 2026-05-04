@@ -370,18 +370,20 @@ typedef OS_WRITE_NEW_FILE_FN(os_write_new_file_fn);
 #define RENDERDOC_GET_API_FN(name) b32 name(u32 version, void **out_api)
 typedef RENDERDOC_GET_API_FN(renderdoc_get_api_fn);
 
-#define RENDERDOC_START_FRAME_CAPTURE_FN(name) void name(iptr gl_context, iptr window_handle)
+#define RENDERDOC_START_FRAME_CAPTURE_FN(name) void name(void *instance_handle, iptr window_handle)
 typedef RENDERDOC_START_FRAME_CAPTURE_FN(renderdoc_start_frame_capture_fn);
 
-#define RENDERDOC_END_FRAME_CAPTURE_FN(name) b32 name(iptr gl_context, iptr window_handle)
+#define RENDERDOC_END_FRAME_CAPTURE_FN(name) b32 name(void *instance_handle, iptr window_handle)
 typedef RENDERDOC_END_FRAME_CAPTURE_FN(renderdoc_end_frame_capture_fn);
 
-typedef alignas(16) u8 RenderDocAPI[216];
-#define RENDERDOC_API_FN_ADDR(a, offset) (*(iptr *)((*a) + offset))
-#define RENDERDOC_START_FRAME_CAPTURE(a) (renderdoc_start_frame_capture_fn *)RENDERDOC_API_FN_ADDR(a, 152)
-#define RENDERDOC_END_FRAME_CAPTURE(a)   (renderdoc_end_frame_capture_fn *)  RENDERDOC_API_FN_ADDR(a, 168)
+#define RENDERDOC_SET_CAPTURE_PATH_TEMPLATE_FN(name) void name(const char *template)
+typedef RENDERDOC_SET_CAPTURE_PATH_TEMPLATE_FN(renderdoc_set_capture_path_template_fn);
 
-#define LABEL_GL_OBJECT(type, id, s) {s8 _s = (s); glObjectLabel(type, id, (i32)_s.len, (c8 *)_s.data);}
+typedef alignas(16) u8 RenderDocAPI[216];
+#define RENDERDOC_API_FN_ADDR(a, offset)       (*(iptr *)((*a) + offset))
+#define RENDERDOC_START_FRAME_CAPTURE(a)       (renderdoc_start_frame_capture_fn *)       RENDERDOC_API_FN_ADDR(a, 152)
+#define RENDERDOC_END_FRAME_CAPTURE(a)         (renderdoc_end_frame_capture_fn *)         RENDERDOC_API_FN_ADDR(a, 168)
+#define RENDERDOC_SET_CAPTURE_PATH_TEMPLATE(a) (renderdoc_set_capture_path_template_fn *) RENDERDOC_API_FN_ADDR(a, 184)
 
 #include "util.c"
 #include "math.c"
