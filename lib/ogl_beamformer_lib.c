@@ -240,7 +240,7 @@ beamformer_reserve_parameter_blocks(uint32_t count)
 {
 	b32 result = 0;
 	if (check_shared_memory() &&
-	    lib_error_check(count <= BeamformerMaxParameterBlockSlots, ParameterBlockOverflow))
+	    lib_error_check(count <= BeamformerMaxParameterBlocks, ParameterBlockOverflow))
 	{
 		g_beamformer_library_context.bp->reserved_parameter_blocks = count;
 		result = 1;
@@ -365,7 +365,7 @@ beamformer_create_filter_base(BeamformerFilterParameters params, u8 filter_slot,
 			work->kind = BeamformerWorkKind_CreateFilter;
 			ctx->parameters      = params;
 			ctx->filter_slot     = filter_slot     % BeamformerFilterSlots;
-			ctx->parameter_block = parameter_block % BeamformerMaxParameterBlockSlots;
+			ctx->parameter_block = parameter_block % BeamformerMaxParameterBlocks;
 			beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
 			result = 1;
 		}

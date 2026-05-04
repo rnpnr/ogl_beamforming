@@ -498,8 +498,8 @@ typedef struct {
 
 typedef struct Table {
 	TableRow *data;
-	iz        count;
-	iz        capacity;
+	da_count  count;
+	da_count  capacity;
 
 	/* NOTE(rnp): counted by columns */
 	TextAlignment *alignment;
@@ -525,8 +525,8 @@ typedef struct {
 
 typedef struct {
 	TableStackFrame *data;
-	iz count;
-	iz capacity;
+	da_count         count;
+	da_count         capacity;
 } TableStack;
 
 typedef enum {
@@ -745,7 +745,7 @@ push_custom_view_title(Stream *s, Variable *var)
 		}break;
 		case BeamformerFrameViewKind_Indexed:{
 			stream_append_s8(s, s8(": Index {"));
-			stream_append_u64(s, *bv->cycler->cycler.state % BeamformerMaxSavedFrames);
+			stream_append_u64(s, *bv->cycler->cycler.state % BeamformerMaxBacklogFrames);
 			stream_append_s8(s, s8("} ["));
 		}break;
 		case BeamformerFrameViewKind_3DXPlane:{ stream_append_s8(s, s8(": 3D X-Plane")); }break;
@@ -1397,7 +1397,7 @@ ui_beamformer_frame_view_convert(BeamformerUI *ui, Arena *arena, Variable *view,
 	}break;
 	case BeamformerFrameViewKind_Indexed:{
 		bv->cycler = add_variable_cycler(ui, menu, arena, 0, ui->small_font, s8("Index:"),
-		                                 &bv->cycler_state, 0, BeamformerMaxSavedFrames);
+		                                 &bv->cycler_state, 0, BeamformerMaxBacklogFrames);
 	}break;
 	default:{}break;
 	}
@@ -2858,7 +2858,7 @@ draw_compute_stats_view(BeamformerUI *ui, Arena arena, Variable *view, Rect r, v
 	assert(view->type == VT_COMPUTE_STATS_VIEW);
 
 	read_only local_persist BeamformerComputePlan dummy_plan = {0};
-	u32 selected_plan = ui->selected_parameter_block % BeamformerMaxParameterBlockSlots;
+	u32 selected_plan = ui->selected_parameter_block % BeamformerMaxParameterBlocks;
 	BeamformerComputePlan *cp = ui->beamformer_context->compute_context.compute_plans[selected_plan];
 	if (!cp) cp = &dummy_plan;
 
@@ -3299,9 +3299,9 @@ draw_ui_regions(BeamformerUI *ui, Rect window, v2 mouse)
 
 	struct {
 		struct region_frame *data;
-		iz count;
-		iz capacity;
-	} stack = {init, 0, ARRAY_COUNT(init)};
+		da_count             count;
+		da_count             capacity;
+	} stack = {init, 0, countof(init)};
 
 	TempArena arena_savepoint = begin_temp_arena(&ui->arena);
 
@@ -3442,7 +3442,10 @@ function void
 end_text_input(InputState *is, Variable *var)
 {
 	f32 value = 0;
-	if (is->numeric) value = (f32)parse_f64((s8){.len = is->count, .data = is->buf});
+	if (is->numeric) {
+		NumberConversion number = number_from_s8((s8){.len = is->count, .data = is->buf});
+		value = number.F64;
+	}
 
 	switch (var->type) {
 	case VT_SCALED_F32:{ var->scaled_real32.val = value; }break;
@@ -4093,7 +4096,7 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 
 	asan_poison_region(ui->arena.beg, ui->arena.end - ui->arena.beg);
 
-	u32 selected_block = ui->selected_parameter_block % BeamformerMaxParameterBlockSlots;
+	u32 selected_block = ui->selected_parameter_block % BeamformerMaxParameterBlocks;
 	u32 selected_mask  = 1 << selected_block;
 	if (ctx->ui_dirty_parameter_blocks & selected_mask) {
 		BeamformerParameterBlock *pb = beamformer_parameter_block_lock(ui->shared_memory, selected_block, 0);

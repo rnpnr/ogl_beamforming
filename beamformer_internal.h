@@ -101,7 +101,7 @@ typedef struct {
 
 /* TODO(rnp): need 1 UBO per filter slot */
 #define BEAMFORMER_COMPUTE_UBO_LIST \
-	X(DAS,        BeamformerShaderDASPushConstants,    das)
+	X(DAS,        BeamformerDASPushConstants,    das)
 
 #define X(k, ...) BeamformerComputeUBOKind_##k,
 typedef enum {BEAMFORMER_COMPUTE_UBO_LIST BeamformerComputeUBOKind_Count} BeamformerComputeUBOKind;
@@ -188,7 +188,7 @@ typedef struct {
 typedef struct {
 	BeamformerRFBuffer rf_buffer;
 
-	BeamformerComputePlan *compute_plans[BeamformerMaxParameterBlockSlots];
+	BeamformerComputePlan *compute_plans[BeamformerMaxParameterBlocks];
 	BeamformerComputePlan *compute_plan_freelist;
 
 	/* NOTE(rnp): two interstage ssbos are allocated so that they may be used to
@@ -316,7 +316,7 @@ typedef struct {
 	BeamformerSharedMemory *shared_memory;
 	i64                     shared_memory_size;
 
-	BeamformerFrame beamform_frames[BeamformerMaxSavedFrames];
+	BeamformerFrame beamform_frames[BeamformerMaxBacklogFrames];
 	BeamformerFrame *latest_frame;
 	u32 next_render_frame_index;
 	u32 display_frame_index;

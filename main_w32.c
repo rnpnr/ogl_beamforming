@@ -74,8 +74,8 @@ typedef struct {
 	s8   name;
 
 	OSW32_FileWatch *data;
-	iz               count;
-	iz               capacity;
+	da_count         count;
+	da_count         capacity;
 
 	w32_overlapped          overlapped;
   w32_io_completion_event event;
@@ -178,7 +178,7 @@ function OSW32_FileWatchDirectory *
 os_lookup_file_watch_directory(OSW32_FileWatchDirectoryList *ctx, u64 hash)
 {
 	OSW32_FileWatchDirectory *result = 0;
-	for (iz i = 0; !result && i < ctx->count; i++)
+	for (da_count i = 0; !result && i < ctx->count; i++)
 		if (ctx->data[i].hash == hash)
 			result = ctx->data + i;
 	return result;
@@ -324,7 +324,7 @@ dispatch_file_watch(BeamformerInput *input, Arena arena, u64 current_time, OSW32
 
 		s8 file_name = s16_to_s8(&arena, (s16){.data = fni->filename, .len  = fni->filename_size / 2});
 		u64 hash = u64_hash_from_s8(file_name);
-		for (u32 i = 0; i < fw_dir->count; i++) {
+		for (da_count i = 0; i < fw_dir->count; i++) {
 			OSW32_FileWatch *fw = fw_dir->data + i;
 			if (fw->hash == hash) {
 				// NOTE(rnp): avoid multiple updates in a single frame
