@@ -13,7 +13,7 @@
 #define ValidVulkanHandle(h) ((h).value[0] != 0)
 
 #define MaxCommandBuffersInFlight  BeamformerMaxRawDataFramesInFlight
-#define MaxCommandBufferTimestamps (64)
+#define MaxCommandBufferTimestamps (1024)
 
 typedef enum {
 	VulkanQueueKind_Graphics,
@@ -2466,6 +2466,8 @@ vk_command_read_timestamps(VulkanTimeline timeline, Arena *arena)
 			if (count > 0) {
 				result = push_array(arena, u64, count + 1);
 				result[0] = count;
+
+				vk_host_wait_timeline(timeline, vq->command_buffer_submission_values[index], -1ULL);
 
 				vkGetQueryPoolResults(vk->device, vq->query_pool, index * MaxCommandBufferTimestamps, count,
 				                      count * sizeof(u64), result + 1, 8, VK_QUERY_RESULT_WAIT_BIT);
