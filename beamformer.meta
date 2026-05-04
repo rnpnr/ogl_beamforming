@@ -1,3 +1,4 @@
+@Constant(16)   ChannelChunkCount
 @Constant(4)    FilterSlots
 @Constant(4096) MaxBacklogFrames
 @Constant(256)  MaxChannelCount
@@ -350,6 +351,7 @@
 			[AcquisitionCount           acquisition_count            U32]
 			[AcquisitionKind            acquisition_kind             U32]
 			[ChannelCount               channel_count                U32]
+			[ChannelChunkCount          channel_chunk_count          U32]
 			[InterpolationMode          interpolation_mode           U32]
 			[SampleCount                sample_count                 U32]
 			[TransmitReceiveOrientation transmit_receive_orientation U32]
@@ -376,7 +378,7 @@
 			[output_size_y     U32]
 			[output_size_z     U32]
 			[cycle_t           U32]
-			[channel_t         S32]
+			[channel_offset    S32]
 		}
 	}
 
