@@ -3,6 +3,7 @@
 // GENERATED CODE
 
 // NOTE: Constants (Integer)
+#define BeamformerChannelChunkCount        (16)
 #define BeamformerFilterSlots              (4)
 #define BeamformerMaxBacklogFrames         (4096)
 #define BeamformerMaxChannelCount          (256)
@@ -153,6 +154,7 @@ typedef struct {
 	u32 acquisition_count;
 	u32 acquisition_kind;
 	u32 channel_count;
+	u32 channel_chunk_count;
 	u32 interpolation_mode;
 	u32 sample_count;
 	u32 transmit_receive_orientation;
@@ -195,7 +197,7 @@ typedef struct {
 	u32 output_size_y;
 	u32 output_size_z;
 	u32 cycle_t;
-	i32 channel_t;
+	i32 channel_offset;
 } BeamformerDASPushConstants;
 
 typedef struct {
@@ -616,7 +618,7 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"  uint32_t output_size_y;\n"
 	"  uint32_t output_size_z;\n"
 	"  uint32_t cycle_t;\n"
-	"  int32_t  channel_t;\n"
+	"  int32_t  channel_offset;\n"
 	"};\n"
 	"\n"),
 	s8_comp(""
@@ -749,6 +751,7 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("AcquisitionCount"),
 		s8_comp("AcquisitionKind"),
 		s8_comp("ChannelCount"),
+		s8_comp("ChannelChunkCount"),
 		s8_comp("InterpolationMode"),
 		s8_comp("SampleCount"),
 		s8_comp("TransmitReceiveOrientation"),
@@ -772,7 +775,7 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
 	0x00000000UL,
 	0x00006000UL,
-	0x0003f800UL,
+	0x0007f000UL,
 	0x00000000UL,
 	0x00000000UL,
 	0x00000000UL,
@@ -783,7 +786,7 @@ read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
 read_only global u8 beamformer_shader_bake_parameter_counts[] = {
 	12,
 	15,
-	18,
+	19,
 	0,
 	0,
 	1,
