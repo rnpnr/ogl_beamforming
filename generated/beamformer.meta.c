@@ -154,6 +154,12 @@ typedef struct {
 } BeamformerShaderDASBakeParameters;
 
 typedef struct {
+	m4 xdc_transform;
+	m4 voxel_transform;
+	v2 xdc_element_pitch;
+} BeamformerShaderDASPushConstants;
+
+typedef struct {
 	union {
 		BeamformerShaderDecodeBakeParameters Decode;
 		BeamformerShaderFilterBakeParameters Filter;
@@ -577,6 +583,50 @@ read_only global i32 beamformer_shader_bake_parameter_counts[] = {
 	9,
 	11,
 	13,
+	0,
+	0,
+	0,
+};
+
+read_only global s8 *beamformer_shader_push_constant_glsl_types[] = {
+	0,
+	0,
+	(s8 []){
+		s8_comp("mat4"),
+		s8_comp("mat4"),
+		s8_comp("vec2"),
+	},
+	0,
+	0,
+	0,
+};
+
+read_only global s8 *beamformer_shader_push_constant_names[] = {
+	0,
+	0,
+	(s8 []){
+		s8_comp("xdc_transform"),
+		s8_comp("voxel_transform"),
+		s8_comp("xdc_element_pitch"),
+	},
+	0,
+	0,
+	0,
+};
+
+read_only global u8 beamformer_shader_push_constant_counts[] = {
+	0,
+	0,
+	3,
+	0,
+	0,
+	0,
+};
+
+read_only global u8 beamformer_shader_push_constant_sizes[] = {
+	0,
+	0,
+	sizeof(BeamformerShaderDASPushConstants),
 	0,
 	0,
 	0,

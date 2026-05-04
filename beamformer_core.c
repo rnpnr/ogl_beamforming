@@ -546,7 +546,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb)
 				sd->bake.data_kind = BeamformerDataKind_Float32Complex;
 
 			BeamformerShaderDASBakeParameters *db = &sd->bake.DAS;
-			BeamformerDASUBO *du = &cp->das_ubo_data;
+			BeamformerShaderDASPushConstants  *du = &cp->das_ubo_data;
 			du->xdc_element_pitch      = pb->parameters.xdc_element_pitch;
 			db->sampling_frequency     = sampling_frequency;
 			db->demodulation_frequency = pb->parameters.demodulation_frequency;
@@ -659,16 +659,6 @@ stream_push_shader_header(Stream *s, BeamformerShaderKind shader_kind, s8 header
 function void
 load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_slot, Arena arena)
 {
-	read_only local_persist s8 compute_headers[BeamformerShaderKind_ComputeCount] = {
-		/* X(name, type, gltype) */
-		#define X(name, t, gltype) "\t" #gltype " " #name ";\n"
-		[BeamformerShaderKind_DAS] = s8_comp("layout(std140, binding = 0) uniform parameters {\n"
-			BEAMFORMER_DAS_UBO_PARAM_LIST
-			"};\n\n"
-		),
-		#undef X
-	};
-
 	BeamformerShaderKind shader = cp->pipeline.shaders[shader_slot];
 
 	u32 program          = 0;
@@ -681,7 +671,7 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 		                            beamformer_reloadable_shader_files[reloadable_index]);
 
 		Stream shader_stream = arena_stream(arena);
-		stream_push_shader_header(&shader_stream, base_shader, compute_headers[base_shader]);
+		stream_push_shader_header(&shader_stream, base_shader, s8(""));
 
 		i32  header_vector_length = beamformer_shader_header_vector_lengths[reloadable_index];
 		i32 *header_vector        = beamformer_shader_header_vectors[reloadable_index];
@@ -722,6 +712,16 @@ load_compute_shader(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 shader_sl
 		for (u32 bit = 0; bit < flag_count; bit++) {
 			stream_append_s8s(&shader_stream, s8("#define "), flag_names[bit],
 			                  (flags & (1 << bit))? s8(" 1") : s8(" 0"), s8("\n"));
+		}
+
+		u32  pc_count = beamformer_shader_push_constant_counts[reloadable_index];
+		s8  *pc_names = beamformer_shader_push_constant_names[reloadable_index];
+		s8  *pc_types = beamformer_shader_push_constant_glsl_types[reloadable_index];
+		if (pc_count) {
+			stream_append_s8s(&shader_stream, s8("\n\nlayout(std140, binding = 0) uniform PushConstants {\n"));
+			for (u32 it = 0; it < pc_count; it++)
+				stream_append_s8s(&shader_stream, s8("\t"), pc_types[it], s8(" "), pc_names[it],s8(";\n"));
+			stream_append_s8s(&shader_stream, s8("};"));
 		}
 
 		if (!renderdoc_attached())

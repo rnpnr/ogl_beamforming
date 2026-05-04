@@ -261,6 +261,8 @@
 		@Enumeration(DataKind)
 		@Flags([ComplexFilter OutputFloats])
 
+		@ShaderAlias Demodulate
+
 		@Bake
 		{
 			@BakeInt(DecimationRate       decimation_rate       )
@@ -275,8 +277,6 @@
 			@BakeFloat(DemodulationFrequency demodulation_frequency)
 			@BakeFloat(SamplingFrequency     sampling_frequency    )
 		}
-
-		@SubShader Demodulate
 	}
 
 	@Shader(das.glsl) DAS
@@ -303,6 +303,13 @@
 			@BakeFloat(SpeedOfSound          speed_of_sound        )
 			@BakeFloat(TimeOffset            time_offset           )
 			@BakeFloat(TransmitAngle         transmit_angle        )
+		}
+
+		@PushConstants
+		{
+			[mat4 M4 xdc_transform    ]
+			[mat4 M4 voxel_transform  ]
+			[vec2 V2 xdc_element_pitch]
 		}
 	}
 

@@ -52,18 +52,14 @@ typedef u64      uptr;
 
 #ifdef _DEBUG
   #define DEBUG_EXPORT EXPORT
-  #if OS_WINDOWS
-    #ifdef _BEAMFORMER_DLL
+  #ifdef _BEAMFORMER_DLL
+    #if OS_WINDOWS
       #define DEBUG_IMPORT __declspec(dllimport)
     #else
-      #define DEBUG_IMPORT __declspec(dllexport)
+      #define DEBUG_IMPORT extern
     #endif
   #else
-    #ifdef _BEAMFORMER_DLL
-      #define DEBUG_IMPORT extern
-    #else
-      #define DEBUG_IMPORT
-    #endif
+    #define DEBUG_IMPORT DEBUG_EXPORT
   #endif
   #define DEBUG_DECL(a) a
   #define assert(c) do { if (!(c)) debugbreak(); } while (0)
@@ -125,14 +121,15 @@ typedef u64      uptr;
 #define Sign(a)          ((a) < 0 ? -1 : 1)
 #define Between(x, a, b) ((x) >= (a) && (x) <= (b))
 #define Clamp(x, a, b)   ((x) < (a) ? (a) : (x) > (b) ? (b) : (x))
+#define Clamp01(x)       Clamp(x, 0, 1)
 #define Min(a, b)        ((a) < (b) ? (a) : (b))
 #define Max(a, b)        ((a) > (b) ? (a) : (b))
 #define IsPowerOfTwo(a)  (((a) & ((a) - 1)) == 0)
 
-#define ISDIGIT(c)       (BETWEEN((c), '0', '9'))
-#define ISUPPER(c)       (((c) & 0x20u) == 0)
-#define TOLOWER(c)       (((c) | 0x20u))
-#define TOUPPER(c)       (((c) & ~(0x20u)))
+#define IsDigit(c)       (Between((c), '0', '9'))
+#define IsUpper(c)       (((c) & 0x20u) == 0)
+#define ToLower(c)       (((c) | 0x20u))
+#define ToUpper(c)       (((c) & ~(0x20u)))
 
 #define f32_equal(x, y)  (Abs((x) - (y)) <= F32_EPSILON * Max(1.0f, Max(Abs(x), Abs(y))))
 

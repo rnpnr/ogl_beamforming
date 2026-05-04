@@ -99,23 +99,9 @@ typedef struct {
 	u32 ssbo;
 } BeamformerFilter;
 
-/* X(name, type, gltype) */
-#define BEAMFORMER_DAS_UBO_PARAM_LIST \
-	X(xdc_transform,          m4,  mat4) \
-	X(voxel_transform,        m4,  mat4) \
-	X(xdc_element_pitch,      v2,  vec2)
-
-typedef alignas(16) struct {
-	#define X(name, type, ...) type name;
-	BEAMFORMER_DAS_UBO_PARAM_LIST
-	#undef X
-	float _pad[2];
-} BeamformerDASUBO;
-static_assert((sizeof(BeamformerDASUBO) & 15) == 0, "UBO size must be a multiple of 16");
-
 /* TODO(rnp): need 1 UBO per filter slot */
 #define BEAMFORMER_COMPUTE_UBO_LIST \
-	X(DAS,        BeamformerDASUBO,    das)
+	X(DAS,        BeamformerShaderDASPushConstants,    das)
 
 #define X(k, ...) BeamformerComputeUBOKind_##k,
 typedef enum {BEAMFORMER_COMPUTE_UBO_LIST BeamformerComputeUBOKind_Count} BeamformerComputeUBOKind;
