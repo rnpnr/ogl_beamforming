@@ -10,10 +10,12 @@
  */
 
 typedef struct {
+	uint64_t shader_count;
+	uint32_t shader_ids[BeamformerMaxComputeShaderStages];
 	/* NOTE(rnp): this wants to be iterated on both dimensions. it depends entirely on which
 	 * visualization method you want to use. the coalescing function wants both directions */
-	float times[32][BeamformerMaxComputeShaderStages];
-	float rf_time_deltas[32];
+	float    times[32][BeamformerMaxComputeShaderStages];
+	float    rf_time_deltas[32];
 } BeamformerComputeStatsTable;
 
 /* X(type, id, pretty name) */
