@@ -6,7 +6,7 @@
 #define BeamformerFilterSlots              (4)
 #define BeamformerMaxBacklogFrames         (16)
 #define BeamformerMaxChannelCount          (256)
-#define BeamformerMaxEmmissionsCount       (256)
+#define BeamformerMaxEmissionsCount        (256)
 #define BeamformerMaxComputeShaderStages   (16)
 #define BeamformerMaxParameterBlocks       (16)
 #define BeamformerMaxRawDataFramesInFlight (3)
@@ -104,76 +104,6 @@ typedef enum {
 } BeamformerShaderKind;
 
 typedef struct {
-	f32 cycles;
-	f32 frequency;
-} BeamformerSineParameters;
-
-typedef struct {
-	f32 duration;
-	f32 min_frequency;
-	f32 max_frequency;
-} BeamformerChirpParameters;
-
-typedef struct {
-	f32 cutoff_frequency;
-	f32 beta;
-	u32 length;
-} BeamformerKaiserFilterParameters;
-
-typedef struct {
-	f32 duration;
-	f32 min_frequency;
-	f32 max_frequency;
-} BeamformerChirpFilterParameters;
-
-typedef struct {
-	m4  das_voxel_transform;
-	m4  xdc_transform;
-	v2  xdc_element_pitch;
-	uv2 raw_data_dimensions;
-	v2  focal_vector;
-	u32 transmit_receive_orientation;
-	u32 sample_count;
-	u32 channel_count;
-	u32 acquisition_count;
-	u32 acquisition_kind;
-	f32 time_offset;
-	u8  single_focus;
-	u8  single_orientation;
-	u8  decode_mode;
-	u8  sampling_mode;
-} BeamformerParametersHead;
-
-typedef struct {
-	iv4 output_points;
-	f32 sampling_frequency;
-	f32 demodulation_frequency;
-	f32 speed_of_sound;
-	f32 f_number;
-	u32 interpolation_mode;
-	u32 coherency_weighting;
-	u32 decimation_rate;
-} BeamformerParametersUI;
-
-typedef struct {
-	i16 channel_mapping[256];
-	i16 sparse_elements[256];
-	u8  transmit_receive_orientations[256];
-	f32 steering_angles[256];
-	f32 focal_depths[256];
-	i32 compute_stages[16];
-	i32 compute_stage_parameters[16];
-	u32 compute_stages_count;
-	i32 data_kind;
-} BeamformerParametersSimple;
-
-typedef struct {
-	m4 xdc_transform;
-	m4 voxel_transform;
-	v2 xdc_element_pitch;
-} BeamformerDASPushConstants;
-
-typedef struct {
 	u32 data_kind;
 	u32 dilate_output;
 	u32 use_shared_memory;
@@ -228,125 +158,157 @@ typedef struct {
 	f32 transmit_angle;
 } BeamformerDASBakeParameters;
 
+typedef struct {
+	m4 xdc_transform;
+	m4 voxel_transform;
+	v2 xdc_element_pitch;
+} BeamformerDASPushConstants;
+
+typedef struct {
+	f32 cycles;
+	f32 frequency;
+} BeamformerSineParameters;
+
+typedef struct {
+	f32 duration;
+	f32 min_frequency;
+	f32 max_frequency;
+} BeamformerChirpParameters;
+
+typedef struct {
+	BeamformerEmissionKind kind;
+	union {
+		BeamformerSineParameters  sine;
+		BeamformerChirpParameters chirp;
+	};
+} BeamformerEmissionParameters;
+
+typedef struct {
+	f32 cutoff_frequency;
+	f32 beta;
+	u32 length;
+} BeamformerKaiserFilterParameters;
+
+typedef struct {
+	f32 duration;
+	f32 min_frequency;
+	f32 max_frequency;
+} BeamformerMatchedChirpFilterParameters;
+
+typedef struct {
+	BeamformerFilterKind kind;
+	f32                  sampling_frequency;
+	b32                  complex;
+	union {
+		BeamformerKaiserFilterParameters       kaiser;
+		BeamformerMatchedChirpFilterParameters matched_chirp;
+	};
+} BeamformerFilterParameters;
+
+typedef struct {
+	m4                        das_voxel_transform;
+	m4                        xdc_transform;
+	v2                        xdc_element_pitch;
+	uv2                       raw_data_dimensions;
+	v2                        focal_vector;
+	u32                       transmit_receive_orientation;
+	u32                       sample_count;
+	u32                       channel_count;
+	u32                       acquisition_count;
+	BeamformerAcquisitionKind acquisition_kind;
+	BeamformerDecodeMode      decode_mode;
+	BeamformerSamplingMode    sampling_mode;
+	f32                       time_offset;
+	b32                       single_focus;
+	b32                       single_orientation;
+} BeamformerParametersHead;
+
+typedef struct {
+	iv4                         output_points;
+	f32                         sampling_frequency;
+	f32                         demodulation_frequency;
+	f32                         speed_of_sound;
+	f32                         f_number;
+	BeamformerInterpolationMode interpolation_mode;
+	b32                         coherency_weighting;
+	u32                         decimation_rate;
+} BeamformerUIParameters;
+
+typedef struct {
+	BeamformerContrastMode       contrast_mode;
+	BeamformerEmissionParameters emission_parameters;
+} BeamformerExtraParameters;
+
+typedef struct {
+	m4                           das_voxel_transform;
+	m4                           xdc_transform;
+	v2                           xdc_element_pitch;
+	uv2                          raw_data_dimensions;
+	v2                           focal_vector;
+	u32                          transmit_receive_orientation;
+	u32                          sample_count;
+	u32                          channel_count;
+	u32                          acquisition_count;
+	BeamformerAcquisitionKind    acquisition_kind;
+	BeamformerDecodeMode         decode_mode;
+	BeamformerSamplingMode       sampling_mode;
+	f32                          time_offset;
+	b32                          single_focus;
+	b32                          single_orientation;
+	iv4                          output_points;
+	f32                          sampling_frequency;
+	f32                          demodulation_frequency;
+	f32                          speed_of_sound;
+	f32                          f_number;
+	BeamformerInterpolationMode  interpolation_mode;
+	b32                          coherency_weighting;
+	u32                          decimation_rate;
+	BeamformerContrastMode       contrast_mode;
+	BeamformerEmissionParameters emission_parameters;
+} BeamformerParameters;
+
+typedef struct {
+	m4                           das_voxel_transform;
+	m4                           xdc_transform;
+	v2                           xdc_element_pitch;
+	uv2                          raw_data_dimensions;
+	v2                           focal_vector;
+	u32                          transmit_receive_orientation;
+	u32                          sample_count;
+	u32                          channel_count;
+	u32                          acquisition_count;
+	BeamformerAcquisitionKind    acquisition_kind;
+	BeamformerDecodeMode         decode_mode;
+	BeamformerSamplingMode       sampling_mode;
+	f32                          time_offset;
+	b32                          single_focus;
+	b32                          single_orientation;
+	iv4                          output_points;
+	f32                          sampling_frequency;
+	f32                          demodulation_frequency;
+	f32                          speed_of_sound;
+	f32                          f_number;
+	BeamformerInterpolationMode  interpolation_mode;
+	b32                          coherency_weighting;
+	u32                          decimation_rate;
+	BeamformerContrastMode       contrast_mode;
+	BeamformerEmissionParameters emission_parameters;
+	i16                          channel_mapping[BeamformerMaxChannelCount];
+	i16                          sparse_elements[BeamformerMaxEmissionsCount];
+	u8                           transmit_receive_orientations[BeamformerMaxEmissionsCount];
+	f32                          steering_angles[BeamformerMaxEmissionsCount];
+	f32                          focal_depths[BeamformerMaxEmissionsCount];
+	i32                          compute_stages[BeamformerMaxComputeShaderStages];
+	i32                          compute_stage_parameters[BeamformerMaxComputeShaderStages];
+	u32                          compute_stages_count;
+	BeamformerDataKind           data_kind;
+} BeamformerSimpleParameters;
+
 typedef union {
 	BeamformerDecodeBakeParameters Decode;
 	BeamformerFilterBakeParameters Filter;
 	BeamformerDASBakeParameters    DAS;
 } BeamformerShaderBakeParameters;
-
-typedef union {
-	struct {
-		f32 cycles;
-		f32 frequency;
-	} sine;
-	struct {
-		f32 duration;
-		f32 min_frequency;
-		f32 max_frequency;
-	} chirp;
-} BeamformerEmissionParameters;
-
-typedef struct {
-	m4  das_voxel_transform;
-	m4  xdc_transform;
-	v2  xdc_element_pitch;
-	uv2 raw_data_dimensions;
-	v2  focal_vector;
-	u32 transmit_receive_orientation;
-	u32 sample_count;
-	u32 channel_count;
-	u32 acquisition_count;
-	u32 acquisition_kind;
-	f32 time_offset;
-	u8  single_focus;
-	u8  single_orientation;
-	u8  decode_mode;
-	u8  sampling_mode;
-	iv4 output_points;
-	f32 sampling_frequency;
-	f32 demodulation_frequency;
-	f32 speed_of_sound;
-	f32 f_number;
-	u32 interpolation_mode;
-	u32 coherency_weighting;
-	u32 decimation_rate;
-	BeamformerContrastMode       contrast_mode;
-	BeamformerEmissionKind       emission_kind;
-	BeamformerEmissionParameters emission_parameters;
-} BeamformerParameters;
-
-typedef struct {
-	iv4 output_points;
-	f32 sampling_frequency;
-	f32 demodulation_frequency;
-	f32 speed_of_sound;
-	f32 f_number;
-	u32 interpolation_mode;
-	u32 coherency_weighting;
-	u32 decimation_rate;
-} BeamformerUIParameters;
-
-typedef struct {
-	BeamformerContrastMode       contrast_mode;
-	BeamformerEmissionKind       emission_kind;
-	BeamformerEmissionParameters emission_parameters;
-} BeamformerParametersExtra;
-
-typedef struct {
-	m4  das_voxel_transform;
-	m4  xdc_transform;
-	v2  xdc_element_pitch;
-	uv2 raw_data_dimensions;
-	v2  focal_vector;
-	u32 transmit_receive_orientation;
-	u32 sample_count;
-	u32 channel_count;
-	u32 acquisition_count;
-	u32 acquisition_kind;
-	f32 time_offset;
-	u8  single_focus;
-	u8  single_orientation;
-	u8  decode_mode;
-	u8  sampling_mode;
-	iv4 output_points;
-	f32 sampling_frequency;
-	f32 demodulation_frequency;
-	f32 speed_of_sound;
-	f32 f_number;
-	u32 interpolation_mode;
-	u32 coherency_weighting;
-	u32 decimation_rate;
-	BeamformerContrastMode       contrast_mode;
-	BeamformerEmissionKind       emission_kind;
-	BeamformerEmissionParameters emission_parameters;
-	i16 channel_mapping[256];
-	i16 sparse_elements[256];
-	u8  transmit_receive_orientations[256];
-	f32 steering_angles[256];
-	f32 focal_depths[256];
-	i32 compute_stages[16];
-	i32 compute_stage_parameters[16];
-	u32 compute_stages_count;
-	i32 data_kind;
-} BeamformerSimpleParameters;
-
-typedef struct {
-	BeamformerFilterKind kind;
-	union {
-		struct {
-			f32 cutoff_frequency;
-			f32 beta;
-			u32 length;
-		} kaiser;
-		struct {
-			f32 duration;
-			f32 min_frequency;
-			f32 max_frequency;
-		} matched_chirp;
-	};
-	f32 sampling_frequency;
-	b16 complex;
-} BeamformerFilterParameters;
 
 read_only global u8 beamformer_data_kind_element_size[] = {
 	2,

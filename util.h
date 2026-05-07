@@ -208,12 +208,19 @@ typedef alignas(16) union {
 typedef struct { u8 *beg, *end; } Arena;
 typedef struct { Arena *arena, original_arena; } TempArena;
 
-typedef struct { iz len; u8 *data; } s8;
+typedef struct { i64 len; u8 *data; } s8;
 #define s8(s) (s8){.len = countof(s) - 1, .data = (u8 *)s}
 #define s8_comp(s) {sizeof(s) - 1, (u8 *)s}
-#define s8_struct(v) (s8){.len = sizeof(*v), .data = (u8 *)v}
 
-typedef struct { iz len; u16 *data; } s16;
+typedef struct { i64 length; u8 *data; } str8;
+#define str8(s)        (str8){.length = countof(s) - 1, .data = (u8 *)s}
+#define str8_comp(s)         {sizeof(s) - 1, (u8 *)s}
+#define str8_struct(v) (str8){.length = sizeof(*v), .data = (u8 *)v}
+
+#define str8_from_s8(s) (str8){.length = (s).len, .data = (s).data}
+#define s8_from_str8(s)   (s8){.len = (s).length, .data = (s).data}
+
+typedef struct { i64 len; u16 *data; } s16;
 
 typedef struct { u32 cp, consumed; } UnicodeDecode;
 

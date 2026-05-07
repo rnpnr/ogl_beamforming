@@ -117,7 +117,7 @@ typedef struct {
 		struct {
 			BeamformerParametersHead  parameters_head;
 			BeamformerUIParameters    parameters_ui;
-			BeamformerParametersExtra parameters_extra;
+			BeamformerExtraParameters parameters_extra;
 		};
 	};
 

@@ -137,9 +137,7 @@ BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_transmit_receive_orientations_at(
  *   M = (A - 8) / (2.285 (ω_s - ω_p))
  */
 
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_create_filter(BeamformerFilterKind kind,
-                                                        void *filter_parameters, uint32_t filter_size,
-                                                        float sampling_frequency, uint32_t complex,
+BEAMFORMER_LIB_EXPORT uint32_t beamformer_create_filter(BeamformerFilterParameters *filter,
                                                         uint8_t filter_slot, uint8_t parameter_block);
 
 //////////////////////////

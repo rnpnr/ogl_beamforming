@@ -1,7 +1,7 @@
 @Constant(4)    FilterSlots
 @Constant(16)   MaxBacklogFrames
 @Constant(256)  MaxChannelCount
-@Constant(256)  MaxEmmissionsCount
+@Constant(256)  MaxEmissionsCount
 @Constant(16)   MaxComputeShaderStages
 @Constant(16)   MaxParameterBlocks
 @Constant(3)    MaxRawDataFramesInFlight
@@ -61,6 +61,7 @@
 	[cycles    F32]
 	[frequency F32]
 }
+@Library @Struct SineParameters
 
 @Struct ChirpParameters
 {
@@ -68,15 +69,28 @@
 	[min_frequency F32]
 	[max_frequency F32]
 }
+@Library @Struct ChirpParameters
 
-@MUnion(EmissionKind [
-	SineParameters
-	ChirpParameters
-]) Emission
+@Table([type c_member m_member]) EmissionParametersTable
+{
+	[SineParameters  sine  Sine ]
+	[ChirpParameters chirp Chirp]
+}
+@Expand(EmissionParametersTable) @Union([`$(c_member)` `$(type)`]) EmissionParametersUnion
+@Expand(EmissionParametersTable) @Union([`$(m_member)` `$(type)`]) EmissionParametersUnionMATLAB
+@MATLAB(EmissionParameters)      @Union EmissionParametersUnionMATLAB
+
+@Struct EmissionParameters
+{
+	[kind EmissionKind           ]
+	[``   EmissionParametersUnion]
+}
+@Library          @Struct EmissionParameters
+@MATLAB(Emission) @Struct EmissionParameters
 
 @Table([name name_lower]) FilterKindTable
 {
-	[Kaiser       kaiser]
+	[Kaiser       kaiser       ]
 	[MatchedChirp matched_chirp]
 }
 @Expand(FilterKindTable) @Enumeration(`$(name)`) FilterKind
@@ -87,18 +101,34 @@
 	[beta             F32]
 	[length           U32]
 }
+@Library @Struct KaiserFilterParameters
 
-@Struct ChirpFilterParameters
+@Struct MatchedChirpFilterParameters
 {
 	[duration      F32]
 	[min_frequency F32]
 	[max_frequency F32]
 }
+@Library @Struct MatchedChirpFilterParameters
 
-@MUnion(FilterKind [
-	KaiserFilterParameters
-	ChirpFilterParameters
-]) Filter
+@Table([type c_member m_member]) FilterParametersTable
+{
+	[KaiserFilterParameters       kaiser        Kaiser      ]
+	[MatchedChirpFilterParameters matched_chirp MatchedChirp]
+}
+@Expand(FilterParametersTable) @Union([`$(c_member)` `$(type)`]) FilterParametersUnion
+@Expand(FilterParametersTable) @Union([`$(m_member)` `$(type)`]) FilterParametersUnionMATLAB
+@MATLAB(FilterParameters)      @Union FilterParametersUnionMATLAB
+
+@Struct FilterParameters
+{
+	[kind               FilterKind           ]
+	[sampling_frequency F32                  ]
+	[complex            B32                  ]
+	[``                 FilterParametersUnion]
+}
+@Library        @Struct FilterParameters
+@MATLAB(Filter) @Struct FilterParameters
 
 @Table([name pretty_name fixed_transmits]) AcquisitionKindTable
 {
@@ -119,103 +149,69 @@
 
 @Struct ParametersHead
 {
-	[das_voxel_transform           M4]
-	[xdc_transform                 M4]
-	[xdc_element_pitch             V2]
-	[raw_data_dimensions          UV2]
-	[focal_vector                  V2]
-	[transmit_receive_orientation U32]
-	[sample_count                 U32]
-	[channel_count                U32]
-	[acquisition_count            U32]
-	[acquisition_kind             U32]
-	[time_offset                  F32]
-	[single_focus                  U8]
-	[single_orientation            U8]
-	[decode_mode                   U8]
-	[sampling_mode                 U8]
+	[das_voxel_transform          M4             ]
+	[xdc_transform                M4             ]
+	[xdc_element_pitch            V2             ]
+	[raw_data_dimensions          UV2            ]
+	[focal_vector                 V2             ]
+	[transmit_receive_orientation U32            ]
+	[sample_count                 U32            ]
+	[channel_count                U32            ]
+	[acquisition_count            U32            ]
+	[acquisition_kind             AcquisitionKind]
+	[decode_mode                  DecodeMode     ]
+	[sampling_mode                SamplingMode   ]
+	[time_offset                  F32            ]
+	[single_focus                 B32            ]
+	[single_orientation           B32            ]
 }
 
-@Struct ParametersUI
+@Struct UIParameters
 {
 	[output_points          SV4]
 	[sampling_frequency     F32]
 	[demodulation_frequency F32]
 	[speed_of_sound         F32]
 	[f_number               F32]
-	[interpolation_mode     U32]
-	[coherency_weighting    U32]
+	[interpolation_mode     InterpolationMode]
+	[coherency_weighting    B32]
 	[decimation_rate        U32]
 }
 
-@Table([name c_type m_type m_size]) ParametersExtra
+@Struct ExtraParameters
 {
-	[contrast_mode       BeamformerContrastMode       uint32  1]
-	[emission_kind       BeamformerEmissionKind       uint32  1]
-	[emission_parameters BeamformerEmissionParameters uint8  12]
+	[contrast_mode       ContrastMode      ]
+	[emission_parameters EmissionParameters]
 }
 
-// TODO(rnp): allow emit statements to reference Constants
-@Struct ParametersSimple
+@Struct Parameters
 {
-	[channel_mapping               S16  256]
-	[sparse_elements               S16  256]
-	[transmit_receive_orientations  U8  256]
-	[steering_angles               F32  256]
-	[focal_depths                  F32  256]
-	[compute_stages                S32   16]
-	[compute_stage_parameters      S32   16]
-	[compute_stages_count          U32    1]
-	[data_kind                     S32    1]
+	[`` ParametersHead ]
+	[`` UIParameters   ]
+	[`` ExtraParameters]
 }
+@Library @Struct Parameters
+@MATLAB  @Struct Parameters
 
+@Struct SimpleParameters
+{
+
+	[``                            Parameters 1                     ]
+	[channel_mapping               S16        MaxChannelCount       ]
+	[sparse_elements               S16        MaxEmissionsCount     ]
+	[transmit_receive_orientations U8         MaxEmissionsCount     ]
+	[steering_angles               F32        MaxEmissionsCount     ]
+	[focal_depths                  F32        MaxEmissionsCount     ]
+	[compute_stages                S32        MaxComputeShaderStages]
+	[compute_stage_parameters      S32        MaxComputeShaderStages]
+	[compute_stages_count          U32        1                     ]
+	[data_kind                     DataKind   1                     ]
+}
+@Library @Struct SimpleParameters
+@MATLAB  @Struct SimpleParameters
 
 @Emit
 {
-	`typedef union {`
-	`	struct {`
-		@Expand(SineParameters)   `		$(%type)$(|)$(name);`
-	`	} sine;`
-	`	struct {`
-		@Expand(ChirpParameters)  `		$(%type)$(|)$(name);`
-	`	} chirp;`
-	`} BeamformerEmissionParameters;`
-	``
-	`typedef struct {`
-	@Expand(ParametersHead)  `	$(%type)$(|)$(name);`
-	@Expand(ParametersUI)    `	$(%type)$(|)$(name);`
-	@Expand(ParametersExtra) `	$(c_type)$(|)$(name);`
-	`} BeamformerParameters;`
-	``
-	`typedef struct {`
-	@Expand(ParametersUI) `	$(%type)$(|)$(name);`
-	`} BeamformerUIParameters;`
-	``
-	`typedef struct {`
-	@Expand(ParametersExtra) `	$(c_type)$(|)$(name);`
-	`} BeamformerParametersExtra;`
-	``
-	`typedef struct {`
-	@Expand(ParametersHead)   `	$(%type)$(|)$(name);`
-	@Expand(ParametersUI)     `	$(%type)$(|)$(name);`
-	@Expand(ParametersExtra)  `	$(c_type)$(|)$(name);`
-	@Expand(ParametersSimple) `	$(%type)$(|)$(name)$(elements > 1 -> "[" elements "]");`
-	`} BeamformerSimpleParameters;`
-	``
-	`typedef struct {`
-	`	BeamformerFilterKind kind;`
-	`	union {`
-	`		struct {`
-			@Expand(KaiserFilterParameters) `			$(%type)$(|)$(name);`
-	`		} kaiser;`
-	`		struct {`
-			@Expand(ChirpFilterParameters)  `			$(%type)$(|)$(name);`
-	`		} matched_chirp;`
-	`	};`
-	`	f32 sampling_frequency;`
-	`	b16 complex;`
-	`} BeamformerFilterParameters;`
-	``
 	`read_only global u8 beamformer_data_kind_element_size[] = {`
 	@Expand(DataKindTable) `	$(size),`
 	`};`
@@ -353,100 +349,4 @@
 @ShaderGroup Render
 {
 	@Shader(render_3d.frag.glsl) Render3D
-}
-
-/////////////////
-// NOTE: Library
-
-@Emit(CLibrary)
-{
-	`typedef union {`
-	`	struct {`
-		@Expand(SineParameters)   `		$(%type)$(|)$(name);`
-	`	} sine;`
-	`	struct {`
-		@Expand(ChirpParameters)  `		$(%type)$(|)$(name);`
-	`	} chirp;`
-	`} BeamformerEmissionParameters;`
-	``
-	`typedef struct {`
-	`	BeamformerFilterKind kind;`
-	`	union {`
-	`		struct {`
-			@Expand(KaiserFilterParameters) `			$(%type)$(|)$(name);`
-	`		} kaiser;`
-	`		struct {`
-			@Expand(ChirpFilterParameters)  `			$(%type)$(|)$(name);`
-	`		} matched_chirp;`
-	`	};`
-	`	float    sampling_frequency;`
-	`	uint16_t complex;`
-	`} BeamformerFilterParameters;`
-	``
-	`typedef struct {`
-	@Expand(ParametersHead)   `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
-	@Expand(ParametersUI)     `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
-	@Expand(ParametersExtra)  `	$(c_type)$(|)$(name);`
-	@Expand(ParametersSimple) `	$(%type)$(|)$(name)$(elements > 1 -> "[" elements "]");`
-	`} BeamformerSimpleParameters;`
-	``
-	`typedef struct {`
-	@Expand(ParametersUI)     `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
-	`} BeamformerUIParameters;`
-	``
-	`typedef struct {`
-	@Expand(ParametersHead)   `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
-	`} BeamformerParametersHead;`
-	``
-	`typedef struct {`
-	@Expand(ParametersHead)   `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
-	@Expand(ParametersUI)     `	$(%type)$(|)$(name)$(#type > 1 -> "[" #type "]");`
-	@Expand(ParametersExtra)  `	$(c_type)$(|)$(name);`
-	`} BeamformerParameters;`
-	``
-}
-
-////////////////
-// NOTE: MATLAB
-
-@Emit(MATLAB) Parameters
-{
-	`classdef OGLBeamformerParameters`
-	`	properties`
-	@Expand(ParametersHead)  `		$(name)(1,$(#type))$(|)$(%type)`
-	`		% UI Parameters`
-	@Expand(ParametersUI)    `		$(name)(1,$(#type))$(|)$(%type)`
-	@Expand(ParametersExtra) `		$(name)(1,$(m_size))$(|)$(m_type)`
-	`	end`
-	`end`
-}
-
-@Emit(MATLAB) ParametersHead
-{
-	`classdef OGLBeamformerParametersHead`
-	`	properties`
-	@Expand(ParametersHead) `		$(name)(1,$(#type))$(|)$(%type)`
-	`	end`
-	`end`
-}
-
-@Emit(MATLAB) ParametersUI
-{
-	`classdef OGLBeamformerParametersUI`
-	`	properties`
-	@Expand(ParametersUI) `		$(name)(1,$(#type))$(|)$(%type)`
-	`	end`
-	`end`
-}
-
-@Emit(MATLAB) SimpleParameters
-{
-	`classdef OGLBeamformerSimpleParameters`
-	`	properties`
-	@Expand(ParametersHead)   `		$(name)(1,$(#type)) $(%type)`
-	@Expand(ParametersUI)     `		$(name)(1,$(#type)) $(%type)`
-	@Expand(ParametersExtra)  `		$(name)(1,$(m_size)) $(m_type)`
-	@Expand(ParametersSimple) `		$(name)(1,$(elements)) $(%type)`
-	`	end`
-	`end`
 }

@@ -175,7 +175,7 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 		// NOTE(rnp): ignores emission count and ensemble count
 		mem_copy(bp->raw_data_dimensions.E, header->raw_data_dimension,          sizeof(bp->raw_data_dimensions));
 
-		bp->data_kind              = ZBP_DataKind_Int16;
+		bp->data_kind              = (BeamformerDataKind)ZBP_DataKind_Int16;
 		raw_data->kind             = ZBP_DataKind_Int16;
 		raw_data->compression_kind = ZBP_DataCompressionKind_ZSTD;
 
@@ -217,7 +217,7 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 				bp->transmit_receive_orientations[it] = bp->transmit_receive_orientation;
 		}
 
-		bp->emission_kind = BeamformerEmissionKind_Sine;
+		bp->emission_parameters.kind           = BeamformerEmissionKind_Sine;
 		bp->emission_parameters.sine.cycles    = 2;
 		bp->emission_parameters.sine.frequency = bp->demodulation_frequency;
 	}break;
@@ -280,14 +280,14 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 
 			case ZBP_EmissionKind_Sine:{
 				ZBP_EmissionSineParameters *ep = (ZBP_EmissionSineParameters *)(raw.data + ed->parameters_offset);
-				bp->emission_kind = BeamformerEmissionKind_Sine;
+				bp->emission_parameters.kind           = BeamformerEmissionKind_Sine;
 				bp->emission_parameters.sine.cycles    = ep->cycles;
 				bp->emission_parameters.sine.frequency = ep->frequency;
 			}break;
 
 			case ZBP_EmissionKind_Chirp:{
 				ZBP_EmissionChirpParameters *ep = (ZBP_EmissionChirpParameters *)(raw.data + ed->parameters_offset);
-				bp->emission_kind = BeamformerEmissionKind_Chirp;
+				bp->emission_parameters.kind                = BeamformerEmissionKind_Chirp;
 				bp->emission_parameters.chirp.duration      = ep->duration;
 				bp->emission_parameters.chirp.min_frequency = ep->min_frequency;
 				bp->emission_parameters.chirp.max_frequency = ep->max_frequency;
@@ -464,30 +464,24 @@ execute_study(Arena arena, Stream path, Options *options)
 	bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_DAS;
 
 	{
-		BeamformerFilterParameters filter = {0};
-		BeamformerFilterKind filter_kind  = 0;
-		b32 complex = 0;
-		u32 size    = 0;
+		BeamformerFilterParameters filter = {.sampling_frequency = bp.sampling_frequency / 2};
 
 		BeamformerEmissionParameters *ep = &bp.emission_parameters;
-		switch (bp.emission_kind) {
+		switch (bp.emission_parameters.kind) {
 
 		case BeamformerEmissionKind_Sine:{
-			filter_kind = BeamformerFilterKind_Kaiser;
+			filter.kind                    = BeamformerFilterKind_Kaiser;
 			filter.kaiser.beta             = 5.65f;
 			filter.kaiser.cutoff_frequency = 0.5f * ep->sine.frequency;
 			filter.kaiser.length           = 36;
-			size = sizeof(filter.kaiser);
 		}break;
 
 		case BeamformerEmissionKind_Chirp:{
-			filter_kind = BeamformerFilterKind_MatchedChirp;
-
+			filter.kind                        = BeamformerFilterKind_MatchedChirp;
 			filter.matched_chirp.duration      = ep->chirp.duration;
 			filter.matched_chirp.min_frequency = ep->chirp.min_frequency - bp.demodulation_frequency;
 			filter.matched_chirp.max_frequency = ep->chirp.max_frequency - bp.demodulation_frequency;
-			size = sizeof(filter.matched_chirp);
-			complex = 1;
+			filter.complex                     = 1;
 
 			//bp.time_offset += ep->chirp.duration / 2;
 		}break;
@@ -495,8 +489,7 @@ execute_study(Arena arena, Stream path, Options *options)
 		InvalidDefaultCase;
 		}
 
-		beamformer_create_filter(filter_kind, (f32 *)&filter.kaiser, size, bp.sampling_frequency / 2,
-		                         complex, 0, 0);
+		beamformer_create_filter(&filter, 0, 0);
 
 		bp.compute_stage_parameters[0] = 0;
 	}

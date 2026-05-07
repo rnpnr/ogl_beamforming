@@ -354,39 +354,23 @@ beamformer_push_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data
 	return result;
 }
 
-function b32
-beamformer_create_filter_base(BeamformerFilterParameters params, u8 filter_slot, u8 parameter_block)
-{
-	b32 result = 0;
-	if (check_shared_memory()) {
-		BeamformWork *work = try_push_work_queue();
-		if (work) {
-			BeamformerCreateFilterContext *ctx = &work->create_filter_context;
-			work->kind = BeamformerWorkKind_CreateFilter;
-			ctx->parameters      = params;
-			ctx->filter_slot     = filter_slot     % BeamformerFilterSlots;
-			ctx->parameter_block = parameter_block % BeamformerMaxParameterBlocks;
-			beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
-			result = 1;
-		}
-	}
-	return result;
-}
-
 b32
-beamformer_create_filter(BeamformerFilterKind kind, void *filter_parameters, u32 filter_size,
-                         f32 sampling_frequency, b32 complex, u8 filter_slot, u8 parameter_block)
+beamformer_create_filter(BeamformerFilterParameters *filter, u8 filter_slot, u8 parameter_block)
 {
 	b32 result = 0;
-	if (lib_error_check(kind >= 0 && kind < BeamformerFilterKind_Count, InvalidFilterKind)) {
-		BeamformerFilterParameters fp = {0};
-		/* NOTE(rnp): any parameter struct works as base offset */
-		filter_size = MIN(filter_size, sizeof(fp) - offsetof(BeamformerFilterParameters, kaiser));
-		mem_copy(&fp.kaiser, filter_parameters, filter_size);
-		fp.kind               = kind;
-		fp.complex            = complex != 0;
-		fp.sampling_frequency = sampling_frequency;
-		result = beamformer_create_filter_base(fp, filter_slot, parameter_block);
+	if (lib_error_check(filter->kind >= 0 && filter->kind < BeamformerFilterKind_Count, InvalidFilterKind)) {
+		if (check_shared_memory()) {
+			BeamformWork *work = try_push_work_queue();
+			if (work) {
+				BeamformerCreateFilterContext *ctx = &work->create_filter_context;
+				work->kind = BeamformerWorkKind_CreateFilter;
+				ctx->parameters      = *filter;
+				ctx->filter_slot     = filter_slot     % BeamformerFilterSlots;
+				ctx->parameter_block = parameter_block % BeamformerMaxParameterBlocks;
+				beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
+				result = 1;
+			}
+		}
 	}
 	return result;
 }
