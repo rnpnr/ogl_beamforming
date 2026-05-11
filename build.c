@@ -3228,6 +3228,7 @@ typedef struct {
 	MetaPushStructStyle union_style;
 	MetaPushStructStyle element_count_style;
 	str8 *base_types;
+	u8   *base_type_element_count_scales;
 	str8  prefix;
 	str8  suffix;
 	str8  str_element_prefix;
@@ -3303,19 +3304,17 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 
 					u32 resolved_element_count = meta_struct_member_elements(ctx, s, member);
 
-					if (p.union_style == MetaPushStructStyle_MATLAB) {
-						if (type_reference) {
-							MetaEntity *re = ctx->entities.data + type_id;
-							MetaStruct *rs = ctx->struct_infos + re->table.struct_info_id;
-							if (member_name.len == 0) {
-								assert(rs->flags & MetaStructFlag_Union);
-								member_name = s8("data");
-							}
-							if (rs->flags & MetaStructFlag_Union)
-								resolved_element_count *= rs->byte_size;
-						} else {
-							resolved_element_count *= meta_kind_elements[type_id];
+					if (type_reference && p.union_style == MetaPushStructStyle_MATLAB) {
+						MetaEntity *re = ctx->entities.data + type_id;
+						MetaStruct *rs = ctx->struct_infos + re->table.struct_info_id;
+						if (member_name.len == 0) {
+							assert(rs->flags & MetaStructFlag_Union);
+							member_name = s8("data");
 						}
+						if (rs->flags & MetaStructFlag_Union)
+							resolved_element_count *= rs->byte_size;
+					} else if (!type_reference && p.base_type_element_count_scales) {
+						resolved_element_count *= p.base_type_element_count_scales[type_id];
 					}
 
 					if (resolved_element_count > 1 || p.element_count_style == MetaPushStructStyle_MATLAB) {
@@ -3409,6 +3408,7 @@ meta_push_matlab_properties(MetaprogramContext *m, MetaContext *ctx, MetaStruct 
 			.base_types          = meta_kind_matlab_types,
 			.suffix              = str8(""),
 			.str_element_prefix  = str8(MATLAB_NAMESPACE META_NAMESPACE_UPPER),
+			.base_type_element_count_scales = meta_kind_elements,
 		});
 	} meta_end_scope(m, s8("end"));
 }
@@ -4301,6 +4301,7 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 						.base_types          = meta_kind_base_c_types,
 						.suffix              = str8(";"),
 						.str_element_prefix  = str8(META_NAMESPACE_UPPER),
+						.base_type_element_count_scales = meta_kind_elements,
 					});
 				} meta_end_scope(m, s8("} " META_NAMESPACE_UPPER), ctx->entity_names.data[ids[it]], s8(";\n"));
 			}break;
@@ -4345,6 +4346,7 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 							.base_types          = meta_kind_base_c_types,
 							.suffix              = str8(";"),
 							.str_element_prefix  = str8(META_NAMESPACE_UPPER),
+							.base_type_element_count_scales = meta_kind_elements,
 						});
 					} meta_end_scope(m, s8("} " META_NAMESPACE_UPPER), ctx->entity_names.data[ids[it]], s8(";\n"));
 				}break;
