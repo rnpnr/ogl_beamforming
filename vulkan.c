@@ -107,7 +107,7 @@ static_assert(alignof(VulkanQueue) == 64, "VulkanQueue must be placed on its own
 
 typedef alignas(64) struct {
 	i32             lock;
-	i32             next_index;
+	u32             next_index;
 
 	VulkanPipeline *bound_pipeline;
 
