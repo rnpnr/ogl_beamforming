@@ -2688,7 +2688,7 @@ vk_command_begin_rendering(VulkanHandle command, GPUImage *colour, GPUImage *dep
 			.imageLayout        = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 			.resolveMode        = ri ? VK_RESOLVE_MODE_AVERAGE_BIT : 0,
 			.resolveImageView   = ri ? ri->view : 0,
-			.resolveImageLayout = ri ? VK_IMAGE_LAYOUT_GENERAL : 0,
+			.resolveImageLayout = ri ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : 0,
 			.loadOp             = VK_ATTACHMENT_LOAD_OP_CLEAR,
 			.storeOp            = VK_ATTACHMENT_STORE_OP_STORE,
 			.clearValue         = {.color = {{0.0f, 0.0f, 0.0f, 0.0f}}},
