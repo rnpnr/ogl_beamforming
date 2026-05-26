@@ -134,6 +134,7 @@ typedef struct {
 } BeamformerShaderResourceInfo;
 
 #include "threads.c"
+#include "util_os_ui.c"
 #include "util_os.c"
 
 ///////////////////////////

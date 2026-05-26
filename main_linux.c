@@ -341,19 +341,16 @@ main(void)
 	fds[0].events = POLLIN;
 
 	while (!WindowShouldClose() && !beamformer_should_close(input)) {
+		os_build_frame_input(input);
+
 		poll(fds, countof(fds), 0);
 		if (fds[0].revents & POLLIN)
 			dispatch_file_watch_events(input);
 
-		Vector2 new_mouse = GetMousePosition();
-		input->last_mouse_x = input->mouse_x;
-		input->last_mouse_y = input->mouse_y;
-		input->mouse_x      = new_mouse.x;
-		input->mouse_y      = new_mouse.y;
-
 		beamformer_frame_step(input);
 
-		input->event_count  = 0;
+		// NOTE(rnp): this must happen at the end of frame to allow the pre loop events through
+		input->event_count = 0;
 	}
 
 	beamformer_terminate(input);

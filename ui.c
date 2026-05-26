@@ -416,6 +416,8 @@ struct BeamformerUI {
 	Font font;
 	Font small_font;
 
+	v2   last_mouse;
+
 	Variable *regions;
 	Variable *variable_freelist;
 
@@ -3926,7 +3928,6 @@ function void
 ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 {
 	v2 input_mouse = {{input->mouse_x, input->mouse_y}};
-	v2 last_mouse  = {{input->last_mouse_x, input->last_mouse_y}};
 	Interaction *it = &ui->interaction;
 	if (it->kind == InteractionKind_None || interaction_is_sticky(*it)) {
 		ui->hot_interaction = ui->next_interaction;
@@ -3959,7 +3960,7 @@ ui_interact(BeamformerUI *ui, BeamformerInput *input, Rect window_rect)
 			ui_end_interact(ui, input_mouse);
 		} else {
 			v2 ws     = window_rect.size;
-			v2 dMouse = v2_sub(input_mouse, last_mouse);
+			v2 dMouse = v2_sub(input_mouse, ui->last_mouse);
 
 			switch (it->var->type) {
 			case VT_BEAMFORMER_VARIABLE:{
@@ -4341,4 +4342,6 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 		draw_ui_regions(ui, window_rect, mouse);
 		draw_floating_widgets(ui, window_rect, mouse);
 	EndDrawing();
+
+	ui->last_mouse = (v2){{input->mouse_x, input->mouse_y}};
 }

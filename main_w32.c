@@ -418,20 +418,17 @@ main(void)
 	beamformer_init(input);
 
 	while (!WindowShouldClose() && !beamformer_should_close(input)) {
+		os_build_frame_input(input);
+
 		DeferLoop(take_lock(&os_w32_context.arena_lock, -1), release_lock(&os_w32_context.arena_lock))
 		{
 			clear_io_queue(input, os_w32_context.arena);
 		}
 
-		Vector2 new_mouse = GetMousePosition();
-		input->last_mouse_x = input->mouse_x;
-		input->last_mouse_y = input->mouse_y;
-		input->mouse_x      = new_mouse.x;
-		input->mouse_y      = new_mouse.y;
-
 		beamformer_frame_step(input);
 
-		input->event_count  = 0;
+		// NOTE(rnp): this must happen at the end of frame to allow the pre loop events through
+		input->event_count = 0;
 	}
 
 	beamformer_terminate(input);

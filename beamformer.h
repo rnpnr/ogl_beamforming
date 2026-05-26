@@ -137,6 +137,25 @@ typedef enum {
 	BeamformerButtonID_Count,
 } BeamformerButtonID;
 
+typedef enum {
+	BeamformerInputModifier_LeftAlt      = (1 << 0),
+	BeamformerInputModifier_RightAlt     = (1 << 1),
+
+	BeamformerInputModifier_LeftControl  = (1 << 2),
+	BeamformerInputModifier_RightControl = (1 << 3),
+
+	BeamformerInputModifier_LeftShift    = (1 << 4),
+	BeamformerInputModifier_RightShift   = (1 << 5),
+
+	BeamformerInputModifier_LeftMeta     = (1 << 6),
+	BeamformerInputModifier_RightMeta    = (1 << 7),
+
+	BeamformerInputModifier_Alt     = BeamformerInputModifier_LeftAlt|BeamformerInputModifier_RightAlt,
+	BeamformerInputModifier_Control = BeamformerInputModifier_LeftControl|BeamformerInputModifier_RightControl,
+	BeamformerInputModifier_Shift   = BeamformerInputModifier_LeftShift|BeamformerInputModifier_RightShift,
+	BeamformerInputModifier_Meta    = BeamformerInputModifier_LeftMeta|BeamformerInputModifier_RightMeta,
+} BeamformerInputModifiers;
+
 typedef struct {
 	BeamformerInputEventKind kind;
 	union {
@@ -165,12 +184,11 @@ typedef struct {
 
 	float       mouse_x;
 	float       mouse_y;
-	float       last_mouse_x;
-	float       last_mouse_y;
 
 	uint32_t    event_count;
 
-	BeamformerInputEvent event_queue[256];
+	BeamformerInputModifiers input_modifiers;
+	BeamformerInputEvent     event_queue[256];
 
 	/* NOTE(rnp): the beamformer is not allowed to dynamically load libraries
 	 * itself. Besides Vulkan, which is required, libraries are optional and
