@@ -174,7 +174,8 @@ build_log_base(BuildLogKind kind, char *format, va_list args)
 #define build_log_info(...)     build_log(BuildLogKind_Info,     ##__VA_ARGS__)
 #define build_log_command(...)  build_log(BuildLogKind_Command,  ##__VA_ARGS__)
 #define build_log_warning(...)  build_log(BuildLogKind_Warning,  ##__VA_ARGS__)
-function void
+
+function print_format(2, 3) void
 build_log(BuildLogKind kind, char *format, ...)
 {
 	va_list ap;
@@ -184,7 +185,7 @@ build_log(BuildLogKind kind, char *format, ...)
 }
 
 #define build_fatal(fmt, ...) build_fatal_("%s: " fmt, __FUNCTION__, ##__VA_ARGS__)
-function no_return void
+function no_return print_format(1, 2) void
 build_fatal_(char *format, ...)
 {
 	va_list ap;
@@ -229,7 +230,7 @@ stream_push_command(Stream *s, CommandList *c)
 	}
 }
 
-function char *
+function print_format(1, 2) char *
 temp_sprintf(char *format, ...)
 {
 	local_persist char buffer[4096];
@@ -4752,7 +4753,7 @@ metagen_file_direct(Arena arena, char *filename)
 	CommandList deps = meta_extract_emit_file_dependencies(ctx, &arena);
 	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
 	if (needs_rebuild_(out, deps.data, deps.count)) {
-		build_log_generate(out);
+		build_log_generate("%s", out);
 		meta_push(m, c_file_header);
 		metagen_run_emit_set(m, ctx, ctx->emit_sets + MetaEmitLang_C, (s8 *)meta_kind_c_types);
 		result &= meta_write_and_reset(m, out);
