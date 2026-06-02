@@ -220,3 +220,11 @@ typedef __m128i u32x4;
 #define store_fence           _mm_sfence
 
 #endif
+
+function force_inline f32
+inf32(void)
+{
+	union {u32 u; f32 f;} result;
+	result.u = 0x7F800000u;
+	return result.f;
+}

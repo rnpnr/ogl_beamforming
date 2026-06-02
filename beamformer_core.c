@@ -24,8 +24,6 @@
 
 #include "beamformer_internal.h"
 
-global f32 dt_for_frame;
-
 typedef struct BeamformerComputeGraphNode BeamformerComputeGraphNode;
 struct BeamformerComputeGraphNode {
 	// NOTE(rnp): will be BeamformerShaderKind_Count for root node
@@ -64,6 +62,79 @@ read_only global u32 beamformer_compute_array_parameter_offsets[] = {
 	BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST
 	#undef X
 };
+
+global BeamformerCtx *beamformer_context;
+global f32 dt_for_frame;
+
+#define beamformer_frame_arena() (beamformer_context->frame_arenas + beamformer_context->frame_index % countof(beamformer_context->frame_arenas))
+#define beamformer_registers() (&beamformer_context->registers->v)
+#define beamformer_push_registers(...) beamformer_push_registers_(&(BeamformerRegisters){beamformer_registers_init_literal __VA_ARGS__})
+#define BeamformerRegistersScope(...) DeferLoop(beamformer_push_registers(__VA_ARGS__), beamformer_pop_registers())
+#define beamformer_command(name, ...) beamformer_push_command(name, &(BeamformerRegisters){beamformer_registers_init_literal __VA_ARGS__})
+
+function BeamformerRegisters *
+beamformer_pop_registers(void)
+{
+	BeamformerRegisters *result = &beamformer_context->registers->v;
+	SLLStackPop(beamformer_context->registers, next);
+	if (beamformer_context->registers == 0)
+		beamformer_context->registers = &beamformer_context->base_registers;
+	return result;
+}
+
+function BeamformerRegisters *
+beamformer_push_registers_(BeamformerRegisters *registers)
+{
+	BeamformerRegistersNode *node   = push_struct(beamformer_frame_arena(), BeamformerRegistersNode);
+	BeamformerRegisters     *result = &node->v;
+	memory_copy(result, registers, sizeof(node->v));
+	SLLStackPush(beamformer_context->registers, node, next);
+	return result;
+}
+
+function void
+beamformer_command_list_push_new(Arena *arena, BeamformerCommandList *commands, str8 name, BeamformerRegisters *registers)
+{
+	BeamformerCommandNode *node = push_struct(arena, BeamformerCommandNode);
+	node->command.registers = push_struct_no_zero(arena, BeamformerRegisters);
+	node->command.name      = push_str8(arena, name);
+	memory_copy(node->command.registers, registers, sizeof(*registers));
+	DLLInsertLast(0, commands->first, commands->last, node, next, prev);
+	commands->count += 1;
+}
+
+function void
+beamformer_push_command(str8 name, BeamformerRegisters *registers)
+{
+	beamformer_command_list_push_new(beamformer_frame_arena(), beamformer_context->command_queues + 0,
+	                                 name, registers);
+}
+
+function BeamformerCommandKind
+beamformer_command_kind_from_string(str8 s)
+{
+	BeamformerCommandKind result = BeamformerCommandKind_Nil;
+	for EachElement(beamformer_command_infos, it) {
+		if (str8_equal(beamformer_command_infos[it].string, s)) {
+			result = (BeamformerCommandKind)it;
+			break;
+		}
+	}
+	return result;
+}
+
+function BeamformerPanelKind
+beamformer_panel_kind_from_string(str8 s)
+{
+	BeamformerPanelKind result = BeamformerPanelKind_Nil;
+	for EachElement(beamformer_panel_infos, it) {
+		if (str8_equal(beamformer_panel_infos[it].string, s)) {
+			result = (BeamformerPanelKind)it;
+			break;
+		}
+	}
+	return result;
+}
 
 function void
 beamformer_compute_plan_release(BeamformerComputeContext *cc, u32 block)
@@ -641,9 +712,11 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				cp->voxel_transform   = m4_mul(cp->ui_voxel_transform, pb->parameters.das_voxel_transform);
 				cp->xdc_element_pitch = pb->parameters.xdc_element_pitch;
 
+				memory_copy(cp->das_voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));
+
 				u32 id = pb->parameters.acquisition_kind;
 				if (id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_FORCES)
-					cp->voxel_transform = m4_mul(cp->xdc_transform, cp->voxel_transform);
+					cp->das_voxel_transform = m4_mul(cp->xdc_transform, cp->das_voxel_transform);
 
 				db->sparse = id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES;
 				db->single_focus        = pb->parameters.single_focus;
@@ -1119,8 +1192,8 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			.channel_offset    = channel_offset,
 			.array_parameters  = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, FocalVectors),
 		};
-		mem_copy(pc.voxel_transform.E, cp->voxel_transform.E, sizeof(pc.voxel_transform));
-		mem_copy(pc.xdc_transform.E,   cp->xdc_transform.E,   sizeof(pc.xdc_transform));
+		memory_copy(pc.voxel_transform.E, cp->das_voxel_transform.E, sizeof(pc.voxel_transform));
+		memory_copy(pc.xdc_transform.E,   cp->xdc_transform.E,       sizeof(pc.xdc_transform));
 
 		b32 coherent = cp->shader_descriptors[shader_slot].bake.DAS.coherency_weighting;
 
@@ -1724,13 +1797,22 @@ beamformer_process_input_events(BeamformerCtx *ctx, BeamformerInput *input,
 BEAMFORMER_EXPORT void
 beamformer_frame_step(BeamformerInput *input)
 {
-	BeamformerCtx *ctx = BeamformerContextMemory(input->memory);
+	BeamformerCtx *ctx = beamformer_context = BeamformerContextMemory(input->memory);
 
 	u64 current_time = os_timer_count();
 	dt_for_frame = (f64)(current_time - ctx->frame_timestamp) / os_system_info()->timer_frequency;
 	ctx->frame_timestamp = current_time;
+	ctx->frame_index++;
 
 	coalesce_timing_table(ctx->compute_timing_table, ctx->compute_shader_stats);
+
+	// NOTE(rnp): reset frame state
+	{
+		ctx->registers = &ctx->base_registers;
+		swap(ctx->command_queues[0], ctx->command_queues[1]);
+		zero_struct(ctx->command_queues + 0);
+		end_temp_arena(ctx->frame_arena_savepoints[ctx->frame_index % countof(ctx->frame_arenas)]);
+	}
 
 	beamformer_process_input_events(ctx, input, input->event_queue, input->event_count);
 
@@ -1742,7 +1824,35 @@ beamformer_frame_step(BeamformerInput *input)
 
 	BeamformerFrame        *frame = ctx->latest_frame;
 	BeamformerViewPlaneTag  tag   = frame? frame->view_plane_tag : 0;
+
 	draw_ui(ctx, input, frame, tag);
+
+	// NOTE(rnp): execute commands
+	for (BeamformerCommandNode *node = ctx->command_queues[0].first;
+	     node;
+	     node = node == node->next ? 0 : node->next)
+	{
+		BeamformerRegistersScope()
+		{
+			memory_copy(beamformer_registers(), node->command.registers, sizeof(*node->command.registers));
+			BeamformerCommandKind kind = beamformer_command_kind_from_string(node->command.name);
+			switch (kind) {
+			InvalidDefaultCase;
+			case BeamformerCommandKind_CloseTab:{
+				UITreeNode *tab = (UITreeNode *)beamformer_registers()->tree_node;
+				ui_kill_tree_node(tab);
+			}break;
+
+			case BeamformerCommandKind_OpenTab:{
+				UITreeNode *panel = (UITreeNode *)beamformer_registers()->tree_node;
+				assert(panel->kind == BeamformerPanelKind_TabGroup);
+
+				BeamformerPanelKind new_panel_kind = beamformer_panel_kind_from_string(beamformer_registers()->string);
+				ui_push_panel(panel, new_panel_kind);
+			}break;
+			}
+		}
+	}
 
 	ctx->render_shader_updated = 0;
 }

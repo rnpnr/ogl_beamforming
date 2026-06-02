@@ -424,16 +424,13 @@ m4_equal(m4 a, m4 b)
 	return result;
 }
 
-function m4
-m4_identity(void)
-{
-	m4 result;
-	result.c[0] = (v4){{1, 0, 0, 0}};
-	result.c[1] = (v4){{0, 1, 0, 0}};
-	result.c[2] = (v4){{0, 0, 1, 0}};
-	result.c[3] = (v4){{0, 0, 0, 1}};
-	return result;
-}
+#define m4_identity() \
+	(m4){.E = { \
+		1, 0, 0, 0, \
+		0, 1, 0, 0, \
+		0, 0, 1, 0, \
+		0, 0, 0, 1, \
+	}}
 
 function v4
 m4_row(m4 a, u32 row)
@@ -566,6 +563,21 @@ m4_mul_v3(m4 a, v3 v)
 	v3 result = m4_mul_v4(a, (v4){{v.x, v.y, v.z, 1.0f}}).xyz;
 	return result;
 }
+
+function Rect
+rect_intersect(Rect a, Rect b)
+{
+	v2 ae = v2_add(a.pos, a.size);
+	v2 be = v2_add(b.pos, b.size);
+
+	Rect result   = {0};
+	result.pos.x  = Max(a.pos.x, b.pos.x);
+	result.pos.y  = Max(a.pos.y, b.pos.y);
+	result.size.x = Min(ae.x, be.x) - result.pos.x;
+	result.size.y = Min(ae.y, be.y) - result.pos.y;
+	return result;
+}
+
 
 function m4
 orthographic_projection(f32 n, f32 f, f32 t, f32 r)

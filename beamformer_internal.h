@@ -307,8 +307,11 @@ struct BeamformerComputePlan {
 	i32 hadamard_order;
 	b32 iq_pipeline;
 
-	m4  voxel_transform;
 	m4  ui_voxel_transform;
+	// NOTE(rnp): final voxel transform determining frame dimensions
+	m4  voxel_transform;
+	// NOTE(rnp): final voxel transform used for beamforming
+	m4  das_voxel_transform;
 
 	iv3 output_points;
 	i32 average_frames;
@@ -316,8 +319,6 @@ struct BeamformerComputePlan {
 	// TODO(rnp): specialization constants
 	v2  xdc_element_pitch;
 	m4  xdc_transform;
-	// TODO(rnp): probably just compute this everytime
-	m4  das_voxel_transform;
 
 	GPUBuffer array_parameters;
 
@@ -457,6 +458,30 @@ typedef struct {
 	b32   awake;
 } GLWorkerThreadContext;
 
+typedef struct {
+	str8                 name;
+	BeamformerRegisters *registers;
+} BeamformerCommand;
+
+typedef struct BeamformerRegistersNode BeamformerRegistersNode;
+struct BeamformerRegistersNode {
+	BeamformerRegistersNode *next;
+	BeamformerRegisters      v;
+};
+
+typedef struct BeamformerCommandNode BeamformerCommandNode;
+struct BeamformerCommandNode {
+	BeamformerCommandNode *next;
+	BeamformerCommandNode *prev;
+	BeamformerCommand      command;
+};
+
+typedef struct {
+	BeamformerCommandNode *first;
+	BeamformerCommandNode *last;
+	u64                    count;
+} BeamformerCommandList;
+
 typedef enum {
 	BeamformerState_Uninitialized = 0,
 	BeamformerState_Running,
@@ -474,7 +499,15 @@ typedef struct {
 	void  *ui;
 	u32    ui_dirty_parameter_blocks;
 
-	u64    frame_timestamp;
+	u64       frame_timestamp;
+	u64       frame_index;
+	Arena     frame_arenas[2];
+	TempArena frame_arena_savepoints[2];
+
+	BeamformerRegistersNode  base_registers;
+	BeamformerRegistersNode *registers;
+
+	BeamformerCommandList command_queues[2];
 
 	Stream error_stream;
 

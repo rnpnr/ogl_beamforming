@@ -138,11 +138,135 @@ typedef enum {
 	BeamformerInputEventKind_FileEvent,
 } BeamformerInputEventKind;
 
-// TODO: not yet used
 typedef enum {
+	BeamformerButtonID_Space        = ' ',
+	BeamformerButtonID_Apostrophe   = '\'',
+	BeamformerButtonID_Comma        = ',',
+	BeamformerButtonID_Minus        = '-',
+	BeamformerButtonID_Period       = '.',
+	BeamformerButtonID_Slash        = '/',
+	BeamformerButtonID_0            = '0',
+	BeamformerButtonID_1            = '1',
+	BeamformerButtonID_2            = '2',
+	BeamformerButtonID_3            = '3',
+	BeamformerButtonID_4            = '4',
+	BeamformerButtonID_5            = '5',
+	BeamformerButtonID_6            = '6',
+	BeamformerButtonID_7            = '7',
+	BeamformerButtonID_8            = '8',
+	BeamformerButtonID_9            = '9',
+	BeamformerButtonID_Semicolon    = ';',
+	BeamformerButtonID_Equal        = '=',
+	BeamformerButtonID_A            = 'A',
+	BeamformerButtonID_B            = 'B',
+	BeamformerButtonID_C            = 'C',
+	BeamformerButtonID_D            = 'D',
+	BeamformerButtonID_E            = 'E',
+	BeamformerButtonID_F            = 'F',
+	BeamformerButtonID_G            = 'G',
+	BeamformerButtonID_H            = 'H',
+	BeamformerButtonID_I            = 'I',
+	BeamformerButtonID_J            = 'J',
+	BeamformerButtonID_K            = 'K',
+	BeamformerButtonID_L            = 'L',
+	BeamformerButtonID_M            = 'M',
+	BeamformerButtonID_N            = 'N',
+	BeamformerButtonID_O            = 'O',
+	BeamformerButtonID_P            = 'P',
+	BeamformerButtonID_Q            = 'Q',
+	BeamformerButtonID_R            = 'R',
+	BeamformerButtonID_S            = 'S',
+	BeamformerButtonID_T            = 'T',
+	BeamformerButtonID_U            = 'U',
+	BeamformerButtonID_V            = 'V',
+	BeamformerButtonID_W            = 'W',
+	BeamformerButtonID_X            = 'X',
+	BeamformerButtonID_Y            = 'Y',
+	BeamformerButtonID_Z            = 'Z',
+	BeamformerButtonID_LeftBracket  = '[',
+	BeamformerButtonID_Backslash    = '\\',
+	BeamformerButtonID_RightBracket = ']',
+	BeamformerButtonID_Grave        = '`',
+
+	BeamformerButtonID_Escape,
+	BeamformerButtonID_Enter,
+	BeamformerButtonID_Tab,
+	BeamformerButtonID_Backspace,
+	BeamformerButtonID_Insert,
+	BeamformerButtonID_Delete,
+	BeamformerButtonID_Right,
+	BeamformerButtonID_Left,
+	BeamformerButtonID_Down,
+	BeamformerButtonID_Up,
+	BeamformerButtonID_PageUp,
+	BeamformerButtonID_PageDown,
+	BeamformerButtonID_Home,
+	BeamformerButtonID_End,
+	BeamformerButtonID_CapsLock,
+	BeamformerButtonID_ScrollLock,
+	BeamformerButtonID_NumLock,
+	BeamformerButtonID_PrintScreen,
+	BeamformerButtonID_Pause,
+	BeamformerButtonID_F1,
+	BeamformerButtonID_F2,
+	BeamformerButtonID_F3,
+	BeamformerButtonID_F4,
+	BeamformerButtonID_F5,
+	BeamformerButtonID_F6,
+	BeamformerButtonID_F7,
+	BeamformerButtonID_F8,
+	BeamformerButtonID_F9,
+	BeamformerButtonID_F10,
+	BeamformerButtonID_F11,
+	BeamformerButtonID_F12,
+	BeamformerButtonID_F13,
+	BeamformerButtonID_F14,
+	BeamformerButtonID_F15,
+	BeamformerButtonID_F16,
+	BeamformerButtonID_F17,
+	BeamformerButtonID_F18,
+	BeamformerButtonID_F19,
+	BeamformerButtonID_F20,
+	BeamformerButtonID_F21,
+	BeamformerButtonID_F22,
+	BeamformerButtonID_F23,
+	BeamformerButtonID_F24,
+	BeamformerButtonID_F25,
+	BeamformerButtonID_KP0,
+	BeamformerButtonID_KP1,
+	BeamformerButtonID_KP2,
+	BeamformerButtonID_KP3,
+	BeamformerButtonID_KP4,
+	BeamformerButtonID_KP5,
+	BeamformerButtonID_KP6,
+	BeamformerButtonID_KP7,
+	BeamformerButtonID_KP8,
+	BeamformerButtonID_KP9,
+	BeamformerButtonID_KPDecimal,
+	BeamformerButtonID_KPDivide,
+	BeamformerButtonID_KPMultiply,
+	BeamformerButtonID_KPSubtract,
+	BeamformerButtonID_KPAdd,
+	BeamformerButtonID_KPEnter,
+	BeamformerButtonID_KPEqual,
+
+	BeamformerButtonID_LeftShift,
+	BeamformerButtonID_LeftControl,
+	BeamformerButtonID_LeftAlt,
+	BeamformerButtonID_LeftSuper,
+	BeamformerButtonID_RightShift,
+	BeamformerButtonID_RightControl,
+	BeamformerButtonID_RightAlt,
+	BeamformerButtonID_RightSuper,
+	BeamformerButtonID_ModifierFirst = BeamformerButtonID_LeftShift,
+	BeamformerButtonID_ModifierLast  = BeamformerButtonID_RightSuper,
+
+	BeamformerButtonID_Menu,
+
 	BeamformerButtonID_MouseLeft,
 	BeamformerButtonID_MouseRight,
 	BeamformerButtonID_MouseMiddle,
+
 	BeamformerButtonID_Count,
 } BeamformerButtonID;
 
@@ -171,8 +295,14 @@ typedef enum {
 
 typedef struct {
 	BeamformerInputEventKind kind;
+	BeamformerInputModifiers modifiers;
 	union {
-		BeamformerButtonID  button_id;
+		struct {
+			BeamformerButtonID button_id;
+			// NOTE(rnp): if the button is not also an input key codepoint should be 0
+			uint32_t           codepoint;
+		};
+		struct {float x, y;} scroll;
 
 		struct {
 			uint32_t width, height;
@@ -206,8 +336,7 @@ typedef struct {
 
 	uint32_t    event_count;
 
-	BeamformerInputModifiers input_modifiers;
-	BeamformerInputEvent     event_queue[256];
+	BeamformerInputEvent event_queue[256];
 
 	/* NOTE(rnp): the beamformer is not allowed to dynamically load libraries
 	 * itself. Besides Vulkan, which is required, libraries are optional and
