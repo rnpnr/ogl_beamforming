@@ -423,7 +423,8 @@ struct BeamformerUI {
 
 	Variable floating_widget_sentinal;
 
-	BeamformerFrameView *views;
+	BeamformerFrameView *view_first;
+	BeamformerFrameView *view_last;
 	BeamformerFrameView *view_freelist;
 
 	Interaction interaction;
@@ -935,7 +936,7 @@ table_push_row(Table *t, Arena *a, TableRowKind kind)
 function TableRow *
 table_push_parameter_row(Table *t, Arena *a, s8 label, Variable *var, s8 suffix)
 {
-	ASSERT(t->columns >= 3);
+	assert(t->columns >= 3);
 	TableRow *result = table_push_row(t, a, TRK_CELLS);
 	TableCell *cells = result->data;
 
@@ -1035,10 +1036,7 @@ ui_variable_free(BeamformerUI *ui, Variable *var)
 					/* TODO(rnp): instead there should be a way of linking these up */
 					BeamformerFrameView *bv = var->generic;
 					ui_beamformer_frame_view_release_subresources(ui, bv, bv->kind);
-					DLLRemove(bv);
-					/* TODO(rnp): hack; use a sentinal */
-					if (bv == ui->views)
-						ui->views = bv->next;
+					DLLRemove(0, ui->view_first, ui->view_last, bv, next, prev);
 					SLLPushFreelist(bv, ui->view_freelist);
 				}
 
@@ -1115,7 +1113,7 @@ add_variable_group(BeamformerUI *ui, Variable *group, Arena *arena, s8 name, Var
 function Variable *
 end_variable_group(Variable *group)
 {
-	ASSERT(group->type == VT_GROUP);
+	assert(group->type == VT_GROUP);
 	return group->parent;
 }
 
@@ -1432,7 +1430,7 @@ ui_beamformer_frame_view_new(BeamformerUI *ui, Arena *arena)
 	if (!result) result = push_struct_no_zero(arena, typeof(*result));
 	zero_struct(result);
 	result->export_handle.value[0] = OSInvalidHandleValue;
-	DLLPushDown(result, ui->views);
+	DLLInsertLast(0, ui->view_first, ui->view_last, result, next, prev);
 	return result;
 }
 
@@ -1827,7 +1825,7 @@ view_update(BeamformerUI *ui, BeamformerFrameView *view)
 function void
 update_frame_views(BeamformerUI *ui, Rect window)
 {
-	for (BeamformerFrameView *view = ui->views; view; view = view->next) {
+	for (BeamformerFrameView *view = ui->view_first; view; view = view->next) {
 		if (view_update(ui, view)) {
 			BeamformerRenderBeamformedPushConstants pc = {
 				.bounding_box_colour = FRAME_VIEW_BB_COLOUR,
@@ -3491,9 +3489,9 @@ update_text_input(InputState *is, Variable *var)
 		b32 allow_key = !is->numeric || (BETWEEN(key, '0', '9') || (key == '.') ||
 		                 (key == '-' && is->cursor == 0));
 		if (allow_key) {
-			mem_move(is->buf + is->cursor + 1,
-			         is->buf + is->cursor,
-			         (uz)(is->count - is->cursor));
+			memory_move(is->buf + is->cursor + 1,
+			            is->buf + is->cursor,
+			            (uz)(is->count - is->cursor));
 			is->buf[is->cursor++] = (u8)key;
 			is->count++;
 		}
@@ -3505,17 +3503,17 @@ update_text_input(InputState *is, Variable *var)
 	if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE)) && is->cursor > 0) {
 		is->cursor--;
 		if (is->cursor < countof(is->buf) - 1) {
-			mem_move(is->buf + is->cursor,
-			         is->buf + is->cursor + 1,
-			         (uz)(is->count - is->cursor - 1));
+			memory_move(is->buf + is->cursor,
+			            is->buf + is->cursor + 1,
+			            (uz)(is->count - is->cursor - 1));
 		}
 		is->count--;
 	}
 
 	if ((IsKeyPressed(KEY_DELETE) || IsKeyPressedRepeat(KEY_DELETE)) && is->cursor < is->count) {
-		mem_move(is->buf + is->cursor,
-		         is->buf + is->cursor + 1,
-		         (uz)(is->count - is->cursor - 1));
+		memory_move(is->buf + is->cursor,
+		            is->buf + is->cursor + 1,
+		            (uz)(is->count - is->cursor - 1));
 		is->count--;
 	}
 
@@ -3801,7 +3799,7 @@ ui_extra_actions(BeamformerUI *ui, Variable *var)
 			ui_beamformer_frame_view_release_subresources(ui, old, last_kind);
 			ui_beamformer_frame_view_convert(ui, &ui->arena, view->child, view->menu, old->kind, old, log_scale);
 
-			DLLRemove(old);
+			DLLRemove(0, old->next, old->prev, old, next, prev);
 			SLLPushFreelist(old, ui->view_freelist);
 		}break;
 		InvalidDefaultCase;

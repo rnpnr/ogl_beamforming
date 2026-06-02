@@ -15,7 +15,7 @@ memory_clear(void *restrict p_, u8 c, u64 size)
 }
 
 function b32
-memory_equal(void *restrict left, void *restrict right, uz n)
+memory_equal(void *restrict left, void *restrict right, u64 n)
 {
 	u8 *a = left, *b = right;
 	b32 result = 1;
@@ -26,7 +26,7 @@ memory_equal(void *restrict left, void *restrict right, uz n)
 
 #define mem_copy memory_copy
 function void
-memory_copy(void *restrict dest, void *restrict src, uz n)
+memory_copy(void *restrict dest, void *restrict src, u64 n)
 {
 	u8 *s = src, *d = dest;
 	#ifdef __AVX512BW__
@@ -43,7 +43,7 @@ memory_copy(void *restrict dest, void *restrict src, uz n)
 
 /* IMPORTANT: this function may fault if dest, src, and n are not multiples of 64 */
 function void
-memory_copy_non_temporal(void *restrict dest, void *restrict src, uz n)
+memory_copy_non_temporal(void *restrict dest, void *restrict src, u64 n)
 {
 	assume(((u64)dest & 63) == 0);
 	assume(((u64)src  & 63) == 0);
@@ -76,14 +76,14 @@ memory_copy_non_temporal(void *restrict dest, void *restrict src, uz n)
 		);
 	}
 	#else
-		mem_copy(d, s, n);
+		memory_copy(d, s, n);
 	#endif
 }
 
 function void
-mem_move(u8 *dest, u8 *src, uz n)
+memory_move(u8 *dest, u8 *src, u64 n)
 {
-	if (dest < src) mem_copy(dest, src, n);
+	if (dest < src) memory_copy(dest, src, n);
 	else            while (n) { n--; dest[n] = src[n]; }
 }
 
@@ -364,6 +364,17 @@ stream_append(Stream *s, void *data, iz count)
 	}
 }
 
+// TODO(rnp): replace with handwritten version
+#include <stdarg.h>
+#include <stdio.h>
+function void
+stream_appendfv(Stream *s, const char *format, va_list args)
+{
+	i32 written = vsnprintf((char *)s->data + s->widx, s->cap - s->widx, format, args);
+	s->errors |= written > (s->cap - s->widx);
+	if (!s->errors) s->widx += written;
+}
+
 function void
 stream_append_byte(Stream *s, u8 b)
 {
@@ -533,7 +544,7 @@ arena_stream(Arena a)
 function s8
 arena_stream_commit(Arena *a, Stream *s)
 {
-	ASSERT(s->data == a->beg);
+	assert(s->data == a->beg);
 	s8 result = stream_to_s8(s);
 	arena_commit(a, result.len);
 	return result;
@@ -575,9 +586,16 @@ u128_hash_from_data(void *data, uz size)
 }
 
 function u64
+u64_hash_from_str8_seed(str8 string, u64 seed)
+{
+	u64 result = XXH3_64bits_withSeed(string.data, (uz)string.length, seed);
+	return result;
+}
+
+function u64
 u64_hash_from_s8(s8 v)
 {
-	u64 result = XXH3_64bits_withSeed(v.data, (uz)v.len, 4969);
+	u64 result = u64_hash_from_str8_seed(str8_from_s8(v), 4969);
 	return result;
 }
 
@@ -589,13 +607,39 @@ c_str_to_s8(char *cstr)
 	return result;
 }
 
+function str8
+str8_range(u8 *start, u8 *one_past_last)
+{
+	str8 result;
+	result.data   = start;
+	result.length = one_past_last - start;
+	return result;
+}
+
+function str8
+str8_skip(str8 s, i64 count)
+{
+	str8 result = s;
+	if (count > 0) {
+		result.data   += count;
+		result.length -= count;
+	}
+	return result;
+}
+
+function b32
+str8_equal(str8 a, str8 b)
+{
+	b32 result = a.length == b.length;
+	for (i64 i = 0; result && i < a.length; i++)
+		result = a.data[i] == b.data[i];
+	return result;
+}
+
 function b32
 s8_equal(s8 a, s8 b)
 {
-	b32 result = a.len == b.len;
-	for (iz i = 0; result && i < a.len; i++)
-		result = a.data[i] == b.data[i];
-	return result;
+	return str8_equal(str8_from_s8(a), str8_from_s8(b));
 }
 
 /* NOTE(rnp): returns < 0 if byte is not found */
@@ -616,6 +660,58 @@ s8_cut_head(s8 s, iz cut)
 	}
 	return result;
 }
+
+function b32
+str8_match(str8 a, str8 b, StringMatchFlags flags)
+{
+	b32 result = 0;
+	if (flags == 0) {
+		result = str8_equal(a, b);
+	} else if (a.length == b.length || (flags & StringMatchFlag_SloppySize)) {
+		result = 1;
+		i64 length = Min(a.length, b.length);
+		for (i64 it = 0; it < length && result; it++) {
+			u8 ab = a.data[it], bb = b.data[it];
+			if (flags & StringMatchFlag_CaseInsensitive) {
+				ab |= 0x20;
+				bb |= 0x20;
+			}
+			result &= ab == bb;
+		}
+	}
+	return result;
+}
+
+function i64
+str8_find_needle(str8 string, str8 needle, StringMatchFlags flags)
+{
+	u8 *s  = string.data;
+	u8 *se = string.data + Max(string.length + 1, needle.length) - needle.length;
+	if (needle.length > 0) {
+		flags |= StringMatchFlag_SloppySize;
+
+		u8 nb = needle.data[0];
+		if (flags & StringMatchFlag_CaseInsensitive)
+			nb |= 0x20;
+
+		str8 needle_tail = str8_skip(needle, 1);
+		u8 *s_opl = string.data + string.length;
+		for (; s < se; s++) {
+			u8 sb = *s;
+			if (flags & StringMatchFlag_CaseInsensitive)
+				sb |= 0x20;
+
+			if (sb == nb && str8_match(str8_range(s + 1, s_opl), needle_tail, flags))
+				break;
+		}
+	}
+
+	i64 result = string.length;
+	if (s < se)
+		result = s - string.data;
+	return result;
+}
+
 
 function s8
 s8_alloc(Arena *a, iz len)
@@ -665,6 +761,30 @@ s8_to_s16(Arena *a, s8 in)
 	return result;
 }
 
+#define push_str8_from_parts(a, j, ...) push_str8_from_parts_((a), (j), arg_list(str8, __VA_ARGS__))
+function str8
+push_str8_from_parts_(Arena *arena, str8 joiner, str8 *parts, i64 count)
+{
+	i64 length = joiner.length * (count - 1);
+	for (i64 i = 0; i < count; i++)
+		length += parts[i].length;
+
+	str8 result = {.length = length, .data = arena_commit(arena, length + 1)};
+
+	i64 offset = 0;
+	for (i64 i = 0; i < count; i++) {
+		if (i != 0) {
+			memory_copy(result.data + offset, joiner.data, (uz)joiner.length);
+			offset += joiner.length;
+		}
+		memory_copy(result.data + offset, parts[i].data, (uz)parts[i].length);
+		offset += parts[i].length;
+	}
+	result.data[result.length] = 0;
+
+	return result;
+}
+
 #define push_s8_from_parts(a, j, ...) push_s8_from_parts_((a), (j), arg_list(s8, __VA_ARGS__))
 function s8
 push_s8_from_parts_(Arena *arena, s8 joiner, s8 *parts, iz count)
@@ -695,6 +815,27 @@ push_s8(Arena *a, s8 str)
 	s8 result   = s8_alloc(a, str.len + 1);
 	result.len -= 1;
 	mem_copy(result.data, str.data, (uz)result.len);
+	return result;
+}
+
+// TODO(rnp): replace with handwritten version
+function str8
+push_str8_fv(Arena *arena, const char *format, va_list args)
+{
+	Stream sb = arena_stream(*arena);
+	stream_appendfv(&sb, format, args);
+	s8 s = arena_stream_commit(arena, &sb);
+	str8 result = {.length = s.len, .data = s.data};
+	return result;
+}
+
+function str8
+push_f64_string(Arena *arena, f64 value, u64 precision)
+{
+	Stream sb = arena_stream(*arena);
+	stream_append_f64(&sb, value, precision);
+	s8 s = arena_stream_commit(arena, &sb);
+	str8 result = {.length = s.len, .data = s.data};
 	return result;
 }
 

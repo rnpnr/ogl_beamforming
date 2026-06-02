@@ -407,7 +407,7 @@ vk_entity_release(VulkanEntity *entity)
 {
 	DeferLoop(take_lock(&vulkan_context->entity_lock, -1), release_lock(&vulkan_context->entity_lock))
 	{
-		SLLStackPush(vulkan_context->entity_freelist, entity);
+		SLLStackPush(vulkan_context->entity_freelist, entity, next);
 	}
 }
 

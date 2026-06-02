@@ -46,6 +46,12 @@ struct BeamformerComputeGraphNode {
 	BeamformerComputeGraphNode *next;
 };
 
+typedef struct {
+	BeamformerComputeGraphNode *first;
+	BeamformerComputeGraphNode *last;
+	u64                         count;
+} BeamformerComputeGraph;
+
 read_only global u32 beamformer_compute_array_parameter_sizes[] = {
 	#define X(k, type, elements) sizeof(type) * elements,
 	BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST
@@ -282,10 +288,13 @@ compute_plan_push_shader(BeamformerComputePlan *p, BeamformerComputeGraphNode *n
 }
 
 function BeamformerComputeGraphNode *
-push_compute_graph_node(BeamformerComputeGraphNode *root, BeamformerShaderKind kind, Arena *arena)
+push_compute_graph_node(BeamformerComputeGraph *graph, BeamformerShaderKind kind, Arena *arena)
 {
 	BeamformerComputeGraphNode *result = push_struct(arena, BeamformerComputeGraphNode);
-	DLLPushEnd(root, result);
+	if (graph) {
+		DLLInsertLast(0, graph->first, graph->last, result, next, prev);
+		graph->count++;
+	}
 	result->kind = kind;
 	result->user_pipeline_index = -1;
 	// NOTE(rnp): initially don't care data kind
@@ -352,8 +361,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 	//////////////////////////////////////
 	// NOTE(rnp): First Pass: build initial graph and insert hard layout constraints
-	BeamformerComputeGraphNode *root_node = push_struct(&scratch, BeamformerComputeGraphNode);
-	root_node->kind = BeamformerShaderKind_Count;
+	BeamformerComputeGraph graph = {0};
+	BeamformerComputeGraphNode *root_node = push_compute_graph_node(&graph, BeamformerShaderKind_Count, &scratch);
 	root_node->input_data_kind  = input_data_kind;
 	root_node->input_stride.x   = 1;                                               // Sample Stride
 	root_node->input_stride.y   = pb->parameters.sample_count * acquisition_count; // Channel Stride
@@ -362,7 +371,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	root_node->output_stride.x  = 1;                                               // Sample Stride
 	root_node->output_stride.y  = pb->parameters.sample_count * acquisition_count; // Channel Stride
 	root_node->output_stride.z  = pb->parameters.sample_count;                     // Receive Event Stride
-	root_node->next = root_node->prev = root_node;
 
 	for EachIndex(pb->pipeline.shader_count, it) {
 		// NOTE(rnp): skip unnecessary shaders
@@ -384,8 +392,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		default:{}break;
 		}
 
-		BeamformerComputeGraphNode *node = push_compute_graph_node(root_node, pb->pipeline.shaders[it],
-		                                                           &scratch);
+		BeamformerComputeGraphNode *node = push_compute_graph_node(&graph, pb->pipeline.shaders[it], &scratch);
 		node->user_pipeline_index = (i32)it;
 		switch (pb->pipeline.shaders[it]) {
 		case BeamformerShaderKind_Decode:{
@@ -422,7 +429,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 			// NOTE(rnp): insert implicit CoherencyWeighting node
 			if (pb->parameters.coherency_weighting)
-				node = push_compute_graph_node(root_node, BeamformerShaderKind_CoherencyWeighting, &scratch);
+				node = push_compute_graph_node(&graph, BeamformerShaderKind_CoherencyWeighting, &scratch);
 		}break;
 
 		default:{}break;
@@ -431,10 +438,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 	//////////////////////////////////////
 	// NOTE(rnp): Second Pass: resolve layout constraints
-	for (BeamformerComputeGraphNode *node = root_node->next;
-	     node != root_node;
-	     node = node->next)
-	{
+	for (BeamformerComputeGraphNode *node = root_node->next; node; node = node->next) {
 		b32 needs_reshape = 0;
 
 		// NOTE(rnp): data strides
@@ -473,13 +477,14 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 		// NOTE(rnp): insert reshape if needed
 		if (needs_reshape) {
-			BeamformerComputeGraphNode *new = push_compute_graph_node(node, BeamformerShaderKind_Reshape,
-			                                                          &scratch);
+			BeamformerComputeGraphNode *new = push_compute_graph_node(0, BeamformerShaderKind_Reshape, &scratch);
+			BeamformerComputeGraphNode *last  = node->prev;
+			DLLInsertLast(0, node, last, new, next, prev);
+			graph.count++;
 			new->input_data_kind  = new->prev->output_data_kind;
 			new->input_stride     = new->prev->output_stride;
-
-			new->output_data_kind = node->input_data_kind;
-			new->output_stride    = node->input_stride;
+			new->output_data_kind = new->next->input_data_kind;
+			new->output_stride    = new->next->input_stride;
 		}
 	}
 
@@ -489,10 +494,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	cp->first_image_shader_index = 0;
 	cp->pipeline.shader_count = 0;
 
-	for (BeamformerComputeGraphNode *node = root_node->next;
-	     node != root_node;
-	     node = node->next)
-	{
+	for (BeamformerComputeGraphNode *node = root_node->next; node; node = node->next) {
 		assert(node->prev->output_data_kind == node->input_data_kind);
 		assert(bv3_all(iv3_equal(node->prev->output_stride, node->input_stride)));
 

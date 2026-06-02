@@ -71,7 +71,6 @@ typedef u64      uptr;
   #define DEBUG_DECL(a)
   #define assert(c) (void)(c)
 #endif
-#define ASSERT assert
 
 #if ASAN_ACTIVE
   void __asan_poison_memory_region(void *, i64);
@@ -145,22 +144,26 @@ typedef u64      uptr;
 
 #define spin_wait(c) while ((c)) cpu_yield()
 
+// NOTE(rnp): typically for enums, wtf is wrong with modern compilers
+#define circular_add(v, add, max) (((u64)(v) + (u64)(max) + (i64)(add)) % (u64)(max))
+
 #define DA_STRUCT(kind, name) typedef struct { \
 	kind     *data;     \
 	da_count  count;    \
 	da_count  capacity; \
 } name ##List;
 
-#define SLLStackPush(list, n) ((n)->next = (list), (list) = (n))
+#define SLLStackPush(list, n, next) ((n)->next = (list), (list) = (n))
 // TODO(rnp): clean this up
-#define SLLPush(v, list) SLLStackPush(list, v)
+#define SLLPush(v, list) SLLStackPush(list, v, next)
 
 /* NOTE(rnp): no guarantees about actually getting an element */
-#define SLLPop(list) list; list = list ? list->next : 0
+#define SLLPop(l, next) (l); ((l) = (l) ? (l)->next : 0)
+#define SLLStackPop(l, next) ((l) = (l)->next)
 
 #define SLLPopFreelist(list) list; do { \
 	asan_unpoison_region((list), sizeof(*(list))); \
-	(void)SLLPop((list)); \
+	(void)SLLPop((list), next); \
 } while(0)
 
 #define SLLPushFreelist(v, list) do { \
@@ -168,19 +171,19 @@ typedef u64      uptr;
 	asan_poison_region((v), sizeof(*(v))); \
 } while(0)
 
-#define DLLPushEnd(l, n) ((n)->prev = (l)->prev, ((l)->prev ? (l)->prev->next = (n) : (0)), (l)->prev = (n), (n)->next = (l))
+#define DLLInsert(nil, f, l, n, next, prev) (\
+	((f) == 0 || (f) == nil) ? ((f) = (l) = (n), (n)->next = (n)->prev = nil) :\
+	((n)->next = (f), (n)->prev = (f)->prev, (f)->prev = (n), (f) = (n)),\
+	((n)->prev ? ((n)->prev->next = (n)) : (0)))
 
-// TODO(rnp): cleanup
-#define DLLPushDown(v, list) do { \
-	(v)->next = (list);                   \
-	if ((v)->next) (v)->next->prev = (v); \
-	(list) = (v);                         \
-} while (0)
+#define DLLInsertFirst(nil, f, l, n, next, prev) DLLInsert(nil, f, l, n, next, prev)
+#define DLLInsertLast(nil, f, l, n, next, prev)  DLLInsert(nil, l, f, n, prev, next)
 
-#define DLLRemove(v) do { \
-	if ((v)->next) (v)->next->prev = (v)->prev; \
-	if ((v)->prev) (v)->prev->next = (v)->next; \
-} while (0)
+#define DLLRemove(nil, f, l, n, next, prev) (\
+	((n) == (f) ? (f) = (n)->next : (0)),\
+	((n) == (l) ? (l) = (l)->prev : (0)),\
+	(((n)->prev != nil && (n)->prev != 0) ? (n)->prev->next = (n)->next : (0)),\
+	(((n)->next != nil && (n)->next != 0) ? (n)->next->prev = (n)->prev : (0)))
 
 #define KB(a)            ((u64)(a) << 10ULL)
 #define MB(a)            ((u64)(a) << 20ULL)
@@ -224,6 +227,11 @@ typedef struct { i64 length; u8 *data; } str8;
 #define s8_from_str8(s)   (s8){.len = (s).length, .data = (s).data}
 
 typedef struct { i64 len; u16 *data; } s16;
+
+typedef enum {
+	StringMatchFlag_CaseInsensitive = (1 << 0),
+	StringMatchFlag_SloppySize      = (1 << 1),
+} StringMatchFlags;
 
 typedef struct { u32 cp, consumed; } UnicodeDecode;
 
@@ -300,6 +308,7 @@ typedef union {
 	struct { f32 w, h; };
 	f32 E[2];
 } v2;
+#define V2_INFINITY (v2){{-F32_INFINITY, F32_INFINITY}}
 
 typedef union {
 	struct { f32 x,  y, z;   };
