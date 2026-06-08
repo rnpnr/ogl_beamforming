@@ -7,7 +7,7 @@ This means that GCC 12.1 or Clang 15 are the mininum supported
 compiler versions. Testing on compilers this old has been limited
 so you may run into bugs which do not occur with newer compilers.
 It is highly recommended that you use a more modern compiler (GCC
-15+ or Clang 21+).
+15+ or Clang 21+). Note that MSVC is not supported.
 
 Bootstrap the build tool once and it will rebuild itself as
 needed:
@@ -34,18 +34,6 @@ development/debugging:
 Debug builds enable dynamic reloading of almost the entire program
 and you can make changes to most code and recompile without
 exiting the application.
-
-## MSVC Support
-
-MSVC is not the target compiler for this application. While some
-attempt is made to keep an exe building with MSVC no effort is
-spent testing that it works beyond launching and running. Some
-previous attempts at testing it have indicated that MSVC is
-miscompiling parts of the code. Additionally there have been valid
-(as far as other C compilers are concerned) lines of code in this
-project that have caused MSVC to **crash** during compilation. If
-your compiler is so poorly written that it crashes on **ANY**
-input is it really worth our effort to support?
 
 # Troubleshooting
 
