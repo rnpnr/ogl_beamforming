@@ -2,6 +2,13 @@
 
 # Building
 
+The beamformer requires a compiler with support for `_Float16`.
+This means that GCC 12.1 or Clang 15 are the mininum supported
+compiler versions. Testing on compilers this old has been limited
+so you may run into bugs which do not occur with newer compilers.
+It is highly recommended that you use a more modern compiler (GCC
+15+ or Clang 21+).
+
 Bootstrap the build tool once and it will rebuild itself as
 needed:
 ```sh
@@ -40,6 +47,38 @@ project that have caused MSVC to **crash** during compilation. If
 your compiler is so poorly written that it crashes on **ANY**
 input is it really worth our effort to support?
 
+# Troubleshooting
+
+## Missing Vulkan Support
+
+If the beamformer fails to start with a message like:
+```sh
+./ogl
+[vulkan]  selecting device: llvmpipe (LLVM 15.0.7, 256 bits)
+[vulkan]  fatal error: missing required device extensions:
+[vulkan]      VK_KHR_external_memory
+[vulkan]      VK_KHR_external_memory_win32
+```
+you may need to use the legacy branch:
+
+```sh
+git checkout legacy
+./build
+```
+
+The `legacy` branch will be supported until the need for those
+extensions is removed but will not see feature or performance
+updates.
+
+## `llvmpipe`
+
+If the beamformer starts with the `llvmpipe` device it means that
+your system is missing vulkan libraries. On Ubuntu this can be
+resolved with:
+
+```sh
+sudo apt install libvulkan1
+```
 
 # Publication
 
