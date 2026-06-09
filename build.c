@@ -751,17 +751,16 @@ build_raylib(Arena a)
 		if (!is_msvc) cmd_append(&a, &cc, "-Wno-unused-but-set-variable");
 		cmd_append(&a, &cc, "-Iexternal/include", "-Iexternal/raylib/src", "-Iexternal/raylib/src/external/glfw/include");
 		#define RAYLIB_SOURCES \
-			X(rcore)     \
 			X(rglfw)     \
 			X(rshapes)   \
 			X(rtext)     \
 			X(rtextures) \
 			X(utils)
 		#define X(name) "external/raylib/src/" #name ".c",
-		char *srcs[] = {RAYLIB_SOURCES};
+		char *srcs[] = {"external/rcore_extended.c", RAYLIB_SOURCES};
 		#undef X
 		#define X(name) OUTPUT(OBJECT(#name)),
-		char *outs[] = {RAYLIB_SOURCES};
+		char *outs[] = {OUTPUT(OBJECT("rcore_extended")), RAYLIB_SOURCES};
 		#undef X
 
 		if (shared) {
