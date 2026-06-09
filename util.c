@@ -330,11 +330,12 @@ stream_alloc(Arena *a, i32 cap)
 	return result;
 }
 
-function s8
-stream_to_s8(Stream *s)
+#define stream_to_s8(s) s8_from_str8(stream_to_str8(s))
+function str8
+stream_to_str8(Stream *s)
 {
-	s8 result = s8("");
-	if (!s->errors) result = (s8){.len = s->widx, .data = s->data};
+	str8 result = str8("");
+	if (!s->errors) result = (str8){.length = s->widx, .data = s->data};
 	return result;
 }
 
@@ -359,9 +360,16 @@ stream_append(Stream *s, void *data, iz count)
 {
 	s->errors |= (s->cap - s->widx) < count;
 	if (!s->errors) {
-		mem_copy(s->data + s->widx, data, (uz)count);
+		memory_copy(s->data + s->widx, data, (uz)count);
 		s->widx += (i32)count;
 	}
+}
+
+function void
+stream_append_codepoint(Stream *s, u32 codepoint)
+{
+	u8 buffer[4];
+	stream_append(s, buffer, utf8_encode(buffer, codepoint));
 }
 
 // TODO(rnp): replace with handwritten version
