@@ -1339,12 +1339,19 @@ vk_load_physical_device(Arena arena, Stream *err)
 
 	vk->memory_info.memory_type_indices[VulkanMemoryKind_BAR] = bar_index;
 
+	vk->memory_info.memory_type_indices[VulkanMemoryKind_Host] = -1;
 	for (u32 i = 0; i < bmp->memoryTypeCount; i++) {
 		if ((bmp->memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) == 0) {
-			assert(bmp->memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-			vk->memory_info.memory_type_indices[VulkanMemoryKind_Host] = i;
-			break;
+			if (bmp->memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) {
+				vk->memory_info.memory_type_indices[VulkanMemoryKind_Host] = (i8)i;
+				break;
+			}
 		}
+	}
+
+	if (vk->memory_info.memory_type_indices[VulkanMemoryKind_Host] == -1) {
+		stream_append_s8(err, vulkan_info("fatal error: vulkan driver does not provide host visible memory\n"));
+		fatal(stream_to_s8(err));
 	}
 
 	for EachElement(vk->memory_info.memory_type_indices, it) {
