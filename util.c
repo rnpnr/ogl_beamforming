@@ -383,6 +383,15 @@ stream_appendfv(Stream *s, const char *format, va_list args)
 	if (!s->errors) s->widx += written;
 }
 
+function print_format(2, 3) void
+stream_appendf(Stream *s, const char *format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	stream_appendfv(s, format, args);
+	va_end(args);
+}
+
 function void
 stream_append_byte(Stream *s, u8 b)
 {
@@ -607,11 +616,19 @@ u64_hash_from_s8(s8 v)
 	return result;
 }
 
+function str8
+str8_from_c_str(char *cstr)
+{
+	str8 result = {.data = (u8 *)cstr};
+	if (cstr) while (*cstr) cstr++;
+	result.length = (u8 *)cstr - result.data;
+	return result;
+}
+
 function s8
 c_str_to_s8(char *cstr)
 {
-	s8 result = {.data = (u8 *)cstr};
-	if (cstr) { while (*cstr) { result.len++; cstr++; } }
+	s8 result = s8_from_str8(str8_from_c_str(cstr));
 	return result;
 }
 

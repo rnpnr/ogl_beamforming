@@ -231,7 +231,22 @@ read_only global s8 vk_debug_extensions[] = {VK_DEBUG_EXTENSIONS};
 read_only global s8 vk_instance_debug_extensions[] = {VK_INSTANCE_DEBUG_EXTENSIONS_LIST};
 #undef X
 
+#if BEAMFORMER_DEBUG
+#define VK_VALIDATION_LAYERS_LIST \
+	X(KHRONOS, validation) \
+
+#else
+#define VK_VALIDATION_LAYERS_LIST
+#endif
+
+read_only global str8 vk_validation_layers[] = {
+	#define X(vendor, name, ...) str8_comp("VK_LAYER_" #vendor "_" #name),
+	VK_VALIDATION_LAYERS_LIST
+	#undef X
+};
+
 global struct {
+	u32 driver_api_version;
 	union {
 		struct {
 			#define X(_, name, ...) b8 name;
@@ -258,6 +273,28 @@ global struct {
 		};
 		b8 E[countof(vk_instance_debug_extensions)];
 	} instance;
+
+	#if BEAMFORMER_DEBUG
+	struct {
+		union {
+			struct {
+				#define X(_, name, ...) b8 name;
+				VK_VALIDATION_LAYERS_LIST
+				#undef X
+			};
+			b8 E[countof(vk_validation_layers)];
+		} enabled;
+
+		union {
+			struct {
+				#define X(_, name, ...) u32 name;
+				VK_VALIDATION_LAYERS_LIST
+				#undef X
+			};
+			u32 E[countof(vk_validation_layers)];
+		} version;
+	} layers;
+	#endif
 } vulkan_config;
 
 #define MAX_ENABLED_EXTENSIONS (  countof(vk_required_device_extensions) \
@@ -486,7 +523,9 @@ glsl_to_spirv(Arena *arena, u32 kind, s8 shader_text, s8 name)
 		if (glslang_program_link(program, messages)) {
 			glslang_spv_options_t options = {.validate = 1,};
 
-			if (vulkan_config.debug.shader_non_semantic_info) {
+			if (vulkan_config.debug.shader_non_semantic_info &&
+			    vulkan_config.debug.shader_relaxed_extended_instruction)
+			{
 				options.generate_debug_info                  = 1;
 				options.emit_nonsemantic_shader_debug_info   = 1;
 				options.emit_nonsemantic_shader_debug_source = 1;
@@ -993,14 +1032,8 @@ vk_load_instance(Arena arena, Stream *err)
 	VkBaseProcedureList
 	#undef X
 
-	s8 validation_layers[] = {
-		#if BEAMFORMER_DEBUG
-		s8_comp("VK_LAYER_KHRONOS_validation"),
-		#endif
-	};
-
 	u32 enabled_validation_layers_count = 0;
-	const char *enabled_validation_layers[countof(validation_layers)];
+	const char *enabled_validation_layers[countof(vk_validation_layers)];
 
 	u32 enabled_instance_extensions_count = 0;
 	const char *enabled_instance_extensions[countof(vk_required_instance_extensions) + countof(vk_instance_debug_extensions)];
@@ -1014,34 +1047,33 @@ vk_load_instance(Arena arena, Stream *err)
 		u32 layer_count = 0;
 		vkEnumerateInstanceLayerProperties(&layer_count, 0);
 
-		VkLayerProperties *layers    = push_array(&arena, VkLayerProperties, layer_count);
-		s8                *layer_s8s = push_array(&arena, s8,                layer_count);
+		VkLayerProperties *layers      = push_array(&arena, VkLayerProperties, layer_count);
+		str8              *layer_str8s = push_array(&arena, str8,              layer_count);
 		vkEnumerateInstanceLayerProperties(&layer_count, layers);
 
 		for (u32 i = 0; i < layer_count; i++)
-			layer_s8s[i] = c_str_to_s8(layers[i].layerName);
+			layer_str8s[i] = str8_from_c_str(layers[i].layerName);
 
-		b32 supported_layers[countof(validation_layers)] = {0};
-		for EachElement(validation_layers, it) {
+		for EachElement(vk_validation_layers, it) {
 			for(u32 i = 0; i < layer_count; i++) {
-				if (s8_equal(validation_layers[it], layer_s8s[i])) {
+				if (str8_equal(vk_validation_layers[it], layer_str8s[i])) {
 					u32 index = enabled_validation_layers_count++;
-					enabled_validation_layers[index] = (char *)validation_layers[it].data;
-					supported_layers[it] = 1;
+					enabled_validation_layers[index]   = (char *)vk_validation_layers[it].data;
+					vulkan_config.layers.enabled.E[it] = 1;
+					vulkan_config.layers.version.E[it] = layers[i].specVersion;
 					break;
 				}
 			}
 		}
 
-		if (countof(validation_layers) != enabled_validation_layers_count) {
-			i32 missing_count = countof(validation_layers) - enabled_validation_layers_count;
+		if (countof(vk_validation_layers) != enabled_validation_layers_count) {
+			i32 missing_count = countof(vk_validation_layers) - enabled_validation_layers_count;
 			stream_append_s8s(err, vulkan_info("missing validation layer"),
 			                  missing_count > 1 ? s8("s:") : s8(":"), s8("\n"));
 
-			for EachElement(validation_layers, it) {
-				if (supported_layers[it] == 0)
-					stream_append_s8s(err, s8("    "), validation_layers[it], s8("\n"));
-			}
+			for EachElement(vk_validation_layers, it)
+				if (vulkan_config.layers.enabled.E[it] == 0)
+					stream_append_s8s(err, s8("    "), s8_from_str8(vk_validation_layers[it]), s8("\n"));
 		}
 
 		u32 instance_extension_count = 0;
@@ -1147,6 +1179,11 @@ vk_load_physical_device(Arena arena, Stream *err)
 	vkGetPhysicalDeviceProperties2(vk->physical_device, &dp);
 
 	stream_append_s8s(err, vulkan_info("selecting device: "), c_str_to_s8(dp.properties.deviceName), s8("\n"));
+	stream_append_s8(err, vulkan_info("Vulkan Version: "));
+	{
+		u32 dv = dp.properties.apiVersion;
+		stream_appendf(err, "%u.%u.%u\n", VK_API_VERSION_MAJOR(dv), VK_API_VERSION_MINOR(dv), VK_API_VERSION_PATCH(dv));
+	}
 
 	{
 		Arena scratch = arena;
@@ -1166,7 +1203,7 @@ vk_load_physical_device(Arena arena, Stream *err)
 
 		u32 supported_count = 0;
 		for EachElement(vk_required_device_extensions, it)
-		 supported_count += supported[it];
+			supported_count += supported[it];
 
 		u32 missing_count = countof(vk_required_device_extensions) - supported_count;
 		if (missing_count) {
@@ -1360,6 +1397,7 @@ vk_load_physical_device(Arena arena, Stream *err)
 		vk->memory_info.memory_host_coherent[it] = (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
 	}
 
+	vulkan_config.driver_api_version       = dp.properties.apiVersion;
 	vk->memory_info.max_allocation_size    = v11p.maxMemoryAllocationSize;
 	vk->memory_info.non_coherent_atom_size = dp.properties.limits.nonCoherentAtomSize;
 	vk->gpu_info.vendor                    = dp.properties.vendorID;
@@ -1373,6 +1411,27 @@ vk_load_physical_device(Arena arena, Stream *err)
 
 	// IMPORTANT(rnp): memory must only be pushed at the end of the function
 	vk->gpu_info.name = push_s8(&vk->arena, c_str_to_s8(dp.properties.deviceName));
+
+	#if BEAMFORMER_DEBUG
+	{
+		b32 mismatch = 0;
+		for EachElement(vk_validation_layers, it) {
+			u32 lv = vulkan_config.layers.version.E[it];
+			u32 dv = vulkan_config.driver_api_version;
+			if (lv < dv) {
+				mismatch = 1;
+				stream_append_s8s(err, vulkan_info("warning: validaton layer \""),
+				                  s8_from_str8(vk_validation_layers[it]), s8("\" version: "));
+				stream_appendf(err, "%u.%u.%u", VK_API_VERSION_MAJOR(lv), VK_API_VERSION_MINOR(lv), VK_API_VERSION_PATCH(lv));
+				stream_append_s8(err, s8(" lower than driver API version: "));
+				stream_appendf(err, "%u.%u.%u\n", VK_API_VERSION_MAJOR(dv), VK_API_VERSION_MINOR(dv), VK_API_VERSION_PATCH(dv));
+			}
+		}
+
+		if (mismatch)
+			stream_append_s8(err, vulkan_info("DO NOT report any bugs without updating your validation layers!\n"));
+	}
+	#endif
 }
 
 function void

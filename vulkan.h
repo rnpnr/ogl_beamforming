@@ -8,6 +8,10 @@
      (((uint32_t)(major))   << 22U) | \
      (((uint32_t)(minor))   << 12U) | \
      ((uint32_t)(patch)))
+#define VK_API_VERSION_VARIANT(version) (((uint32_t)(version) >> 29U) & 0x00U)
+#define VK_API_VERSION_MAJOR(version)   (((uint32_t)(version) >> 22U) & 0x7FU)
+#define VK_API_VERSION_MINOR(version)   (((uint32_t)(version) >> 12U) & 0x3FFU)
+#define VK_API_VERSION_PATCH(version)   (((uint32_t)(version) >>  0U) & 0xFFFU)
 
 #define VK_MAX_DESCRIPTION_SIZE           256U
 #define VK_MAX_EXTENSION_NAME_SIZE        256U
