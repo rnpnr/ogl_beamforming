@@ -21,6 +21,8 @@
 #define VK_MAX_MEMORY_TYPES               32U
 #define VK_MAX_MEMORY_HEAPS               16U
 
+#define VK_WHOLE_SIZE                     (~0ULL)
+
 #define VK_SUBPASS_EXTERNAL               (~0U)
 
 // NOTE: keeps type safety over void *
@@ -133,6 +135,7 @@ typedef enum {
 	VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO                                            = 1000207005,
 	VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO                                       = 1000244001,
 	VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT                                          = 1000247000,
+	VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_KHR                        = 1000286000,
 	VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2                                          = 1000314001,
 	VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2                                           = 1000314002,
 	VK_STRUCTURE_TYPE_DEPENDENCY_INFO                                                  = 1000314003,
@@ -2208,6 +2211,14 @@ typedef struct {
 	void *          pNext;
 	VkBool32        shaderRelaxedExtendedInstruction;
 } VkPhysicalDeviceShaderRelaxedExtendedInstructionFeaturesKHR;
+
+typedef struct {
+	VkStructureType sType;
+	void *          pNext;
+	VkBool32        robustBufferAccess2;
+	VkBool32        robustImageAccess2;
+	VkBool32        nullDescriptor;
+} VkPhysicalDeviceRobustness2FeaturesKHR;
 
 typedef struct {
 	VkStructureType          sType;

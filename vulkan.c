@@ -2,6 +2,7 @@
 // TODO(rnp)
 // [ ]: what is needed for HDR? I think it makes sense to just default to it nowadays
 // [ ]: once opengl is removed switch images to SRGB and/or 16 bit Float
+// [ ]: VK_KHR_robustness2 probably shouldn't be required but it also might not matter
 
 #include "beamformer_internal.h"
 #include "vulkan.h"
@@ -184,6 +185,7 @@ read_only global const char *vk_required_instance_extensions[] = {
 	X("VK_KHR_16bit_storage") \
 	X("VK_KHR_external_memory") \
 	X("VK_KHR_external_semaphore") \
+	X("VK_KHR_robustness2") \
 	X("VK_KHR_storage_buffer_storage_class") \
 	X("VK_KHR_timeline_semaphore") \
 	VK_OS_REQUIRED_DEVICE_EXTENSIONS_LIST
@@ -1640,6 +1642,13 @@ vk_load_queues(Arena *memory, Stream *err)
 		device_create_info.pNext = &coop_mat_features;
 	}
 
+	VkPhysicalDeviceRobustness2FeaturesKHR robust2 = {
+		.sType          = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_KHR,
+		.pNext          = (void *)device_create_info.pNext,
+		.nullDescriptor = 1,
+	};
+	device_create_info.pNext = &robust2;
+
 	VkPhysicalDeviceVulkan13Features v13f = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
 		.pNext = (void *)device_create_info.pNext,
@@ -1826,6 +1835,10 @@ vk_load_descriptor_block(void)
 			vk_label_object(DESCRIPTOR_SET_LAYOUT, vk->descriptor_set_layouts[it], stream_to_s8(&sb), s8("Set Layout"));
 		}
 	}
+
+	// NOTE(rnp): junk API requirement that doesn't allow 0 initialization
+	for EachElement(vk->descriptor_buffer_infos, it)
+		vk->descriptor_buffer_infos[it].range = VK_WHOLE_SIZE;
 }
 
 ///////////////////////
