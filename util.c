@@ -628,7 +628,8 @@ str8_from_c_str(char *cstr)
 function s8
 c_str_to_s8(char *cstr)
 {
-	s8 result = s8_from_str8(str8_from_c_str(cstr));
+	str8 s = str8_from_c_str(cstr);
+	s8 result = s8_from_str8(s);
 	return result;
 }
 
