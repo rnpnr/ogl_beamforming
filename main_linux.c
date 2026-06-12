@@ -43,8 +43,8 @@ typedef struct {
 
 typedef struct {
 	u64  hash;
-	iptr handle;
-	s8   name;
+	i64  handle;
+	str8 name;
 
 	OSLinux_FileWatch *data;
 	da_count           count;
@@ -159,35 +159,35 @@ os_lookup_file_watch_directory(OSLinux_FileWatchDirectoryList *ctx, u64 hash)
 }
 
 function void
-os_linux_add_file_watch(s8 path, void *user_context, OSLinux_FileWatchKind kind)
+os_linux_add_file_watch(str8 path, void *user_context, OSLinux_FileWatchKind kind)
 {
-	s8 directory  = path;
-	directory.len = s8_scan_backwards(path, '/');
-	assert(directory.len > 0);
+	str8 directory   = path;
+	directory.length = str8_scan_backwards(path, '/');
+	assert(directory.length > 0);
 
 	OSLinux_FileWatchDirectoryList *fwctx = &os_linux_context.file_watch_list;
 
-	u64 hash = u64_hash_from_s8(directory);
+	u64 hash = u64_hash_from_str8(directory);
 	OSLinux_FileWatchDirectory *dir = os_lookup_file_watch_directory(fwctx, hash);
 	if (!dir) {
-		assert(path.data[directory.len] == '/');
+		assert(path.data[directory.length] == '/');
 		dir = da_push(&os_linux_context.arena, fwctx);
 		dir->hash   = hash;
-		dir->name   = push_s8(&os_linux_context.arena, directory);
+		dir->name   = push_str8(&os_linux_context.arena, directory);
 		u32 mask    = IN_MOVED_TO|IN_CLOSE_WRITE;
 		dir->handle = inotify_add_watch(os_linux_context.inotify_handle, (c8 *)dir->name.data, mask);
 	}
 
 	OSLinux_FileWatch *fw = da_push(&os_linux_context.arena, dir);
 	fw->user_context = user_context;
-	fw->hash         = u64_hash_from_s8(s8_cut_head(path, dir->name.len + 1));
+	fw->hash         = u64_hash_from_str8(str8_cut_head(path, dir->name.length + 1));
 	fw->kind         = kind;
 }
 
 BEAMFORMER_IMPORT void
 os_add_file_watch(const char *path, int64_t path_length, void *user_context)
 {
-	s8 path_str = {.data = (u8 *)path, .len = path_length};
+	str8 path_str = {.data = (u8 *)path, .length = path_length};
 	os_linux_add_file_watch(path_str, user_context, OSLinux_FileWatchKindUser);
 }
 
@@ -233,7 +233,7 @@ load_platform_libraries(BeamformerInput *input)
 {
 	#if BEAMFORMER_DEBUG
 		debug_library_reload(input);
-		os_linux_add_file_watch(s8(OS_DEBUG_LIB_NAME), (void *)BeamformerInputEventKind_ExecutableReload,
+		os_linux_add_file_watch(str8(OS_DEBUG_LIB_NAME), (void *)BeamformerInputEventKind_ExecutableReload,
 		                        OSLinux_FileWatchKindPlatform);
 	#endif
 
@@ -275,8 +275,8 @@ dispatch_file_watch_events(BeamformerInput *input)
 				if (event->wd != dir->handle)
 					continue;
 
-				s8  file = c_str_to_s8(event->name);
-				u64 hash = u64_hash_from_s8(file);
+				str8 file = str8_from_c_str(event->name);
+				u64  hash = u64_hash_from_str8(file);
 				for (da_count j = 0; j < dir->count; j++) {
 					OSLinux_FileWatch *fw = dir->data + j;
 					if (fw->hash == hash) {

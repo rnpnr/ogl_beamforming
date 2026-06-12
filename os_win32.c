@@ -198,11 +198,11 @@ function OS_WRITE_NEW_FILE_FN(os_write_new_file)
 	b32 result = 0;
 	iptr h = CreateFileA(fname, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, 0);
 	if (h >= 0) {
-		while (raw.len > 0) {
-			i64 length = MIN(raw.len, (iz)GB(2));
+		while (raw.length > 0) {
+			i64 length = Min(raw.length, (i64)GB(2));
 			result     = os_write_file(h, raw.data, length);
 			if (!result) break;
-			raw = s8_cut_head(raw, length);
+			raw = str8_cut_head(raw, length);
 		}
 		CloseHandle(h);
 	}

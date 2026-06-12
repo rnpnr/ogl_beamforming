@@ -946,26 +946,36 @@ s8_chop(s8 *in, iz count)
 	return result;
 }
 
-function void
-s8_split(s8 str, s8 *left, s8 *right, u8 byte)
+function str8
+str8_chop(str8 *in, i64 count)
 {
-	iz i;
-	for (i = 0; i < str.len; i++) if (str.data[i] == byte) break;
+	count = Clamp(count, 0, in->length);
+	str8 result = {.data = in->data, .length = count};
+	in->data   += count;
+	in->length -= count;
+	return result;
+}
 
-	if (left) *left = (s8){.data = str.data, .len = i};
+function void
+str8_split(str8 str, str8 *left, str8 *right, u8 byte)
+{
+	i64 i;
+	for (i = 0; i < str.length; i++) if (str.data[i] == byte) break;
+
+	if (left) *left = (str8){.data = str.data, .length = i};
 	if (right) {
-		right->data = str.data + i + 1;
-		right->len  = MAX(0, str.len - (i + 1));
+		right->data   = str.data + i + 1;
+		right->length = Max(0, str.length - (i + 1));
 	}
 }
 
-function s8
-s8_trim(s8 in)
+function str8
+str8_trim(str8 in)
 {
-	s8 result = in;
-	for (iz i = 0; i < in.len && *result.data == ' '; i++) result.data++;
-	result.len -= result.data - in.data;
-	for (; result.len > 0 && result.data[result.len - 1] == ' '; result.len--);
+	str8 result = in;
+	for (i64 i = 0; i < in.length && *result.data == ' '; i++) result.data++;
+	result.length -= result.data - in.data;
+	for (; result.length > 0 && result.data[result.length - 1] == ' '; result.length--);
 	return result;
 }
 
@@ -978,7 +988,7 @@ typedef struct {
 function b32
 meta_write_and_reset(MetaprogramContext *m, char *file)
 {
-	b32 result = os_write_new_file(file, stream_to_s8(&m->stream));
+	b32 result = os_write_new_file(file, stream_to_str8(&m->stream));
 	if (!result) build_log_failure("%s", file);
 	m->stream.widx       = 0;
 	m->indentation_level = 0;
@@ -1727,7 +1737,7 @@ typedef struct {
 
 typedef struct {
 	union {
-		s8 string;
+		str8 string;
 		MetaEmitOperationExpansion expansion_operation;
 	};
 	MetaEmitOperationKind kind;
@@ -1937,8 +1947,8 @@ typedef struct {
 typedef struct {
 	Arena *arena, scratch;
 
-	s8 filename;
-	s8 directory;
+	str8 filename;
+	str8 directory;
 
 	MetaEntityID                 library_entity;
 	MetaEntityID                 matlab_entity;
@@ -2445,35 +2455,35 @@ meta_pack_references(MetaContext *ctx, MetaEntry *entries, i64 entry_count, Meta
 }
 
 function void
-meta_expansion_string_split(s8 string, s8 *left, s8 *inner, s8 *remainder, MetaLocation loc)
+meta_expansion_string_split(str8 string, str8 *left, str8 *inner, str8 *remainder, MetaLocation loc)
 {
 	b32 found = 0;
-	for (u8 *s = string.data, *e = s + string.len; (s + 1) != e; s++) {
+	for (u8 *s = string.data, *e = s + string.length; (s + 1) != e; s++) {
 		u32 val  = (u32)'$'  << 8u | (u32)'(';
 		u32 test = (u32)s[0] << 8u | s[1];
 		if (test == val) {
 			if (left) {
-				left->data = string.data;
-				left->len  = s - string.data;
+				left->data   = string.data;
+				left->length = s - string.data;
 			}
 
 			u8 *start = s + 2;
 			while (s != e && *s != ')') s++;
 			if (s == e) {
 				meta_compiler_error_message(loc, "unterminated expansion in raw string:\n  %.*s\n",
-				                            (i32)string.len, string.data);
+				                            (i32)string.length, string.data);
 				fprintf(stderr, "  %.*s^\n", (i32)(start - string.data), "");
 				meta_error();
 			}
 
 			if (inner) {
-				inner->data = start;
-				inner->len  = s - start;
+				inner->data   = start;
+				inner->length = s - start;
 			}
 
 			if (remainder) {
-				remainder->data = s + 1;
-				remainder->len  = string.len - (remainder->data - string.data);
+				remainder->data   = s + 1;
+				remainder->length = string.length - (remainder->data - string.data);
 			}
 			found = 1;
 			break;
@@ -2481,14 +2491,14 @@ meta_expansion_string_split(s8 string, s8 *left, s8 *inner, s8 *remainder, MetaL
 	}
 	if (!found) {
 		if (left)      *left      = string;
-		if (inner)     *inner     = (s8){0};
-		if (remainder) *remainder = (s8){0};
+		if (inner)     *inner     = (str8){0};
+		if (remainder) *remainder = (str8){0};
 	}
 }
 
 function MetaExpansionPart *
 meta_push_expansion_part(MetaContext *ctx, Arena *arena, MetaExpansionPartList *parts,
-                         MetaExpansionPartKind kind, s8 string, MetaEntity *table, MetaLocation loc)
+                         MetaExpansionPartKind kind, str8 string, MetaEntity *table, MetaLocation loc)
 {
 	MetaExpansionPart *result = da_push(arena, parts);
 
@@ -2505,17 +2515,17 @@ meta_push_expansion_part(MetaContext *ctx, Arena *arena, MetaExpansionPartList *
 		assert(meta_entity_kind_is_table[table->kind]);
 		MetaTable *t = &table->table;
 
-		da_count index = meta_lookup_string_slow(t->fields, t->field_count, string);
+		da_count index = meta_lookup_string_slow(t->fields, t->field_count, s8_from_str8(string));
 		result->strings = t->entries[index];
 		if (index < 0) {
 			/* TODO(rnp): fix this location to point directly at the field in the string */
 			s8 table_name = ctx->entity_names.data[da_index(table, &ctx->entities)];
 			meta_compiler_error(loc, "table \"%.*s\" does not contain member: %.*s\n",
-			                    (i32)table_name.len, table_name.data, (i32)string.len, string.data);
+			                    (i32)table_name.len, table_name.data, (i32)string.length, string.data);
 		}
 	}break;
 
-	case MetaExpansionPartKind_String:{ result->string = string; }break;
+	case MetaExpansionPartKind_String:{ result->string = s8_from_str8(string); }break;
 	InvalidDefaultCase;
 	}
 	return result;
@@ -2552,12 +2562,12 @@ read_only global s8 meta_expansion_token_strings[] = {
 };
 
 typedef	struct {
-	s8 s;
+	str8 s;
 	union {
-		i64 number;
-		s8  string;
+		i64  number;
+		str8 string;
 	};
-	s8 save;
+	str8 save;
 	MetaLocation loc;
 } MetaExpansionParser;
 
@@ -2570,13 +2580,13 @@ typedef	struct {
 	                    (i32)meta_expansion_token_strings[e].len, meta_expansion_token_strings[e].data, \
 	                    (i32)meta_expansion_token_strings[g].len, meta_expansion_token_strings[g].data)
 
-function s8
+function str8
 meta_expansion_extract_string(MetaExpansionParser *p)
 {
-	s8 result = {.data = p->s.data};
-	for (; result.len < p->s.len; result.len++) {
+	str8 result = {.data = p->s.data};
+	for (; result.length < p->s.length; result.length++) {
 		b32 done = 0;
-		switch (p->s.data[result.len]) {
+		switch (p->s.data[result.length]) {
 		#define X(t, ...) case t:
 		META_EXPANSION_TOKEN_LIST
 		#undef X
@@ -2586,8 +2596,8 @@ meta_expansion_extract_string(MetaExpansionParser *p)
 		}
 		if (done) break;
 	}
-	p->s.data += result.len;
-	p->s.len  -= result.len;
+	p->s.data   += result.length;
+	p->s.length -= result.length;
 	return result;
 }
 
@@ -2596,7 +2606,7 @@ meta_expansion_token(MetaExpansionParser *p)
 {
 	MetaExpansionToken result = MetaExpansionToken_EOF;
 	meta_expansion_save(p);
-	if (p->s.len > 0) {
+	if (p->s.length > 0) {
 		b32 chop = 1;
 		switch (p->s.data[0]) {
 		#define X(t, kind, ...) case t:{ result = MetaExpansionToken_## kind; }break;
@@ -2609,13 +2619,13 @@ meta_expansion_token(MetaExpansionParser *p)
 		}break;
 		}
 		if (chop) {
-			s8_chop(&p->s, 1);
-			p->s = s8_trim(p->s);
+			str8_chop(&p->s, 1);
+			p->s = str8_trim(p->s);
 		}
 
 		switch (result) {
 		case MetaExpansionToken_Number:{
-			NumberConversion integer = integer_from_s8(p->s);
+			NumberConversion integer = integer_from_str8(p->s);
 			if (integer.result != NumberConversionResult_Success) {
 				/* TODO(rnp): point at start */
 				meta_compiler_error(p->loc, "invalid integer in expansion string\n");
@@ -2626,7 +2636,7 @@ meta_expansion_token(MetaExpansionParser *p)
 		case MetaExpansionToken_Identifier:{ p->string = meta_expansion_extract_string(p); }break;
 		default:{}break;
 		}
-		p->s = s8_trim(p->s);
+		p->s = str8_trim(p->s);
 	}
 	return result;
 }
@@ -2636,7 +2646,7 @@ meta_expansion_start_conditional(MetaContext *ctx, Arena *arena, MetaExpansionPa
                                  MetaExpansionParser *p, MetaExpansionToken token, b32 negate)
 {
 	MetaExpansionPart *result = meta_push_expansion_part(ctx, arena, ops, MetaExpansionPartKind_Conditional,
-	                                                     s8(""), 0, p->loc);
+	                                                     str8(""), 0, p->loc);
 	switch (token) {
 	case MetaExpansionToken_Number:{
 		result->conditional.lhs.kind   = MetaExpansionConditionalArgumentKind_Number;
@@ -2652,7 +2662,7 @@ meta_expansion_end_conditional(MetaExpansionPart *ep, MetaExpansionParser *p, Me
 {
 	if (ep->conditional.rhs.kind != MetaExpansionConditionalArgumentKind_Invalid) {
 		meta_compiler_error(p->loc, "invalid expansion conditional: duplicate right hand expression: '%.*s'\n",
-		                    (i32)p->save.len, p->save.data);
+		                    (i32)p->save.length, p->save.data);
 	}
 	switch (token) {
 	case MetaExpansionToken_Number:{
@@ -2664,14 +2674,14 @@ meta_expansion_end_conditional(MetaExpansionPart *ep, MetaExpansionParser *p, Me
 }
 
 function MetaExpansionPartList
-meta_generate_expansion_set(MetaContext *ctx, Arena *arena, s8 expansion_string, MetaEntity *table, MetaLocation loc)
+meta_generate_expansion_set(MetaContext *ctx, Arena *arena, str8 expansion_string, MetaEntity *table, MetaLocation loc)
 {
 	MetaExpansionPartList result = {0};
-	s8 left = {0}, inner, remainder = expansion_string;
+	str8 left = {0}, inner, remainder = expansion_string;
 	do {
 		meta_expansion_string_split(remainder, &left, &inner, &remainder, loc);
-		if (left.len)  meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_String, left, table, loc);
-		if (inner.len) {
+		if (left.length)  meta_push_expansion_part(ctx, arena, &result, MetaExpansionPartKind_String, left, table, loc);
+		if (inner.length) {
 			MetaExpansionParser p[1] = {{.s = inner, .loc = loc}};
 
 			MetaExpansionPart *test_part = 0;
@@ -2706,7 +2716,7 @@ meta_generate_expansion_set(MetaContext *ctx, Arena *arena, s8 expansion_string,
 
 				case MetaExpansionToken_Quote:{
 					u8 *point = p->s.data;
-					s8 string = meta_expansion_extract_string(p);
+					str8 string = meta_expansion_extract_string(p);
 					token = meta_expansion_token(p);
 					if (token != MetaExpansionToken_Quote) {
 						loc.column += (u32)(point - expansion_string.data);
@@ -2786,14 +2796,14 @@ meta_generate_expansion_set(MetaContext *ctx, Arena *arena, s8 expansion_string,
 				}
 			}
 		}
-	} while (remainder.len);
+	} while (remainder.length);
 	return result;
 }
 
 function s8 *
 meta_expand_to_s8_array(MetaContext *ctx, Arena scratch, s8 expand, MetaEntity *table, MetaLocation location)
 {
-	MetaExpansionPartList parts = meta_generate_expansion_set(ctx, &scratch, expand, table, location);
+	MetaExpansionPartList parts = meta_generate_expansion_set(ctx, &scratch, str8_from_s8(expand), table, location);
 	s8 *result = push_array(ctx->arena, s8, table->table.entry_count);
 	for EachIndex(table->table.entry_count, expansion) {
 		Stream sb = arena_stream(*ctx->arena);
@@ -2838,7 +2848,7 @@ meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count, MetaE
 		case MetaEntryKind_String:{
 			if (!ops) goto error;
 
-			MetaExpansionPartList parts = meta_generate_expansion_set(ctx, ctx->arena, row->name, table, row->location);
+			MetaExpansionPartList parts = meta_generate_expansion_set(ctx, ctx->arena, str8_from_s8(row->name), table, row->location);
 
 			MetaEmitOperation *op = da_push(ctx->arena, ops);
 			op->kind     = MetaEmitOperationKind_Expand;
@@ -2918,15 +2928,15 @@ meta_embed(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count)
 	MetaEmitOperation *op;
 	op = da_push(ctx->arena, ops);
 	op->kind   = MetaEmitOperationKind_String;
-	op->string = push_s8_from_parts(ctx->arena, s8(""), s8("read_only global u8 "), e->name, s8("[] = {"));
+	op->string = push_str8_from_parts(ctx->arena, str8(""), str8("read_only global u8 "), str8_from_s8(e->name), str8("[] = {"));
 
 	op = da_push(ctx->arena, ops);
 	op->kind   = MetaEmitOperationKind_FileBytes;
-	op->string = filename;
+	op->string = str8_from_s8(filename);
 
 	op = da_push(ctx->arena, ops);
 	op->kind   = MetaEmitOperationKind_String;
-	op->string = s8("};");
+	op->string = str8("};");
 }
 
 function MetaKind
@@ -2970,8 +2980,8 @@ meta_pack_constant(MetaContext *ctx, MetaEntry *e)
 	meta_entry_argument_expected(e, s8("value"));
 	s8 value = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
 
-	NumberConversion number = number_from_s8(value);
-	if (number.result != NumberConversionResult_Success || number.unparsed.len != 0) {
+	NumberConversion number = number_from_str8(str8_from_s8(value));
+	if (number.result != NumberConversionResult_Success || number.unparsed.length != 0) {
 		meta_compiler_error(e->location, "Invalid integer in definition of Constant '%.*s': %.*s\n",
 		                    (i32)e->name.len, e->name.data, (i32)value.len, value.data);
 	}
@@ -3008,7 +3018,7 @@ meta_pack_emit(MetaContext *ctx, Arena scratch, MetaEntry *e, i64 entry_count)
 		case MetaEntryKind_String:{
 			MetaEmitOperation *op = da_push(ctx->arena, ops);
 			op->kind     = MetaEmitOperationKind_String;
-			op->string   = row->name;
+			op->string   = str8_from_s8(row->name);
 			op->location = row->location;
 		}break;
 		case MetaEntryKind_Expand:{
@@ -3030,7 +3040,7 @@ meta_extract_emit_file_dependencies(MetaContext *ctx, Arena *arena)
 			MetaEmitOperation *op = ops->data + opcode;
 			switch (op->kind) {
 			case MetaEmitOperationKind_FileBytes:{
-				s8 filename = push_s8_from_parts(arena, s8(OS_PATH_SEPARATOR), ctx->directory, op->string);
+				str8 filename = push_str8_from_parts(arena, str8(OS_PATH_SEPARATOR), ctx->directory, op->string);
 				*da_push(arena, &result) = (c8 *)filename.data;
 			}break;
 			default:{}break;
@@ -3100,11 +3110,11 @@ meta_expansion_part_conditional_argument(MetaExpansionConditionalArgument a, u32
 	}break;
 
 	case MetaExpansionConditionalArgumentKind_Reference:{
-		s8 string = a.strings[entry];
-		NumberConversion integer = integer_from_s8(string);
+		str8 string = str8_from_s8(a.strings[entry]);
+		NumberConversion integer = integer_from_str8(string);
 		if (integer.result != NumberConversionResult_Success) {
 			meta_compiler_error(loc, "Invalid integer in '%.*s' table expansion: %.*s\n",
-			                    (i32)table_name.len, table_name.data, (i32)string.len, string.data);
+			                    (i32)table_name.len, table_name.data, (i32)string.length, string.data);
 		}
 		result = integer.S64;
 	}break;
@@ -3136,11 +3146,11 @@ metagen_run_emit(MetaprogramContext *m, MetaContext *ctx, MetaEmitOperationList 
 	for (iz opcode = 0; opcode < ops->count; opcode++) {
 		MetaEmitOperation *op = ops->data + opcode;
 		switch (op->kind) {
-		case MetaEmitOperationKind_String:{ meta_push_line(m, op->string); }break;
+		case MetaEmitOperationKind_String:{ meta_push_line(m, s8_from_str8(op->string)); }break;
 		case MetaEmitOperationKind_FileBytes:{
 			Arena scratch = m->scratch;
-			s8 filename = push_s8_from_parts(&scratch, s8(OS_PATH_SEPARATOR), ctx->directory, op->string);
-			s8 file     = read_entire_file((c8 *)filename.data, &scratch);
+			str8 filename = push_str8_from_parts(&scratch, str8(OS_PATH_SEPARATOR), ctx->directory, op->string);
+			s8   file     = read_entire_file((c8 *)filename.data, &scratch);
 			m->indentation_level++;
 			metagen_push_byte_array(m, file);
 			m->indentation_level--;
@@ -4101,7 +4111,7 @@ metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaStruct *u, s8 
 			build_log_failure("%.*s:%u:%u: error: base type in MATLAB union:\n"
 			                  "%.*s %.*s\n"
 			                  "MATLAB unions only support Struct and Union members\n",
-			                  (i32)ctx->filename.len, ctx->filename.data, u->location.line, u->location.column,
+			                  (i32)ctx->filename.length, ctx->filename.data, u->location.line, u->location.column,
 			                  (i32)name.length, name.data, (i32)type_name.length, type_name.data);
 			result = 0;
 			break;
@@ -4152,7 +4162,7 @@ metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaStruct *u, s8 
 									build_log_failure("%.*s:%u:%u: error: array of structs present in struct referenced by MATLAB union:\n"
 									                  "%.*s %.*s\n"
 									                  "MATLAB unions do not currently support array of structs\n",
-									                  (i32)ctx->filename.len, ctx->filename.data, u->location.line, u->location.column,
+									                  (i32)ctx->filename.length, ctx->filename.data, u->location.line, u->location.column,
 									                  (i32)name.length, name.data, (i32)ref->name.length, ref->name.data);
 								}
 							} else {
@@ -4571,10 +4581,10 @@ metagen_load_context(Arena *arena, char *filename)
 
 	MetaContext *result = ctx;
 
-	ctx->filename  = c_str_to_s8(filename);
-	ctx->directory = s8_chop(&ctx->filename, s8_scan_backwards(ctx->filename, OS_PATH_SEPARATOR_CHAR));
-	s8_chop(&ctx->filename, 1);
-	if (ctx->directory.len <= 0) ctx->directory = s8(".");
+	ctx->filename  = str8_from_c_str(filename);
+	ctx->directory = str8_chop(&ctx->filename, str8_scan_backwards(ctx->filename, OS_PATH_SEPARATOR_CHAR));
+	str8_chop(&ctx->filename, 1);
+	if (ctx->directory.length <= 0) ctx->directory = str8(".");
 
 	Arena scratch = ctx->scratch;
 	MetaEntryStack entries = meta_entry_stack_from_file(ctx->arena, filename);
@@ -4773,7 +4783,7 @@ metagen_load_context(Arena *arena, char *filename)
 				s8 *elements = field >= 0 ? e->table.entries[field] : 0;
 				for EachIndex(s->member_count, member) {
 					if (elements) {
-						NumberConversion integer = integer_from_s8(elements[member]);
+						NumberConversion integer = integer_from_str8(str8_from_s8(elements[member]));
 						if (integer.result == NumberConversionResult_Success) {
 							s->elements[member] = integer.U64;
 						} else {
@@ -4914,16 +4924,16 @@ metagen_file_direct(Arena arena, char *filename)
 	b32 result = 1;
 	char *out;
 	{
-		s8 basename;
-		s8_split(ctx->filename, &basename, 0, '.');
+		str8 basename;
+		str8_split(ctx->filename, &basename, 0, '.');
 
 		Stream sb = arena_stream(arena);
-		stream_append_s8s(&sb, ctx->directory, s8(OS_PATH_SEPARATOR), s8("generated"));
+		stream_append_s8s(&sb, s8_from_str8(ctx->directory), s8(OS_PATH_SEPARATOR), s8("generated"));
 		stream_append_byte(&sb, 0);
 		os_make_directory((c8 *)sb.data);
 		stream_reset(&sb, sb.widx - 1);
 
-		stream_append_s8s(&sb, s8(OS_PATH_SEPARATOR), basename, s8(".c"));
+		stream_append_s8s(&sb, s8(OS_PATH_SEPARATOR), s8_from_str8(basename), s8(".c"));
 		stream_append_byte(&sb, 0);
 
 		out = (c8 *)arena_stream_commit(&arena, &sb).data;

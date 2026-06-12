@@ -3450,7 +3450,7 @@ end_text_input(InputState *is, Variable *var)
 {
 	f32 value = 0;
 	if (is->numeric) {
-		NumberConversion number = number_from_s8((s8){.len = is->count, .data = is->buf});
+		NumberConversion number = number_from_str8((str8){.length = is->count, .data = is->buf});
 		value = number.F64;
 	}
 

@@ -73,8 +73,8 @@ typedef struct {
 
 typedef struct {
 	u64  hash;
-	iptr handle;
-	s8   name;
+	i64  handle;
+	str8 name;
 
 	OSW32_FileWatch *data;
 	da_count         count;
@@ -113,7 +113,7 @@ os_create_thread(const char *name, void *user_context, os_thread_entry_point_fn 
 		DeferLoop(take_lock(&os_w32_context.arena_lock, -1), release_lock(&os_w32_context.arena_lock))
 		{
 			Arena arena = os_w32_context.arena;
-			SetThreadDescription(result.value[0], s8_to_s16(&arena, c_str_to_s8((c8 *)name)).data);
+			SetThreadDescription(result.value[0], str16_from_str8(&arena, str8_from_c_str((c8 *)name)).data);
 		}
 	} else {
 		result.value[0] = OSInvalidHandleValue;
@@ -188,22 +188,22 @@ os_lookup_file_watch_directory(OSW32_FileWatchDirectoryList *ctx, u64 hash)
 }
 
 function void
-os_w32_add_file_watch(s8 path, void *user_context, OSW32_FileWatchKind kind)
+os_w32_add_file_watch(str8 path, void *user_context, OSW32_FileWatchKind kind)
 {
-	s8 directory  = path;
-	directory.len = s8_scan_backwards(path, '\\');
-	assert(directory.len > 0);
+	str8 directory   = path;
+	directory.length = str8_scan_backwards(path, '\\');
+	assert(directory.length > 0);
 
 	OSW32_FileWatchDirectoryList *fwctx = &os_w32_context.file_watch_list;
 
-	u64 hash = u64_hash_from_s8(directory);
+	u64 hash = u64_hash_from_str8(directory);
 	OSW32_FileWatchDirectory *dir = os_lookup_file_watch_directory(fwctx, hash);
 	if (!dir) {
-		assert(path.data[directory.len] == '\\');
+		assert(path.data[directory.length] == '\\');
 
 		dir = da_push(&os_w32_context.arena, fwctx);
 		dir->hash   = hash;
-		dir->name   = push_s8(&os_w32_context.arena, directory);
+		dir->name   = push_str8(&os_w32_context.arena, directory);
 		dir->handle = CreateFileA((c8 *)dir->name.data, GENERIC_READ, FILE_SHARE_READ, 0,
 		                          OPEN_EXISTING,
 		                          FILE_FLAG_BACKUP_SEMANTICS|FILE_FLAG_OVERLAPPED, 0);
@@ -219,14 +219,14 @@ os_w32_add_file_watch(s8 path, void *user_context, OSW32_FileWatchKind kind)
 
 	OSW32_FileWatch *fw = da_push(&os_w32_context.arena, dir);
 	fw->user_context = user_context;
-	fw->hash         = u64_hash_from_s8(s8_cut_head(path, dir->name.len + 1));
+	fw->hash         = u64_hash_from_str8(str8_cut_head(path, dir->name.length + 1));
 	fw->kind         = kind;
 }
 
 BEAMFORMER_IMPORT void
 os_add_file_watch(const char *path, int64_t path_length, void *user_context)
 {
-	s8 path_str = {.data = (u8 *)path, .len = path_length};
+	str8 path_str = {.data = (u8 *)path, .length = path_length};
 	os_w32_add_file_watch(path_str, user_context, OSW32_FileWatchKindUser);
 }
 
@@ -282,7 +282,7 @@ load_platform_libraries(BeamformerInput *input)
 {
 	#if BEAMFORMER_DEBUG
 		debug_library_reload(input);
-		os_w32_add_file_watch(s8(OS_DEBUG_LIB_NAME), (void *)BeamformerInputEventKind_ExecutableReload,
+		os_w32_add_file_watch(str8(OS_DEBUG_LIB_NAME), (void *)BeamformerInputEventKind_ExecutableReload,
 		                      OSW32_FileWatchKindPlatform);
 	#endif
 
@@ -326,8 +326,8 @@ dispatch_file_watch(BeamformerInput *input, Arena arena, u64 current_time, OSW32
 			stream_reset(&e, 0);
 		}
 
-		s8 file_name = s16_to_s8(&arena, (s16){.data = fni->filename, .len  = fni->filename_size / 2});
-		u64 hash = u64_hash_from_s8(file_name);
+		str8 file_name = str8_from_str16(&arena, (str16){.data = fni->filename, .length = fni->filename_size / 2});
+		u64  hash      = u64_hash_from_str8(file_name);
 		for (da_count i = 0; i < fw_dir->count; i++) {
 			OSW32_FileWatch *fw = fw_dir->data + i;
 			if (fw->hash == hash) {

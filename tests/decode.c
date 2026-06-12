@@ -180,7 +180,7 @@ dump_stats(BeamformerComputeStatsTable *stats, Options *options, u32 transmit_co
 	stream_append_u64(&sb, transmit_count);
 	stream_append_s8(&sb, s8(".bin"));
 	stream_append_byte(&sb, 0);
-	os_write_new_file(path_buffer, (s8){.len = sizeof(*stats), .data = (u8 *)stats});
+	os_write_new_file(path_buffer, str8_struct(stats));
 }
 
 function void

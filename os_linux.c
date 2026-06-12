@@ -106,7 +106,7 @@ function OS_WRITE_NEW_FILE_FN(os_write_new_file)
 	b32 result = 0;
 	i32 fd = open(fname, O_WRONLY|O_TRUNC|O_CREAT, 0600);
 	if (fd != INVALID_FILE) {
-		result = os_write_file(fd, raw.data, raw.len);
+		result = os_write_file(fd, raw.data, raw.length);
 		close(fd);
 	}
 	return result;

@@ -226,7 +226,7 @@ typedef struct { i64 length; u8 *data; } str8;
 #define str8_from_s8(s) (str8){.length = (s).len, .data = (s).data}
 #define s8_from_str8(s)   (s8){.len = (s).length, .data = (s).data}
 
-typedef struct { i64 len; u16 *data; } s16;
+typedef struct { i64 length; u16 *data; } str16;
 
 typedef enum {
 	StringMatchFlag_CaseInsensitive = (1 << 0),
@@ -255,7 +255,7 @@ typedef struct {
 		i64 S64;
 		f64 F64;
 	};
-	s8 unparsed;
+	str8 unparsed;
 } NumberConversion;
 
 typedef struct { u64 start, stop; } RangeU64;
@@ -388,7 +388,7 @@ typedef struct {
 #define OS_WAKE_ALL_WAITERS_FN(name)   void  name(i32 *sync)
 #define OS_THREAD_ENTRY_POINT_FN(name) u64   name(void *user_context)
 
-#define OS_WRITE_NEW_FILE_FN(name) b32 name(char *fname, s8 raw)
+#define OS_WRITE_NEW_FILE_FN(name) b32 name(char *fname, str8 raw)
 typedef OS_WRITE_NEW_FILE_FN(os_write_new_file_fn);
 
 #define RENDERDOC_GET_API_FN(name) b32 name(u32 version, void **out_api)

@@ -610,9 +610,9 @@ u64_hash_from_str8_seed(str8 string, u64 seed)
 }
 
 function u64
-u64_hash_from_s8(s8 v)
+u64_hash_from_str8(str8 v)
 {
-	u64 result = u64_hash_from_str8_seed(str8_from_s8(v), 4969);
+	u64 result = u64_hash_from_str8_seed(v, 4969);
 	return result;
 }
 
@@ -669,21 +669,22 @@ s8_equal(s8 a, s8 b)
 }
 
 /* NOTE(rnp): returns < 0 if byte is not found */
-function iz
-s8_scan_backwards(s8 s, u8 byte)
+function i64
+str8_scan_backwards(str8 s, u8 byte)
 {
-	iz result = (u8 *)memory_scan_backwards(s.data, byte, s.len) - s.data;
+	i64 result = (u8 *)memory_scan_backwards(s.data, byte, s.length) - s.data;
 	return result;
 }
 
-function s8
-s8_cut_head(s8 s, iz cut)
+function str8
+str8_cut_head(str8 s, i64 cut)
 {
-	s8 result = s;
+	str8 result = s;
 	if (cut > 0) {
-		result.data += cut;
-		result.len  -= cut;
+		result.data   += cut;
+		result.length -= cut;
 	}
+	result.length = Max(0, result.length);
 	return result;
 }
 
@@ -739,49 +740,49 @@ str8_find_needle(str8 string, str8 needle, StringMatchFlags flags)
 }
 
 
-function s8
-s8_alloc(Arena *a, iz len)
+function str8
+str8_alloc(Arena *a, i64 length)
 {
-	s8 result = {.data = push_array(a, u8, len), .len = len};
+	str8 result = {.data = push_array(a, u8, length), .length = length};
 	return result;
 }
 
-function s8
-s16_to_s8(Arena *a, s16 in)
+function str8
+str8_from_str16(Arena *a, str16 in)
 {
-	s8 result = s8("");
-	if (in.len) {
-		iz commit = in.len * 4;
-		iz length = 0;
+	str8 result = str8("");
+	if (in.length) {
+		i64 commit = in.length * 4;
+		i64 length = 0;
 		u8 *data = arena_commit(a, commit + 1);
 		u16 *beg = in.data;
-		u16 *end = in.data + in.len;
+		u16 *end = in.data + in.length;
 		while (beg < end) {
 			UnicodeDecode decode = utf16_decode(beg, end - beg);
 			length += utf8_encode(data + length, decode.cp);
 			beg    += decode.consumed;
 		}
 		data[length] = 0;
-		result = (s8){.len = length, .data = data};
+		result = (str8){.length = length, .data = data};
 		arena_pop(a, commit - length);
 	}
 	return result;
 }
 
-function s16
-s8_to_s16(Arena *a, s8 in)
+function str16
+str16_from_str8(Arena *a, str8 in)
 {
-	s16 result = {0};
-	if (in.len) {
-		iz required = 2 * in.len + 1;
-		u16 *data   = push_array(a, u16, required);
-		iz length   = 0;
+	str16 result = {0};
+	if (in.length) {
+		i64  length   = 0;
+		i64  required = 2 * in.length + 1;
+		u16 *data     = push_array(a, u16, required);
 		/* TODO(rnp): utf8_decode */
-		for (iz i = 0; i < in.len; i++) {
+		for (i64 i = 0; i < in.length; i++) {
 			u32 cp  = in.data[i];
 			length += utf16_encode(data + length, cp);
 		}
-		result = (s16){.len = length, .data = data};
+		result = (str16){.length = length, .data = data};
 		arena_pop(a, required - length);
 	}
 	return result;
@@ -835,12 +836,20 @@ push_s8_from_parts_(Arena *arena, s8 joiner, s8 *parts, iz count)
 	return result;
 }
 
+function str8
+push_str8(Arena *a, str8 str)
+{
+	str8 result    = str8_alloc(a, str.length + 1);
+	result.length -= 1;
+	memory_copy(result.data, str.data, (uz)result.length);
+	return result;
+}
+
 function s8
 push_s8(Arena *a, s8 str)
 {
-	s8 result   = s8_alloc(a, str.len + 1);
-	result.len -= 1;
-	mem_copy(result.data, str.data, (uz)result.len);
+	str8 copy   = push_str8(a, str8_from_s8(str));
+	s8   result = s8_from_str8(copy);
 	return result;
 }
 
@@ -952,7 +961,7 @@ cut_rect_vertical(Rect rect, f32 at, Rect *top, Rect *bot)
 }
 
 function NumberConversion
-integer_from_s8(s8 raw)
+integer_from_str8(str8 raw)
 {
 	read_only local_persist alignas(64) i8 lut[64] = {
 		 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, -1, -1, -1, -1, -1, -1,
@@ -963,21 +972,21 @@ integer_from_s8(s8 raw)
 
 	NumberConversion result = {.unparsed = raw};
 
-	iz  i     = 0;
+	i64 i     = 0;
 	i64 scale = 1;
-	if (raw.len > 0 && raw.data[0] == '-') {
+	if (raw.length > 0 && raw.data[0] == '-') {
 		scale = -1;
 		i     =  1;
 	}
 
 	b32 hex = 0;
-	if (raw.len - i > 2 && raw.data[i] == '0' && (raw.data[1] == 'x' || raw.data[1] == 'X')) {
+	if (raw.length - i > 2 && raw.data[i] == '0' && (raw.data[1] == 'x' || raw.data[1] == 'X')) {
 		hex = 1;
 		i += 2;
 	}
 
 	#define integer_conversion_body(radix, clamp) do {\
-		for (; i < raw.len; i++) {\
+		for (; i < raw.length; i++) {\
 			i64 value = lut[Min((u8)(raw.data[i] - (u8)'0'), clamp)];\
 			if (value >= 0) {\
 				if (result.U64 > (U64_MAX - (u64)value) / radix) {\
@@ -998,7 +1007,7 @@ integer_from_s8(s8 raw)
 
 	#undef integer_conversion_body
 
-	result.unparsed = (s8){.len = raw.len - i, .data = raw.data + i};
+	result.unparsed = (str8){.length = raw.length - i, .data = raw.data + i};
 	result.result   = i > 0 ? NumberConversionResult_Success : NumberConversionResult_Invalid;
 	result.kind     = NumberConversionKind_Integer;
 	if (scale < 0) result.U64 = 0 - result.U64;
@@ -1007,20 +1016,20 @@ integer_from_s8(s8 raw)
 }
 
 function NumberConversion
-number_from_s8(s8 s)
+number_from_str8(str8 s)
 {
 	NumberConversion result  = {.unparsed = s};
-	NumberConversion integer = integer_from_s8(s);
+	NumberConversion integer = integer_from_str8(s);
 	if (integer.result == NumberConversionResult_Success) {
-		if (integer.unparsed.len != 0 && integer.unparsed.data[0] == '.') {
+		if (integer.unparsed.length != 0 && integer.unparsed.data[0] == '.') {
 			s = integer.unparsed;
 			s.data++;
-			s.len--;
+			s.length--;
 
-			while (s.len > 0 && s.data[s.len - 1] == '0') s.len--;
+			while (s.length > 0 && s.data[s.length - 1] == '0') s.length--;
 
-			NumberConversion fractional = integer_from_s8(s);
-			if (fractional.result == NumberConversionResult_Success || s.len == 0) {
+			NumberConversion fractional = integer_from_str8(s);
+			if (fractional.result == NumberConversionResult_Success || s.length == 0) {
 				result.F64 = (f64)fractional.U64;
 
 				u64 divisor = (u64)(fractional.unparsed.data - s.data);
