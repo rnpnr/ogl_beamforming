@@ -11,7 +11,7 @@ jobs:
         cc: ["gcc", "clang"]
     runs-on: ${{matrix.os}}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: 'true'
       - name: Install dependencies
@@ -36,7 +36,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: 'true'
       - uses: msys2/setup-msys2@v2
