@@ -4,6 +4,14 @@
 // otherwise share implementation
 
 function void
+os_push_input_event(BeamformerInput *input, BeamformerInputEvent event)
+{
+	assert(input->event_count < countof(input->event_queue));
+	if (input->event_count < countof(input->event_queue))
+		input->event_queue[input->event_count++] = event;
+}
+
+function void
 os_build_frame_input(BeamformerInput *input)
 {
 	Vector2 new_mouse = {-1, -1};

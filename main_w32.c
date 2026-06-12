@@ -345,7 +345,7 @@ dispatch_file_watch(BeamformerInput *input, Arena arena, u64 current_time, OSW32
 						input_event.kind = BeamformerInputEventKind_FileEvent;
 						input_event.file_watch_user_context = fw->user_context;
 					}
-					input->event_queue[input->event_count++] = input_event;
+					os_push_input_event(input, input_event);
 				}
 				fw->update_time = current_time;
 				break;
@@ -409,9 +409,9 @@ main(void)
 		input->shared_memory_name_length = s8(OS_SHARED_MEMORY_NAME).len;
 	}
 
-	input->event_queue[input->event_count++] = (BeamformerInputEvent){
+	os_push_input_event(input, (BeamformerInputEvent){
 		.kind = BeamformerInputEventKind_ExecutableReload,
-	};
+	});
 
 	load_platform_libraries(input);
 
