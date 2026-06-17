@@ -175,10 +175,13 @@ beamformer_init(BeamformerInput *input)
 
 	BeamformerCtx *ctx   = push_struct(&memory, BeamformerCtx);
 
+	str8 window_title = str8("VK Beamformer");
+	ctx->main_window  = os_window_create(window_title.data, window_title.length, 1280, 840);
+	ctx->window_size  = (iv2){{1280, 840}};
+
 	Arena scratch = {.beg = memory.end - 4096L, .end = memory.end};
 	memory.end = scratch.beg;
 
-	ctx->window_size           = (iv2){{1280, 840}};
 	ctx->error_stream          = error;
 	ctx->ui_backing_store      = ui_arena;
 	ctx->compute_worker.arena  = compute_arena;
@@ -241,12 +244,6 @@ beamformer_init(BeamformerInput *input)
 	}
 
 	beamformer_load_cuda_library(ctx, input->cuda_library_handle, memory);
-
-	SetConfigFlags(FLAG_VSYNC_HINT|FLAG_WINDOW_ALWAYS_RUN);
-	InitWindow(ctx->window_size.w, ctx->window_size.h, "OGL Beamformer");
-	/* NOTE: do this after initing so that the window starts out floating in tiling wm */
-	SetWindowState(FLAG_WINDOW_RESIZABLE);
-	SetWindowMinSize(840, ctx->window_size.h);
 
 	load_gl(&ctx->error_stream);
 

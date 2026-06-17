@@ -69,6 +69,7 @@ typedef struct { uint64_t value[1]; } OSBarrier;
 typedef struct { uint64_t value[1]; } OSHandle;
 typedef struct { uint64_t value[1]; } OSLibrary;
 typedef struct { uint64_t value[1]; } OSThread;
+typedef struct { uint64_t value[1]; } OSWindow;
 typedef struct { uint64_t value[1]; } OSW32Semaphore;
 
 typedef uint64_t os_thread_entry_point_fn(void *user_context);
@@ -102,6 +103,12 @@ BEAMFORMER_IMPORT void *         os_lookup_symbol(OSLibrary library, const char 
 BEAMFORMER_IMPORT uint32_t       os_wait_on_address(int32_t *lock, int32_t current, uint32_t timeout_ms);
 BEAMFORMER_IMPORT void           os_wake_all_waiters(int32_t *lock);
 
+// NOTE(rnp): currently beamformer will only create one window.
+// once raylib is removed it may request multiple
+BEAMFORMER_IMPORT OSWindow       os_window_create(uint8_t *title, int64_t title_length, int32_t width, int32_t height);
+//BEAMFORMER_IMPORT void           os_window_title(OSWindow window, uint8_t *title, int64_t title_length);
+//BEAMFORMER_IMPORT void           os_window_destroy(OSWindow window);
+
 // NOTE(rnp): eventually logging will just be done internally
 BEAMFORMER_IMPORT void           os_console_log(uint8_t *data, int64_t length);
 BEAMFORMER_IMPORT void           os_fatal(uint8_t *data, int64_t length);
@@ -125,6 +132,8 @@ BEAMFORMER_IMPORT void           os_w32_semaphore_release(OSW32Semaphore, int32_
 typedef enum {
 	BeamformerInputEventKind_ButtonPress,
 	BeamformerInputEventKind_ButtonRelease,
+	BeamformerInputEventKind_MouseScroll,
+	BeamformerInputEventKind_WindowResize,
 	BeamformerInputEventKind_ExecutableReload,
 	BeamformerInputEventKind_FileEvent,
 } BeamformerInputEventKind;
@@ -154,13 +163,23 @@ typedef enum {
 	BeamformerInputModifier_Control = BeamformerInputModifier_LeftControl|BeamformerInputModifier_RightControl,
 	BeamformerInputModifier_Shift   = BeamformerInputModifier_LeftShift|BeamformerInputModifier_RightShift,
 	BeamformerInputModifier_Meta    = BeamformerInputModifier_LeftMeta|BeamformerInputModifier_RightMeta,
+	BeamformerInputModifier_Any     = BeamformerInputModifier_Alt|
+	                                  BeamformerInputModifier_Control|
+	                                  BeamformerInputModifier_Shift|
+	                                  BeamformerInputModifier_Meta,
 } BeamformerInputModifiers;
 
 typedef struct {
 	BeamformerInputEventKind kind;
 	union {
 		BeamformerButtonID  button_id;
-		void *              file_watch_user_context;
+
+		struct {
+			uint32_t width, height;
+			OSWindow window;
+		} window_resize;
+
+		void *file_watch_user_context;
 	};
 } BeamformerInputEvent;
 

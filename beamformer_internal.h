@@ -493,6 +493,9 @@ typedef struct {
 	ComputeTimingTable compute_timing_table[1];
 
 	BeamformWorkQueue  beamform_work_queue[1];
+
+	// TODO(rnp): this should go to the UI eventually
+	OSWindow main_window;
 } BeamformerCtx;
 #define BeamformerContextMemory(m) (BeamformerCtx *)align_pointer_up((m), alignof(BeamformerCtx));
 

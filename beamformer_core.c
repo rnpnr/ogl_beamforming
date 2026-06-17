@@ -1,5 +1,6 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: backtrace dumping on SIGSEGV
  * [ ]: bug? HERCULES might be broken, we may need to to chunk on transmits instead of channels
  * [ ]: refactor: do_compute should build its own "command graph" which tracks
  *      dependencies better. It is very important that unnecessary barriers are
@@ -1652,6 +1653,13 @@ beamformer_process_input_events(BeamformerCtx *ctx, BeamformerInput *input,
 		BeamformerInputEvent *event = events + index;
 		switch (event->kind) {
 
+		// NOTE(rnp): ui will handle these
+		case BeamformerInputEventKind_ButtonPress:
+		case BeamformerInputEventKind_ButtonRelease:
+		case BeamformerInputEventKind_MouseScroll:
+		case BeamformerInputEventKind_WindowResize:
+		{}break;
+
 		case BeamformerInputEventKind_ExecutableReload:{
 			ui_init(ctx, ctx->ui_backing_store);
 
@@ -1709,11 +1717,6 @@ beamformer_frame_step(BeamformerInput *input)
 	u64 current_time = os_timer_count();
 	dt_for_frame = (f64)(current_time - ctx->frame_timestamp) / os_system_info()->timer_frequency;
 	ctx->frame_timestamp = current_time;
-
-	if (IsWindowResized()) {
-		ctx->window_size.h = GetScreenHeight();
-		ctx->window_size.w = GetScreenWidth();
-	}
 
 	coalesce_timing_table(ctx->compute_timing_table, ctx->compute_shader_stats);
 

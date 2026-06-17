@@ -2,6 +2,17 @@
 
 // NOTE(rnp): functions which require platform layer support but
 // otherwise share implementation
+// TODO(rnp): replace all this with platform specific functions
+
+void *GetPlatformWindowHandle(void);
+
+// see: external/raylib/src/external/glfw/include/GLFW/glfw3.h
+typedef void glfw_window_resize_fn(void *window, i32 width, i32 height);
+
+glfw_window_resize_fn *glfwSetWindowSizeCallback(void *window, glfw_window_resize_fn *callback);
+
+global BeamformerInput       *beamformer_input;
+global glfw_window_resize_fn *raylib_window_resize;
 
 function void
 os_push_input_event(BeamformerInput *input, BeamformerInputEvent event)
@@ -9,6 +20,12 @@ os_push_input_event(BeamformerInput *input, BeamformerInputEvent event)
 	assert(input->event_count < countof(input->event_queue));
 	if (input->event_count < countof(input->event_queue))
 		input->event_queue[input->event_count++] = event;
+}
+
+function void
+os_window_equip_common(BeamformerInput *input, void *window)
+{
+	beamformer_input = input;
 }
 
 function void

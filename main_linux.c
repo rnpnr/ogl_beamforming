@@ -29,28 +29,54 @@
 
 #include <dlfcn.h>
 
-typedef enum {
-	OSLinux_FileWatchKindPlatform,
-	OSLinux_FileWatchKindUser,
-} OSLinux_FileWatchKind;
-
+typedef struct OSLinuxEntity OSLinuxEntity;
 typedef struct {
-	OSLinux_FileWatchKind kind;
+	void          *handle;
+	OSLinuxEntity *prev, *next;
+} OSLinuxWindow;
+
+typedef enum {
+	OSLinuxFileWatchKind_Platform,
+	OSLinuxFileWatchKind_User,
+} OSLinuxFileWatchKind;
+
+typedef struct OSLinuxFileWatchDirectory OSLinuxFileWatchDirectory;
+typedef struct OSLinuxFileWatch OSLinuxFileWatch;
+struct OSLinuxFileWatch {
+	OSLinuxFileWatchKind  kind;
 	u64                   hash;
 	u64                   update_time;
-	void *                user_context;
-} OSLinux_FileWatch;
+	void                 *user_context;
 
-typedef struct {
+	OSLinuxFileWatchDirectory *parent;
+	OSLinuxFileWatch *prev, *next;
+};
+
+struct OSLinuxFileWatchDirectory {
 	u64  hash;
 	i64  handle;
 	str8 name;
 
-	OSLinux_FileWatch *data;
-	da_count           count;
-	da_count           capacity;
-} OSLinux_FileWatchDirectory;
-DA_STRUCT(OSLinux_FileWatchDirectory, OSLinux_FileWatchDirectory);
+	OSLinuxFileWatch *first_child;
+	OSLinuxFileWatch *last_child;
+	OSLinuxFileWatchDirectory *prev, *next;
+};
+
+typedef enum {
+	OSLinuxEntityKind_Window,
+	OSLinuxEntityKind_FileWatch,
+	OSLinuxEntityKind_FileWatchDirectory,
+} OSLinuxEntityKind;
+
+struct OSLinuxEntity {
+	OSLinuxEntityKind kind;
+	union {
+		OSLinuxFileWatch          file_watch;
+		OSLinuxFileWatchDirectory file_watch_directory;
+		OSLinuxWindow             window;
+	} as;
+	OSLinuxEntity *next;
+};
 
 typedef struct {
 	Arena         arena;
@@ -58,11 +84,38 @@ typedef struct {
 
 	i32           inotify_handle;
 
-	OSLinux_FileWatchDirectoryList file_watch_list;
+	BeamformerInput *input;
 
 	OSSystemInfo system_info;
+
+	struct {
+		OSLinuxFileWatchDirectory *first;
+		OSLinuxFileWatchDirectory *last;
+	} file_watch_directories;
+
+	struct {
+		OSLinuxEntity *first;
+		OSLinuxEntity *last;
+	} windows;
+
+	OSLinuxEntity *entity_freelist;
 } OSLinux_Context;
 global OSLinux_Context os_linux_context;
+
+function OSLinuxEntity *
+os_entity_allocate(OSLinuxEntityKind kind)
+{
+	OSLinuxEntity *result = 0;
+	DeferLoop(take_lock(&os_linux_context.arena_lock, -1), release_lock(&os_linux_context.arena_lock))
+	{
+		result = SLLPopFreelist(os_linux_context.entity_freelist);
+		if (!result) result = push_struct_no_zero(&os_linux_context.arena, OSLinuxEntity);
+	}
+
+	zero_struct(result);
+	result->kind = kind;
+	return result;
+}
 
 BEAMFORMER_IMPORT OSSystemInfo *
 os_system_info(void)
@@ -148,47 +201,106 @@ allocate_shared_memory(char *name, iz requested_capacity, u64 *capacity)
 	return result;
 }
 
-function OSLinux_FileWatchDirectory *
-os_lookup_file_watch_directory(OSLinux_FileWatchDirectoryList *ctx, u64 hash)
+function OSLinuxFileWatchDirectory *
+os_lookup_file_watch_directory(u64 hash)
 {
-	OSLinux_FileWatchDirectory *result = 0;
-	for (da_count i = 0; !result && i < ctx->count; i++)
-		if (ctx->data[i].hash == hash)
-			result = ctx->data + i;
+	OSLinuxFileWatchDirectory *result = 0;
+	for (OSLinuxFileWatchDirectory *fwd = os_linux_context.file_watch_directories.first; fwd; fwd = fwd->next) {
+		if (fwd->hash == hash) {
+			result = fwd;
+			break;
+		}
+	}
 	return result;
 }
 
 function void
-os_linux_add_file_watch(str8 path, void *user_context, OSLinux_FileWatchKind kind)
+os_linux_add_file_watch(str8 path, void *user_context, OSLinuxFileWatchKind kind)
 {
 	str8 directory   = path;
 	directory.length = str8_scan_backwards(path, '/');
 	assert(directory.length > 0);
 
-	OSLinux_FileWatchDirectoryList *fwctx = &os_linux_context.file_watch_list;
-
 	u64 hash = u64_hash_from_str8(directory);
-	OSLinux_FileWatchDirectory *dir = os_lookup_file_watch_directory(fwctx, hash);
+	OSLinuxFileWatchDirectory *dir = os_lookup_file_watch_directory(hash);
 	if (!dir) {
 		assert(path.data[directory.length] == '/');
-		dir = da_push(&os_linux_context.arena, fwctx);
+		OSLinuxEntity *fwd = os_entity_allocate(OSLinuxEntityKind_FileWatchDirectory);
+		dir = &fwd->as.file_watch_directory;
+		DLLInsert(0, os_linux_context.file_watch_directories.first,
+		          os_linux_context.file_watch_directories.last, dir, next, prev);
+
 		dir->hash   = hash;
 		dir->name   = push_str8(&os_linux_context.arena, directory);
 		u32 mask    = IN_MOVED_TO|IN_CLOSE_WRITE;
 		dir->handle = inotify_add_watch(os_linux_context.inotify_handle, (c8 *)dir->name.data, mask);
 	}
 
-	OSLinux_FileWatch *fw = da_push(&os_linux_context.arena, dir);
+	OSLinuxEntity    *fwe = os_entity_allocate(OSLinuxEntityKind_FileWatch);
+	OSLinuxFileWatch *fw  = &fwe->as.file_watch;
+	DLLInsert(0, dir->first_child, dir->last_child, fw, next, prev);
 	fw->user_context = user_context;
 	fw->hash         = u64_hash_from_str8(str8_cut_head(path, dir->name.length + 1));
 	fw->kind         = kind;
+	fw->parent       = dir;
 }
 
 BEAMFORMER_IMPORT void
 os_add_file_watch(const char *path, int64_t path_length, void *user_context)
 {
 	str8 path_str = {.data = (u8 *)path, .length = path_length};
-	os_linux_add_file_watch(path_str, user_context, OSLinux_FileWatchKindUser);
+	os_linux_add_file_watch(path_str, user_context, OSLinuxFileWatchKind_User);
+}
+
+function void
+os_window_resize_callback(void *window, i32 width, i32 height)
+{
+	OSWindow event_window = {0};
+	for (OSLinuxEntity *we = os_linux_context.windows.first; we; we = we->as.window.next) {
+		if (we->as.window.handle == window) {
+			event_window.value[0] = (u64)we;
+			break;
+		}
+	}
+
+	os_push_input_event(beamformer_input, (BeamformerInputEvent){
+		.kind      = BeamformerInputEventKind_WindowResize,
+		.window_resize = {
+			.width = (u32)width, .height = (u32)height,
+			.window = event_window,
+		},
+	});
+
+	raylib_window_resize(window, width, height);
+}
+
+BEAMFORMER_IMPORT OSWindow
+os_window_create(u8 *title, i64 title_length, i32 width, i32 height)
+{
+	OSLinuxEntity *we = os_entity_allocate(OSLinuxEntityKind_Window);
+	OSWindow result = {(u64)we};
+	DLLInsert(0, os_linux_context.windows.first, os_linux_context.windows.last, we, as.window.next, as.window.prev);
+
+	SetConfigFlags(FLAG_VSYNC_HINT|FLAG_WINDOW_ALWAYS_RUN);
+
+	str8 name = {.data = title, .length = title_length};
+	DeferLoop(take_lock(&os_linux_context.arena_lock, -1), release_lock(&os_linux_context.arena_lock))
+	{
+		Arena scratch = os_linux_context.arena;
+		name.length = Min(name.length, arena_capacity(&scratch, u8) - 1);
+		str8 title_string = push_str8(&scratch, name);
+		InitWindow(width, height, (char *)title_string.data);
+	}
+
+	we->as.window.handle = GetPlatformWindowHandle();
+	os_window_equip_common(os_linux_context.input, we->as.window.handle);
+	raylib_window_resize = glfwSetWindowSizeCallback(we->as.window.handle, os_window_resize_callback);
+
+	/* NOTE: do this after initing so that the window starts out floating in tiling wm */
+	SetWindowState(FLAG_WINDOW_RESIZABLE);
+	SetWindowMinSize(320, 240);
+
+	return result;
 }
 
 function OSLibrary
@@ -226,6 +338,8 @@ debug_library_reload(BeamformerInput *input)
 		beamformer_library_handle = new_handle;
 	}
 }
+#else
+#define debug_library_reload(a) (void)(a)
 #endif /* BEAMFORMER_DEBUG */
 
 function void
@@ -234,7 +348,7 @@ load_platform_libraries(BeamformerInput *input)
 	#if BEAMFORMER_DEBUG
 		debug_library_reload(input);
 		os_linux_add_file_watch(str8(OS_DEBUG_LIB_NAME), (void *)BeamformerInputEventKind_ExecutableReload,
-		                        OSLinux_FileWatchKindPlatform);
+		                        OSLinuxFileWatchKind_Platform);
 	#endif
 
 	input->vulkan_library_handle = (OSLibrary){OSInvalidHandleValue};
@@ -259,46 +373,39 @@ load_platform_libraries(BeamformerInput *input)
 function void
 dispatch_file_watch_events(BeamformerInput *input)
 {
-	OSLinux_FileWatchDirectoryList *fwctx = &os_linux_context.file_watch_list;
 	Arena arena = os_linux_context.arena;
 	u8 *mem     = arena_alloc(&arena, .size = 4096, .align = 16);
 	struct inotify_event *event;
 
 	u64 current_time = os_timer_count();
 
-	iz rlen;
+	i64 rlen;
 	while ((rlen = read(os_linux_context.inotify_handle, mem, 4096)) > 0) {
 		for (u8 *data = mem; data < mem + rlen; data += sizeof(*event) + event->len) {
 			event = (struct inotify_event *)data;
-			for (da_count i = 0; i < fwctx->count; i++) {
-				OSLinux_FileWatchDirectory *dir = fwctx->data + i;
+			for (OSLinuxFileWatchDirectory *dir = os_linux_context.file_watch_directories.first; dir; dir = dir->next) {
 				if (event->wd != dir->handle)
 					continue;
 
 				str8 file = str8_from_c_str(event->name);
 				u64  hash = u64_hash_from_str8(file);
-				for (da_count j = 0; j < dir->count; j++) {
-					OSLinux_FileWatch *fw = dir->data + j;
-					if (fw->hash == hash) {
-						// NOTE(rnp): avoid multiple updates in a single frame
-						if (fw->update_time < current_time) {
-							BeamformerInputEvent input_event = {0};
-							if (fw->kind == OSLinux_FileWatchKindPlatform) {
-								assert((u64)fw->user_context == BeamformerInputEventKind_ExecutableReload);
-								#if BEAMFORMER_DEBUG
-									if ((u64)fw->user_context == BeamformerInputEventKind_ExecutableReload)
-										debug_library_reload(input);
-								#endif
-								input_event.kind = (u64)fw->user_context;
-							} else {
-								input_event.kind = BeamformerInputEventKind_FileEvent;
-								input_event.file_watch_user_context = fw->user_context;
-							}
-							os_push_input_event(input, input_event);
+				for (OSLinuxFileWatch *fw = dir->first_child; fw; fw = fw->next) if (fw->hash == hash) {
+					// NOTE(rnp): avoid multiple updates in a single frame
+					if (fw->update_time < current_time) {
+						BeamformerInputEvent input_event = {0};
+						if (fw->kind == OSLinuxFileWatchKind_Platform) {
+							assert((u64)fw->user_context == BeamformerInputEventKind_ExecutableReload);
+							if ((u64)fw->user_context == BeamformerInputEventKind_ExecutableReload)
+								debug_library_reload(input);
+							input_event.kind = (u64)fw->user_context;
+						} else {
+							input_event.kind = BeamformerInputEventKind_FileEvent;
+							input_event.file_watch_user_context = fw->user_context;
 						}
-						fw->update_time = current_time;
-						break;
+						os_push_input_event(input, input_event);
 					}
+					fw->update_time = current_time;
+					break;
 				}
 			}
 		}
@@ -313,12 +420,13 @@ main(void)
 	os_linux_context.system_info.page_size               = ARCH_X64? KB(4) : getauxval(AT_PAGESZ);
 	os_linux_context.system_info.path_separator_byte     = '/';
 
-	Arena program_memory = os_alloc_arena(MB(16) + KB(16));
+	Arena program_memory = os_alloc_arena(MB(16) + MB(1));
 
-	os_linux_context.arena = sub_arena(&program_memory, KB(16), KB(4));
+	os_linux_context.arena = sub_arena(&program_memory, MB(1), KB(4));
 	os_linux_context.inotify_handle = inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
 
 	BeamformerInput *input = push_struct(&program_memory, BeamformerInput);
+	os_linux_context.input = input;
 	input->memory          = program_memory.beg;
 	input->memory_size     = program_memory.end - program_memory.beg;
 	input->shared_memory   = allocate_shared_memory(OS_SHARED_MEMORY_NAME, OS_SHARED_MEMORY_SIZE,
@@ -350,7 +458,9 @@ main(void)
 		beamformer_frame_step(input);
 
 		// NOTE(rnp): this must happen at the end of frame to allow the pre loop events through
-		input->event_count = 0;
+		// TODO(rnp): hack: until raylib is removed this happens in ui since raylib will cause
+		// glfw to call the input callbacks in during EndDrawing()
+		//input->event_count = 0;
 	}
 
 	beamformer_terminate(input);

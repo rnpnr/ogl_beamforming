@@ -4224,6 +4224,14 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 		ui->latest_plane_valid[frame_plane]                  = 0;
 	}
 
+	for EachIndex(input->event_count, it) {
+		if (input->event_queue[it].kind == BeamformerInputEventKind_WindowResize) {
+			// TODO(rnp): match window against window list
+			ctx->window_size.w = input->event_queue[it].window_resize.width;
+			ctx->window_size.h = input->event_queue[it].window_resize.height;
+		}
+	}
+
 	asan_poison_region(ui->arena.beg, ui->arena.end - ui->arena.beg);
 
 	u32 selected_block = ui->selected_parameter_block % BeamformerMaxParameterBlocks;
@@ -4339,6 +4347,10 @@ draw_ui(BeamformerCtx *ctx, BeamformerInput *input, BeamformerFrame *frame_to_dr
 
 		draw_ui_regions(ui, window_rect, mouse);
 		draw_floating_widgets(ui, window_rect, mouse);
+
+		// TODO(rnp): hack: until raylib is removed this happens in ui since raylib will cause
+		// glfw to call the input callbacks during EndDrawing()
+		input->event_count = 0;
 	EndDrawing();
 
 	ui->last_mouse = (v2){{input->mouse_x, input->mouse_y}};
