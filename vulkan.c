@@ -403,12 +403,12 @@ vk_renderdoc_instance_handle(void)
 #if BEAMFORMER_DEBUG
 #define vk_label_object(k, h, label, extra) vk_label_object_(VK_OBJECT_TYPE_##k, (u64)h, label, extra)
 function void
-vk_label_object_(VkObjectType kind, u64 handle, s8 label, s8 extra)
+vk_label_object_(VkObjectType kind, u64 handle, str8 label, str8 extra)
 {
 	local_persist u8 buffer[1024];
 	Stream sb = arena_stream(arena_from_memory(buffer, sizeof(buffer)));
-	if (vulkan_config.instance.debug_utils && label.len > 0) {
-		stream_append_s8s(&sb, label, s8(" ("), extra, s8(")"));
+	if (vulkan_config.instance.debug_utils && label.length > 0) {
+		stream_append_s8s(&sb, s8_from_str8(label), s8(" ("), s8_from_str8(extra), s8(")"));
 		stream_append_byte(&sb, 0);
 		if (!sb.errors) {
 			VkDebugUtilsObjectNameInfoEXT object_name_info = {
@@ -626,9 +626,9 @@ vk_compute_pipeline_from_shader_text(Arena arena, s8 text, s8 name, u32 push_con
 
 		vkCreateComputePipelines(vulkan_context->device, 0, 1, &pipeline_create_info, 0, &result.pipeline);
 
-		vk_label_object(PIPELINE,        result.pipeline, name, s8("Pipeline"));
-		vk_label_object(PIPELINE_LAYOUT, result.layout,   name, s8("Pipeline Layout"));
-		vk_label_object(SHADER_MODULE,   module,          name, s8("Module"));
+		vk_label_object(PIPELINE,        result.pipeline, str8_from_s8(name), str8("Pipeline"));
+		vk_label_object(PIPELINE_LAYOUT, result.layout,   str8_from_s8(name), str8("Pipeline Layout"));
+		vk_label_object(SHADER_MODULE,   module,          str8_from_s8(name), str8("Module"));
 
 		vkDestroyShaderModule(vulkan_context->device, module, 0);
 	}
@@ -792,8 +792,8 @@ vk_graphics_pipeline_from_infos(Arena arena, VulkanPipelineCreateInfo *infos, u3
 		assert(infos[0].kind < countof(extras));
 		assert(infos[1].kind < countof(extras));
 
-		vk_label_object(PIPELINE,        result.pipeline, infos[0].name, s8("Pipeline"));
-		vk_label_object(PIPELINE_LAYOUT, result.layout,   infos[0].name, s8("Pipeline Layout"));
+		vk_label_object(PIPELINE,        result.pipeline, str8_from_s8(infos[0].name), str8("Pipeline"));
+		vk_label_object(PIPELINE_LAYOUT, result.layout,   str8_from_s8(infos[0].name), str8("Pipeline Layout"));
 		//vk_label_object_(VK_OBJECT_TYPE_SHADER_MODULE, (u64)modules[0], infos[0].name, extras[infos[0].kind]);
 		//vk_label_object_(VK_OBJECT_TYPE_SHADER_MODULE, (u64)modules[1], infos[1].name, extras[infos[1].kind]);
 	}
@@ -940,7 +940,8 @@ typedef struct {
 	u32               queue_family_count;
 	u32               queue_family_indices[VulkanTimeline_Count];
 	VkIndexType       index_type;
-	s8                label;
+	OSHandle         *export;
+	str8              label;
 } VulkanBufferAllocateInfo;
 
 function b32
@@ -976,8 +977,16 @@ vk_buffer_allocate_common(VulkanBuffer *vb, VulkanBufferAllocateInfo *ai)
 	if (ai->index_type != VK_INDEX_TYPE_NONE_KHR)
 		buffer_create_info.usage |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
 
+	VkExternalMemoryBufferCreateInfo external_memory_buffer_create_info = {
+		.sType       = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
+		.handleTypes = OS_WINDOWS ? VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT
+		                          : VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+	};
+
+	if (ai->export) buffer_create_info.pNext = &external_memory_buffer_create_info;
+
 	vkCreateBuffer(vk->device, &buffer_create_info, 0, &vb->buffer);
-	vk_label_object(BUFFER, vb->buffer, ai->label, s8("Buffer"));
+	vk_label_object(BUFFER, vb->buffer, ai->label, str8("Buffer"));
 
 	VkMemoryRequirements memory_requirements;
 	vkGetBufferMemoryRequirements(vk->device, vb->buffer, &memory_requirements);
@@ -1005,14 +1014,14 @@ vk_buffer_allocate_common(VulkanBuffer *vb, VulkanBufferAllocateInfo *ai)
 	b32 result = 0;
 	// TODO(rnp): this may fail if the allocation is too big for the BAR size
 	// it needs to handled properly
-	if (vk_allocate_memory(&vb->memory, size, vb->memory_kind, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, &dedicated_allocate_info, 0)) {
+	if (vk_allocate_memory(&vb->memory, size, vb->memory_kind, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, &dedicated_allocate_info, ai->export)) {
 		result  = 1;
 		ai->gpu_buffer->size = size;
 		vb->memory_size = size;
 
 		vb->index_type = ai->index_type;
 
-		vk_label_object(DEVICE_MEMORY, vb->memory, ai->label, s8("Memory"));
+		vk_label_object(DEVICE_MEMORY, vb->memory, ai->label, str8("Memory"));
 
 		if (host_read_write)
 			vkMapMemory(vk->device, vb->memory, 0, size, 0, &vb->host_pointer);
@@ -1824,15 +1833,15 @@ vk_load_descriptor_block(void)
 	static_assert(countof(vk->descriptor_set_layouts) == countof(vk->descriptor_sets), "");
 	vkAllocateDescriptorSets(vk->device, &set_allocate_info, vk->descriptor_sets);
 
-	vk_label_object(DESCRIPTOR_POOL, vk->descriptor_pool, s8("Beamformer Resources"), s8("Pool"));
+	vk_label_object(DESCRIPTOR_POOL, vk->descriptor_pool, str8("Beamformer Resources"), str8("Pool"));
 
 	DeferLoop(take_lock(&vk->arena_lock, -1), release_lock(&vk->arena_lock)) {
 		Arena scratch = vk->arena;
 		for EachElement(vk->descriptor_sets, it) {
 			Stream sb = arena_stream(scratch);
 			stream_append_s8s(&sb, s8("Beamformer "), beamformer_shader_resource_kind_strings[it], s8("s"));
-			vk_label_object(DESCRIPTOR_SET,        vk->descriptor_sets[it],        stream_to_s8(&sb), s8("Set"));
-			vk_label_object(DESCRIPTOR_SET_LAYOUT, vk->descriptor_set_layouts[it], stream_to_s8(&sb), s8("Set Layout"));
+			vk_label_object(DESCRIPTOR_SET,        vk->descriptor_sets[it],        stream_to_str8(&sb), str8("Set"));
+			vk_label_object(DESCRIPTOR_SET_LAYOUT, vk->descriptor_set_layouts[it], stream_to_str8(&sb), str8("Set Layout"));
 		}
 	}
 
@@ -2121,7 +2130,7 @@ vk_render_model_allocate(GPUBuffer *model, void *indices, u64 index_count, u64 m
 		.size                    = (u64)size,
 		.flags                   = VulkanUsageFlag_HostReadWrite,
 		.index_type              = index_type,
-		.label                   = label,
+		.label                   = str8_from_s8(label),
 		.queue_family_count      = 1,
 		.queue_family_indices[0] = vulkan_context->queues[VulkanQueueKind_Graphics]->queue_family,
 	};
@@ -2274,9 +2283,9 @@ vk_image_allocate(GPUImage *image, u32 width, u32 height, u32 mips, u32 samples,
 		};
 		vkCreateImageView(vk->device, &image_view_info, 0, &vi->view);
 
-		vk_label_object(IMAGE,         vi->image,  label, s8("Image"));
-		vk_label_object(IMAGE_VIEW,    vi->view,   label, s8("Image View"));
-		vk_label_object(DEVICE_MEMORY, vi->memory, label, s8("Memory"));
+		vk_label_object(IMAGE,         vi->image,  str8_from_s8(label), str8("Image"));
+		vk_label_object(IMAGE_VIEW,    vi->view,   str8_from_s8(label), str8("Image View"));
+		vk_label_object(DEVICE_MEMORY, vi->memory, str8_from_s8(label), str8("Memory"));
 	} else {
 		vkDestroyImage(vk->device, vi->image, 0);
 		vk_entity_release(e);

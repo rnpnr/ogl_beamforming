@@ -222,7 +222,7 @@ beamformer_init(BeamformerInput *input)
 				.flags           = VulkanUsageFlag_TransferSource|VulkanUsageFlag_HostReadWrite,
 				.timeline_count  = countof(timelines),
 				.timelines_used  = timelines,
-				.label           = s8("BeamformedData"),
+				.label           = str8("BeamformedData"),
 			};
 			vk_buffer_allocate(cs->backlog.buffer, &allocate_info);
 			if (cs->backlog.buffer->size > 0)
@@ -263,7 +263,7 @@ beamformer_init(BeamformerInput *input)
 	ctx->shared_memory->capabilities.max_rf_data_size = cs->backlog.buffer->size
 	                                                    / BeamformerMaxRawDataFramesInFlight;
 
-	ctx->shared_memory->capabilities.cuda    = cuda_init != cuda_init_stub;
+	ctx->shared_memory->capabilities.cuda    = cuda_supported();
 	// TODO(rnp): re-enable hilbert support, with and without cuda
 	ctx->shared_memory->capabilities.hilbert = 0;
 

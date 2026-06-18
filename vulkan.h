@@ -120,6 +120,7 @@ typedef enum {
 	VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2                                              = 1000059002,
 	VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2                              = 1000059006,
 	VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO                                       = 1000060000,
+	VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO                               = 1000072000,
 	VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO                                = 1000072001,
 	VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO                                      = 1000072002,
 	VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR                                 = 1000073003,
@@ -2889,6 +2890,12 @@ typedef struct {
 	const void *                    pNext;
 	VkExternalMemoryHandleTypeFlags handleTypes;
 } VkExportMemoryAllocateInfo;
+
+typedef struct {
+	VkStructureType                 sType;
+	const void *                    pNext;
+	VkExternalMemoryHandleTypeFlags handleTypes;
+} VkExternalMemoryBufferCreateInfo;
 
 typedef struct {
 	VkStructureType                 sType;

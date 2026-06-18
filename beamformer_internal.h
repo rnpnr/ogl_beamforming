@@ -112,7 +112,9 @@ typedef struct {
 	VulkanTimeline   *timelines_used;
 	u32               timeline_count;
 
-	s8                label;
+	OSHandle         *export;
+
+	str8              label;
 } GPUBufferAllocateInfo;
 
 typedef struct {
@@ -218,6 +220,7 @@ DEBUG_IMPORT renderdoc_end_frame_capture_fn         *end_frame_capture;
 ///////////////////////////////
 // NOTE: CUDA Library Bindings
 
+#define cuda_supported() (cuda_init != cuda_init_stub)
 #define CUDA_INIT_FN(name) void name(u32 *input_dims, u32 *decoded_dims)
 typedef CUDA_INIT_FN(cuda_init_fn);
 CUDA_INIT_FN(cuda_init_stub) {}
@@ -434,7 +437,8 @@ typedef struct {
 	 */
 	#define PING_PONG_BUFFER_SLOTS (2 + 1)
 	GPUBuffer ping_pong_buffer;
-	u32 ping_pong_input_index;
+	OSHandle  ping_pong_export_handle;
+	u32       ping_pong_input_index;
 
 	f32 processing_progress;
 	b32 processing_compute;

@@ -101,7 +101,7 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 		GPUBufferAllocateInfo allocate_info = {
 			.size  = sizeof(BeamformerComputeArrayParameters),
 			.flags = VulkanUsageFlag_HostReadWrite,
-			.label = stream_to_s8(&label),
+			.label = stream_to_str8(&label),
 		};
 		vk_buffer_allocate(&result->array_parameters, &allocate_info);
 		assert((result->array_parameters.gpu_pointer & 63) == 0);
@@ -154,7 +154,7 @@ beamformer_filter_update(BeamformerFilter *f, BeamformerFilterParameters fp, u32
 		GPUBufferAllocateInfo allocate_info = {
 			.size  = byte_size,
 			.flags = VulkanUsageFlag_HostReadWrite,
-			.label = label,
+			.label = str8_from_s8(label),
 		};
 		vk_buffer_allocate(&f->buffer, &allocate_info);
 	}
@@ -913,7 +913,12 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 
 			i64 buffer_size = PING_PONG_BUFFER_SLOTS * round_up_to(cp->rf_size, 64);
 			if (ctx->compute_context.ping_pong_buffer.size < buffer_size) {
-				GPUBufferAllocateInfo allocate_info = {.size = buffer_size, .label = s8("PingPongBuffer")};
+				b32 cuda = cuda_supported();
+				GPUBufferAllocateInfo allocate_info = {
+					.size   = buffer_size,
+					.export = cuda ? &ctx->compute_context.ping_pong_export_handle : 0,
+					.label  = str8("PingPongBuffer"),
+				};
 				vk_buffer_allocate(&ctx->compute_context.ping_pong_buffer, &allocate_info);
 
 				BeamformerShaderResourceInfo shader_resource_infos[] = {
@@ -924,7 +929,12 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 					},
 				};
 				vk_bind_shader_resources(shader_resource_infos, countof(shader_resource_infos));
+
 				// TODO(rnp): figure out how to share with CUDA
+				// IMPORTANT: on linux the handle is returned to os and should be cleared after import
+				// see usage of glImportMemoryFdEXT and surrounding code in ui.c for examples
+				if (cuda) {
+				}
 			}
 
 			if (cp->hadamard_order != (i32)cp->acquisition_count)
@@ -1593,7 +1603,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 			GPUBufferAllocateInfo allocate_info = {
 				.size  = countof(rf->upload_complete_values) * rf->active_rf_size,
 				.flags = VulkanUsageFlag_HostReadWrite,
-				.label = s8("RawRFBuffer"),
+				.label = str8("RawRFBuffer"),
 			};
 			vk_buffer_allocate(&rf->buffer, &allocate_info);
 		}

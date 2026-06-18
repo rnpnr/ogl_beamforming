@@ -1567,7 +1567,7 @@ ui_beamformer_frame_view_copy_frame(BeamformerUI *ui, BeamformerFrameView *new, 
 	GPUBufferAllocateInfo allocate_info = {
 		.size  = frame_size,
 		.flags = VulkanUsageFlag_TransferDestination,
-		.label = stream_to_s8(&sb),
+		.label = stream_to_str8(&sb),
 	};
 	vk_buffer_allocate(&new->copy_buffer, &allocate_info);
 
