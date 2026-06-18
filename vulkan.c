@@ -1963,6 +1963,7 @@ vk_buffer_allocate(GPUBuffer *b, GPUBufferAllocateInfo *info)
 		.flags      = info->flags,
 		.index_type = VK_INDEX_TYPE_NONE_KHR,
 		.label      = info->label,
+		.export     = info->export,
 	};
 
 	u32 queue_index_hit_count[VulkanQueueKind_Count] = {0};
