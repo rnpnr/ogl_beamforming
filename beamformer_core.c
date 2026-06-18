@@ -1351,10 +1351,10 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			post_sync_barrier(ctx->shared_memory, BeamformerSharedMemoryLockKind_DispatchCompute);
 
 			u32 dirty_programs = atomic_swap_u32(&cp->dirty_programs, 0);
-			static_assert(IsPowerOfTwo(BeamformerMaxComputeShaderStages), "");
-			assert((dirty_programs & ~((u32)BeamformerMaxComputeShaderStages - 1)) == 0);
+			static_assert(BeamformerMaxComputeShaderStages <= 32, "");
 			if unlikely(dirty_programs) {
 				for EachBit(dirty_programs, slot) {
+					assert(slot < BeamformerMaxComputeShaderStages);
 					beamformer_reload_compute_pipeline(cp->vulkan_pipelines + slot,
 					                                   cp->pipeline.shaders[slot],
 					                                   cp->shader_descriptors + slot, *arena);
