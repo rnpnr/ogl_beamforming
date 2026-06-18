@@ -145,7 +145,7 @@ os_entity_allocate(OSW32EntityKind kind)
 	DeferLoop(take_lock(&os_w32_context.arena_lock, -1), release_lock(&os_w32_context.arena_lock))
 	{
 		result = SLLPopFreelist(os_w32_context.entity_freelist);
-		if (!result) push_struct_no_zero(&os_w32_context.arena, OSW32Entity);
+		if (!result) result = push_struct_no_zero(&os_w32_context.arena, OSW32Entity);
 	}
 
 	zero_struct(result);
