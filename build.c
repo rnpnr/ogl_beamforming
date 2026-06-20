@@ -1092,25 +1092,26 @@ typedef enum {
 } MetaEmitLang;
 
 #define META_KIND_LIST \
-	X(M4,  m4,  f32mat4,   float,    single, 64, 16) \
-	X(V4,  v4,  f32vec4,   float,    single, 16,  4) \
-	X(SV4, iv4, i32vec4,   int32_t,  int32,  16,  4) \
-	X(UV4, uv4, u32vec4,   uint32_t, uint32, 16,  4) \
-	X(UV2, uv2, u32vec2,   uint32_t, uint32,  8,  2) \
-	X(V3,  v3,  f32vec3,   float,    single, 12,  3) \
-	X(V2,  v2,  f32vec2,   float,    single,  8,  2) \
-	X(F32, f32, float32_t, float,    single,  4,  1) \
-	X(S32, i32, int32_t,   int32_t,  int32,   4,  1) \
-	X(S16, i16, int16_t,   int16_t,  int16,   2,  1) \
-	X(S8,  i8,  int8_t,    int8_t,   int8,    1,  1) \
-	X(B64, b64, uint64_t,  uint64_t, uint64,  8,  1) \
-	X(B32, b32, bool,      uint32_t, uint32,  4,  1) \
-	X(B16, b16, uint16_t,  uint16_t, uint16,  2,  1) \
-	X(B8,  b8,  uint8_t,   uint8_t,  uint8,   1,  1) \
-	X(U64, u64, uint64_t,  uint64_t, uint64,  8,  1) \
-	X(U32, u32, uint32_t,  uint32_t, uint32,  4,  1) \
-	X(U16, u16, uint16_t,  uint16_t, uint16,  2,  1) \
-	X(U8,  u8,  uint8_t,   uint8_t,  uint8,   1,  1) \
+	X(M4,  m4,   f32mat4,   float,    single, 64, 16) \
+	X(V4,  v4,   f32vec4,   float,    single, 16,  4) \
+	X(SV4, iv4,  i32vec4,   int32_t,  int32,  16,  4) \
+	X(UV4, uv4,  u32vec4,   uint32_t, uint32, 16,  4) \
+	X(UV2, uv2,  u32vec2,   uint32_t, uint32,  8,  2) \
+	X(V3,  v3,   f32vec3,   float,    single, 12,  3) \
+	X(V2,  v2,   f32vec2,   float,    single,  8,  2) \
+	X(F32, f32,  float32_t, float,    single,  4,  1) \
+	X(S32, i32,  int32_t,   int32_t,  int32,   4,  1) \
+	X(S16, i16,  int16_t,   int16_t,  int16,   2,  1) \
+	X(S8,  i8,   int8_t,    int8_t,   int8,    1,  1) \
+	X(B64, b64,  uint64_t,  uint64_t, uint64,  8,  1) \
+	X(B32, b32,  bool,      uint32_t, uint32,  4,  1) \
+	X(B16, b16,  uint16_t,  uint16_t, uint16,  2,  1) \
+	X(B8,  b8,   uint8_t,   uint8_t,  uint8,   1,  1) \
+	X(U64, u64,  uint64_t,  uint64_t, uint64,  8,  1) \
+	X(U32, u32,  uint32_t,  uint32_t, uint32,  4,  1) \
+	X(U16, u16,  uint16_t,  uint16_t, uint16,  2,  1) \
+	X(U8,  u8,   uint8_t,   uint8_t,  uint8,   1,  1) \
+	X(STR, str8, error,     error,    error,  16,  1) \
 
 typedef enum {
 	#define X(k, ...) MetaKind_## k,
@@ -2874,7 +2875,9 @@ meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count, MetaE
 			new->table.entries[0]  = meta_expand_to_s8_array(ctx, scratch, expand, table, row->location);
 		}break;
 
-		case MetaEntryKind_Union:{
+		case MetaEntryKind_Struct:
+		case MetaEntryKind_Union:
+		{
 			if (ops) meta_entry_nesting_error(row, MetaEntryKind_Emit);
 			MetaEntryArgument fields = meta_entry_argument_expect(row, 0, MetaEntryArgumentKind_Array);
 			if (fields.count != 2 && fields.count != 3) {
@@ -2883,9 +2886,10 @@ meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count, MetaE
 				                                   "and optionally element counts.\n", (i32)table_name.len, table_name.data);
 			}
 
-			MetaEntityID entity_id = meta_intern_entity(ctx, row->name, MetaEntityKind_Union,
-			                                            meta_root_entity_id(ctx), row->location, 0);
-			MetaEntry entry = {.kind = MetaEntryKind_Union};
+			MetaEntityKind entity_kind = row->kind == MetaEntryKind_Struct ? MetaEntityKind_Struct : MetaEntityKind_Union;
+			MetaEntityID   entity_id   = meta_intern_entity(ctx, row->name, entity_kind,
+			                                                meta_root_entity_id(ctx), row->location, 0);
+			MetaEntry entry = {.kind = row->kind};
 			MetaEntity *new = ctx->entities.data + entity_id.value;
 			meta_pack_table_begin(&entry, &new->table);
 			new->table.entries     = push_array(ctx->arena, s8 *, new->table.field_count);
