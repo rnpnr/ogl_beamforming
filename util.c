@@ -81,10 +81,11 @@ memory_copy_non_temporal(void *restrict dest, void *restrict src, u64 n)
 }
 
 function void
-memory_move(u8 *dest, u8 *src, u64 n)
+memory_move(void *dest, void *src, u64 n)
 {
-	if (dest < src) memory_copy(dest, src, n);
-	else            while (n) { n--; dest[n] = src[n]; }
+	u8 *d = dest, *s = src;
+	if (d < s) memory_copy(d, s, n);
+	else            while (n) { n--; d[n] = s[n]; }
 }
 
 function void *

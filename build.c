@@ -2170,292 +2170,6 @@ meta_entity_first_child_of_kind(MetaContext *ctx, MetaEntity *e, MetaEntityKind 
 }
 
 function void
-meta_pack_table_begin(MetaEntry *e, MetaTable *t)
-{
-	switch (e->kind) {
-
-	case MetaEntryKind_Bake:
-	{
-		meta_entry_argument_expected_(e, 0, 0);
-		#define X(_i, name, ...) s8_comp(#name),
-		read_only local_persist s8 bake_fields[] = {META_BAKE_FIELDS};
-		#undef X
-		t->fields      = bake_fields;
-		t->field_count = countof(bake_fields);
-	}break;
-
-	case MetaEntryKind_Enumeration:{
-		read_only local_persist s8 enumeration_fields[] = {s8_comp("name")};
-		t->fields      = enumeration_fields;
-		t->field_count = countof(enumeration_fields);
-	}break;
-
-	case MetaEntryKind_PushConstants:
-	case MetaEntryKind_Struct:
-	case MetaEntryKind_Union:
-	{
-		meta_entry_argument_expected_(e, 0, 0);
-		#define X(_i, name, ...) s8_comp(#name),
-		read_only local_persist s8 struct_fields[] = {META_STRUCT_FIELDS};
-		#undef X
-		t->fields      = struct_fields;
-		t->field_count = countof(struct_fields);
-	}break;
-
-	case MetaEntryKind_Table:{
-		meta_entry_argument_expected(e, s8("[field ...]"));
-		MetaEntryArgument fields = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_Array);
-		t->fields      = fields.strings;
-		t->field_count = (u32)fields.count;
-	}break;
-
-	InvalidDefaultCase;
-	}
-}
-
-function i64
-meta_pack_table_entity(MetaContext *ctx, MetaEntry *e, i64 entry_count, s8 name, MetaEntityID parent)
-{
-	MetaEntityKind entity_kind = MetaEntityKind_Nil;
-	switch (e->kind) {
-	case MetaEntryKind_Bake:{         entity_kind = MetaEntityKind_BakeParameters;}break;
-	case MetaEntryKind_Enumeration:{  entity_kind = MetaEntityKind_Enumeration;   }break;
-	case MetaEntryKind_PushConstants:{entity_kind = MetaEntityKind_PushConstants; }break;
-	case MetaEntryKind_Struct:{       entity_kind = MetaEntityKind_Struct;        }break;
-	case MetaEntryKind_Table:{        entity_kind = MetaEntityKind_Table;         }break;
-	case MetaEntryKind_Union:{        entity_kind = MetaEntityKind_Union;         }break;
-	InvalidDefaultCase;
-	}
-
-	MetaEntityID entity_id = meta_intern_entity(ctx, name, entity_kind, parent, e->location, 0);
-
-	MetaTable table = {0}, *t = &table;
-	meta_pack_table_begin(e, t);
-
-	b32 structure = e->kind == MetaEntryKind_Struct ||
-	                e->kind == MetaEntryKind_PushConstants ||
-	                e->kind == MetaEntryKind_Union;
-
-	MetaEntryScope scope = meta_entry_extract_scope(e, entry_count);
-	if (scope.consumed > 1) {
-		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++) {
-			if (row->kind != MetaEntryKind_Array && row->kind != MetaEntryKind_String)
-				meta_entry_nesting_error(row, e->kind);
-
-			MetaEntryArgument entries = {.count = 1};
-			if (row->kind == MetaEntryKind_Array)
-				entries.count = meta_entry_argument_expect(row, 0, MetaEntryArgumentKind_Array).count;
-
-			if (structure && entries.count != 2 && entries.count != 3) {
-				meta_compiler_error(row->location, "incorrect field count for @%s entry got: %zu expected: "
-				                    "[name type (elements)]\n", meta_entry_kind_strings[e->kind],
-				                    (size_t)entries.count);
-			} else if (!structure && entries.count != t->field_count) {
-				meta_compiler_error_message(row->location, "incorrect field count for @%s entry got: %zu expected: %u\n",
-				                            meta_entry_kind_strings[e->kind], (size_t)entries.count, t->field_count);
-				fprintf(stderr, "  fields: [");
-				for (u64 i = 0; i < t->field_count; i++) {
-					if (i != 0) fprintf(stderr, " ");
-					fprintf(stderr, "%.*s", (i32)t->fields[i].len, t->fields[i].data);
-				}
-				fprintf(stderr, "]\n");
-				meta_error();
-			}
-
-			t->entry_count++;
-		}
-
-		t->entries = push_array(ctx->arena, s8 *, t->field_count);
-		for (u32 field = 0; field < t->field_count; field++)
-			t->entries[field] = push_array(ctx->arena, s8, t->entry_count);
-
-		u32 row_index = 0;
-		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++, row_index++) {
-			s8 *fs = &row->name;
-			if (row->arguments)
-				fs = row->arguments->strings;
-
-			for (u32 field = 0; field < t->field_count; field++)
-				t->entries[field][row_index] = fs[field];
-
-			// NOTE(rnp): if we are filling out a struct the array element count is optional
-			// and defaults to 1. fill this out here for uniformity elsewhere in the code
-			if (structure && row->arguments->count == 2)
-				t->entries[2][row_index] = s8("1");
-		}
-	}
-
-	MetaEntity *entity = meta_entity(ctx, entity_id);
-	entity->table = table;
-
-	switch (e->kind) {
-	case MetaEntryKind_Bake:
-	case MetaEntryKind_PushConstants:
-	case MetaEntryKind_Struct:
-	case MetaEntryKind_Union:
-	case MetaEntryKind_Enumeration:
-	case MetaEntryKind_Table:
-	{}break;
-
-	InvalidDefaultCase;
-	}
-
-	return scope.consumed;
-}
-
-function i64
-meta_pack_shader_common(MetaContext *ctx, MetaEntityID shader_id, MetaEntry *e, i64 entry_count, MetaEntityID group_entity_id)
-{
-	assert(ctx->entities.data[shader_id.value].kind == MetaEntityKind_Shader);
-	i64 result = 0;
-
-	switch(e->kind) {
-
-	case MetaEntryKind_Bake:{
-		e->name = push_s8_from_parts(ctx->arena, s8(""), ctx->entity_names.data[shader_id.value], s8("BakeParameters"));
-		result  = meta_pack_table_entity(ctx, e, entry_count, e->name, shader_id);
-	}break;
-
-	case MetaEntryKind_PushConstants:{
-		e->name = push_s8_from_parts(ctx->arena, s8(""), ctx->entity_names.data[shader_id.value], s8("PushConstants"));
-		result  = meta_pack_table_entity(ctx, e, entry_count, e->name, shader_id);
-		goto reference;
-	}break;
-
-	case MetaEntryKind_ShaderAlias:{
-		MetaEntityID alias_id = meta_intern_entity(ctx, e->name, MetaEntityKind_Shader, group_entity_id,
-		                                           e->location, 0);
-		meta_entity(ctx, alias_id)->shader.kind            = MetaShaderKind_Alias;
-		meta_entity(ctx, alias_id)->shader.alias_parent_id = shader_id;
-	}break;
-
-	case MetaEntryKind_Enumeration:
-	case MetaEntryKind_Constant:
-	case MetaEntryKind_Struct:
-	reference:
-	{
-		meta_entry_argument_expected(e);
-		// TODO(rnp): MetaIDList.data should be of type MetaEntityID
-		MetaEntityID  ref_id = meta_entity_reference(ctx, e->name, e->location);
-		meta_intern_id(ctx, &meta_entity(ctx, shader_id)->shader.entity_reference_ids, ref_id.value);
-	}break;
-
-	default:{ meta_entry_nesting_error(e, MetaEntryKind_Shader); }break;
-	}
-
-	return result;
-}
-
-function i64
-meta_pack_render_shader(MetaContext *ctx, MetaEntry *entries, i64 entry_count, MetaEntityID group_entity_id)
-{
-	assert(entries[0].kind == MetaEntryKind_RenderShader);
-
-	MetaEntityID entity_id = meta_intern_entity(ctx, entries->name, MetaEntityKind_Shader,
-	                                            group_entity_id, entries->location, 0);
-	meta_entity(ctx, entity_id)->shader.kind = MetaShaderKind_Render;
-
-	meta_entry_argument_expected(entries);
-
-	MetaEntryScope scope = meta_entry_extract_scope(entries, entry_count);
-	if (scope.consumed > 1) {
-		for (MetaEntry *e = scope.start; e < scope.one_past_last; e++) {
-			switch (e->kind) {
-
-			case MetaEntryKind_VertexShader:{
-				if (meta_entity(ctx, entity_id)->shader.files[0].len)
-					meta_entry_error(e, "primitive shader file redefined\n");
-				meta_entity(ctx, entity_id)->shader.files[0] = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
-				meta_entity(ctx, entity_id)->shader.render.kind = MetaShaderPrimitiveKind_Vertex;
-			}break;
-
-			case MetaEntryKind_FragmentShader:{
-				if (meta_entity(ctx, entity_id)->shader.files[1].len)
-					meta_entry_error(e, "fragment shader file redefined\n");
-				meta_entity(ctx, entity_id)->shader.files[1] = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
-			}break;
-
-			default:{
-				e += meta_pack_shader_common(ctx, entity_id, e, scope.one_past_last - e, group_entity_id);
-			}break;
-			}
-		}
-	}
-	return scope.consumed;
-}
-
-function i64
-meta_pack_compute_shader(MetaContext *ctx, MetaEntry *entries, i64 entry_count, MetaEntityID group_entity_id)
-{
-	assert(entries[0].kind == MetaEntryKind_Shader);
-
-	MetaEntityID entity_id = meta_intern_entity(ctx, entries->name, MetaEntityKind_Shader, group_entity_id,
-	                                        entries->location, 0);
-	meta_entity(ctx, entity_id)->shader.kind = MetaShaderKind_Compute;
-
-	if (entries->argument_count > 1) {
-		meta_entry_argument_expected(entries, s8("[file_name]"));
-	} else if (entries->argument_count == 1) {
-		s8 shader_file = meta_entry_argument_expect(entries, 0, MetaEntryArgumentKind_String).string;
-		meta_entity(ctx, entity_id)->shader.files[0] = shader_file;
-	}
-
-	MetaEntryScope scope = meta_entry_extract_scope(entries, entry_count);
-	if (scope.consumed > 1) {
-		for (MetaEntry *e = scope.start; e < scope.one_past_last; e++)
-			e += meta_pack_shader_common(ctx, entity_id, e, scope.one_past_last - e, group_entity_id);
-	} else {
-		assert(scope.consumed == 1);
-		// TODO(rnp): some functions (@Expand) expect no scope and that the next entry
-		// is treated as in scope; here we do not want that behaviour.
-		scope.consumed = 0;
-	}
-	return scope.consumed;
-}
-
-function i64
-meta_pack_shader_group(MetaContext *ctx, MetaEntry *entries, i64 entry_count)
-{
-	assert(entries->kind == MetaEntryKind_ShaderGroup);
-
-	MetaEntityID entity_id = meta_intern_entity(ctx, entries->name, MetaEntityKind_ShaderGroup,
-	                                            meta_root_entity_id(ctx), entries->location, 0);
-
-	MetaEntryScope scope = meta_entry_extract_scope(entries, entry_count);
-	if (scope.consumed > 1) {
-		for (MetaEntry *e = scope.start; e < scope.one_past_last; e++) {
-			switch (e->kind) {
-			case MetaEntryKind_RenderShader:{
-				e += meta_pack_render_shader(ctx, e, scope.one_past_last - e, entity_id);
-			}break;
-			case MetaEntryKind_Shader:{
-				e += meta_pack_compute_shader(ctx, e, scope.one_past_last - e, entity_id);
-			}break;
-			default:{meta_entry_nesting_error(e, MetaEntryKind_ShaderGroup);}break;
-			}
-		}
-	}
-	return scope.consumed;
-}
-
-function i64
-meta_pack_references(MetaContext *ctx, MetaEntry *entries, i64 entry_count, MetaEntityID parent, s8 scope_name, s8 prefix)
-{
-	MetaEntryScope scope = meta_entry_extract_scope(entries, entry_count);
-	for (MetaEntry *e = scope.start; e < scope.one_past_last; e++) {
-		switch (e->kind) {
-		case MetaEntryKind_Struct:
-		case MetaEntryKind_Union:
-		{
-			meta_entity_reference_reference(ctx, e->name, scope_name, e->location, parent, prefix);
-		}break;
-		default:{meta_entry_nesting_error(e, entries->kind);}break;
-		}
-	}
-	return scope.consumed;
-}
-
-function void
 meta_expansion_string_split(str8 string, str8 *left, str8 *inner, str8 *remainder, MetaLocation loc)
 {
 	b32 found = 0;
@@ -2801,26 +2515,8 @@ meta_generate_expansion_set(MetaContext *ctx, Arena *arena, str8 expansion_strin
 	return result;
 }
 
-function s8 *
-meta_expand_to_s8_array(MetaContext *ctx, Arena scratch, s8 expand, MetaEntity *table, MetaLocation location)
-{
-	MetaExpansionPartList parts = meta_generate_expansion_set(ctx, &scratch, str8_from_s8(expand), table, location);
-	s8 *result = push_array(ctx->arena, s8, table->table.entry_count);
-	for EachIndex(table->table.entry_count, expansion) {
-		Stream sb = arena_stream(*ctx->arena);
-		for EachIndex((u64)parts.count, part) {
-			MetaExpansionPart *p = parts.data + part;
-			u32 index = 0;
-			if (p->kind == MetaExpansionPartKind_Reference) index = expansion;
-			stream_append_s8(&sb, p->strings[index]);
-		}
-		result[expansion] = arena_stream_commit(ctx->arena, &sb);
-	}
-	return result;
-}
-
-function i64
-meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count, MetaEmitOperationList *ops)
+function da_count
+meta_expand_table_entity_id(MetaContext *ctx, MetaEntry *e)
 {
 	assert(e->kind == MetaEntryKind_Expand);
 
@@ -2828,12 +2524,11 @@ meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count, MetaE
 	meta_entry_argument_expected(e, s8("table_name"));
 	s8 table_name = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
 
-	MetaEntity *table = ctx->entities.data + meta_lookup_string_slow(ctx->entity_names.data,
-	                                                                 ctx->entity_names.count,
-	                                                                 table_name);
+	da_count result = meta_lookup_string_slow(ctx->entity_names.data, ctx->entity_names.count, table_name);
 
-	if (table < ctx->entities.data)
-		meta_entry_error(e, "undefined table %.*s\n", (i32)table_name.len, table_name.data);
+	if (result < 0) meta_entry_error(e, "undefined table %.*s\n", (i32)table_name.len, table_name.data);
+
+	MetaEntity *table = ctx->entities.data + result;
 	if (!meta_entity_kind_is_table[table->kind]) {
 		s8 old_kind    = meta_entity_kind_names[table->kind];
 		s8 wanted_kind = meta_entity_kind_names[MetaEntityKind_Table];
@@ -2842,6 +2537,395 @@ meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count, MetaE
 		                 (i32)old_kind.len,    old_kind.data,
 		                 (i32)wanted_kind.len, wanted_kind.data);
 	}
+
+	return result;
+}
+
+function s8
+meta_expand_parts_to_s8_at_index(MetaContext *ctx, u64 table_index, MetaExpansionPartList parts)
+{
+	Stream sb = arena_stream(*ctx->arena);
+	for EachIndex((u64)parts.count, part) {
+		MetaExpansionPart *p = parts.data + part;
+		u32 index = 0;
+		if (p->kind == MetaExpansionPartKind_Reference) index = table_index;
+		stream_append_s8(&sb, p->strings[index]);
+	}
+	s8 result = arena_stream_commit(ctx->arena, &sb);
+	return result;
+}
+
+function void
+meta_pack_table_begin(MetaEntry *e, MetaTable *t)
+{
+	switch (e->kind) {
+
+	case MetaEntryKind_Bake:
+	{
+		meta_entry_argument_expected_(e, 0, 0);
+		#define X(_i, name, ...) s8_comp(#name),
+		read_only local_persist s8 bake_fields[] = {META_BAKE_FIELDS};
+		#undef X
+		t->fields      = bake_fields;
+		t->field_count = countof(bake_fields);
+	}break;
+
+	case MetaEntryKind_Enumeration:{
+		read_only local_persist s8 enumeration_fields[] = {s8_comp("name")};
+		t->fields      = enumeration_fields;
+		t->field_count = countof(enumeration_fields);
+	}break;
+
+	case MetaEntryKind_PushConstants:
+	case MetaEntryKind_Struct:
+	case MetaEntryKind_Union:
+	{
+		meta_entry_argument_expected_(e, 0, 0);
+		#define X(_i, name, ...) s8_comp(#name),
+		read_only local_persist s8 struct_fields[] = {META_STRUCT_FIELDS};
+		#undef X
+		t->fields      = struct_fields;
+		t->field_count = countof(struct_fields);
+	}break;
+
+	case MetaEntryKind_Table:{
+		meta_entry_argument_expected(e, s8("[field ...]"));
+		MetaEntryArgument fields = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_Array);
+		t->fields      = fields.strings;
+		t->field_count = (u32)fields.count;
+	}break;
+
+	InvalidDefaultCase;
+	}
+}
+
+function i64
+meta_pack_table_entity(MetaContext *ctx, MetaEntry *e, i64 entry_count, s8 name, MetaEntityID parent)
+{
+	MetaEntityKind entity_kind = MetaEntityKind_Nil;
+	switch (e->kind) {
+	case MetaEntryKind_Bake:{         entity_kind = MetaEntityKind_BakeParameters;}break;
+	case MetaEntryKind_Enumeration:{  entity_kind = MetaEntityKind_Enumeration;   }break;
+	case MetaEntryKind_PushConstants:{entity_kind = MetaEntityKind_PushConstants; }break;
+	case MetaEntryKind_Struct:{       entity_kind = MetaEntityKind_Struct;        }break;
+	case MetaEntryKind_Table:{        entity_kind = MetaEntityKind_Table;         }break;
+	case MetaEntryKind_Union:{        entity_kind = MetaEntityKind_Union;         }break;
+	InvalidDefaultCase;
+	}
+
+	MetaEntityID entity_id = meta_intern_entity(ctx, name, entity_kind, parent, e->location, 0);
+
+	MetaTable table = {0}, *t = &table;
+	meta_pack_table_begin(e, t);
+
+	b32 structure = e->kind == MetaEntryKind_Struct ||
+	                e->kind == MetaEntryKind_PushConstants ||
+	                e->kind == MetaEntryKind_Union;
+
+	MetaEntryScope scope = meta_entry_extract_scope(e, entry_count);
+	if (scope.consumed > 1) {
+		Arena scratch = ctx->scratch;
+
+		// NOTE(rnp): count expands
+		i64 expand_count = 0;
+		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++)
+			if (row->kind == MetaEntryKind_Expand)
+				expand_count++;
+
+		// NOTE(rnp): extract expand tables
+		da_count *table_ids = 0;
+		i64 table_id_index = 0;
+		if (expand_count > 0) {
+			table_ids = push_array(&ctx->scratch, da_count, expand_count);
+			for (MetaEntry *row = scope.start; row != scope.one_past_last; row++)
+				if (row->kind == MetaEntryKind_Expand)
+					table_ids[table_id_index++] = meta_expand_table_entity_id(ctx, row);
+		}
+
+		table_id_index = 0;
+		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++) {
+			if (row->kind != MetaEntryKind_Array &&
+			    row->kind != MetaEntryKind_Expand &&
+			    row->kind != MetaEntryKind_String)
+			{
+				meta_entry_nesting_error(row, e->kind);
+			}
+
+			MetaEntryArgument entries = {.count = 1};
+
+			if (row->kind == MetaEntryKind_Expand) {
+				if (row + 1 == scope.one_past_last || (
+				    row[1].kind != MetaEntryKind_Array &&
+				    row[1].kind != MetaEntryKind_String))
+				{
+					meta_entry_nesting_error(row + 1, row->kind);
+				}
+
+				if (row[1].kind == MetaEntryKind_Array)
+					entries.count = meta_entry_argument_expect(row + 1, 0, MetaEntryArgumentKind_Array).count;
+			}
+
+			if (row->kind == MetaEntryKind_Array)
+				entries.count = meta_entry_argument_expect(row, 0, MetaEntryArgumentKind_Array).count;
+
+			if (structure && entries.count != 2 && entries.count != 3) {
+				meta_compiler_error(row->location, "incorrect field count for @%s entry got: %zu expected: "
+				                    "[name type (elements)]\n", meta_entry_kind_strings[e->kind],
+				                    (size_t)entries.count);
+			} else if (!structure && entries.count != t->field_count) {
+				meta_compiler_error_message(row->location, "incorrect field count for @%s entry got: %zu expected: %u\n",
+				                            meta_entry_kind_strings[e->kind], (size_t)entries.count, t->field_count);
+				fprintf(stderr, "  fields: [");
+				for (u64 i = 0; i < t->field_count; i++) {
+					if (i != 0) fprintf(stderr, " ");
+					fprintf(stderr, "%.*s", (i32)t->fields[i].len, t->fields[i].data);
+				}
+				fprintf(stderr, "]\n");
+				meta_error();
+			}
+
+			if (row->kind == MetaEntryKind_Expand) {
+				t->entry_count += ctx->entities.data[table_ids[table_id_index++]].table.entry_count;
+				// NOTE(rnp): skip expand argument
+				row++;
+			} else {
+				t->entry_count++;
+			}
+		}
+
+		t->entries = push_array(ctx->arena, s8 *, t->field_count);
+		for (u32 field = 0; field < t->field_count; field++)
+			t->entries[field] = push_array(ctx->arena, s8, t->entry_count);
+
+		u32 row_index = 0;
+		table_id_index = 0;
+		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++) {
+			u64 argument_count = row->arguments ? row->arguments->count : 1;
+			if (row->kind == MetaEntryKind_Expand) {
+				row++;
+				argument_count = row->arguments ? row->arguments->count : 1;
+
+				MetaEntity *table = ctx->entities.data + table_ids[table_id_index++];
+
+				u32 working_row_index = row_index;
+				for EachIndex(argument_count, it) {
+					working_row_index = row_index;
+					str8 expand = str8_from_s8(row->arguments ? row->arguments->strings[it] : row->name);
+					MetaExpansionPartList parts = meta_generate_expansion_set(ctx, &ctx->scratch, expand, table, row->location);
+					for EachIndex(table->table.entry_count, entry_index)
+						t->entries[it][working_row_index++] = meta_expand_parts_to_s8_at_index(ctx, entry_index, parts);
+				}
+
+				for (; row_index < working_row_index; row_index++)
+					if (structure && argument_count == 2)
+						t->entries[2][row_index] = s8("1");
+
+			} else {
+				s8 *fs = &row->name;
+				if (row->arguments)
+					fs = row->arguments->strings;
+
+				for (u32 field = 0; field < t->field_count; field++)
+					t->entries[field][row_index] = fs[field];
+
+				// NOTE(rnp): if we are filling out a struct the array element count is optional
+				// and defaults to 1. fill this out here for uniformity elsewhere in the code
+				if (structure && argument_count == 2)
+					t->entries[2][row_index] = s8("1");
+				row_index++;
+			}
+		}
+
+		ctx->scratch = scratch;
+	}
+
+	MetaEntity *entity = meta_entity(ctx, entity_id);
+	entity->table = table;
+
+	switch (e->kind) {
+	case MetaEntryKind_Bake:
+	case MetaEntryKind_PushConstants:
+	case MetaEntryKind_Struct:
+	case MetaEntryKind_Union:
+	case MetaEntryKind_Enumeration:
+	case MetaEntryKind_Table:
+	{}break;
+
+	InvalidDefaultCase;
+	}
+
+	return scope.consumed;
+}
+
+function i64
+meta_pack_shader_common(MetaContext *ctx, MetaEntityID shader_id, MetaEntry *e, i64 entry_count, MetaEntityID group_entity_id)
+{
+	assert(ctx->entities.data[shader_id.value].kind == MetaEntityKind_Shader);
+	i64 result = 0;
+
+	switch(e->kind) {
+
+	case MetaEntryKind_Bake:{
+		e->name = push_s8_from_parts(ctx->arena, s8(""), ctx->entity_names.data[shader_id.value], s8("BakeParameters"));
+		result  = meta_pack_table_entity(ctx, e, entry_count, e->name, shader_id);
+	}break;
+
+	case MetaEntryKind_PushConstants:{
+		e->name = push_s8_from_parts(ctx->arena, s8(""), ctx->entity_names.data[shader_id.value], s8("PushConstants"));
+		result  = meta_pack_table_entity(ctx, e, entry_count, e->name, shader_id);
+		goto reference;
+	}break;
+
+	case MetaEntryKind_ShaderAlias:{
+		MetaEntityID alias_id = meta_intern_entity(ctx, e->name, MetaEntityKind_Shader, group_entity_id,
+		                                           e->location, 0);
+		meta_entity(ctx, alias_id)->shader.kind            = MetaShaderKind_Alias;
+		meta_entity(ctx, alias_id)->shader.alias_parent_id = shader_id;
+	}break;
+
+	case MetaEntryKind_Enumeration:
+	case MetaEntryKind_Constant:
+	case MetaEntryKind_Struct:
+	reference:
+	{
+		meta_entry_argument_expected(e);
+		// TODO(rnp): MetaIDList.data should be of type MetaEntityID
+		MetaEntityID  ref_id = meta_entity_reference(ctx, e->name, e->location);
+		meta_intern_id(ctx, &meta_entity(ctx, shader_id)->shader.entity_reference_ids, ref_id.value);
+	}break;
+
+	default:{ meta_entry_nesting_error(e, MetaEntryKind_Shader); }break;
+	}
+
+	return result;
+}
+
+function i64
+meta_pack_render_shader(MetaContext *ctx, MetaEntry *entries, i64 entry_count, MetaEntityID group_entity_id)
+{
+	assert(entries[0].kind == MetaEntryKind_RenderShader);
+
+	MetaEntityID entity_id = meta_intern_entity(ctx, entries->name, MetaEntityKind_Shader,
+	                                            group_entity_id, entries->location, 0);
+	meta_entity(ctx, entity_id)->shader.kind = MetaShaderKind_Render;
+
+	meta_entry_argument_expected(entries);
+
+	MetaEntryScope scope = meta_entry_extract_scope(entries, entry_count);
+	if (scope.consumed > 1) {
+		for (MetaEntry *e = scope.start; e < scope.one_past_last; e++) {
+			switch (e->kind) {
+
+			case MetaEntryKind_VertexShader:{
+				if (meta_entity(ctx, entity_id)->shader.files[0].len)
+					meta_entry_error(e, "primitive shader file redefined\n");
+				meta_entity(ctx, entity_id)->shader.files[0] = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
+				meta_entity(ctx, entity_id)->shader.render.kind = MetaShaderPrimitiveKind_Vertex;
+			}break;
+
+			case MetaEntryKind_FragmentShader:{
+				if (meta_entity(ctx, entity_id)->shader.files[1].len)
+					meta_entry_error(e, "fragment shader file redefined\n");
+				meta_entity(ctx, entity_id)->shader.files[1] = meta_entry_argument_expect(e, 0, MetaEntryArgumentKind_String).string;
+			}break;
+
+			default:{
+				e += meta_pack_shader_common(ctx, entity_id, e, scope.one_past_last - e, group_entity_id);
+			}break;
+			}
+		}
+	}
+	return scope.consumed;
+}
+
+function i64
+meta_pack_compute_shader(MetaContext *ctx, MetaEntry *entries, i64 entry_count, MetaEntityID group_entity_id)
+{
+	assert(entries[0].kind == MetaEntryKind_Shader);
+
+	MetaEntityID entity_id = meta_intern_entity(ctx, entries->name, MetaEntityKind_Shader, group_entity_id,
+	                                        entries->location, 0);
+	meta_entity(ctx, entity_id)->shader.kind = MetaShaderKind_Compute;
+
+	if (entries->argument_count > 1) {
+		meta_entry_argument_expected(entries, s8("[file_name]"));
+	} else if (entries->argument_count == 1) {
+		s8 shader_file = meta_entry_argument_expect(entries, 0, MetaEntryArgumentKind_String).string;
+		meta_entity(ctx, entity_id)->shader.files[0] = shader_file;
+	}
+
+	MetaEntryScope scope = meta_entry_extract_scope(entries, entry_count);
+	if (scope.consumed > 1) {
+		for (MetaEntry *e = scope.start; e < scope.one_past_last; e++)
+			e += meta_pack_shader_common(ctx, entity_id, e, scope.one_past_last - e, group_entity_id);
+	} else {
+		assert(scope.consumed == 1);
+		// TODO(rnp): some functions (@Expand) expect no scope and that the next entry
+		// is treated as in scope; here we do not want that behaviour.
+		scope.consumed = 0;
+	}
+	return scope.consumed;
+}
+
+function i64
+meta_pack_shader_group(MetaContext *ctx, MetaEntry *entries, i64 entry_count)
+{
+	assert(entries->kind == MetaEntryKind_ShaderGroup);
+
+	MetaEntityID entity_id = meta_intern_entity(ctx, entries->name, MetaEntityKind_ShaderGroup,
+	                                            meta_root_entity_id(ctx), entries->location, 0);
+
+	MetaEntryScope scope = meta_entry_extract_scope(entries, entry_count);
+	if (scope.consumed > 1) {
+		for (MetaEntry *e = scope.start; e < scope.one_past_last; e++) {
+			switch (e->kind) {
+			case MetaEntryKind_RenderShader:{
+				e += meta_pack_render_shader(ctx, e, scope.one_past_last - e, entity_id);
+			}break;
+			case MetaEntryKind_Shader:{
+				e += meta_pack_compute_shader(ctx, e, scope.one_past_last - e, entity_id);
+			}break;
+			default:{meta_entry_nesting_error(e, MetaEntryKind_ShaderGroup);}break;
+			}
+		}
+	}
+	return scope.consumed;
+}
+
+function i64
+meta_pack_references(MetaContext *ctx, MetaEntry *entries, i64 entry_count, MetaEntityID parent, s8 scope_name, s8 prefix)
+{
+	MetaEntryScope scope = meta_entry_extract_scope(entries, entry_count);
+	for (MetaEntry *e = scope.start; e < scope.one_past_last; e++) {
+		switch (e->kind) {
+		case MetaEntryKind_Struct:
+		case MetaEntryKind_Union:
+		{
+			meta_entity_reference_reference(ctx, e->name, scope_name, e->location, parent, prefix);
+		}break;
+		default:{meta_entry_nesting_error(e, entries->kind);}break;
+		}
+	}
+	return scope.consumed;
+}
+
+function s8 *
+meta_expand_to_s8_array(MetaContext *ctx, Arena scratch, s8 expand, MetaEntity *table, MetaLocation location)
+{
+	MetaExpansionPartList parts = meta_generate_expansion_set(ctx, &scratch, str8_from_s8(expand), table, location);
+	s8 *result = push_array(ctx->arena, s8, table->table.entry_count);
+	for EachIndex(table->table.entry_count, expansion)
+		result[expansion] = meta_expand_parts_to_s8_at_index(ctx, expansion, parts);
+	return result;
+}
+
+function i64
+meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count, MetaEmitOperationList *ops)
+{
+	assert(e->kind == MetaEntryKind_Expand);
+
+	MetaEntity *table = ctx->entities.data + meta_expand_table_entity_id(ctx, e);
+	s8 table_name = ctx->entity_names.data[da_index(table, &ctx->entities)];
 
 	MetaEntryScope scope = meta_entry_extract_scope(e, entry_count);
 	for (MetaEntry *row = scope.start; row != scope.one_past_last; row++) {
