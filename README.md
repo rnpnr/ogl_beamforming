@@ -14,10 +14,6 @@ needed:
 ```sh
 cc -march=native -O3 build.c -o build
 ```
-or:
-```bat
-md out & cl -nologo -std:c11 -O2 -Fo:out\ build.c
-```
 
 Then run the build tool:
 ```sh
