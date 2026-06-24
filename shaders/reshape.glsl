@@ -18,10 +18,16 @@
 #elif OutputDataKind == DataKind_Float32
   #define Output     Float32
   #define OutputKind f32
-#elif OutputDataKind == DataKind_Float16Complex || OutputDataKind == DataKind_Int16Complex
+#elif OutputDataKind == DataKind_Float16Complex
+  #define Output     Float16Complex
+  #define OutputKind f16vec2
+#elif OutputDataKind == DataKind_Float16
+  #define Output     Float16
+  #define OutputKind f16
+#elif OutputDataKind == DataKind_Int16Complex
   #define Output     Int16Complex
   #define OutputKind s16vec2
-#elif OutputDataKind == DataKind_Float16 || OutputDataKind == DataKind_Int16
+#elif OutputDataKind == DataKind_Int16
   #define Output     Int16
   #define OutputKind s16
 #else
@@ -34,6 +40,14 @@ layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Int
 
 layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Int16Complex {
 	s16vec2 x[];
+};
+
+layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Float16 {
+	f16 x[];
+};
+
+layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Float16Complex {
+	f16vec2 x[];
 };
 
 layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Float32 {
