@@ -301,6 +301,7 @@ struct BeamformerComputePlan {
 
 	BeamformerAcquisitionKind acquisition_kind;
 	u32                       acquisition_count;
+	BeamformerContrastMode    contrast_mode;
 
 	u32 rf_size;
 	i32 hadamard_order;
@@ -406,6 +407,7 @@ typedef struct {
 	u32                       compound_count;
 	BeamformerDataKind        data_kind;
 	BeamformerAcquisitionKind acquisition_kind;
+	BeamformerContrastMode    contrast_mode;
 	BeamformerViewPlaneTag    view_plane_tag;
 } BeamformerFrame;
 

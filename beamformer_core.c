@@ -910,6 +910,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 
 			cp->acquisition_count = pb->parameters.acquisition_count;
 			cp->acquisition_kind  = pb->parameters.acquisition_kind;
+			cp->contrast_mode     = pb->parameters.contrast_mode;
 
 			i64 buffer_size = PING_PONG_BUFFER_SLOTS * round_up_to(cp->rf_size, 64);
 			if (ctx->compute_context.ping_pong_buffer.size < buffer_size) {
@@ -1387,6 +1388,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 
 			BeamformerFrame *frame  = beamformer_frame_next(cs, cp->output_points, cp->iq_pipeline, reserved_frame_size);
 			frame->acquisition_kind = cp->acquisition_kind;
+			frame->contrast_mode    = cp->contrast_mode;
 			frame->compound_count   = cp->acquisition_count;
 			frame->view_plane_tag   = work->compute_context.view_plane;
 			mem_copy(frame->voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));

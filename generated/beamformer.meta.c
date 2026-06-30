@@ -474,6 +474,11 @@ read_only global u8 beamformer_contrast_mode_samples[] = {
 	3,
 };
 
+read_only global str8 beamformer_contrast_mode_strings[] = {
+	str8_comp("None"),
+	str8_comp("A1S2"),
+};
+
 read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
 	1,
 	0,

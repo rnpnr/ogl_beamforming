@@ -718,7 +718,7 @@ stream_append_variable_group(Stream *s, Variable *var)
 }
 
 function s8
-push_acquisition_kind(Stream *s, BeamformerAcquisitionKind kind, u32 transmit_count)
+push_acquisition_kind(Stream *s, BeamformerAcquisitionKind kind, u32 transmit_count, BeamformerContrastMode contrast_mode)
 {
 	s8 name             = beamformer_acquisition_kind_strings[kind];
 	b32 fixed_transmits = beamformer_acquisition_kind_has_fixed_transmits[kind];
@@ -732,6 +732,9 @@ push_acquisition_kind(Stream *s, BeamformerAcquisitionKind kind, u32 transmit_co
 		stream_append_byte(s, '-');
 		stream_append_u64(s, transmit_count);
 	}
+
+	if (contrast_mode != BeamformerContrastMode_None)
+		stream_append_s8s(s, s8(" ("), s8_from_str8(beamformer_contrast_mode_strings[contrast_mode]), s8(")"));
 
 	return stream_to_s8(s);
 }
@@ -2714,7 +2717,7 @@ draw_beamformer_frame_view(BeamformerUI *ui, Arena a, Variable *var, Rect displa
 
 	{
 		Stream buf = arena_stream(a);
-		s8 shader  = push_acquisition_kind(&buf, frame->acquisition_kind, frame->compound_count);
+		s8 shader  = push_acquisition_kind(&buf, frame->acquisition_kind, frame->compound_count, frame->contrast_mode);
 		text_spec.font = &ui->font;
 		text_spec.limits.size.w -= 16;
 		v2 txt_s  = measure_text(*text_spec.font, shader);

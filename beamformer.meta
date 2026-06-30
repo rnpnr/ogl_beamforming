@@ -260,6 +260,10 @@
 	@Expand(ContrastModeTable) `	$(samples),`
 	`};`
 	``
+	`read_only global str8 beamformer_contrast_mode_strings[] = {`
+	@Expand(ContrastModeTable) `	str8_comp("$(name)"),`
+	`};`
+	``
 	`read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {`
 	@Expand(AcquisitionKindTable) `	$(fixed_transmits),`
 	`};`
