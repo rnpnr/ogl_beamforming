@@ -1402,25 +1402,18 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			vk_command_timestamp(cmd);
 
 			if (das_index >= 0) {
+				u64 frame_size = beamformer_frame_byte_size(frame->points, frame->data_kind);
 				GPUBuffer *backlog = cs->backlog.buffer;
-				u32 subgroup_size = vk_gpu_info()->subgroup_size;
-				BeamformerBufferClearPushConstants pc = {
-					.data     = backlog->gpu_pointer + frame->buffer_offset,
-					.clear_v4 = (uv4){{0}},
-					.bins     = beamformer_frame_byte_size(frame->points, frame->data_kind) / sizeof(uv4),
-				};
 
-				u32 index = BeamformerShaderKind_BufferClear - BeamformerShaderKind_ComputeInternalFirst;
-				vk_command_bind_pipeline(cmd, cs->compute_internal_pipelines[index]);
-				vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
-				vk_command_dispatch_compute(cmd, (uv3){{(u32)ceil_f32((f32)pc.bins / subgroup_size), 1, 1}});
+				// TODO(rnp): this could be problematic if we support F16 output
+				assert((frame_size % 4) == 0);
+				assert((frame->buffer_offset % 4) == 0);
 
+				vk_command_clear_buffer(cmd, backlog, frame->buffer_offset, frame_size, 0);
 				if (das_coherent) {
-					assert((pc.bins % beamformer_data_kind_element_count[frame->data_kind]) == 0);
-					pc.bins  = pc.bins / beamformer_data_kind_element_count[frame->data_kind];
-					pc.data  = backlog->gpu_pointer + backlog->size - sizeof(uv4) * pc.bins;
-					vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
-					vk_command_dispatch_compute(cmd, (uv3){{(u32)ceil_f32((f32)pc.bins / subgroup_size), 1, 1}});
+					u64 coherent_size = frame_size / beamformer_data_kind_element_count[frame->data_kind];
+					assert((coherent_size % 4) == 0);
+					vk_command_clear_buffer(cmd, backlog, backlog->size - coherent_size, coherent_size, 0);
 				}
 			}
 
@@ -1679,14 +1672,6 @@ beamformer_process_input_events(BeamformerCtx *ctx, BeamformerInput *input,
 
 		case BeamformerInputEventKind_ExecutableReload:{
 			ui_init(ctx, ctx->ui_backing_store);
-
-			if (!vk_pipeline_valid(ctx->compute_context.compute_internal_pipelines[0])) {
-				for EachElement(ctx->compute_context.compute_internal_pipelines, it) {
-					beamformer_reload_compute_pipeline(ctx->compute_context.compute_internal_pipelines + it,
-					                                   BeamformerShaderKind_ComputeInternalFirst + it, 0,
-					                                   ctx->arena);
-				}
-			}
 		}break;
 
 		case BeamformerInputEventKind_FileEvent:{

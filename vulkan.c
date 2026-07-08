@@ -2542,6 +2542,18 @@ vk_command_buffer_memory_barriers(VulkanHandle command, GPUMemoryBarrierInfo *ba
 }
 
 DEBUG_IMPORT void
+vk_command_clear_buffer(VulkanHandle command, GPUBuffer *buffer, u64 offset, u64 size, u32 clear_word)
+{
+	assert((offset % 4) == 0);
+	assert((size % 4) == 0);
+	if ValidVulkanHandle(command) {
+		VulkanBuffer *vb = vk_entity_data(buffer->handle, VulkanEntityKind_Buffer);
+		VkCommandBuffer cmd = vk_command_buffer(command);
+		vkCmdFillBuffer(cmd, vb->buffer, offset, size, clear_word);
+	}
+}
+
+DEBUG_IMPORT void
 vk_command_dispatch_compute(VulkanHandle command, uv3 dispatch)
 {
 	assert(dispatch.x <= U16_MAX);

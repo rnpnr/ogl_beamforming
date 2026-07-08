@@ -106,22 +106,18 @@ typedef enum {
 	BeamformerShaderKind_Hilbert            = 6,
 	BeamformerShaderKind_CoherencyWeighting = 7,
 	BeamformerShaderKind_Reshape            = 8,
-	BeamformerShaderKind_BufferClear        = 9,
-	BeamformerShaderKind_RenderBeamformed   = 10,
+	BeamformerShaderKind_RenderBeamformed   = 9,
 	BeamformerShaderKind_Count,
 
-	BeamformerShaderKind_ComputeFirst         = BeamformerShaderKind_Decode,
-	BeamformerShaderKind_ComputeLast          = BeamformerShaderKind_Hilbert,
-	BeamformerShaderKind_ComputeCount         = 7,
-	BeamformerShaderKind_ComputeHelpersFirst  = BeamformerShaderKind_CoherencyWeighting,
-	BeamformerShaderKind_ComputeHelpersLast   = BeamformerShaderKind_Reshape,
-	BeamformerShaderKind_ComputeHelpersCount  = 2,
-	BeamformerShaderKind_ComputeInternalFirst = BeamformerShaderKind_BufferClear,
-	BeamformerShaderKind_ComputeInternalLast  = BeamformerShaderKind_BufferClear,
-	BeamformerShaderKind_ComputeInternalCount = 1,
-	BeamformerShaderKind_RenderFirst          = BeamformerShaderKind_RenderBeamformed,
-	BeamformerShaderKind_RenderLast           = BeamformerShaderKind_RenderBeamformed,
-	BeamformerShaderKind_RenderCount          = 1,
+	BeamformerShaderKind_ComputeFirst        = BeamformerShaderKind_Decode,
+	BeamformerShaderKind_ComputeLast         = BeamformerShaderKind_Hilbert,
+	BeamformerShaderKind_ComputeCount        = 7,
+	BeamformerShaderKind_ComputeHelpersFirst = BeamformerShaderKind_CoherencyWeighting,
+	BeamformerShaderKind_ComputeHelpersLast  = BeamformerShaderKind_Reshape,
+	BeamformerShaderKind_ComputeHelpersCount = 2,
+	BeamformerShaderKind_RenderFirst         = BeamformerShaderKind_RenderBeamformed,
+	BeamformerShaderKind_RenderLast          = BeamformerShaderKind_RenderBeamformed,
+	BeamformerShaderKind_RenderCount         = 1,
 } BeamformerShaderKind;
 
 typedef struct {
@@ -239,12 +235,6 @@ typedef struct {
 	u64 left_input_buffer;
 	u64 right_input_buffer;
 } BeamformerReshapePushConstants;
-
-typedef struct {
-	uv4 clear_v4;
-	u64 data;
-	u32 bins;
-} BeamformerBufferClearPushConstants;
 
 typedef struct {
 	m4  mvp_matrix;
@@ -541,7 +531,6 @@ read_only global s8 beamformer_shader_names[] = {
 	s8_comp("Hilbert"),
 	s8_comp("CoherencyWeighting"),
 	s8_comp("Reshape"),
-	s8_comp("BufferClear"),
 	s8_comp("RenderBeamformed"),
 };
 
@@ -553,7 +542,6 @@ read_only global BeamformerShaderKind beamformer_reloadable_shader_kinds[] = {
 	BeamformerShaderKind_MinMax,
 	BeamformerShaderKind_CoherencyWeighting,
 	BeamformerShaderKind_Reshape,
-	BeamformerShaderKind_BufferClear,
 	BeamformerShaderKind_RenderBeamformed,
 };
 
@@ -565,7 +553,6 @@ read_only global s8 *beamformer_reloadable_shader_files[] = {
 	(s8 []){s8_comp("min_max.glsl")},
 	(s8 []){s8_comp("coherency_weighting.glsl")},
 	(s8 []){s8_comp("reshape.glsl")},
-	(s8 []){s8_comp("buffer_clear.glsl")},
 	(s8 []){s8_comp("render_3d.vert.glsl"), s8_comp("render_3d.frag.glsl")},
 };
 
@@ -580,7 +567,6 @@ read_only global i32 beamformer_shader_reloadable_index_by_shader[] = {
 	5,
 	6,
 	7,
-	8,
 };
 
 read_only global i32 beamformer_reloadable_compute_shader_info_indices[] = {
@@ -596,12 +582,8 @@ read_only global i32 beamformer_reloadable_compute_helpers_shader_info_indices[]
 	6,
 };
 
-read_only global i32 beamformer_reloadable_compute_internal_shader_info_indices[] = {
-	7,
-};
-
 read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
-	8,
+	7,
 };
 
 read_only global s8 beamformer_shader_global_header_strings[] = {
@@ -706,13 +688,6 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 	s8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
-	"  u32vec4  clear_v4;\n"
-	"  uint64_t data;\n"
-	"  uint32_t bins;\n"
-	"};\n"
-	"\n"),
-	s8_comp(""
-	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  f32mat4   mvp_matrix;\n"
 	"  uint64_t  positions;\n"
 	"  uint64_t  normals;\n"
@@ -738,12 +713,10 @@ read_only global b8 beamformer_shader_has_primitive[] = {
 	0,
 	0,
 	0,
-	0,
 	1,
 };
 
 read_only global b8 beamformer_shader_primitive_is_vertex[] = {
-	0,
 	0,
 	0,
 	0,
@@ -763,7 +736,6 @@ read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){12},
 	(i32 []){13},
 	(i32 []){14},
-	(i32 []){15},
 };
 
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
@@ -772,7 +744,6 @@ read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	8,
 	1,
 	0,
-	1,
 	1,
 	1,
 	1,
@@ -846,14 +817,12 @@ read_only global s8 *beamformer_shader_bake_parameter_names[] = {
 		s8_comp("Deinterleave"),
 	},
 	0,
-	0,
 };
 
 read_only global u32 beamformer_shader_bake_parameter_float_bits[] = {
 	0x00000000UL,
 	0x00003000UL,
 	0x0003f800UL,
-	0x00000000UL,
 	0x00000000UL,
 	0x00000000UL,
 	0x00000000UL,
@@ -870,7 +839,6 @@ read_only global u8 beamformer_shader_bake_parameter_counts[] = {
 	0,
 	11,
 	0,
-	0,
 };
 
 read_only global u8 beamformer_shader_push_constant_sizes[] = {
@@ -881,7 +849,6 @@ read_only global u8 beamformer_shader_push_constant_sizes[] = {
 	0,
 	sizeof(BeamformerCoherencyWeightingPushConstants),
 	sizeof(BeamformerReshapePushConstants),
-	sizeof(BeamformerBufferClearPushConstants),
 	sizeof(BeamformerRenderBeamformedPushConstants),
 };
 

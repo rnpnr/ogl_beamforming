@@ -179,6 +179,7 @@ DEBUG_IMPORT u64          vk_host_signal_timeline(VulkanTimeline timeline);
 DEBUG_IMPORT VulkanHandle vk_command_begin(VulkanTimeline timeline);
 DEBUG_IMPORT void         vk_command_bind_pipeline(VulkanHandle command, VulkanHandle pipeline);
 DEBUG_IMPORT void         vk_command_buffer_memory_barriers(VulkanHandle command, GPUMemoryBarrierInfo *barriers, u64 count);
+DEBUG_IMPORT void         vk_command_clear_buffer(VulkanHandle command, GPUBuffer *buffer, u64 offset, u64 size, u32 clear_word);
 DEBUG_IMPORT void         vk_command_dispatch_compute(VulkanHandle command, uv3 dispatch);
 DEBUG_IMPORT void         vk_command_push_constants(VulkanHandle command, u32 offset, u32 size, void *values);
 DEBUG_IMPORT void         vk_command_timestamp(VulkanHandle command);
@@ -427,8 +428,6 @@ typedef struct {
 
 	BeamformerComputePlan *compute_plans[BeamformerMaxParameterBlocks];
 	BeamformerComputePlan *compute_plan_freelist;
-
-	VulkanHandle compute_internal_pipelines[BeamformerShaderKind_ComputeInternalCount];
 
 	/* NOTE(rnp): used to ping pong data between compute stages.
 	 *

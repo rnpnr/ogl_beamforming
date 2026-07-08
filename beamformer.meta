@@ -464,20 +464,6 @@
 	}
 }
 
-// NOTE: general compute shaders which do not need baking
-@ShaderGroup ComputeInternal
-{
-	@Shader(buffer_clear.glsl) BufferClear
-	{
-		@PushConstants
-		{
-			[clear_v4 UV4]
-			[data     U64]
-			[bins     U32]
-		}
-	}
-}
-
 @ShaderGroup Render
 {
 	@RenderShader RenderBeamformed

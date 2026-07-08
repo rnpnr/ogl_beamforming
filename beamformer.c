@@ -219,7 +219,7 @@ beamformer_init(BeamformerInput *input)
 			VulkanTimeline timelines[] = {VulkanTimeline_Compute, VulkanTimeline_Graphics};
 			GPUBufferAllocateInfo allocate_info = {
 				.size            = trial_sizes[i],
-				.flags           = VulkanUsageFlag_TransferSource|VulkanUsageFlag_HostReadWrite,
+				.flags           = VulkanUsageFlag_TransferDestination|VulkanUsageFlag_TransferSource|VulkanUsageFlag_HostReadWrite,
 				.timeline_count  = countof(timelines),
 				.timelines_used  = timelines,
 				.label           = str8("BeamformedData"),
@@ -337,18 +337,6 @@ beamformer_init(BeamformerInput *input)
 			BeamformerFileReloadContext *frc = push_struct(&memory, typeof(*frc));
 			frc->kind                 = BeamformerFileReloadKind_ComputeShader;
 			frc->shader_reload.shader = beamformer_reloadable_shader_kinds[index];
-			os_add_file_watch((char *)file.data, file.len, frc);
-		}
-
-		for EachElement(beamformer_reloadable_compute_internal_shader_info_indices, it) {
-			i32   index = beamformer_reloadable_compute_internal_shader_info_indices[it];
-			Arena temp  = scratch;
-			s8 file = push_s8_from_parts(&temp, os_path_separator(), s8("shaders"),
-			                             beamformer_reloadable_shader_files[index][0]);
-			BeamformerFileReloadContext *frc = push_struct(&memory, typeof(*frc));
-			frc->kind                   = BeamformerFileReloadKind_ComputeInternalShader;
-			frc->shader_reload.shader   = beamformer_reloadable_shader_kinds[index];
-			frc->shader_reload.pipeline = cs->compute_internal_pipelines + it;
 			os_add_file_watch((char *)file.data, file.len, frc);
 		}
 	}

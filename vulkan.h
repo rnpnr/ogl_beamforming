@@ -3154,6 +3154,7 @@ typedef struct {
 	X(vkCmdDispatch,                   void,     (VkCommandBuffer commandBuffer, uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ)) \
 	X(vkCmdDrawIndexed,                void,     (VkCommandBuffer commandBuffer, uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance)) \
 	X(vkCmdEndRendering,               void,     (VkCommandBuffer commandBuffer)) \
+	X(vkCmdFillBuffer,                 void,     (VkCommandBuffer commandBuffer, VkBuffer dstBuffer, VkDeviceSize dstOffset, VkDeviceSize size, uint32_t data)) \
 	X(vkCmdPipelineBarrier2,           void,     (VkCommandBuffer commandBuffer, const VkDependencyInfo *pDependencyInfo)) \
 	X(vkCmdPushConstants,              void,     (VkCommandBuffer commandBuffer, VkPipelineLayout layout, VkShaderStageFlags stageFlags, uint32_t offset, uint32_t size, const void *pValues)) \
 	X(vkCmdResetQueryPool,             void,     (VkCommandBuffer commandBuffer, VkQueryPool queryPool, uint32_t firstQuery, uint32_t queryCount)) \
