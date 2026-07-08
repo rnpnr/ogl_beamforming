@@ -172,7 +172,7 @@ das_valid_points(iv3 points)
 }
 
 function void
-update_hadamard(BeamformerComputePlan *cp, i32 order, b32 row_major, Arena arena)
+beamformer_update_hadamard(BeamformerComputePlan *cp, i32 order, b32 row_major, Arena arena)
 {
 	f16 *hadamard = make_hadamard_transpose(&arena, order, row_major);
 	if (hadamard) {
@@ -881,8 +881,11 @@ beamformer_reload_compute_pipeline(VulkanHandle *pipeline, BeamformerShaderKind 
 function void
 beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 block, Arena arena)
 {
-	BeamformerParameterBlock *pb = beamformer_parameter_block_lock(ctx->shared_memory, block, -1);
-	for EachBit(pb->region_update_flags, region) {
+	BeamformerParameterBlock *pb;
+	DeferLoop(pb = beamformer_parameter_block_lock(ctx->shared_memory, block, -1),
+	          beamformer_parameter_block_unlock(ctx->shared_memory, block))
+	for EachBit(pb->region_update_flags, region)
+	{
 		switch (region) {
 		case BeamformerParameterRegionFlag_NotifyUI:{
 			atomic_store_u32(&ctx->ui_dirty_parameter_blocks, 1u << block);
@@ -938,8 +941,11 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 				}
 			}
 
-			if (cp->hadamard_order != (i32)cp->acquisition_count)
-				update_hadamard(cp, (i32)cp->acquisition_count, vk_gpu_info()->cooperative_matrix, arena);
+			if (pb->parameters.decode_mode != BeamformerDecodeMode_None &&
+			    cp->hadamard_order != (i32)cp->acquisition_count)
+			{
+				beamformer_update_hadamard(cp, (i32)cp->acquisition_count, vk_gpu_info()->cooperative_matrix, arena);
+			}
 		}break;
 
 		case BeamformerParameterBlockRegion_ChannelMapping:{
@@ -982,7 +988,6 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 		}break;
 		}
 	}
-	beamformer_parameter_block_unlock(ctx->shared_memory, block);
 }
 
 function void
