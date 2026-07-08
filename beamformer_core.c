@@ -1402,17 +1402,12 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			vk_command_timestamp(cmd);
 
 			if (das_index >= 0) {
-				u64 frame_size = beamformer_frame_byte_size(frame->points, frame->data_kind);
-				GPUBuffer *backlog = cs->backlog.buffer;
-
-				// TODO(rnp): this could be problematic if we support F16 output
-				assert((frame_size % 4) == 0);
-				assert((frame->buffer_offset % 4) == 0);
+				u64        frame_size = beamformer_frame_byte_size(frame->points, frame->data_kind);
+				GPUBuffer *backlog    = cs->backlog.buffer;
 
 				vk_command_clear_buffer(cmd, backlog, frame->buffer_offset, frame_size, 0);
 				if (das_coherent) {
 					u64 coherent_size = frame_size / beamformer_data_kind_element_count[frame->data_kind];
-					assert((coherent_size % 4) == 0);
 					vk_command_clear_buffer(cmd, backlog, backlog->size - coherent_size, coherent_size, 0);
 				}
 			}
