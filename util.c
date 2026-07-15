@@ -536,16 +536,6 @@ stream_append_f64_e(Stream *s, f64 f)
 	stream_append_u64(s, (u64)Abs(scale));
 }
 
-function void
-stream_append_v2(Stream *s, v2 v)
-{
-	stream_append_byte(s, '{');
-	stream_append_f64(s, v.x, 100);
-	stream_append_s8(s, s8(", "));
-	stream_append_f64(s, v.y, 100);
-	stream_append_byte(s, '}');
-}
-
 function Stream
 arena_stream(Arena a)
 {
@@ -865,16 +855,6 @@ push_str8_fv(Arena *arena, const char *format, va_list args)
 	return result;
 }
 
-function str8
-push_f64_string(Arena *arena, f64 value, u64 precision)
-{
-	Stream sb = arena_stream(*arena);
-	stream_append_f64(&sb, value, precision);
-	s8 s = arena_stream_commit(arena, &sb);
-	str8 result = {.length = s.len, .data = s.data};
-	return result;
-}
-
 /* NOTE(rnp): from Hacker's Delight */
 function force_inline u64
 round_down_power_of_two(u64 a)
@@ -897,68 +877,6 @@ round_up_to(iz value, iz multiple)
 	if (value % multiple != 0)
 		result += multiple - value % multiple;
 	return result;
-}
-
-function void
-split_rect_horizontal(Rect rect, f32 fraction, Rect *left, Rect *right)
-{
-	if (left) {
-		left->pos    = rect.pos;
-		left->size.h = rect.size.h;
-		left->size.w = rect.size.w * fraction;
-	}
-	if (right) {
-		right->pos    = rect.pos;
-		right->pos.x += rect.size.w * fraction;
-		right->size.h = rect.size.h;
-		right->size.w = rect.size.w * (1.0f - fraction);
-	}
-}
-
-function void
-split_rect_vertical(Rect rect, f32 fraction, Rect *top, Rect *bot)
-{
-	if (top) {
-		top->pos    = rect.pos;
-		top->size.w = rect.size.w;
-		top->size.h = rect.size.h * fraction;
-	}
-	if (bot) {
-		bot->pos    = rect.pos;
-		bot->pos.y += rect.size.h * fraction;
-		bot->size.w = rect.size.w;
-		bot->size.h = rect.size.h * (1.0f - fraction);
-	}
-}
-
-function void
-cut_rect_horizontal(Rect rect, f32 at, Rect *left, Rect *right)
-{
-	at = MIN(at, rect.size.w);
-	if (left) {
-		*left = rect;
-		left->size.w = at;
-	}
-	if (right) {
-		*right = rect;
-		right->pos.x  += at;
-		right->size.w -= at;
-	}
-}
-
-function void
-cut_rect_vertical(Rect rect, f32 at, Rect *top, Rect *bot)
-{
-	at = MIN(at, rect.size.h);
-	if (top) {
-		*top = rect;
-		top->size.h = at;
-	}
-	if (bot) {
-		*bot = rect;
-		bot->pos.y  += at;
-		bot->size.h -= at;
-	}
 }
 
 function NumberConversion

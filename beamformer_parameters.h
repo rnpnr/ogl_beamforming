@@ -1,7 +1,6 @@
 /* See LICENSE for license details. */
 
 /* TODO(rnp):
- * [ ]: shader kinds have ballooned; shader stats table needs to be compressed
  * [ ]: Upload previously exported data for display. maybe this is a UI thing but doing it
  *      programatically would be nice.
  * [ ]: Add interface for multi frame upload. RF upload already uses an offset into SM so
@@ -17,20 +16,6 @@ typedef struct {
 	float    times[32][BeamformerMaxComputeShaderStages];
 	float    rf_time_deltas[32];
 } BeamformerComputeStatsTable;
-
-/* X(type, id, pretty name) */
-#define BEAMFORMER_VIEW_PLANE_TAG_LIST \
-	X(XZ,        0, "XZ")        \
-	X(YZ,        1, "YZ")        \
-	X(XY,        2, "XY")        \
-	X(Arbitrary, 3, "Arbitrary")
-
-typedef enum {
-	#define X(type, id, pretty) BeamformerViewPlaneTag_##type = id,
-	BEAMFORMER_VIEW_PLANE_TAG_LIST
-	#undef X
-	BeamformerViewPlaneTag_Count,
-} BeamformerViewPlaneTag;
 
 #define BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST \
 	X(ImagePlaneOffsets, 0) \

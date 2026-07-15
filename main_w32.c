@@ -343,6 +343,26 @@ os_window_create(u8 *title, i64 title_length, i32 width, i32 height)
 	return result;
 }
 
+BEAMFORMER_IMPORT u8 *
+os_get_clipboard_text(i64 *length)
+{
+	str8 result = str8_from_c_str((char *)GetClipboardText());
+	if (length) *length = result.length;
+	return result.data;
+}
+
+BEAMFORMER_IMPORT void
+os_set_clipboard_text(u8 *data, i64 length)
+{
+	DeferLoop(take_lock(&os_w32_context.arena_lock, -1), release_lock(&os_w32_context.arena_lock))
+	{
+		Arena scratch     = os_w32_context.arena;
+		str8  string      = {.data = data, .length = Min(length, arena_capacity(&scratch, u8) - 1)};
+		str8  safe_string = push_str8(&scratch, string);
+		SetClipboardText((char *)safe_string.data);
+	}
+}
+
 #if BEAMFORMER_RENDERDOC_HOOKS
 function OSLibrary
 get_module(char *name)

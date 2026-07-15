@@ -1,5 +1,6 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: bug? beamforming non XZ tag from non-0 parameter slot doesn't work?
  * [ ]: backtrace dumping on SIGSEGV
  * [ ]: bug? HERCULES might be broken, we may need to to chunk on transmits instead of channels
  * [ ]: refactor: do_compute should build its own "command graph" which tracks
@@ -23,8 +24,6 @@
 #endif
 
 #include "beamformer_internal.h"
-
-global f32 dt_for_frame;
 
 typedef struct BeamformerComputeGraphNode BeamformerComputeGraphNode;
 struct BeamformerComputeGraphNode {
@@ -64,6 +63,102 @@ read_only global u32 beamformer_compute_array_parameter_offsets[] = {
 	BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST
 	#undef X
 };
+
+read_only global BeamformerFrame       beamformer_nil_frame;
+read_only global BeamformerComputePlan beamformer_nil_compute_plan;
+
+global BeamformerCtx   *beamformer_context;
+global BeamformerInput *beamformer_input;
+global f32 dt_for_frame;
+
+#define beamformer_frame_arena() (beamformer_context->frame_arenas + beamformer_context->frame_index % countof(beamformer_context->frame_arenas))
+#define beamformer_registers() (&beamformer_context->registers->v)
+#define beamformer_push_registers(...) beamformer_push_registers_(&(BeamformerRegisters){beamformer_registers_init_literal __VA_ARGS__})
+#define BeamformerRegistersScope(...) DeferLoop(beamformer_push_registers(__VA_ARGS__), beamformer_pop_registers())
+#define beamformer_command(name, ...) beamformer_push_command(name, &(BeamformerRegisters){beamformer_registers_init_literal __VA_ARGS__})
+
+function BeamformerRegisters *
+beamformer_pop_registers(void)
+{
+	BeamformerRegisters *result = &beamformer_context->registers->v;
+	SLLStackPop(beamformer_context->registers, next);
+	if (beamformer_context->registers == 0)
+		beamformer_context->registers = &beamformer_context->base_registers;
+	return result;
+}
+
+function BeamformerRegisters *
+beamformer_push_registers_(BeamformerRegisters *registers)
+{
+	BeamformerRegistersNode *node   = push_struct(beamformer_frame_arena(), BeamformerRegistersNode);
+	BeamformerRegisters     *result = &node->v;
+	memory_copy(result, registers, sizeof(node->v));
+	SLLStackPush(beamformer_context->registers, node, next);
+	return result;
+}
+
+function void
+beamformer_command_list_push_new(Arena *arena, BeamformerCommandList *commands, str8 name, BeamformerRegisters *registers)
+{
+	BeamformerCommandNode *node = push_struct(arena, BeamformerCommandNode);
+	node->command.registers = push_struct_no_zero(arena, BeamformerRegisters);
+	node->command.name      = push_str8(arena, name);
+	memory_copy(node->command.registers, registers, sizeof(*registers));
+	DLLInsertLast(0, commands->first, commands->last, node, next, prev);
+	commands->count += 1;
+}
+
+function void
+beamformer_push_command(str8 name, BeamformerRegisters *registers)
+{
+	beamformer_command_list_push_new(beamformer_frame_arena(), beamformer_context->command_queues + 0,
+	                                 name, registers);
+}
+
+function BeamformerCommandKind
+beamformer_command_kind_from_string(str8 s)
+{
+	BeamformerCommandKind result = BeamformerCommandKind_Nil;
+	for EachElement(beamformer_command_infos, it) {
+		if (str8_equal(beamformer_command_infos[it].string, s)) {
+			result = (BeamformerCommandKind)it;
+			break;
+		}
+	}
+	return result;
+}
+
+function BeamformerPanelKind
+beamformer_panel_kind_from_string(str8 s)
+{
+	BeamformerPanelKind result = BeamformerPanelKind_Nil;
+	for EachElement(beamformer_panel_infos, it) {
+		if (str8_equal(beamformer_panel_infos[it].string, s)) {
+			result = (BeamformerPanelKind)it;
+			break;
+		}
+	}
+	return result;
+}
+
+function BeamformerFrame *
+beamformer_frame_from_index(u64 index)
+{
+	BeamformerFrame *result = &beamformer_nil_frame;
+	if (index < countof(beamformer_context->compute_context.backlog.frames)) {
+		BeamformerFrame *frame = beamformer_context->compute_context.backlog.frames + index;
+		if (frame->timeline_valid_value != 0)
+			result = frame;
+	}
+	return result;
+}
+
+function b32
+beamformer_frame_valid(u64 index)
+{
+	b32 result = beamformer_frame_from_index(index) != &beamformer_nil_frame;
+	return result;
+}
 
 function void
 beamformer_compute_plan_release(BeamformerComputeContext *cc, u32 block)
@@ -641,9 +736,11 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				cp->voxel_transform   = m4_mul(cp->ui_voxel_transform, pb->parameters.das_voxel_transform);
 				cp->xdc_element_pitch = pb->parameters.xdc_element_pitch;
 
+				memory_copy(cp->das_voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));
+
 				u32 id = pb->parameters.acquisition_kind;
 				if (id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_FORCES)
-					cp->voxel_transform = m4_mul(cp->xdc_transform, cp->voxel_transform);
+					cp->das_voxel_transform = m4_mul(cp->xdc_transform, cp->das_voxel_transform);
 
 				db->sparse = id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES;
 				db->single_focus        = pb->parameters.single_focus;
@@ -1124,8 +1221,8 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			.channel_offset    = channel_offset,
 			.array_parameters  = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, FocalVectors),
 		};
-		mem_copy(pc.voxel_transform.E, cp->voxel_transform.E, sizeof(pc.voxel_transform));
-		mem_copy(pc.xdc_transform.E,   cp->xdc_transform.E,   sizeof(pc.xdc_transform));
+		memory_copy(pc.voxel_transform.E, cp->das_voxel_transform.E, sizeof(pc.voxel_transform));
+		memory_copy(pc.xdc_transform.E,   cp->xdc_transform.E,       sizeof(pc.xdc_transform));
 
 		b32 coherent = cp->shader_descriptors[shader_slot].bake.DAS.coherency_weighting;
 
@@ -1395,6 +1492,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			frame->acquisition_kind = cp->acquisition_kind;
 			frame->contrast_mode    = cp->contrast_mode;
 			frame->compound_count   = cp->acquisition_count;
+			frame->parameter_block  = work->compute_context.parameter_block;
 			frame->view_plane_tag   = work->compute_context.view_plane;
 			mem_copy(frame->voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));
 
@@ -1706,28 +1804,191 @@ beamformer_process_input_events(BeamformerCtx *ctx, BeamformerInput *input,
 	}
 }
 
+function void
+beamformer_panel_group_insert_at(BeamformerUIPanel *group, BeamformerUIPanel *tab, u64 new_child_index)
+{
+	if (tab->parent) beamformer_ui_panel_unlink(tab);
+	new_child_index = Min(new_child_index, group->child_count);
+
+	tab->parent = group;
+	group->child_count++;
+	if (group->kind == BeamformerPanelKind_TabGroup) group->u.tab_focus = tab;
+
+	BeamformerUIPanel *previous_sibling = new_child_index == 0 ? 0 : group->first_child;
+	for (u64 child_index = 1; child_index < new_child_index; child_index++)
+		previous_sibling = previous_sibling->next_sibling;
+
+	if (previous_sibling) {
+		tab->previous_sibling = previous_sibling;
+		tab->next_sibling     = previous_sibling->next_sibling;
+		if (tab->next_sibling) tab->next_sibling->previous_sibling = tab;
+		previous_sibling->next_sibling = tab;
+		if (previous_sibling == group->last_child) group->last_child = tab;
+	} else {
+		DLLInsertFirst(0, group->first_child, group->last_child, tab, next_sibling, previous_sibling);
+	}
+}
+
 BEAMFORMER_EXPORT void
 beamformer_frame_step(BeamformerInput *input)
 {
-	BeamformerCtx *ctx = BeamformerContextMemory(input->memory);
+	BeamformerCtx *ctx = beamformer_context = BeamformerContextMemory(input->memory);
+	beamformer_input = input;
 
 	u64 current_time = os_timer_count();
 	dt_for_frame = (f64)(current_time - ctx->frame_timestamp) / os_system_info()->timer_frequency;
 	ctx->frame_timestamp = current_time;
+	ctx->frame_index++;
 
 	coalesce_timing_table(ctx->compute_timing_table, ctx->compute_shader_stats);
+
+	// NOTE(rnp): reset frame state
+	{
+		ctx->registers = &ctx->base_registers;
+		swap(ctx->command_queues[0], ctx->command_queues[1]);
+		zero_struct(ctx->command_queues + 0);
+		//zero_struct(ctx->registers);
+		end_temp_arena(ctx->frame_arena_savepoints[ctx->frame_index % countof(ctx->frame_arenas)]);
+	}
 
 	beamformer_process_input_events(ctx, input, input->event_queue, input->event_count);
 
 	BeamformerSharedMemory *sm = ctx->shared_memory;
+	u32 live_imaging_active = atomic_load_u32(&sm->live_imaging_parameters.active);
+	if (live_imaging_active != ctx->live_imaging_active) {
+		if (ctx->live_imaging_active) {
+			BeamformerUIPanel *parent = ctx->auto_live_control_panel->parent;
+			beamformer_command(beamformer_command_infos[BeamformerCommandKind_CloseTab].string, .tree_node = (u64)ctx->auto_live_control_panel);
+			if (parent->child_count == 1)
+				beamformer_command(beamformer_command_infos[BeamformerCommandKind_CloseTab].string, .tree_node = (u64)parent);
+			ctx->auto_live_control_panel = 0;
+		} else {
+			ctx->live_imaging_active_frame = ctx->frame_index;
+			ctx->auto_live_control_panel   = beamformer_ui_push_panel(0, BeamformerPanelKind_LiveImagingControls);
+			beamformer_command(beamformer_command_infos[BeamformerCommandKind_SplitTree].string,
+			                   .tree_node        = (u64)ctx->auto_live_control_panel,
+			                   .split_axis       = Axis2_X,
+			                   .split_left_tree  = (u64)ui_context->tree,
+			                   .split_right_tree = 0,
+			                   .drop_target_tree = (u64)ui_context->tree);
+		}
+		ctx->live_imaging_active = live_imaging_active;
+	}
+
 	if (atomic_load_u32(sm->locks + BeamformerSharedMemoryLockKind_UploadRF))
 		os_wake_all_waiters(&ctx->upload_worker.sync_variable);
 	if (atomic_load_u32(sm->locks + BeamformerSharedMemoryLockKind_DispatchCompute))
 		os_wake_all_waiters(&ctx->compute_worker.sync_variable);
 
-	BeamformerFrame        *frame = ctx->latest_frame;
-	BeamformerViewPlaneTag  tag   = frame? frame->view_plane_tag : 0;
-	draw_ui(ctx, input, frame, tag);
+	beamformer_registers()->frame = (u64)(ctx->latest_frame - ctx->compute_context.backlog.frames);
+
+	beamformer_ui_frame();
+
+	// NOTE(rnp): execute commands
+	for (BeamformerCommandNode *node = ctx->command_queues[0].first;
+	     node;
+	     node = node == node->next ? 0 : node->next)
+	{
+		BeamformerRegistersScope()
+		{
+			memory_copy(beamformer_registers(), node->command.registers, sizeof(*node->command.registers));
+			BeamformerCommandKind kind = beamformer_command_kind_from_string(node->command.name);
+			switch (kind) {
+			InvalidDefaultCase;
+			case BeamformerCommandKind_CloseTab:{
+				BeamformerUIPanel *tab = (BeamformerUIPanel *)beamformer_registers()->tree_node;
+				ui_kill_panel(tab);
+			}break;
+
+			case BeamformerCommandKind_FocusTab:{
+				BeamformerUIPanel *tab = (BeamformerUIPanel *)beamformer_registers()->tree_node;
+				assert(tab->parent->kind == BeamformerPanelKind_TabGroup);
+				tab->parent->u.tab_focus = tab;
+			}break;
+
+			case BeamformerCommandKind_MoveTab:{
+				BeamformerUIPanel *move    = (BeamformerUIPanel *)beamformer_registers()->tree_node;
+				BeamformerUIPanel *group   = (BeamformerUIPanel *)beamformer_registers()->drop_target_tree;
+				u64 new_child_index = beamformer_registers()->drop_child_index;
+				beamformer_panel_group_insert_at(group, move, new_child_index);
+			}break;
+
+			case BeamformerCommandKind_OpenTab:{
+				BeamformerUIPanel *panel = (BeamformerUIPanel *)beamformer_registers()->tree_node;
+				assert(panel->kind == BeamformerPanelKind_TabGroup);
+
+				BeamformerPanelKind new_panel_kind = beamformer_panel_kind_from_string(beamformer_registers()->string);
+				beamformer_ui_push_panel(panel, new_panel_kind);
+			}break;
+
+			case BeamformerCommandKind_SplitTree:{
+				BeamformerUIPanel *drag  = (BeamformerUIPanel *)beamformer_registers()->tree_node;
+				BeamformerUIPanel *left  = (BeamformerUIPanel *)beamformer_registers()->split_left_tree;
+				BeamformerUIPanel *right = (BeamformerUIPanel *)beamformer_registers()->split_right_tree;
+				Axis2 axis = beamformer_registers()->split_axis;
+
+				BeamformerUIPanel *new_split     = beamformer_ui_push_panel(0, BeamformerPanelKind_Split);
+				BeamformerUIPanel *new_tab_group = beamformer_ui_push_panel(0, BeamformerPanelKind_TabGroup);
+				beamformer_panel_group_insert_at(new_tab_group, drag, 0);
+
+				BeamformerUIPanel *target = 0;
+				u32 target_child_index = 0;
+				f32 new_split_pct = 0.5f;
+
+				if (left == 0 || right == 0) {
+					// NOTE(rnp): split on edge of window
+					target             = left ? left : right;
+					target_child_index = left ? 0 : 1;
+
+					if (target->kind == BeamformerPanelKind_TabGroup) {
+						new_split->kind        = BeamformerPanelKind_TabGroup;
+						new_split->u.tab_focus = target->u.tab_focus;
+					}
+
+					for (BeamformerUIPanel *child = target->last_child, *next; child; child = next) {
+						next = child->previous_sibling;
+						beamformer_panel_group_insert_at(new_split, child, 0);
+					}
+
+					beamformer_panel_group_insert_at(target, new_tab_group, 0);
+				} else if (((drag == left)  && right->kind == BeamformerPanelKind_Split) ||
+				           ((drag == right) && left->kind  == BeamformerPanelKind_Split))
+				{
+					// NOTE(rnp): split on internal split
+					target             = left == drag ? right : left;
+					target_child_index = 1;
+					new_split_pct      = 1.f / 3.f;
+					beamformer_panel_group_insert_at(new_split, new_tab_group, 0);
+					beamformer_panel_group_insert_at(new_split, target->last_child, 1);
+				} else {
+					// NOTE(rnp): TabGroup Split
+					target             = left == drag ? right : left;
+					target_child_index = left == drag ? 1 : 0;
+					assert(target->kind == BeamformerPanelKind_TabGroup);
+
+					new_split->kind        = BeamformerPanelKind_TabGroup;
+					new_split->u.tab_focus = target->u.tab_focus;
+					for (BeamformerUIPanel *child = target->last_child, *next; child; child = next) {
+						next = child->previous_sibling;
+						beamformer_panel_group_insert_at(new_split, child, 0);
+					}
+
+					beamformer_panel_group_insert_at(target, new_tab_group, 0);
+				}
+
+				beamformer_panel_group_insert_at(target, new_split, target_child_index);
+				if (target->kind == BeamformerPanelKind_Split) {
+					new_split->u.split.axis     = target->u.split.axis;
+					new_split->u.split.fraction = target->u.split.fraction;
+				}
+				target->kind             = BeamformerPanelKind_Split;
+				target->u.split.axis     = axis;
+				target->u.split.fraction = new_split_pct;
+			}break;
+
+			}
+		}
+	}
 
 	ctx->render_shader_updated = 0;
 }

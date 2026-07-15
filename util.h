@@ -109,12 +109,9 @@ typedef u64      uptr;
 #define countof(a)       (iz)(sizeof(a) / sizeof(*a))
 #define BETWEEN(x, a, b) ((x) >= (a) && (x) <= (b))
 #define CLAMP(x, a, b)   ((x) < (a) ? (a) : (x) > (b) ? (b) : (x))
-#define CLAMP01(x)       CLAMP(x, 0, 1)
 #define ISPOWEROF2(a)    (((a) & ((a) - 1)) == 0)
 #define MIN(a, b)        ((a) < (b) ? (a) : (b))
 #define MAX(a, b)        ((a) > (b) ? (a) : (b))
-#define ORONE(x)         ((x)? (x) : 1)
-#define SIGN(x)          ((x) < 0? -1 : 1)
 #define swap(a, b)       do {typeof(a) __tmp = (a); (a) = (b); (b) = __tmp;} while(0)
 
 #define Abs(a)           ((a) < 0 ? -(a) : (a))
@@ -204,6 +201,13 @@ typedef u64      uptr;
 #endif
 
 #include "intrinsics.c"
+
+typedef enum {
+	Axis2_X = 0,
+	Axis2_Y = 1,
+	Axis2_Count,
+} Axis2;
+#define axis2_flip(v) (!(v))
 
 typedef alignas(16) union {
 	u8    U8[16];

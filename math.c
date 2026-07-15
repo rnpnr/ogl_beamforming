@@ -424,16 +424,13 @@ m4_equal(m4 a, m4 b)
 	return result;
 }
 
-function m4
-m4_identity(void)
-{
-	m4 result;
-	result.c[0] = (v4){{1, 0, 0, 0}};
-	result.c[1] = (v4){{0, 1, 0, 0}};
-	result.c[2] = (v4){{0, 0, 1, 0}};
-	result.c[3] = (v4){{0, 0, 0, 1}};
-	return result;
-}
+#define m4_identity() \
+	(m4){.E = { \
+		1, 0, 0, 0, \
+		0, 1, 0, 0, \
+		0, 0, 1, 0, \
+		0, 0, 0, 1, \
+	}}
 
 function v4
 m4_row(m4 a, u32 row)
@@ -564,6 +561,54 @@ function v3
 m4_mul_v3(m4 a, v3 v)
 {
 	v3 result = m4_mul_v4(a, (v4){{v.x, v.y, v.z, 1.0f}}).xyz;
+	return result;
+}
+
+function v2
+rect_uv(v2 p, Rect r)
+{
+	v2 result = v2_div(v2_sub(p, r.pos), r.size);
+	return result;
+}
+
+function v2
+rect_uv_ndc(v2 p, Rect r)
+{
+	v2 uv     = rect_uv(p, r);
+	v2 result = v2_sub(v2_scale(uv, 2.f), (v2){{1.f, 1.f}});
+	return result;
+}
+
+function Rect
+rect_intersect(Rect a, Rect b)
+{
+	v2 ae = v2_add(a.pos, a.size);
+	v2 be = v2_add(b.pos, b.size);
+
+	Rect result   = {0};
+	result.pos.x  = Max(a.pos.x, b.pos.x);
+	result.pos.y  = Max(a.pos.y, b.pos.y);
+	result.size.x = Min(ae.x, be.x) - result.pos.x;
+	result.size.y = Min(ae.y, be.y) - result.pos.y;
+	return result;
+}
+
+function Rect
+rect_squish_centered(Rect a, v2 pct)
+{
+	v2 delta_size = v2_mul(a.size, pct);
+	Rect result;
+	result.pos  = v2_add(a.pos,  v2_scale(delta_size, 0.5f));
+	result.size = v2_add(a.size, v2_scale(delta_size, -1.f));
+	return result;
+}
+
+function Rect
+rect_shrink_centered(Rect a, v2 px)
+{
+	Rect result;
+	result.pos  = v2_add(a.pos,  v2_scale(px, 0.5f));
+	result.size = v2_add(a.size, v2_scale(px, -1.f));
 	return result;
 }
 
@@ -869,6 +914,35 @@ das_transform(v3 min_coordinate, v3 max_coordinate, iv3 *points)
 	}
 
 	return result;
+}
+
+function v3
+plane_normal_from_transform(m4 transform)
+{
+	v3 U = v3_normalize(transform.c[0].xyz);
+	v3 V = v3_normalize(transform.c[1].xyz);
+	v3 result  = cross(V, U);
+	return result;
+}
+
+function f32
+plane_offset_from_transform(m4 transform)
+{
+	f32 result = v3_dot(plane_normal_from_transform(transform), transform.c[3].xyz);
+	return result;
+}
+
+function void
+plane_corners_from_transform(m4 transform, v2 *min, v2 *max)
+{
+	v3 U = v3_normalize(transform.c[0].xyz);
+	v3 V = v3_normalize(transform.c[1].xyz);
+
+	v3 min_3d = m4_mul_v3(transform, (v3){{0.f, 0.f, 0.f}});
+	v3 max_3d = m4_mul_v3(transform, (v3){{1.f, 1.f, 1.f}});
+
+	if (min) *min = (v2){{v3_dot(U, min_3d), v3_dot(V, min_3d)}};
+	if (max) *max = (v2){{v3_dot(U, max_3d), v3_dot(V, max_3d)}};
 }
 
 function v2

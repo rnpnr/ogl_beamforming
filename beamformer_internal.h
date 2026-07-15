@@ -308,8 +308,11 @@ struct BeamformerComputePlan {
 	i32 hadamard_order;
 	b32 iq_pipeline;
 
-	m4  voxel_transform;
 	m4  ui_voxel_transform;
+	// NOTE(rnp): final voxel transform determining frame dimensions
+	m4  voxel_transform;
+	// NOTE(rnp): final voxel transform used for beamforming
+	m4  das_voxel_transform;
 
 	iv3 output_points;
 	i32 average_frames;
@@ -317,8 +320,6 @@ struct BeamformerComputePlan {
 	// TODO(rnp): specialization constants
 	v2  xdc_element_pitch;
 	m4  xdc_transform;
-	// TODO(rnp): probably just compute this everytime
-	m4  das_voxel_transform;
 
 	GPUBuffer array_parameters;
 
@@ -406,6 +407,7 @@ typedef struct {
 
 	u32                       id;
 	u32                       compound_count;
+	u32                       parameter_block;
 	BeamformerDataKind        data_kind;
 	BeamformerAcquisitionKind acquisition_kind;
 	BeamformerContrastMode    contrast_mode;
@@ -456,12 +458,141 @@ typedef struct {
 	b32   awake;
 } GLWorkerThreadContext;
 
+typedef struct {
+	str8                 name;
+	BeamformerRegisters *registers;
+} BeamformerCommand;
+
+typedef struct BeamformerRegistersNode BeamformerRegistersNode;
+struct BeamformerRegistersNode {
+	BeamformerRegistersNode *next;
+	BeamformerRegisters      v;
+};
+
+typedef struct BeamformerCommandNode BeamformerCommandNode;
+struct BeamformerCommandNode {
+	BeamformerCommandNode *next;
+	BeamformerCommandNode *prev;
+	BeamformerCommand      command;
+};
+
+typedef struct {
+	BeamformerCommandNode *first;
+	BeamformerCommandNode *last;
+	u64                    count;
+} BeamformerCommandList;
+
 typedef enum {
 	BeamformerState_Uninitialized = 0,
 	BeamformerState_Running,
 	BeamformerState_ShouldClose,
 	BeamformerState_Terminated,
 } BeamformerState;
+
+typedef enum {
+	RulerState_None,
+	RulerState_Start,
+	RulerState_Hold,
+	RulerState_Count,
+} RulerState;
+
+typedef struct {
+	v3 start;
+	v3 end;
+	RulerState state;
+} Ruler;
+
+typedef struct {
+	f32 t;
+	f32 scale;
+} BeamformerUIBlinker;
+
+#define BEAMFORMER_FRAME_VIEW_KIND_LIST \
+	X(Latest,   "Latest")     \
+	X(3DXPlane, "3D X-Plane") \
+	X(Copy,     "Copy")       \
+
+typedef enum {
+	#define X(kind, ...) BeamformerFrameViewKind_##kind,
+	BEAMFORMER_FRAME_VIEW_KIND_LIST
+	#undef X
+	BeamformerFrameViewKind_Count,
+} BeamformerFrameViewKind;
+
+typedef struct BeamformerFrameView BeamformerFrameView;
+struct BeamformerFrameView {
+	BeamformerFrameViewKind kind;
+	b32 dirty;
+
+	// NOTE(rnp): for FrameViewKindCopy
+	GPUBuffer copy_buffer;
+
+	GPUImage colour_image;
+	// NOTE(rnp): temporary, on w32 we must hold onto this when importing vulkan data to OpenGL
+	OSHandle export_handle;
+	u32      memory_object;
+	u32      texture;
+
+	b32 log_scale;
+	f32 threshold;
+	f32 dynamic_range;
+	f32 gamma;
+
+	union {
+		/* BeamformerFrameViewKind_Latest/BeamformerFrameViewKind_Copy */
+		struct {
+			b32   scale_bar_active[2];
+			Ruler ruler;
+			BeamformerViewPlaneTag view_plane;
+			BeamformerFrame frame;
+		};
+
+		/* BeamformerFrameViewKind_3DXPlane */
+		struct {
+			f32 hot_t[BeamformerViewPlaneTag_Count];
+			//b32 plane_active[BeamformerViewPlaneTag_Count];
+			b32 plane_active[BeamformerViewPlaneTag_Count - 2];
+			i32 plane_drag_index;
+			f32 rotation;
+			b32 demo;
+			v3  hit_start_point;
+			v3  hit_test_point;
+		};
+	};
+
+	BeamformerFrameView *prev, *next;
+};
+
+typedef struct BeamformerUIPanel BeamformerUIPanel;
+struct BeamformerUIPanel {
+	BeamformerUIPanel *parent;
+	BeamformerUIPanel *last_child;
+	BeamformerUIPanel *first_child;
+	BeamformerUIPanel *previous_sibling;
+	BeamformerUIPanel *next_sibling;
+
+	u64 child_count;
+
+	BeamformerPanelKind kind;
+	union {
+		BeamformerFrameView *frame_view;
+
+		BeamformerUIPanel *tab_focus;
+
+		BeamformerUIBlinker compute_stats_broken_shader_blinker;
+		BeamformerUIBlinker live_imaging_save_button_blinker;
+
+		struct {
+			u32 parameter_block;
+			b16 expand_coordinate[2];
+		} parameter_listing;
+
+		struct {
+			Axis2 axis;
+			f32   fraction;
+		} split;
+	} u;
+};
 
 typedef struct {
 	BeamformerState state;
@@ -473,7 +604,19 @@ typedef struct {
 	void  *ui;
 	u32    ui_dirty_parameter_blocks;
 
-	u64    frame_timestamp;
+	u64       frame_timestamp;
+	u64       frame_index;
+	Arena     frame_arenas[2];
+	TempArena frame_arena_savepoints[2];
+
+	BeamformerUIPanel *auto_live_control_panel;
+	u64                live_imaging_active_frame;
+	b32                live_imaging_active;
+
+	BeamformerRegistersNode  base_registers;
+	BeamformerRegistersNode *registers;
+
+	BeamformerCommandList command_queues[2];
 
 	Stream error_stream;
 

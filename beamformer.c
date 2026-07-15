@@ -175,6 +175,11 @@ beamformer_init(BeamformerInput *input)
 
 	BeamformerCtx *ctx   = push_struct(&memory, BeamformerCtx);
 
+	for EachElement(ctx->frame_arenas, it) {
+		ctx->frame_arenas[it]           = sub_arena(&memory, KB(64), KB(4));
+		ctx->frame_arena_savepoints[it] = begin_temp_arena(ctx->frame_arenas + it);
+	}
+
 	str8 window_title = str8("VK Beamformer");
 	ctx->main_window  = os_window_create(window_title.data, window_title.length, 1280, 840);
 	ctx->window_size  = (iv2){{1280, 840}};

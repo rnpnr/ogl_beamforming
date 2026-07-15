@@ -21,6 +21,7 @@
 #include <stdio.h>
 
 #define BeamformerMaxComputeShaderStages 1
+#define BeamformerViewPlaneTag_Count     1
 #include "beamformer_parameters.h"
 
 global char *g_argv0;
