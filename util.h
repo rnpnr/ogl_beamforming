@@ -181,9 +181,11 @@ typedef u64      uptr;
 
 #define DLLRemove(nil, f, l, n, next, prev) (\
 	((n) == (f) ? (f) = (n)->next : (0)),\
-	((n) == (l) ? (l) = (l)->prev : (0)),\
+	((n) == (l) ? (l) = (n)->prev : (0)),\
 	(((n)->prev != nil && (n)->prev != 0) ? (n)->prev->next = (n)->next : (0)),\
-	(((n)->next != nil && (n)->next != 0) ? (n)->next->prev = (n)->prev : (0)))
+	(((n)->next != nil && (n)->next != 0) ? (n)->next->prev = (n)->prev : (0)),\
+	(!(f) && (l) ? (f) = (l) : (0)),\
+	(!(l) && (f) ? (l) = (f) : (0)))
 
 #define KB(a)            ((u64)(a) << 10ULL)
 #define MB(a)            ((u64)(a) << 20ULL)

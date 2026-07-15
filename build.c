@@ -1054,6 +1054,7 @@ meta_end_and_write_matlab(MetaprogramContext *m, char *path)
 	X(EndScope) \
 	X(Enumeration) \
 	X(Expand) \
+	X(Flags) \
 	X(FragmentShader) \
 	X(Library) \
 	X(MATLAB) \
@@ -1845,6 +1846,7 @@ typedef struct {
 	X(BakeParameters,     1, 1, 0) \
 	X(Constant,           0, 0, 0) \
 	X(Enumeration,        1, 0, 1) \
+	X(Flags,              1, 0, 1) \
 	X(PushConstants,      1, 1, 0) \
 	X(Reference,          0, 0, 0) \
 	X(ReferenceReference, 0, 0, 0) \
@@ -2570,7 +2572,9 @@ meta_pack_table_begin(MetaEntry *e, MetaTable *t)
 		t->field_count = countof(bake_fields);
 	}break;
 
-	case MetaEntryKind_Enumeration:{
+	case MetaEntryKind_Enumeration:
+	case MetaEntryKind_Flags:
+	{
 		read_only local_persist s8 enumeration_fields[] = {s8_comp("name")};
 		t->fields      = enumeration_fields;
 		t->field_count = countof(enumeration_fields);
@@ -2606,6 +2610,7 @@ meta_pack_table_entity(MetaContext *ctx, MetaEntry *e, i64 entry_count, s8 name,
 	switch (e->kind) {
 	case MetaEntryKind_Bake:{         entity_kind = MetaEntityKind_BakeParameters;}break;
 	case MetaEntryKind_Enumeration:{  entity_kind = MetaEntityKind_Enumeration;   }break;
+	case MetaEntryKind_Flags:{        entity_kind = MetaEntityKind_Flags;         }break;
 	case MetaEntryKind_PushConstants:{entity_kind = MetaEntityKind_PushConstants; }break;
 	case MetaEntryKind_Struct:{       entity_kind = MetaEntityKind_Struct;        }break;
 	case MetaEntryKind_Table:{        entity_kind = MetaEntityKind_Table;         }break;
@@ -2744,11 +2749,12 @@ meta_pack_table_entity(MetaContext *ctx, MetaEntry *e, i64 entry_count, s8 name,
 
 	switch (e->kind) {
 	case MetaEntryKind_Bake:
+	case MetaEntryKind_Enumeration:
+	case MetaEntryKind_Flags:
 	case MetaEntryKind_PushConstants:
 	case MetaEntryKind_Struct:
-	case MetaEntryKind_Union:
-	case MetaEntryKind_Enumeration:
 	case MetaEntryKind_Table:
+	case MetaEntryKind_Union:
 	{}break;
 
 	InvalidDefaultCase;
@@ -2784,6 +2790,7 @@ meta_pack_shader_common(MetaContext *ctx, MetaEntityID shader_id, MetaEntry *e, 
 	}break;
 
 	case MetaEntryKind_Enumeration:
+	case MetaEntryKind_Flags:
 	case MetaEntryKind_Constant:
 	case MetaEntryKind_Struct:
 	reference:
@@ -2943,15 +2950,18 @@ meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, iz entry_count, MetaE
 			op->expansion_operation.table_entity_id = da_index(table, &ctx->entities);
 		}break;
 
-		case MetaEntryKind_Enumeration:{
+		case MetaEntryKind_Enumeration:
+		case MetaEntryKind_Flags:
+		{
 			if (ops) meta_entry_nesting_error(row, MetaEntryKind_Emit);
 
 			meta_entry_argument_expected(row, s8("`raw_string`"));
 			s8 expand = meta_entry_argument_expect(row, 0, MetaEntryArgumentKind_String).string;
 
-			MetaEntityID entity_id = meta_intern_entity(ctx, row->name, MetaEntityKind_Enumeration,
-			                                            meta_root_entity_id(ctx), row->location, 0);
-			MetaEntry entry = {.kind = MetaEntryKind_Enumeration};
+			MetaEntityKind entity_kind = row->kind == MetaEntryKind_Flags ? MetaEntityKind_Flags : MetaEntityKind_Enumeration;
+			MetaEntityID entity_id = meta_intern_entity(ctx, row->name, entity_kind, meta_root_entity_id(ctx),
+			                                            row->location, 0);
+			MetaEntry entry = {.kind = row->kind};
 			MetaEntity *new = ctx->entities.data + entity_id.value;
 			meta_pack_table_begin(&entry, &new->table);
 			new->table.entries     = push_array(ctx->arena, s8 *, new->table.field_count);
@@ -3379,12 +3389,12 @@ metagen_push_counted_enum_body_from_ids(MetaprogramContext *m, s8 kind, s8 prefi
 }
 
 function void
-metagen_push_c_enum(MetaprogramContext *m, Arena scratch, s8 kind, s8 *ids, iz ids_count)
+metagen_push_c_enum(MetaprogramContext *m, Arena scratch, s8 kind, b32 flags, s8 *ids, i64 ids_count)
 {
 	s8 kind_full = push_s8_from_parts(&scratch, s8(""), kind, s8("_"));
 	meta_begin_scope(m, s8("typedef enum {"));
-	metagen_push_counted_enum_body(m, kind_full, s8(""), s8("= "), s8(","), ids, ids_count);
-	meta_push_line(m, kind_full, s8("Count,"));
+	metagen_push_counted_enum_body(m, kind_full, s8(""), flags ? s8("= 1 << ") : s8("= "), s8(","), ids, ids_count);
+	if (!flags) meta_push_line(m, kind_full, s8("Count,"));
 	meta_end_scope(m, s8("} "), kind, s8(";\n"));
 }
 
@@ -3950,14 +3960,20 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 
 	/////////////////////////
 	// NOTE(rnp): enumerants
-	for (da_count kind = 0; kind < ctx->entity_kind_counts[MetaEntityKind_Enumeration]; kind++) {
-		da_count    id = ctx->entity_kind_ids[MetaEntityKind_Enumeration][kind];
-		MetaEntity *e  = ctx->entities.data + id;
+	struct {MetaEntityKind kind; b32 flags;} enums[] = {
+		{MetaEntityKind_Enumeration, 0},
+		{MetaEntityKind_Flags,       1},
+	};
+	for EachElement(enums, it) {
+		for (da_count kind = 0; kind < ctx->entity_kind_counts[enums[it].kind]; kind++) {
+			da_count    id = ctx->entity_kind_ids[enums[it].kind][kind];
+			MetaEntity *e  = ctx->entities.data + id;
 
-		s8 enum_name = push_s8_from_parts(&m->scratch, s8(""), s8(META_NAMESPACE_UPPER),
-		                                  ctx->entity_names.data[id]);
-		metagen_push_c_enum(m, m->scratch, enum_name, e->table.entries[0], e->table.entry_count);
-		m->scratch = ctx->scratch;
+			s8 enum_name = push_s8_from_parts(&m->scratch, s8(""), s8(META_NAMESPACE_UPPER),
+			                                  ctx->entity_names.data[id]);
+			metagen_push_c_enum(m, m->scratch, enum_name, enums[it].flags, e->table.entries[0], e->table.entry_count);
+			m->scratch = ctx->scratch;
+		}
 	}
 
 	{
@@ -4484,7 +4500,7 @@ meta_push_helper_library_header_base(MetaprogramContext *m, MetaContext *ctx)
 
 		s8 enum_name = push_s8_from_parts(&m->scratch, s8(""), s8(META_NAMESPACE_UPPER),
 		                                  ctx->entity_names.data[id]);
-		metagen_push_c_enum(m, m->scratch, enum_name, e->table.entries[0], e->table.entry_count);
+		metagen_push_c_enum(m, m->scratch, enum_name, 0, e->table.entries[0], e->table.entry_count);
 		m->scratch = ctx->scratch;
 	}
 
@@ -4723,6 +4739,7 @@ metagen_load_context(Arena *arena, char *filename)
 		}break;
 
 		case MetaEntryKind_Enumeration:
+		case MetaEntryKind_Flags:
 		case MetaEntryKind_Struct:
 		case MetaEntryKind_Table:
 		case MetaEntryKind_Union:
@@ -4918,9 +4935,10 @@ metagen_load_context(Arena *arena, char *filename)
 					u32 member_size = 0;
 					if (type_reference) {
 						MetaEntity *ref = ctx->entities.data + s->type_ids[member];
-						if (ref->kind == MetaEntityKind_Enumeration) {
-							if (ref->table.entry_count < U32_MAX) member_size = sizeof(u32);
-							else                                  member_size = sizeof(u64);
+						if (ref->kind == MetaEntityKind_Enumeration || ref->kind == MetaEntityKind_Flags) {
+							i64 limit = ref->kind == MetaEntityKind_Flags ? 32 : U32_MAX;
+							if (ref->table.entry_count < limit) member_size = sizeof(u32);
+							else                                member_size = sizeof(u64);
 						} else {
 							MetaStruct *sub_struct = ctx->struct_infos + ref->table.struct_info_id;
 							if (sub_struct->byte_size != (u32)-1) {
