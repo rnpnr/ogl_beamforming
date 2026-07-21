@@ -24,7 +24,6 @@ memory_equal(void *restrict left, void *restrict right, u64 n)
 	return result;
 }
 
-#define mem_copy memory_copy
 function void
 memory_copy(void *restrict dest, void *restrict src, u64 n)
 {
@@ -121,11 +120,11 @@ arena_aligned_start(Arena a, uz alignment)
 }
 
 #define arena_capacity(a, t) arena_capacity_(a, sizeof(t), alignof(t))
-function iz
-arena_capacity_(Arena *a, iz size, uz alignment)
+function i64
+arena_capacity_(Arena *a, i64 size, u64 alignment)
 {
-	iz available = a->end - (u8 *)arena_aligned_start(*a, alignment);
-	iz result    = available / size;
+	i64 available = a->end - (u8 *)arena_aligned_start(*a, alignment);
+	i64 result    = available / size;
 	return result;
 }
 
@@ -226,7 +225,7 @@ enum { DA_INITIAL_CAP = 16 };
 
 #define da_append_count(a, s, items, item_count) do { \
 	da_reserve((a), (s), (item_count));                                             \
-	mem_copy((s)->data + (s)->count, (items), sizeof(*(items)) * (uz)(item_count)); \
+	memory_copy((s)->data + (s)->count, (items), sizeof(*(items)) * (uz)(item_count)); \
 	(s)->count += (item_count);                                                     \
 } while (0)
 
@@ -245,7 +244,7 @@ da_reserve_(Arena *a, void *data, da_count *capacity, da_count needed, u64 align
 	 * on the stack or someone allocated something in the middle of the arena during usage) */
 	if (!data || a->beg != (u8 *)data + cap * size) {
 		void *copy = arena_alloc(a, .size = size, .align = align, .count = cap);
-		if (data) mem_copy(copy, data, (uz)(cap * size));
+		if (data) memory_copy(copy, data, (uz)(cap * size));
 		data = copy;
 	}
 
@@ -290,8 +289,8 @@ utf16_decode(u16 *data, iz length)
 	if (length) {
 		result.consumed = 1;
 		result.cp = data[0];
-		if (length > 1 && BETWEEN(data[0], 0xD800u, 0xDBFFu)
-		               && BETWEEN(data[1], 0xDC00u, 0xDFFFu))
+		if (length > 1 && Between(data[0], 0xD800u, 0xDBFFu)
+		               && Between(data[1], 0xDC00u, 0xDFFFu))
 		{
 			result.consumed = 2;
 			result.cp = ((data[0] - 0xD800u) << 10u) | ((data[1] - 0xDC00u) + 0x10000u);
@@ -351,7 +350,7 @@ stream_reset(Stream *s, i32 index)
 function void
 stream_commit(Stream *s, i32 count)
 {
-	s->errors |= !BETWEEN(s->widx + count, 0, s->cap);
+	s->errors |= !Between(s->widx + count, 0, s->cap);
 	if (!s->errors)
 		s->widx += count;
 }
@@ -425,7 +424,7 @@ stream_append_u64_width(Stream *s, u64 n, u64 min_width)
 	u8 tmp[64];
 	u8 *end = tmp + sizeof(tmp);
 	u8 *beg = end;
-	min_width = MIN(sizeof(tmp), min_width);
+	min_width = Min(sizeof(tmp), min_width);
 
 	do { *--beg = (u8)('0' + (n % 10)); } while (n /= 10);
 	while (end - beg > 0 && (uz)(end - beg) < min_width)
@@ -589,7 +588,7 @@ u128_hash_from_data(void *data, uz size)
 {
 	u128 result = {0};
 	XXH128_hash_t hash = XXH3_128bits_withSeed(data, size, 4969);
-	mem_copy(&result, &hash, sizeof(result));
+	memory_copy(&result, &hash, sizeof(result));
 	return result;
 }
 
@@ -816,10 +815,10 @@ push_s8_from_parts_(Arena *arena, s8 joiner, s8 *parts, iz count)
 	iz offset = 0;
 	for (iz i = 0; i < count; i++) {
 		if (i != 0) {
-			mem_copy(result.data + offset, joiner.data, (uz)joiner.len);
+			memory_copy(result.data + offset, joiner.data, (uz)joiner.len);
 			offset += joiner.len;
 		}
-		mem_copy(result.data + offset, parts[i].data, (uz)parts[i].len);
+		memory_copy(result.data + offset, parts[i].data, (uz)parts[i].len);
 		offset += parts[i].len;
 	}
 	result.data[result.len] = 0;

@@ -131,9 +131,9 @@ os_create_thread(const char *name, void *user_context, os_thread_entry_point_fn 
 
 	if (name) {
 		char buffer[16];
-		s8 name_str = c_str_to_s8((char *)name);
-		u64  length = (u64)CLAMP(name_str.len, 0, countof(buffer) - 1);
-		mem_copy(buffer, (char *)name, length);
+		str8 name_str = str8_from_c_str((char *)name);
+		u64  length   = (u64)Clamp(name_str.length, 0, countof(buffer) - 1);
+		memory_copy(buffer, (char *)name, length);
 		buffer[length] = 0;
 		pthread_setname_np(thread, buffer);
 	}

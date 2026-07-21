@@ -106,12 +106,6 @@ typedef u64      uptr;
 #define str_(...) #__VA_ARGS__
 #define str(...) str_(__VA_ARGS__)
 
-#define countof(a)       (iz)(sizeof(a) / sizeof(*a))
-#define BETWEEN(x, a, b) ((x) >= (a) && (x) <= (b))
-#define CLAMP(x, a, b)   ((x) < (a) ? (a) : (x) > (b) ? (b) : (x))
-#define ISPOWEROF2(a)    (((a) & ((a) - 1)) == 0)
-#define MIN(a, b)        ((a) < (b) ? (a) : (b))
-#define MAX(a, b)        ((a) > (b) ? (a) : (b))
 #define swap(a, b)       do {typeof(a) __tmp = (a); (a) = (b); (b) = __tmp;} while(0)
 
 #define Abs(a)           ((a) < 0 ? -(a) : (a))
@@ -131,7 +125,6 @@ typedef u64      uptr;
 #define f32_equal(x, y)  (Abs((x) - (y)) <= F32_EPSILON * Max(1.0f, Max(Abs(x), Abs(y))))
 
 #define DeferLoop(begin, end)          for (i32 _i_ = ((begin), 0); !_i_; _i_ += 1, (end))
-#define DeferLoopTag(begin, end, tag)  for (i32 __##tag = ((begin), 0); !__##tag ; __##tag += 1, (end))
 
 #define EachBit(a, it)                 (u64 it = ctz_u64(a); it != 64; a &= ~(1u << (it)), it = ctz_u64(a))
 #define EachElement(array, it)         (u64 it = 0; it < countof(array); it += 1)
@@ -194,7 +187,6 @@ typedef u64      uptr;
 #define U16_MAX          (0x0000FFFFUL)
 #define U32_MAX          (0xFFFFFFFFUL)
 #define U64_MAX          (0xFFFFFFFFFFFFFFFFULL)
-#define F32_INFINITY     (1e+300*1e+300)
 #define F32_EPSILON      (1e-6f)
 #ifndef PI
   #define PI             (3.14159265358979323846f)
@@ -314,7 +306,7 @@ typedef union {
 	struct { f32 w, h; };
 	f32 E[2];
 } v2;
-#define V2_INFINITY (v2){{-F32_INFINITY, F32_INFINITY}}
+#define V2_INFINITY (v2){{-inf32(), inf32()}}
 
 typedef union {
 	struct { f32 x,  y, z;   };
@@ -350,8 +342,6 @@ typedef struct {
 } ray;
 
 typedef struct { v2 pos, size; } Rect;
-#define INVERTED_INFINITY_RECT (Rect){.pos  = {.x = -F32_INFINITY, .y = -F32_INFINITY}, \
-                                      .size = {.x = -F32_INFINITY, .y = -F32_INFINITY}}
 
 typedef struct {
 	u8   *data;

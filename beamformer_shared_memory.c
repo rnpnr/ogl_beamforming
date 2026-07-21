@@ -174,7 +174,7 @@ beamform_work_queue_pop(BeamformWorkQueue *q)
 {
 	BeamformWork *result = 0;
 
-	static_assert(ISPOWEROF2(countof(q->work_items)), "queue capacity must be a power of 2");
+	static_assert(IsPowerOfTwo(countof(q->work_items)), "queue capacity must be a power of 2");
 	u64 val  = atomic_load_u64(&q->queue);
 	u64 mask = countof(q->work_items) - 1;
 	u64 widx = val       & mask;
@@ -197,7 +197,7 @@ beamform_work_queue_push(BeamformWorkQueue *q)
 {
 	BeamformWork *result = 0;
 
-	static_assert(ISPOWEROF2(countof(q->work_items)), "queue capacity must be a power of 2");
+	static_assert(IsPowerOfTwo(countof(q->work_items)), "queue capacity must be a power of 2");
 	u64 val  = atomic_load_u64(&q->queue);
 	u64 mask = countof(q->work_items) - 1;
 	u64 widx = val        & mask;

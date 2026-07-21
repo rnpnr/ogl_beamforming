@@ -731,7 +731,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->transmit_receive_orientation = pb->parameters.transmit_receive_orientation;
 
 				// NOTE(rnp): old gcc will miscompile an assignment
-				mem_copy(cp->xdc_transform.E, pb->parameters.xdc_transform.E, sizeof(cp->xdc_transform));
+				memory_copy(cp->xdc_transform.E, pb->parameters.xdc_transform.E, sizeof(cp->xdc_transform));
 
 				cp->voxel_transform   = m4_mul(cp->ui_voxel_transform, pb->parameters.das_voxel_transform);
 				cp->xdc_element_pitch = pb->parameters.xdc_element_pitch;
@@ -1376,7 +1376,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 		}
 
-		mem_copy(aframe->voxel_transform.E,  frame->voxel_transform.E, sizeof(frame->voxel_transform));
+		memory_copy(aframe->voxel_transform.E,  frame->voxel_transform.E, sizeof(frame->voxel_transform));
 		aframe->compound_count   = frame->compound_count;
 		aframe->acquisition_kind = frame->acquisition_kind;
 	}break;
@@ -1421,7 +1421,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				spin_wait(table->write_index != atomic_load_u32(&table->read_index));
 				ComputeShaderStats *stats = ctx->compute_shader_stats;
 				if (sizeof(stats->table) <= ec->size)
-					mem_copy(beamformer_shared_memory_scratch_arena(sm, ctx->shared_memory_size).beg,
+					memory_copy(beamformer_shared_memory_scratch_arena(sm, ctx->shared_memory_size).beg,
 					         &stats->table, sizeof(stats->table));
 			}break;
 			InvalidDefaultCase;
@@ -1494,7 +1494,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			frame->compound_count   = cp->acquisition_count;
 			frame->parameter_block  = work->compute_context.parameter_block;
 			frame->view_plane_tag   = work->compute_context.view_plane;
-			mem_copy(frame->voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));
+			memory_copy(frame->voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));
 
 			VulkanHandle cmd = vk_command_begin(VulkanTimeline_Compute);
 			vk_command_timestamp(cmd);
@@ -1635,7 +1635,7 @@ coalesce_timing_table(ComputeTimingTable *t, ComputeShaderStats *stats)
 			t->compute_frame_active = 0;
 			stats_index = stats->latest_frame_index = (stats_index + 1) % countof(stats->table.times);
 			stats->table.shader_count = t->in_flight_shader_count;
-			mem_copy(stats->table.shader_ids, t->in_flight_shader_ids, sizeof(t->in_flight_shader_ids));
+			memory_copy(stats->table.shader_ids, t->in_flight_shader_ids, sizeof(t->in_flight_shader_ids));
 		}break;
 
 		case ComputeTimingInfoKind_Shader:{

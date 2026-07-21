@@ -266,7 +266,7 @@ main(i32 argc, char *argv[])
 
 	BeamformerLiveImagingParameters lip = {.active = 1, .save_enabled = 1};
 	s8 short_name = s8("Decode Bench");
-	mem_copy(lip.save_name_tag, short_name.data, (uz)short_name.len);
+	memory_copy(lip.save_name_tag, short_name.data, (u64)short_name.len);
 	lip.save_name_tag_length = (i32)short_name.len;
 	beamformer_set_live_parameters(&lip);
 

@@ -18,14 +18,14 @@ function void
 thread_context_barrier_wait(void *broadcast, u64 broadcast_size, u64 broadcast_lane_index)
 {
 	ThreadContext *ctx = thread_context_local;
-	u64 broadcast_size_clamped = MIN(broadcast_size, sizeof(ctx->lane_context.broadcast_memory[0]));
+	u64 broadcast_size_clamped = Min(broadcast_size, sizeof(ctx->lane_context.broadcast_memory[0]));
 	if (broadcast && lane_index() == broadcast_lane_index)
-		mem_copy(ctx->lane_context.broadcast_memory, broadcast, broadcast_size_clamped);
+		memory_copy(ctx->lane_context.broadcast_memory, broadcast, broadcast_size_clamped);
 
 	os_barrier_enter(ctx->lane_context.barrier);
 
 	if (broadcast && lane_index() != broadcast_lane_index)
-		mem_copy(broadcast, ctx->lane_context.broadcast_memory, broadcast_size_clamped);
+		memory_copy(broadcast, ctx->lane_context.broadcast_memory, broadcast_size_clamped);
 
 	if (broadcast)
 		os_barrier_enter(ctx->lane_context.barrier);

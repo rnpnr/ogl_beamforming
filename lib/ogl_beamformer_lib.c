@@ -214,7 +214,7 @@ beamformer_error_string(BeamformerLibErrorKind kind)
 	#define X(type, num, string) string,
 	local_persist const char *error_string_table[] = {BEAMFORMER_LIB_ERRORS "invalid error kind"};
 	#undef X
-	return error_string_table[MIN(kind, countof(error_string_table) - 1)];
+	return error_string_table[Min(kind, countof(error_string_table) - 1)];
 }
 
 BeamformerLibErrorKind
@@ -352,8 +352,8 @@ parameter_block_region_upload(void *data, u32 size, u32 block, BeamformerParamet
 	i32 lock   = BeamformerSharedMemoryLockKind_Count + (i32)block;
 	b32 result = valid_parameter_block(block) && lib_try_lock(lock, timeout_ms);
 	if (result) {
-		mem_copy((u8 *)beamformer_parameter_block(g_beamformer_library_context.bp, block) + block_offset,
-		         data, size);
+		memory_copy((u8 *)beamformer_parameter_block(g_beamformer_library_context.bp, block) + block_offset,
+		            data, size);
 		mark_parameter_block_region_dirty(g_beamformer_library_context.bp, block, region_id);
 		lib_release_lock(lock);
 	}
@@ -387,7 +387,7 @@ beamformer_push_pipeline_at(i32 *shaders, u32 shader_count, BeamformerDataKind d
 		i32 lock = BeamformerSharedMemoryLockKind_Count + (i32)block;
 		if (valid_parameter_block(block) && lib_try_lock(lock, g_beamformer_library_context.timeout_ms)) {
 			BeamformerParameterBlock *b = beamformer_parameter_block(g_beamformer_library_context.bp, block);
-			mem_copy(&b->pipeline.shaders, shaders, shader_count * sizeof(*shaders));
+			memory_copy(&b->pipeline.shaders, shaders, shader_count * sizeof(*shaders));
 			mark_parameter_block_region_dirty(g_beamformer_library_context.bp, block,
 			                                  BeamformerParameterBlockRegion_ComputePipeline);
 			b->pipeline.shader_count = shader_count;
@@ -679,7 +679,7 @@ beamformer_export(BeamformerExportContext export, void *out, i32 timeout_ms)
 			if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
 				Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
 				                                                       g_beamformer_library_context.shared_memory_size);
-				mem_copy(out, scratch.beg, export.size);
+				memory_copy(out, scratch.beg, export.size);
 				lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
 				result = 1;
 			}
@@ -770,7 +770,7 @@ beamformer_set_live_parameters(BeamformerLiveImagingParameters *new)
 {
 	b32 result = 0;
 	if (check_shared_memory()) {
-		mem_copy(&g_beamformer_library_context.bp->live_imaging_parameters, new, sizeof(*new));
+		memory_copy(&g_beamformer_library_context.bp->live_imaging_parameters, new, sizeof(*new));
 		store_fence();
 		result = 1;
 	}

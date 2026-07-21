@@ -2038,7 +2038,7 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 
 				// NOTE(rnp): don't trash the CPU cache for large data stores
 				if (non_temporal) memory_copy_non_temporal(dest, src, size);
-				else              mem_copy(dest, src, size);
+				else              memory_copy(dest, src, size);
 			}
 		}break;
 		InvalidDefaultCase;
@@ -2055,7 +2055,7 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 
 			// NOTE(rnp): don't trash the CPU cache for large data stores
 			if (non_temporal) memory_copy_non_temporal(dest, src, size);
-			else              mem_copy(dest, src, size);
+			else              memory_copy(dest, src, size);
 
 			b32 coherent = vk->memory_info.memory_host_coherent[destination->memory_kind];
 			if (!coherent) {

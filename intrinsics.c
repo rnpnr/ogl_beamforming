@@ -18,6 +18,10 @@
   #define read_only
 #endif
 
+#if !defined(countof)
+  #define countof(a)     (i64)(sizeof(a) / sizeof(*a))
+#endif
+
 #if COMPILER_MSVC
   #define alignas(n)     __declspec(align(n))
   #define pack_struct(s) __pragma(pack(push, 1)) s __pragma(pack(pop))

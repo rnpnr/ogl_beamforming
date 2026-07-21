@@ -145,7 +145,7 @@ subrange_n_from_n_m_count(u64 n, u64 n_count, u64 m)
 
 	u64 per_lane            = m / n_count;
 	u64 leftover            = m - per_lane * n_count;
-	u64 leftovers_before_n  = MIN(leftover, n);
+	u64 leftovers_before_n  = Min(leftover, n);
 	u64 base_index          = n * per_lane + leftovers_before_n;
 	u64 one_past_last_index = base_index + per_lane + ((n < leftover) ? 1 : 0);
 
@@ -188,8 +188,8 @@ function v2
 clamp_v2_rect(v2 v, Rect r)
 {
 	v2 result = v;
-	result.x = CLAMP(v.x, r.pos.x, r.pos.x + r.size.x);
-	result.y = CLAMP(v.y, r.pos.y, r.pos.y + r.size.y);
+	result.x = Clamp(v.x, r.pos.x, r.pos.x + r.size.x);
+	result.y = Clamp(v.y, r.pos.y, r.pos.y + r.size.y);
 	return result;
 }
 
@@ -696,8 +696,8 @@ obb_raycast(m4 obb_orientation, v3 obb_size, v3 obb_center, ray r)
 	}
 
 	if (result != -1) {
-		f32 tmin = MAX(MAX(MIN(t[0], t[1]), MIN(t[2], t[3])), MIN(t[4], t[5]));
-		f32 tmax = MIN(MIN(MAX(t[0], t[1]), MAX(t[2], t[3])), MAX(t[4], t[5]));
+		f32 tmin = Max(Max(Min(t[0], t[1]), Min(t[2], t[3])), Min(t[4], t[5]));
+		f32 tmax = Min(Min(Max(t[0], t[1]), Max(t[2], t[3])), Max(t[4], t[5]));
 		if (tmax >= 0 && tmin <= tmax) {
 			result = tmin > 0 ? tmin : tmax;
 		} else {

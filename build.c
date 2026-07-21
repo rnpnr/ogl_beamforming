@@ -168,7 +168,7 @@ build_log_base(BuildLogKind kind, char *format, va_list args)
 	read_only local_persist char *prefixes[BuildLogKind_Count + 1] = {BUILD_LOG_KINDS "[INVALID] "};
 	#undef X
 	FILE *out = kind == BuildLogKind_Error? stderr : stdout;
-	fputs(prefixes[MIN(kind, BuildLogKind_Count)], out);
+	fputs(prefixes[Min(kind, BuildLogKind_Count)], out);
 	vfprintf(out, format, args);
 	fputc('\n', out);
 }
@@ -487,7 +487,7 @@ os_spawn_process(CommandList *cmd, Stream sb)
 	} w32_process_info = {0};
 
 	/* TODO(rnp): warn if we need to clamp last string */
-	sb.widx = MIN(sb.widx, (i32)(KB(32) - 1));
+	sb.widx = Min(sb.widx, (i32)(KB(32) - 1));
 	if (sb.widx < sb.cap) sb.data[sb.widx]     = 0;
 	else                  sb.data[sb.widx - 1] = 0;
 
@@ -2332,7 +2332,7 @@ meta_expansion_token(MetaExpansionParser *p)
 		#undef X
 		default:{
 			chop = 0;
-			if (BETWEEN(p->s.data[0], '0', '9')) result = MetaExpansionToken_Number;
+			if (Between(p->s.data[0], '0', '9')) result = MetaExpansionToken_Number;
 			else                                 result = MetaExpansionToken_Identifier;
 		}break;
 		}
@@ -3173,7 +3173,7 @@ metagen_push_table(MetaprogramContext *m, Arena scratch, str8 row_start, str8 ro
 		for (uz column = 0; column < columns - 1; column++) {
 			s8 *strings = column_strings[column];
 			for (uz row = 0; row < rows; row++)
-				column_widths[column] = MAX(column_widths[column], (u32)strings[row].len);
+				column_widths[column] = Max(column_widths[column], (u32)strings[row].len);
 		}
 	}
 
@@ -3357,13 +3357,13 @@ meta_struct_member_elements(MetaContext *ctx, MetaStruct *s, u32 member)
 }
 
 function void
-metagen_push_counted_enum_body(MetaprogramContext *m, s8 kind, s8 prefix, s8 mid, s8 suffix, s8 *ids, iz ids_count)
+metagen_push_counted_enum_body(MetaprogramContext *m, s8 kind, s8 prefix, s8 mid, s8 suffix, s8 *ids, i64 ids_count)
 {
-	iz max_id_length = 0;
-	for (iz id = 0; id < ids_count; id++)
-		max_id_length = MAX(max_id_length, ids[id].len);
+	i64 max_id_length = 0;
+	for (i64 id = 0; id < ids_count; id++)
+		max_id_length = Max(max_id_length, ids[id].len);
 
-	for (iz id = 0; id < ids_count; id++) {
+	for (i64 id = 0; id < ids_count; id++) {
 		meta_begin_line(m, prefix, kind, ids[id]);
 		meta_pad(m, ' ', 1 + (i32)(max_id_length - ids[id].len));
 		meta_push(m, mid);

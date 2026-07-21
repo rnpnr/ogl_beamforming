@@ -168,11 +168,11 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 		bp->speed_of_sound         = header->speed_of_sound;
 		bp->time_offset            = header->time_offset;
 
-		mem_copy(bp->channel_mapping,       header->channel_mapping,             sizeof(*bp->channel_mapping) * bp->channel_count);
-		mem_copy(bp->xdc_transform.E,       header->transducer_transform_matrix, sizeof(bp->xdc_transform));
-		mem_copy(bp->xdc_element_pitch.E,   header->transducer_element_pitch,    sizeof(bp->xdc_element_pitch));
+		memory_copy(bp->channel_mapping,       header->channel_mapping,             sizeof(*bp->channel_mapping) * bp->channel_count);
+		memory_copy(bp->xdc_transform.E,       header->transducer_transform_matrix, sizeof(bp->xdc_transform));
+		memory_copy(bp->xdc_element_pitch.E,   header->transducer_element_pitch,    sizeof(bp->xdc_element_pitch));
 		// NOTE(rnp): ignores emission count and ensemble count
-		mem_copy(bp->raw_data_dimensions.E, header->raw_data_dimension,          sizeof(bp->raw_data_dimensions));
+		memory_copy(bp->raw_data_dimensions.E, header->raw_data_dimension,          sizeof(bp->raw_data_dimensions));
 
 		bp->data_kind              = (BeamformerDataKind)ZBP_DataKind_Int16;
 		raw_data->kind             = ZBP_DataKind_Int16;
@@ -204,14 +204,14 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 		if (acquisition_kind == ZBP_AcquisitionKind_UFORCES ||
 		    acquisition_kind == ZBP_AcquisitionKind_UHERCULES)
 		{
-			mem_copy(bp->sparse_elements, header->sparse_elements, sizeof(*bp->sparse_elements) * bp->acquisition_count);
+			memory_copy(bp->sparse_elements, header->sparse_elements, sizeof(*bp->sparse_elements) * bp->acquisition_count);
 		}
 
 		if (acquisition_kind == ZBP_AcquisitionKind_RCA_TPW ||
 		    acquisition_kind == ZBP_AcquisitionKind_RCA_VLS)
 		{
-			mem_copy(bp->focal_depths,    header->focal_depths,    sizeof(*bp->focal_depths) * bp->acquisition_count);
-			mem_copy(bp->steering_angles, header->steering_angles, sizeof(*bp->steering_angles) * bp->acquisition_count);
+			memory_copy(bp->focal_depths,    header->focal_depths,    sizeof(*bp->focal_depths) * bp->acquisition_count);
+			memory_copy(bp->steering_angles, header->steering_angles, sizeof(*bp->steering_angles) * bp->acquisition_count);
 			for EachIndex(bp->acquisition_count, it)
 				bp->transmit_receive_orientations[it] = bp->transmit_receive_orientation;
 		}
@@ -244,17 +244,17 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 		bp->contrast_mode          = header->contrast_mode;
 
 		if (header->channel_mapping_offset != -1) {
-			mem_copy(bp->channel_mapping, raw.data + header->channel_mapping_offset,
+			memory_copy(bp->channel_mapping, raw.data + header->channel_mapping_offset,
 			         sizeof(*bp->channel_mapping) * bp->channel_count);
 		} else {
 			for EachIndex(bp->channel_count, it)
 				bp->channel_mapping[it] = it;
 		}
 
-		mem_copy(bp->xdc_transform.E,       header->transducer_transform_matrix, sizeof(bp->xdc_transform));
-		mem_copy(bp->xdc_element_pitch.E,   header->transducer_element_pitch,    sizeof(bp->xdc_element_pitch));
+		memory_copy(bp->xdc_transform.E,       header->transducer_transform_matrix, sizeof(bp->xdc_transform));
+		memory_copy(bp->xdc_element_pitch.E,   header->transducer_element_pitch,    sizeof(bp->xdc_element_pitch));
 		// NOTE(rnp): ignores group count and ensemble count
-		mem_copy(bp->raw_data_dimensions.E, header->raw_data_dimension,          sizeof(bp->raw_data_dimensions));
+		memory_copy(bp->raw_data_dimensions.E, header->raw_data_dimension,          sizeof(bp->raw_data_dimensions));
 
 		bp->data_kind              = header->raw_data_kind;
 		raw_data->kind             = header->raw_data_kind;
@@ -312,7 +312,7 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 
 		case ZBP_AcquisitionKind_UFORCES:{
 			ZBP_uFORCESParameters *p = (ZBP_uFORCESParameters *)(raw.data + header->acquisition_parameters_offset);
-			mem_copy(bp->sparse_elements, raw.data + p->sparse_elements_offset,
+			memory_copy(bp->sparse_elements, raw.data + p->sparse_elements_offset,
 			         sizeof(*bp->sparse_elements) * bp->acquisition_count);
 		}break;
 
@@ -325,26 +325,26 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 			bp->single_focus       = 1;
 			bp->single_orientation = 1;
 
-			mem_copy(bp->sparse_elements, raw.data + p->sparse_elements_offset,
+			memory_copy(bp->sparse_elements, raw.data + p->sparse_elements_offset,
 			         sizeof(*bp->sparse_elements) * bp->acquisition_count);
 		}break;
 
 		case ZBP_AcquisitionKind_RCA_TPW:{
 			ZBP_TPWParameters *p = (ZBP_TPWParameters *)(raw.data + header->acquisition_parameters_offset);
 
-			mem_copy(bp->transmit_receive_orientations, raw.data + p->transmit_receive_orientations_offset,
+			memory_copy(bp->transmit_receive_orientations, raw.data + p->transmit_receive_orientations_offset,
 			         sizeof(*bp->transmit_receive_orientations) * bp->acquisition_count);
-			mem_copy(bp->steering_angles, raw.data + p->tilting_angles_offset,
+			memory_copy(bp->steering_angles, raw.data + p->tilting_angles_offset,
 			         sizeof(*bp->steering_angles) * bp->acquisition_count);
 
 			for EachIndex(bp->acquisition_count, it)
-				bp->focal_depths[it] = F32_INFINITY;
+				bp->focal_depths[it] = inf32();
 		}break;
 
 		case ZBP_AcquisitionKind_RCA_VLS:{
 			ZBP_VLSParameters *p = (ZBP_VLSParameters *)(raw.data + header->acquisition_parameters_offset);
 
-			mem_copy(bp->transmit_receive_orientations, raw.data + p->transmit_receive_orientations_offset,
+			memory_copy(bp->transmit_receive_orientations, raw.data + p->transmit_receive_orientations_offset,
 			         sizeof(*bp->transmit_receive_orientations) * bp->acquisition_count);
 
 			f32 *focal_depths   = (f32 *)(raw.data + p->focal_depths_offset);
@@ -526,7 +526,7 @@ execute_study(Arena arena, Stream path, Options *options)
 		};
 
 		s8 short_name = s8("Throughput");
-		mem_copy(lip.save_name_tag, short_name.data, (uz)short_name.len);
+		memory_copy(lip.save_name_tag, short_name.data, (uz)short_name.len);
 		lip.save_name_tag_length = (i32)short_name.len;
 		beamformer_set_live_parameters(&lip);
 
