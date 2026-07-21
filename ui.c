@@ -3053,7 +3053,7 @@ ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t)
 				if (vk_pipeline_valid(cp->vulkan_pipelines[it]) == 0 &&
 				    stats->table.shader_ids[it] != BeamformerShaderKind_Hilbert)
 				{
-					v4_lerp(FG_COLOUR, FOCUSED_COLOUR, ease_in_out_quartic(broken_shader_t));
+					label_colour = v4_lerp(FG_COLOUR, FOCUSED_COLOUR, ease_in_out_quartic(broken_shader_t));
 				}
 
 				str8 shader = str8_from_s8(beamformer_shader_names[stats->table.shader_ids[it]]);
