@@ -1,6 +1,5 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
- * [ ]: bug? beamforming non XZ tag from non-0 parameter slot doesn't work?
  * [ ]: backtrace dumping on SIGSEGV
  * [ ]: bug? HERCULES might be broken, we may need to to chunk on transmits instead of channels
  * [ ]: refactor: do_compute should build its own "command graph" which tracks

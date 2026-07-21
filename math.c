@@ -877,7 +877,8 @@ das_transform_2d_xz(v2 min_coordinate, v2 max_coordinate, f32 y_off)
 function m4
 das_transform_2d_yz(v2 min_coordinate, v2 max_coordinate, f32 x_off)
 {
-	m4 result = das_transform_2d_with_normal((v3){.x = 1.0f}, min_coordinate, max_coordinate, x_off);
+	// NOTE(rnp): flip so that region extends in correct direction
+	m4 result = das_transform_2d_with_normal((v3){.x = -1.0f}, min_coordinate, max_coordinate, x_off);
 	return result;
 }
 
