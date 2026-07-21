@@ -1,6 +1,5 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
- * [ ]: bug: context_menu_close on live parameters acquisition jumps to left corner of beamformer
  * [ ]: bug: flickering x-scroll bar on switch from ComputeBarGraph to other
  * [ ]: word scan for text input
  * [ ]: animation state
@@ -8,8 +7,6 @@
  * [ ]: extra copy view settings
  * [ ]: refactor: all drag overlay floating elements can be children of the drag_root.
  *      as long as we layout before chaining them on there won't be an issue.
- * [ ]: refactor: move context menu building code next to normal ui building.
- *      keeping this localized makes it easier to add new panels.
  * [ ]: refactor: can the scroll container just use the ViewScroll flags like the tab bar?
  * [ ]: refactor: it would be nice to have some table building helpers
  *
@@ -527,10 +524,12 @@ UI_STACK_LIST
 #define ui_padh(v) UIPrefHeight(ui_px(v, 1.f)) ui_spacer(0)
 #define ui_pads(v) UISize(ui_px(v, 1.f))       ui_spacer(0)
 
-#define ui_dragging(s) (!!(s.flags & UISignalFlag_Dragging))
-#define ui_released(s) (!!(s.flags & UISignalFlag_Released))
-#define ui_pressed(s)  (!!(s.flags & UISignalFlag_Pressed))
-#define ui_scrolled(s) (!!(s.flags & UISignalFlag_Scrolled))
+#define ui_dragging(s)     (!!((s).flags & UISignalFlag_Dragging))
+#define ui_released(s)     (!!((s).flags & UISignalFlag_Released))
+#define ui_pressed(s)      (!!((s).flags & UISignalFlag_Pressed))
+#define ui_scrolled(s)     (!!((s).flags & UISignalFlag_Scrolled))
+
+#define ui_context_menu(p) ((p) == ui_context->context_menu_panel)
 
 function UIAlign
 ui_push_axis_alignment(Axis2 axis, UIAlign v)
@@ -1710,6 +1709,7 @@ ui_context_menu_close(void)
 {
 	ui_context->context_menu_next_anchor_key = ui_node_key_zero();
 	ui_context->context_menu_state_changed   = 1;
+	ui_context->context_menu_next_panel      = 0;
 }
 
 function void
@@ -2674,6 +2674,90 @@ ui_build_frame_view_overlay(UINode *frame_view, BeamformerFrameView *view, v2 mi
 }
 
 function void
+ui_build_3d_xplane_context_menu(BeamformerFrameView *view)
+{
+	UINode *label_column, *button_column;
+	UIParent(ui_context->context_menu_root)
+	UIChildLayoutAxis(Axis2_X)
+	UIPrefHeight(ui_children_sum(1.f))
+	UIPrefWidth(ui_children_sum(1.f))
+	UIParent(ui_spacer(0))
+	UIChildLayoutAxis(Axis2_Y)
+	{
+		ui_padw(UI_NODE_PAD);
+		UIAxisAlign(Axis2_X, Left)   label_column  = ui_node_from_string(0, str8("###labels"));
+		ui_padw(UI_NODE_PAD * 2.f);
+		UIAxisAlign(Axis2_X, Center)
+			button_column = ui_node_from_string(0, str8("###buttons"));
+		ui_padw(UI_NODE_PAD);
+	}
+
+	UIPrefHeight(ui_text_dim(1.1f, 1.f))
+	UIPrefWidth(ui_text_dim(1.f, 1.f))
+	{
+		{
+			f32 row_height;
+			UIParent(label_column)
+				row_height = ui_label(str8("Log Scale")).node->computed_size[Axis2_Y];
+
+			UIParent(button_column)
+			// TODO(rnp): ui_em(1.f, 1.f) once font size matches directly
+			UIPrefHeight(ui_px(row_height, 1.f))
+			UIPrefWidth(ui_px(row_height, 1.f))
+			{
+				UISignal signal = ui_toggle_button(view->log_scale, str8("###log_scale"));
+				if ui_pressed(signal) {
+					view->log_scale = !view->log_scale;
+					view->dirty     = 1;
+				}
+			}
+		}
+
+		{
+			f32 row_height;
+			UIParent(label_column)
+				row_height = ui_label(str8("Demo Mode")).node->computed_size[Axis2_Y];
+
+			UIParent(button_column)
+			// TODO(rnp): ui_em(1.f, 1.f) once font size matches directly
+			UIPrefHeight(ui_px(row_height, 1.f))
+			UIPrefWidth(ui_px(row_height, 1.f))
+			{
+				UISignal signal = ui_toggle_button(view->demo, str8("###demo_mode"));
+				if ui_pressed(signal)
+					view->demo = !view->demo;
+			}
+		}
+
+		UIParent(label_column)
+		{
+			f32 row_height = ui_label(str8("Planes:")).node->computed_size[Axis2_Y];
+			// TODO(rnp): ui_em(1.f, 1.f) once font size matches directly
+			UIParent(button_column) ui_padh(row_height);
+		}
+		for EachElement(view->plane_active, plane) {
+			f32 row_height;
+			UIParent(label_column)
+			{
+				str8 label = push_str8_from_parts(ui_build_arena(), str8(""), str8("    "),
+				                                  beamformer_view_plane_tag_strings[plane]);
+				row_height = ui_label(label).node->computed_size[Axis2_Y];
+			}
+
+			UIParent(button_column)
+			UIPrefHeight(ui_px(row_height, 1.f))
+			UIPrefWidth(ui_px(row_height, 1.f))
+			{
+				UISignal signal = ui_toggle_button(view->plane_active[plane],
+				                                   beamformer_view_plane_tag_strings[plane]);
+				if ui_pressed(signal)
+					view->plane_active[plane] = !view->plane_active[plane];
+			}
+		}
+	}
+}
+
+function void
 ui_build_3d_xplane_frame_view(UINode *container, BeamformerFrameView *view)
 {
 	assert(view->kind == BeamformerFrameViewKind_3DXPlane);
@@ -2808,6 +2892,111 @@ ui_build_3d_xplane_frame_view(UINode *container, BeamformerFrameView *view)
 
 		view->plane_drag_index = -1;
 		view->hit_start_point = view->hit_test_point = (v3){0};
+	}
+}
+
+function void
+ui_build_frame_view_context_menu(BeamformerUIPanel *panel, BeamformerFrameView *view)
+{
+	UINode *label_column, *button_column;
+	UIParent(ui_context->context_menu_root)
+	UIChildLayoutAxis(Axis2_X)
+	UIPrefHeight(ui_children_sum(1.f))
+	UIPrefWidth(ui_children_sum(1.f))
+	UIParent(ui_spacer(0))
+	UIChildLayoutAxis(Axis2_Y)
+	{
+		ui_padw(UI_NODE_PAD);
+		UIAxisAlign(Axis2_X, Left)   label_column  = ui_node_from_string(0, str8("###labels"));
+		ui_padw(UI_NODE_PAD * 2.f);
+		UIAxisAlign(Axis2_X, Center)
+			button_column = ui_node_from_string(0, str8("###buttons"));
+		ui_padw(UI_NODE_PAD);
+	}
+
+	UIPrefHeight(ui_text_dim(1.1f, 1.f))
+	UIPrefWidth(ui_text_dim(1.f, 1.f))
+	{
+		read_only local_persist str8 dimension_strings[2][2] = {
+			{str8_comp("Extent Scale Bar"),  str8_comp("Magnitude Scale Bar")},
+			{str8_comp("Lateral Scale Bar"), str8_comp("Axial Scale Bar")    },
+		};
+
+		UIParent(label_column)  ui_label(str8("Plane Tag"));
+		UIParent(button_column)
+		UIFlags(UINodeFlag_Scroll)
+		{
+			str8 tag = str8("Any");
+			if (view->view_plane != BeamformerViewPlaneTag_Count)
+				tag = beamformer_view_plane_tag_strings[view->view_plane];
+			UISignal signal = ui_label_button(push_str8_from_parts(ui_build_arena(), str8(""),
+			                                                       tag, str8("###PlaneTagButton")));
+			i32 delta = signal.scroll.y + ui_pressed(signal);
+			view->view_plane = circular_add(view->view_plane, delta, BeamformerViewPlaneTag_Count + 1);
+			if (ui_pressed(signal) || ui_scrolled(signal))
+				view->dirty = 1;
+		}
+
+		i32 dimension = iv3_dimension(view->frame.points);
+		dimension = Min(dimension, 2);
+		if (dimension > 0) {
+			for EachEnumValue(Axis2, axis) {
+				f32 row_height;
+				UIParent(label_column)
+					row_height = ui_label(dimension_strings[dimension - 1][axis]).node->computed_size[Axis2_Y];
+
+				UIParent(button_column)
+				// TODO(rnp): ui_em(1.f, 1.f) once font size matches directly
+				UIPrefHeight(ui_px(row_height, 1.f))
+				UIPrefWidth(ui_px(row_height, 1.f))
+				{
+					UISignal signal = ui_toggle_buttonf(view->scale_bar_active[axis], "###axis_%u", axis);
+					if ui_pressed(signal)
+						view->scale_bar_active[axis] = !view->scale_bar_active[axis];
+				}
+			}
+		}
+
+		{
+			f32 row_height;
+			UIParent(label_column)
+				row_height = ui_label(str8("Log Scale")).node->computed_size[Axis2_Y];
+
+			UIParent(button_column)
+			// TODO(rnp): ui_em(1.f, 1.f) once font size matches directly
+			UIPrefHeight(ui_px(row_height, 1.f))
+			UIPrefWidth(ui_px(row_height, 1.f))
+			{
+				UISignal signal = ui_toggle_button(view->log_scale, str8("###log_scale"));
+				if ui_pressed(signal) {
+					view->log_scale = !view->log_scale;
+					view->dirty     = 1;
+				}
+			}
+		}
+
+		if (dimension > 0 && panel->kind != BeamformerPanelKind_FrameViewCopy) {
+			f32 row_height;
+			UIParent(label_column)
+			{
+				UISignal signal = ui_label_button(str8("Copy Frame"));
+				row_height = signal.node->computed_size[Axis2_Y];
+				if ui_pressed(signal) {
+					ui_context_menu_close();
+					beamformer_command(beamformer_command_infos[BeamformerCommandKind_OpenTab].string,
+					                   .tree_node  = (u64)panel->parent,
+					                   .frame_view = (u64)view,
+					                   .string     = beamformer_panel_infos[BeamformerPanelKind_FrameViewCopy].string);
+				}
+			}
+
+			// TODO(rnp): ui_em(1.f, 1.f) once font size matches directly
+			UIParent(button_column) ui_padh(row_height);
+		}
+
+		// TODO(rnp): extra frame view copy settings
+		if (panel->kind == BeamformerPanelKind_FrameViewCopy) {
+		}
 	}
 }
 
@@ -3092,6 +3281,42 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 {
 	BeamformerUI *ui = ui_context;
 
+	if ui_context_menu(panel) {
+		UINode *label_column, *button_column;
+		UIParent(ui->context_menu_root)
+		UIChildLayoutAxis(Axis2_X)
+		UIPrefHeight(ui_children_sum(1.f))
+		UIPrefWidth(ui_children_sum(1.f))
+		UIParent(ui_spacer(0))
+		UIChildLayoutAxis(Axis2_Y)
+		{
+			ui_padw(UI_NODE_PAD);
+			UIAxisAlign(Axis2_X, Left)   label_column  = ui_node_from_string(0, str8("###labels"));
+			ui_padw(UI_NODE_PAD * 2.f);
+			UIAxisAlign(Axis2_X, Center)
+				button_column = ui_node_from_string(0, str8("###buttons"));
+			ui_padw(UI_NODE_PAD);
+		}
+
+		UIPrefHeight(ui_text_dim(1.1f, 1.f))
+		UIPrefWidth(ui_text_dim(1.f, 1.f))
+		{
+			UIParent(label_column) ui_label(str8("Block"));
+			UIParent(button_column)
+			{
+				UISignal signal;
+				u32 cycle = beamformer_context->shared_memory->reserved_parameter_blocks;
+				u32 block = panel->u.parameter_listing.parameter_block;
+				UIFlags(cycle <= 1 ? UINodeFlag_Disabled : 0)
+					signal = ui_label_buttonf("%u", block);
+				if (ui_pressed(signal) || ui_scrolled(signal)) {
+					i32 delta = signal.scroll.y + ui_pressed(signal);
+					panel->u.parameter_listing.parameter_block = circular_add(block, delta, cycle);
+				}
+			}
+		}
+	}
+
 	UIFontSize(30.f)
 	UIScroll(Axis2_Count)
 	{
@@ -3333,6 +3558,32 @@ ui_build_live_imaging_controls(BeamformerUIPanel *panel)
 			UISignal signal = ui_label_button(kind_string);
 			if ui_pressed(signal)
 				ui_context_menu_open(signal.node->key, panel);
+
+			if ui_context_menu(panel) {
+				u64 enabled_kinds = atomic_load_u64(&lip->acquisition_kind_enabled_flags);
+
+				UIParent(ui_context->context_menu_root)
+				UIFontSize(24.f)
+				UIChildLayoutAxis(Axis2_X)
+				UIPrefHeight(ui_children_sum(1.f))
+				UIPrefWidth(ui_children_sum(1.f))
+				for EachBit(enabled_kinds, kind)
+				UIParent(ui_spacer(0))
+				{
+					ui_padw(UI_NODE_PAD);
+					UIPrefHeight(ui_text_dim(1.1f, 1.f))
+					UIPrefWidth(ui_text_dim(1.f, 1.f))
+						signal = ui_label_button(beamformer_acquisition_kind_strings[kind]);
+					ui_padw(UI_NODE_PAD);
+
+					if ui_pressed(signal) {
+						ui_context_menu_close();
+						lip->acquisition_kind = kind;
+						atomic_or_u32(&beamformer_context->shared_memory->live_imaging_dirty_flags,
+						              BeamformerLiveImagingDirtyFlags_AcquisitionKind);
+					}
+				}
+			}
 		}
 
 		UIPrefHeight(ui_text_dim(1.1f, 1.f))
@@ -3424,44 +3675,38 @@ ui_build_live_imaging_controls(BeamformerUIPanel *panel)
 
 				ui_padh(UI_NODE_PAD);
 
+				UIChildLayoutAxis(Axis2_Y)
 				UIAxisAlign(Axis2_X, Center)
+				UIPrefWidth(ui_children_sum(1.f))
+				UIPrefHeight(ui_children_sum(1.f))
+				spacer = ui_spacer(0);
+
+				UIParent(spacer)
 				UITextAlign(Center)
 				UIBGColour((v4){0})
 				UIPrefWidth(ui_text_dim(1.3f, 1.f))
 				UIPrefHeight(ui_text_dim(1.3f, 1.f))
 				{
-					UIPrefWidth(ui_pct(1.f, 1.f)) UIPrefHeight(ui_children_sum(1.f))
-					spacer = ui_spacer(0);
-
-					UIParent(spacer)
-					{
-						b32  active = lip->save_active;
-						str8 label  = active ? str8("Saving...###save_button") : str8("Save Data###save_button");
-						f32 save_t = beamformer_ui_blinker_update(&panel->u.live_imaging_save_button_blinker, BLINK_SPEED);
-						v4 border_colour = (v4){.a = 0.6f};
-						if (active) border_colour = v4_lerp(BORDER_COLOUR, FOCUSED_COLOUR, ease_in_out_cubic(save_t));
-						UIBorderColour(border_colour)
-						signal = ui_button(label);
-						if ui_pressed(signal) {
-							lip->save_active = !active;
-							atomic_or_u32(&beamformer_context->shared_memory->live_imaging_dirty_flags,
-							              BeamformerLiveImagingDirtyFlags_SaveData);
-						}
+					b32  active = lip->save_active;
+					str8 label  = active ? str8("Saving...###save_button") : str8("Save Data###save_button");
+					f32 save_t = beamformer_ui_blinker_update(&panel->u.live_imaging_save_button_blinker, BLINK_SPEED);
+					v4 border_colour = (v4){.a = 0.6f};
+					if (active) border_colour = v4_lerp(BORDER_COLOUR, FOCUSED_COLOUR, ease_in_out_cubic(save_t));
+					UIBorderColour(border_colour)
+					signal = ui_button(label);
+					if ui_pressed(signal) {
+						lip->save_active = !active;
+						atomic_or_u32(&beamformer_context->shared_memory->live_imaging_dirty_flags,
+						              BeamformerLiveImagingDirtyFlags_SaveData);
 					}
 
 					ui_padh(UI_NODE_PAD);
 
-					UIPrefWidth(ui_pct(1.f, 1.f)) UIPrefHeight(ui_children_sum(1.f))
-					spacer = ui_spacer(0);
-
-					UIParent(spacer)
-					{
-						UIBorderColour((v4){.a = 0.6f})
-						signal = ui_button(str8("Stop Imaging"));
-						if ui_pressed(signal)
-							atomic_or_u32(&beamformer_context->shared_memory->live_imaging_dirty_flags,
-							              BeamformerLiveImagingDirtyFlags_StopImaging);
-					}
+					UIBorderColour((v4){.a = 0.6f})
+					signal = ui_button(str8("Stop Imaging"));
+					if ui_pressed(signal)
+						atomic_or_u32(&beamformer_context->shared_memory->live_imaging_dirty_flags,
+						              BeamformerLiveImagingDirtyFlags_StopImaging);
 				}
 			}
 		}
@@ -3688,6 +3933,36 @@ ui_panel_group_equip(UINode *node, BeamformerUIPanel *group)
 			if ui_pressed(signal)
 				ui_context_menu_open(signal.node->key, group);
 
+			if ui_context_menu(group) {
+				UIParent(ui_context->context_menu_root)
+				UIChildLayoutAxis(Axis2_X)
+				UIPrefHeight(ui_children_sum(1.f))
+				UIPrefWidth(ui_children_sum(1.f))
+				for EachElement(beamformer_panel_infos, it)
+				{
+					BeamformerPanelInfo *info = beamformer_panel_infos + it;
+					b32 list        = (info->flags & BeamformerPanelFlags_List) != 0;
+					b32 needs_frame = (info->flags & BeamformerPanelFlags_NeedsFrame) != 0;
+					if (list && (!needs_frame || beamformer_frame_valid(beamformer_registers()->frame))) {
+						UIParent(ui_spacer(0))
+						{
+							ui_padw(UI_NODE_PAD);
+							UIPrefHeight(ui_text_dim(1.1f, 1.f))
+							UIPrefWidth(ui_text_dim(1.f, 1.f))
+								signal = ui_label_button(info->display);
+							ui_padw(UI_NODE_PAD);
+
+							if ui_pressed(signal) {
+								ui_context_menu_close();
+								beamformer_command(beamformer_command_infos[BeamformerCommandKind_OpenTab].string,
+								                   .tree_node = (u64)group,
+								                   .string    = info->string);
+							}
+						}
+					}
+				}
+			}
+
 			if (drop_site && !drop_site_handled && ui_context->drag_panel != group->last_child) {
 				drop_site_handled = 1;
 				ui_insert_drop_site_spacer_before(signal.node, tab_pad);
@@ -3876,6 +4151,7 @@ ui_build_regions(UINode *root_node, BeamformerUIPanel *tree_root)
 					container = ui_node_from_string(0, str8("###frame_view_container"));
 				ui_build_3d_xplane_frame_view(container, view);
 			}
+			if ui_context_menu(panel) ui_build_3d_xplane_context_menu(view);
 		}break;
 
 		case BeamformerPanelKind_FrameViewCopy:
@@ -3892,6 +4168,7 @@ ui_build_regions(UINode *root_node, BeamformerUIPanel *tree_root)
 					container = ui_node_from_string(0, str8("###frame_view_container"));
 				ui_build_frame_view(container, view);
 			}
+			if ui_context_menu(panel) ui_build_frame_view_context_menu(panel, view);
 		}break;
 
 		case BeamformerPanelKind_ParameterListing:{ ui_build_parameters_listing(panel); }break;
@@ -4235,303 +4512,6 @@ ui_build_drag_overlay(Rect window_rect)
 				}
 			}
 		}
-	}
-}
-
-function void
-ui_build_context_menu_for_panel(BeamformerUIPanel *panel)
-{
-	if (!panel)
-	{
-		// TODO(rnp): command pallete
-	}
-
-	if (panel) {
-		UIAxisSize(Axis2_X, ui_px(0.f, 0.5f)) ui_padh(0.8f * UI_NODE_PAD);
-		switch(panel->kind) {
-		InvalidDefaultCase;
-
-		case BeamformerPanelKind_TabGroup:{
-			for EachElement(beamformer_panel_infos, it) {
-				BeamformerPanelInfo *info = beamformer_panel_infos + it;
-				b32 list        = (info->flags & BeamformerPanelFlags_List) != 0;
-				b32 needs_frame = (info->flags & BeamformerPanelFlags_NeedsFrame) != 0;
-				if (list && (!needs_frame || beamformer_frame_valid(beamformer_registers()->frame))) {
-					UIChildLayoutAxis(Axis2_X)
-					UIPrefHeight(ui_children_sum(1.f))
-					UIPrefWidth(ui_children_sum(1.f))
-					UIParent(ui_spacer(0))
-					{
-						UISignal signal;
-						ui_padw(UI_NODE_PAD);
-						UIPrefHeight(ui_text_dim(1.1f, 1.f))
-						UIPrefWidth(ui_text_dim(1.f, 1.f))
-							signal = ui_label_button(info->display);
-						ui_padw(UI_NODE_PAD);
-
-						if ui_pressed(signal) {
-							ui_context_menu_close();
-							beamformer_command(beamformer_command_infos[BeamformerCommandKind_OpenTab].string,
-							                   .tree_node = (u64)panel,
-							                   .string    = info->string);
-						}
-					}
-				}
-			}
-		}break;
-
-		case BeamformerPanelKind_FrameViewCopy:
-		case BeamformerPanelKind_FrameViewLive:
-		{
-			BeamformerFrameView *view = panel->u.frame_view;
-
-			UINode *label_column, *button_column;
-			UIChildLayoutAxis(Axis2_X)
-			UIPrefHeight(ui_children_sum(1.f))
-			UIPrefWidth(ui_children_sum(1.f))
-			UIParent(ui_spacer(0))
-			UIChildLayoutAxis(Axis2_Y)
-			{
-				ui_padw(UI_NODE_PAD);
-				UIAxisAlign(Axis2_X, Left)   label_column  = ui_node_from_string(0, str8("###labels"));
-				ui_padw(UI_NODE_PAD * 2.f);
-				UIAxisAlign(Axis2_X, Center)
-					button_column = ui_node_from_string(0, str8("###buttons"));
-				ui_padw(UI_NODE_PAD);
-			}
-
-			UIPrefHeight(ui_text_dim(1.1f, 1.f))
-			UIPrefWidth(ui_text_dim(1.f, 1.f))
-			{
-				read_only local_persist str8 dimension_strings[2][2] = {
-					{str8_comp("Extent Scale Bar"),  str8_comp("Magnitude Scale Bar")},
-					{str8_comp("Lateral Scale Bar"), str8_comp("Axial Scale Bar")    },
-				};
-
-				UIParent(label_column)  ui_label(str8("Plane Tag"));
-				UIParent(button_column)
-				UIFlags(UINodeFlag_Scroll)
-				{
-					str8 tag = str8("Any");
-					if (view->view_plane != BeamformerViewPlaneTag_Count)
-						tag = beamformer_view_plane_tag_strings[view->view_plane];
-					UISignal signal = ui_label_button(push_str8_from_parts(ui_build_arena(), str8(""),
-					                                                       tag, str8("###PlaneTagButton")));
-					i32 delta = signal.scroll.y + ui_pressed(signal);
-					view->view_plane = circular_add(view->view_plane, delta, BeamformerViewPlaneTag_Count + 1);
-					if (ui_pressed(signal) || ui_scrolled(signal))
-						view->dirty = 1;
-				}
-
-				i32 dimension = iv3_dimension(view->frame.points);
-				dimension = Min(dimension, 2);
-				if (dimension > 0) {
-					for EachEnumValue(Axis2, axis) {
-						f32 row_height;
-						UIParent(label_column)
-							row_height = ui_label(dimension_strings[dimension - 1][axis]).node->computed_size[Axis2_Y];
-
-						UIParent(button_column)
-						// TODO(rnp): ui_em(1.f, 1.f) once font size matches directly
-						UIPrefHeight(ui_px(row_height, 1.f))
-						UIPrefWidth(ui_px(row_height, 1.f))
-						{
-							UISignal signal = ui_toggle_buttonf(view->scale_bar_active[axis], "###axis_%u", axis);
-							if ui_pressed(signal)
-								view->scale_bar_active[axis] = !view->scale_bar_active[axis];
-						}
-					}
-				}
-
-				{
-					f32 row_height;
-					UIParent(label_column)
-						row_height = ui_label(str8("Log Scale")).node->computed_size[Axis2_Y];
-
-					UIParent(button_column)
-					// TODO(rnp): ui_em(1.f, 1.f) once font size matches directly
-					UIPrefHeight(ui_px(row_height, 1.f))
-					UIPrefWidth(ui_px(row_height, 1.f))
-					{
-						UISignal signal = ui_toggle_button(view->log_scale, str8("###log_scale"));
-						if ui_pressed(signal) {
-							view->log_scale = !view->log_scale;
-							view->dirty     = 1;
-						}
-					}
-				}
-
-				if (dimension > 0 && panel->kind != BeamformerPanelKind_FrameViewCopy) {
-					f32 row_height;
-					UIParent(label_column)
-					{
-						UISignal signal = ui_label_button(str8("Copy Frame"));
-						row_height = signal.node->computed_size[Axis2_Y];
-						if ui_pressed(signal) {
-							ui_context_menu_close();
-							beamformer_command(beamformer_command_infos[BeamformerCommandKind_OpenTab].string,
-							                   .tree_node  = (u64)panel->parent,
-							                   .frame_view = (u64)view,
-							                   .string     = beamformer_panel_infos[BeamformerPanelKind_FrameViewCopy].string);
-						}
-					}
-
-					// TODO(rnp): ui_em(1.f, 1.f) once font size matches directly
-					UIParent(button_column) ui_padh(row_height);
-				}
-
-				// TODO(rnp): extra frame view copy settings
-				if (panel->kind == BeamformerPanelKind_FrameViewCopy) {
-				}
-			}
-		}break;
-
-		case BeamformerPanelKind_FrameViewXPlane:{
-			BeamformerFrameView *view = panel->u.frame_view;
-
-			UINode *label_column, *button_column;
-			UIChildLayoutAxis(Axis2_X)
-			UIPrefHeight(ui_children_sum(1.f))
-			UIPrefWidth(ui_children_sum(1.f))
-			UIParent(ui_spacer(0))
-			UIChildLayoutAxis(Axis2_Y)
-			{
-				ui_padw(UI_NODE_PAD);
-				UIAxisAlign(Axis2_X, Left)   label_column  = ui_node_from_string(0, str8("###labels"));
-				ui_padw(UI_NODE_PAD * 2.f);
-				UIAxisAlign(Axis2_X, Center)
-					button_column = ui_node_from_string(0, str8("###buttons"));
-				ui_padw(UI_NODE_PAD);
-			}
-
-			UIPrefHeight(ui_text_dim(1.1f, 1.f))
-			UIPrefWidth(ui_text_dim(1.f, 1.f))
-			{
-				{
-					f32 row_height;
-					UIParent(label_column)
-						row_height = ui_label(str8("Log Scale")).node->computed_size[Axis2_Y];
-
-					UIParent(button_column)
-					// TODO(rnp): ui_em(1.f, 1.f) once font size matches directly
-					UIPrefHeight(ui_px(row_height, 1.f))
-					UIPrefWidth(ui_px(row_height, 1.f))
-					{
-						UISignal signal = ui_toggle_button(view->log_scale, str8("###log_scale"));
-						if ui_pressed(signal) {
-							view->log_scale = !view->log_scale;
-							view->dirty     = 1;
-						}
-					}
-				}
-
-				{
-					f32 row_height;
-					UIParent(label_column)
-						row_height = ui_label(str8("Demo Mode")).node->computed_size[Axis2_Y];
-
-					UIParent(button_column)
-					// TODO(rnp): ui_em(1.f, 1.f) once font size matches directly
-					UIPrefHeight(ui_px(row_height, 1.f))
-					UIPrefWidth(ui_px(row_height, 1.f))
-					{
-						UISignal signal = ui_toggle_button(view->demo, str8("###demo_mode"));
-						if ui_pressed(signal)
-							view->demo = !view->demo;
-					}
-				}
-
-				UIParent(label_column)
-				{
-					f32 row_height = ui_label(str8("Planes:")).node->computed_size[Axis2_Y];
-					// TODO(rnp): ui_em(1.f, 1.f) once font size matches directly
-					UIParent(button_column) ui_padh(row_height);
-				}
-				for EachElement(view->plane_active, plane) {
-					f32 row_height;
-					UIParent(label_column)
-					{
-						str8 label = push_str8_from_parts(ui_build_arena(), str8(""), str8("    "),
-						                                  beamformer_view_plane_tag_strings[plane]);
-						row_height = ui_label(label).node->computed_size[Axis2_Y];
-					}
-
-					UIParent(button_column)
-					UIPrefHeight(ui_px(row_height, 1.f))
-					UIPrefWidth(ui_px(row_height, 1.f))
-					{
-						UISignal signal = ui_toggle_button(view->plane_active[plane],
-						                                   beamformer_view_plane_tag_strings[plane]);
-						if ui_pressed(signal)
-							view->plane_active[plane] = !view->plane_active[plane];
-					}
-				}
-			}
-		}break;
-
-		case BeamformerPanelKind_ParameterListing:{
-			UINode *label_column, *button_column;
-			UIChildLayoutAxis(Axis2_X)
-			UIPrefHeight(ui_children_sum(1.f))
-			UIPrefWidth(ui_children_sum(1.f))
-			UIParent(ui_spacer(0))
-			UIChildLayoutAxis(Axis2_Y)
-			{
-				ui_padw(UI_NODE_PAD);
-				UIAxisAlign(Axis2_X, Left)   label_column  = ui_node_from_string(0, str8("###labels"));
-				ui_padw(UI_NODE_PAD * 2.f);
-				UIAxisAlign(Axis2_X, Center)
-					button_column = ui_node_from_string(0, str8("###buttons"));
-				ui_padw(UI_NODE_PAD);
-			}
-
-			UIPrefHeight(ui_text_dim(1.1f, 1.f))
-			UIPrefWidth(ui_text_dim(1.f, 1.f))
-			{
-				UIParent(label_column) ui_label(str8("Block"));
-				UIParent(button_column)
-				{
-					UISignal signal;
-					u32 cycle = beamformer_context->shared_memory->reserved_parameter_blocks;
-					u32 block = panel->u.parameter_listing.parameter_block;
-					UIFlags(cycle <= 1 ? UINodeFlag_Disabled : 0)
-						signal = ui_label_buttonf("%u", block);
-					if (ui_pressed(signal) || ui_scrolled(signal)) {
-						i32 delta = signal.scroll.y + ui_pressed(signal);
-						panel->u.parameter_listing.parameter_block = circular_add(block, delta, cycle);
-					}
-				}
-			}
-		}break;
-
-		case BeamformerPanelKind_LiveImagingControls:{
-			BeamformerLiveImagingParameters *lip = &beamformer_context->shared_memory->live_imaging_parameters;
-			u64 enabled_kinds = atomic_load_u64(&lip->acquisition_kind_enabled_flags);
-
-			UIChildLayoutAxis(Axis2_X)
-			UIPrefHeight(ui_children_sum(1.f))
-			UIPrefWidth(ui_children_sum(1.f))
-			for EachBit(enabled_kinds, kind)
-			UIParent(ui_spacer(0))
-			{
-				UISignal signal;
-				ui_padw(UI_NODE_PAD);
-				UIPrefHeight(ui_text_dim(1.1f, 1.f))
-				UIPrefWidth(ui_text_dim(1.f, 1.f))
-					signal = ui_label_button(beamformer_acquisition_kind_strings[kind]);
-				ui_padw(UI_NODE_PAD);
-
-				if ui_pressed(signal) {
-					ui_context_menu_close();
-					lip->acquisition_kind = kind;
-					atomic_or_u32(&beamformer_context->shared_memory->live_imaging_dirty_flags,
-					              BeamformerLiveImagingDirtyFlags_AcquisitionKind);
-				}
-			}
-		}break;
-
-		}
-		UIAxisSize(Axis2_X, ui_px(0.f, 0.5f)) ui_padh(0.8f * UI_NODE_PAD);
 	}
 }
 
@@ -5322,10 +5302,7 @@ beamformer_ui_frame(void)
 				ui->context_menu_root = ui_node_from_string(UINodeFlag_DrawBackground, str8("context_menu_root"));
 			}
 
-			UIParent(ui->context_menu_root)
-			{
-				ui_build_context_menu_for_panel(ui->context_menu_panel);
-			}
+			UIParent(ui->context_menu_root) UIAxisSize(Axis2_X, ui_px(0.f, 0.5f)) ui_padh(0.8f * UI_NODE_PAD);
 		}
 
 		// NOTE(rnp): drag panel
@@ -5406,6 +5383,8 @@ beamformer_ui_frame(void)
 		ui_layout_nodes(ui->root_node);
 
 		if (!ui_node_key_nil(ui->context_menu_anchor_key)) {
+			UIParent(ui->context_menu_root) UIAxisSize(Axis2_X, ui_px(0.f, 0.5f)) ui_padh(0.8f * UI_NODE_PAD);
+
 			UINode *anchor   = ui_node_from_key(ui->context_menu_anchor_key);
 			v2      anchor_p = ui_node_final_position(anchor);
 			ui->context_menu_root->computed_position[Axis2_X] = anchor_p.x;
