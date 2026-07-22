@@ -1,7 +1,12 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
  * [ ]: backtrace dumping on SIGSEGV
- * [ ]: bug? HERCULES might be broken, we may need to to chunk on transmits instead of channels
+ * [ ]: cooperative shared memory loading in decode shader
+ * [ ]: upload previously exported data for display. maybe this is a UI thing but doing it
+ *      programatically would be nice.
+ * [ ]: Add interface for multi frame upload. RF upload already uses an offset into SM so
+ *      that part works fine. We just need a way of specify a multi frame upload. (Data must
+ *      be organized for simple offset access per frame).
  * [ ]: refactor: do_compute should build its own "command graph" which tracks
  *      dependencies better. It is very important that unnecessary barriers are
  *      not placed between compute stages which requires knowledge of the entire

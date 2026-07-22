@@ -80,10 +80,6 @@ BEAMFORMER_LIB_EXPORT void beamformer_set_global_timeout(uint32_t timeout_ms);
 ///////////////////////////
 // NOTE: Advanced API
 
-/* NOTE: downloads the last 32 frames worth of compute timings into output */
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_compute_timings(BeamformerComputeStatsTable *output,
-                                                          int32_t timeout_ms);
-
 /* NOTE: pushes data and tries to immediately starts a compute */
 BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_data_with_compute(void *data, uint32_t size,
                                                                  uint32_t image_plane_tag,

@@ -8,7 +8,6 @@
 #include "../util.h"
 
 #include "../generated/beamformer.meta.c"
-#include "../beamformer_parameters.h"
 #include "ogl_beamformer_lib_base.h"
 
 #if OS_LINUX
@@ -23,6 +22,7 @@ W32(iptr) OpenFileMappingA(u32, b32, c8 *);
 #endif
 
 #include "../util_os.c"
+#include "../beamformer_compute_stats.c"
 #include "../beamformer_shared_memory.c"
 
 global struct {
@@ -726,7 +726,7 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 	return result;
 }
 
-b32
+BEAMFORMER_LIB_EXPORT b32
 beamformer_compute_timings(BeamformerComputeStatsTable *output, i32 timeout_ms)
 {
 	b32 result = 0;

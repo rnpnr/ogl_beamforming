@@ -4308,7 +4308,7 @@ function b32
 metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 {
 	b32 result = 1;
-	if (!needs_rebuild(OUTPUT("matlab/OGLBeamformerShaderStage.m"), "beamformer_parameters.h", "beamformer.meta"))
+	if (!needs_rebuild(OUTPUT("matlab/OGLBeamformerShaderStage.m"), "beamformer.meta"))
 		return result;
 
 	build_log_generate("MATLAB Bindings");
@@ -4546,8 +4546,7 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 
 	build_log_generate("Library Header");
 
-	s8 parameters_header = read_entire_file("beamformer_parameters.h", &arena);
-	s8 base_header       = read_entire_file("lib/ogl_beamformer_lib_base.h", &arena);
+	s8 base_header = read_entire_file("lib/ogl_beamformer_lib_base.h", &arena);
 
 	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
 
@@ -4591,7 +4590,7 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 
 	meta_push_line(m, s8("// END GENERATED CODE\n"));
 
-	meta_push(m, parameters_header, base_header);
+	meta_push(m, base_header);
 	result &= meta_write_and_reset(m, out);
 
 	// NOTE(rnp): matlab compatible header
@@ -4633,7 +4632,7 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 
 		meta_push_line(m, s8("// END GENERATED CODE\n"));
 
-		meta_push(m, parameters_header, base_header);
+		meta_push(m, base_header);
 		result &= meta_write_and_reset(m, OUTPUT("ogl_beamformer_lib_matlab.h"));
 	}
 

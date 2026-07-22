@@ -251,7 +251,7 @@ CUDALibraryProcedureList
 /////////////////////////////////////
 // NOTE: Core Beamformer Definitions
 
-#include "beamformer_parameters.h"
+#include "beamformer_compute_stats.c"
 #include "beamformer_shared_memory.c"
 
 typedef struct {
