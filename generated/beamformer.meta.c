@@ -105,6 +105,17 @@ typedef enum {
 } BeamformerFilterKind;
 
 typedef enum {
+	BeamformerLiveFeedbackFlags_ImagePlaneOffsets = 0,
+	BeamformerLiveFeedbackFlags_TransmitPower     = 1,
+	BeamformerLiveFeedbackFlags_TGCControlPoints  = 2,
+	BeamformerLiveFeedbackFlags_SaveData          = 3,
+	BeamformerLiveFeedbackFlags_SaveNameTag       = 4,
+	BeamformerLiveFeedbackFlags_StopImaging       = 5,
+	BeamformerLiveFeedbackFlags_AcquisitionKind   = 6,
+	BeamformerLiveFeedbackFlags_Count,
+} BeamformerLiveFeedbackFlags;
+
+typedef enum {
 	BeamformerPanelKind_Nil                 = 0,
 	BeamformerPanelKind_Split               = 1,
 	BeamformerPanelKind_TabGroup            = 2,
@@ -141,6 +152,16 @@ typedef enum {
 	BeamformerCommandKind_SplitTree = 5,
 	BeamformerCommandKind_Count,
 } BeamformerCommandKind;
+
+typedef enum {
+	BeamformerLiveImagingDirtyFlags_ImagePlaneOffsets = 1 << 0,
+	BeamformerLiveImagingDirtyFlags_TransmitPower     = 1 << 1,
+	BeamformerLiveImagingDirtyFlags_TGCControlPoints  = 1 << 2,
+	BeamformerLiveImagingDirtyFlags_SaveData          = 1 << 3,
+	BeamformerLiveImagingDirtyFlags_SaveNameTag       = 1 << 4,
+	BeamformerLiveImagingDirtyFlags_StopImaging       = 1 << 5,
+	BeamformerLiveImagingDirtyFlags_AcquisitionKind   = 1 << 6,
+} BeamformerLiveImagingDirtyFlags;
 
 typedef enum {
 	BeamformerPanelFlags_List        = 1 << 0,
@@ -443,6 +464,19 @@ typedef struct {
 	u32                          compute_stages_count;
 	BeamformerDataKind           data_kind;
 } BeamformerSimpleParameters;
+
+typedef struct {
+	u32 active;
+	u32 save_enabled;
+	u32 save_active;
+	u32 acquisition_kind;
+	u64 acquisition_kind_enabled_flags;
+	f32 transmit_power;
+	f32 image_plane_offsets[BeamformerViewPlaneTag_Count];
+	f32 tgc_control_points[8];
+	i32 save_name_tag_length;
+	u8  save_name_tag[128];
+} BeamformerLiveImagingParameters;
 
 typedef struct {
 	v2  focal_vectors[BeamformerMaxChannelCount];

@@ -20,10 +20,6 @@
 #include <setjmp.h>
 #include <stdio.h>
 
-#define BeamformerMaxComputeShaderStages 1
-#define BeamformerViewPlaneTag_Count     1
-#include "beamformer_parameters.h"
-
 global char *g_argv0;
 
 #define META_NAMESPACE_UPPER "Beamformer"
@@ -582,7 +578,7 @@ function void
 check_rebuild_self(Arena arena, i32 argc, char *argv[])
 {
 	char *binary = shift(argv, argc);
-	if (needs_rebuild(binary, __FILE__, "os_win32.c", "os_linux.c", "util.c", "util.h", "beamformer_parameters.h")) {
+	if (needs_rebuild(binary, __FILE__, "os_win32.c", "os_linux.c", "util.c", "util.h")) {
 		Stream name_buffer = arena_stream(arena);
 		stream_append_s8s(&name_buffer, c_str_to_s8(binary), s8(".old"));
 		char *old_name = (char *)arena_stream_commit_zero(&arena, &name_buffer).data;
@@ -1027,14 +1023,6 @@ meta_push_(MetaprogramContext *m, s8 *items, iz count)
   meta_begin_matlab_class_cracker(__VA_ARGS__, \
                                   meta_begin_matlab_class_2, \
                                   meta_begin_matlab_class_1)(m, __VA_ARGS__)
-
-function void
-meta_push_matlab_property(MetaprogramContext *m, s8 name, u64 length, s8 kind)
-{
-	meta_begin_line(m, name, s8("(1,"));
-	meta_push_u64(m, (u64)length);
-	meta_end_line(m, s8(")"), kind.len > 0 ? s8(" ") : s8(""), kind);
-}
 
 function b32
 meta_end_and_write_matlab(MetaprogramContext *m, char *path)
@@ -1928,6 +1916,7 @@ typedef enum {
 typedef enum {
 	MetaStructMemberFlag_ReferenceType     = 1 << 0,
 	MetaStructMemberFlag_ReferenceElements = 1 << 1,
+	MetaStructMemberFlag_EnumerationCount  = 1 << 2,
 } MetaStructMemberFlags;
 
 typedef struct {
@@ -3353,6 +3342,8 @@ meta_struct_member_elements(MetaContext *ctx, MetaStruct *s, u32 member)
 	i32 result = s->elements[member];
 	if (s->member_flags[member] & MetaStructMemberFlag_ReferenceElements)
 		result = (i32)meta_entity(ctx, (MetaEntityID){result})->constant.U64;
+	if (s->member_flags[member] & MetaStructMemberFlag_EnumerationCount)
+		result = (i32)meta_entity(ctx, (MetaEntityID){result})->table.entry_count;
 	return result;
 }
 
@@ -3504,8 +3495,8 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 			} else {
 				Stream sb = arena_stream(m->scratch);
 
-				b32 elements_reference = (s->member_flags[member] & MetaStructMemberFlag_ReferenceElements) != 0;
-
+				b32 enum_count         = (s->member_flags[member] & MetaStructMemberFlag_EnumerationCount) != 0;
+				b32 elements_reference = enum_count || (s->member_flags[member] & MetaStructMemberFlag_ReferenceElements) != 0;
 				// NOTE(rnp): member name column
 				{
 					read_only local_persist str8 elements_count_open[MetaPushStructStyle_Count] = {
@@ -3540,6 +3531,7 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 						stream_append_s8s(&sb, member_name, s8_from_str8(elements_count_open[p.layout_style]));
 						if (elements_reference && p.element_count_style != MetaPushStructStyle_MATLAB) {
 							stream_append_s8s(&sb, s8_from_str8(p.str_element_prefix), ctx->entity_names.data[s->elements[member]]);
+							if (enum_count) stream_append_s8(&sb, s8("_Count"));
 						} else {
 							if (p.element_count_style == MetaPushStructStyle_MATLAB)
 								stream_append_s8(&sb, s8("1, "));
@@ -4316,7 +4308,7 @@ function b32
 metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 {
 	b32 result = 1;
-	if (!needs_rebuild(OUTPUT("matlab/OGLBeamformerLiveImagingParameters.m"), "beamformer_parameters.h", "beamformer.meta"))
+	if (!needs_rebuild(OUTPUT("matlab/OGLBeamformerShaderStage.m"), "beamformer_parameters.h", "beamformer.meta"))
 		return result;
 
 	build_log_generate("MATLAB Bindings");
@@ -4333,20 +4325,6 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 	os_make_directory(base_directory);
 
 	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
-
-	#define X(name, flag, ...) meta_push_line(m, s8(#name " (" str(flag) ")"));
-	meta_begin_matlab_class(m, "OGLBeamformerLiveFeedbackFlags", "int32");
-	meta_begin_scope(m, s8("enumeration"));
-	BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST
-	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerLiveFeedbackFlags.m"));
-	#undef X
-
-	#define X(name, __t, __s, elements, ...) meta_push_matlab_property(m, s8(#name), elements, s8(""));
-	meta_begin_matlab_class(m, "OGLBeamformerLiveImagingParameters");
-	meta_begin_scope(m, s8("properties"));
-	BEAMFORMER_LIVE_IMAGING_PARAMETERS_LIST
-	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerLiveImagingParameters.m"));
-	#undef X
 
 	meta_begin_matlab_class(m, "OGLBeamformerShaderStage", "int32");
 	meta_begin_scope(m, s8("enumeration"));
@@ -4893,11 +4871,20 @@ metagen_load_context(Arena *arena, char *filename)
 						if (integer.result == NumberConversionResult_Success) {
 							s->elements[member] = integer.U64;
 						} else {
-							s->member_flags[member] |= MetaStructMemberFlag_ReferenceElements;
-							i64 id = meta_lookup_string_slow(ctx->entity_names.data, ctx->entity_names.count, elements[member]);
+							s8 ref_name = elements[member];
+							if (ref_name.data[0] == '#') {
+								s->member_flags[member] |= MetaStructMemberFlag_EnumerationCount;
+								s8_chop(&ref_name, 1);
+							} else {
+								s->member_flags[member] |= MetaStructMemberFlag_ReferenceElements;
+							}
+
+							i64 id = meta_lookup_string_slow(ctx->entity_names.data, ctx->entity_names.count, ref_name);
 							if (id >= 0) {
 								MetaEntity *ee = ctx->entities.data + id;
-								if (ee->kind != MetaEntityKind_Constant || ee->constant.kind != MetaConstantKind_Integer) {
+								b32 valid = ee->kind == MetaEntityKind_Enumeration ||
+								           (ee->kind == MetaEntityKind_Constant && ee->constant.kind == MetaConstantKind_Integer);
+								if (!valid) {
 									// TODO(rnp): point at correct member
 									meta_compiler_error(e->location, "struct '%.*s': element count for field '%.*s'"
 									                                 "references '%.*s' which is not an integer constant\n",

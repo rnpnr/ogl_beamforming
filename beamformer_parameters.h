@@ -16,30 +16,3 @@ typedef struct {
 	float    times[32][BeamformerMaxComputeShaderStages];
 	float    rf_time_deltas[32];
 } BeamformerComputeStatsTable;
-
-#define BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST \
-	X(ImagePlaneOffsets, 0) \
-	X(TransmitPower,     1) \
-	X(TGCControlPoints,  2) \
-	X(SaveData,          3) \
-	X(SaveNameTag,       4) \
-	X(StopImaging,       5) \
-	X(AcquisitionKind,   6) \
-
-/* NOTE(rnp): if this exceeds 32 you need to fix the flag handling code */
-
-#define BEAMFORMER_LIVE_IMAGING_PARAMETERS_LIST \
-	X(active,                         uint32_t, ,                               1)   \
-	X(save_enabled,                   uint32_t, ,                               1)   \
-	X(save_active,                    uint32_t, ,                               1)   \
-	X(acquisition_kind,               uint32_t, ,                               1)   \
-	X(acquisition_kind_enabled_flags, uint64_t, ,                               1)   \
-	X(transmit_power,                 float,    ,                               1)   \
-	X(image_plane_offsets,            float,    [BeamformerViewPlaneTag_Count], BeamformerViewPlaneTag_Count) \
-	X(tgc_control_points,             float,    [8],                            8)   \
-	X(save_name_tag_length,           int32_t,  ,                               1)   \
-	X(save_name_tag,                  char,     [128],                          128)
-
-#define X(name, type, size, ...) type name size;
-typedef struct {BEAMFORMER_LIVE_IMAGING_PARAMETERS_LIST} BeamformerLiveImagingParameters;
-#undef X

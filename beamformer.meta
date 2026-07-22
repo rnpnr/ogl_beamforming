@@ -231,6 +231,39 @@
 @Library @Struct SimpleParameters
 @MATLAB  @Struct SimpleParameters
 
+@Flags LiveImagingDirtyFlags
+{
+	ImagePlaneOffsets
+	TransmitPower
+	TGCControlPoints
+	SaveData
+	SaveNameTag
+	StopImaging
+	AcquisitionKind
+}
+
+// NOTE(rnp): we have this other name in MATLAB for some reason
+@Enumeration LiveFeedbackFlags
+{
+	@Expand(LiveImagingDirtyFlags) `$(name)`
+}
+
+@Struct LiveImagingParameters
+{
+	[active                         U32   1]
+	[save_enabled                   U32   1]
+	[save_active                    U32   1]
+	[acquisition_kind               U32   1]
+	[acquisition_kind_enabled_flags U64   1]
+	[transmit_power                 F32   1]
+	[image_plane_offsets            F32 #ViewPlaneTag]
+	[tgc_control_points             F32   8]
+	[save_name_tag_length           S32   1]
+	[save_name_tag                  U8  128]
+}
+@Library @Struct LiveImagingParameters
+@MATLAB  @Struct LiveImagingParameters
+
 @Struct DASArrayParameters
 {
 	[focal_vectors                 V2  MaxChannelCount]

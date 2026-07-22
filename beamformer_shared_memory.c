@@ -62,10 +62,6 @@ typedef struct {
 	BeamformWork work_items[1 << 6];
 } BeamformWorkQueue;
 
-#define X(name, id) BeamformerLiveImagingDirtyFlags_##name = (1 << id),
-typedef enum {BEAMFORMER_LIVE_IMAGING_DIRTY_FLAG_LIST} BeamformerLiveImagingDirtyFlags;
-#undef X
-
 #define BEAMFORMER_PARAMETER_BLOCK_REGION_LIST \
 	X(ComputePipeline,             pipeline)        \
 	X(ChannelMapping,              channel_mapping) \
