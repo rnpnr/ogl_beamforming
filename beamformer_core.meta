@@ -1,0 +1,94 @@
+// See LICENSE for license details.
+@Flags PanelFlags
+{
+	List
+	NeedsFrame
+	HasSettings
+}
+
+@Struct PanelInfo
+{
+	[display     STR]
+	[string      STR]
+	[description STR]
+	[flags       PanelFlags]
+}
+
+@Table([name display string list needs_frame has_settings description]) PanelTable
+{
+	[Nil       `` nil   0 0 0 ``]
+	[Split     `` split 0 0 0 ``]
+	[TabGroup  `` group 0 0 0 ``]
+
+	[ComputeBarGraph     `Compute Bar Graph` compute_bar_graph  1 0 0 `Bar graph showing portions of compute occupied by each stage.`]
+	[ComputeStats        `Compute Stats`     compute_stats      1 0 0 `Average stats about beamforming computations.`]
+	[FrameViewLive       `Frame View`        frame_view_live    1 0 1 `Latest frame with selected tag.`]
+	[FrameViewCopy       `Frame View (Copy)` frame_view_copy    0 1 1 `Copy of an old frame. Useful for comparisons.`]
+	[FrameViewXPlane     `3D X-Plane`        frame_view_xplane  1 0 1 `3D Cross Plane View.`]
+	[LiveImagingControls `Live Controls`     live_controls      1 0 0 `Imaging system controls.`]
+	[ParameterListing    `Parameter Listing` parameters_listing 1 0 1 `Editable parameter set used for beamforming.`]
+}
+@Expand(PanelTable) @Enumeration(`$(name)`) PanelKind
+@Emit
+{
+	`read_only global BeamformerPanelInfo beamformer_panel_infos[] = {`
+	@Expand(PanelTable) `	{str8_comp("$(display)"), str8_comp("$(string)"), str8_comp("$(description)"), ($(list)*BeamformerPanelFlags_List)|($(needs_frame)*BeamformerPanelFlags_NeedsFrame)|($(has_settings)*BeamformerPanelFlags_HasSettings)},`
+	`};`
+}
+
+@Table ([type name upper]) RegistersTable
+{
+	[STR string           String        ]
+	[U64 tree_node        TreeNode      ]
+	[U64 window           Window        ]
+	[U64 frame            Frame         ]
+
+	[U64 frame_view       FrameView     ]
+
+	// NOTE(rnp): Panel Movement and Splitting
+	[U64 split_axis       SplitAxis     ]
+	[U64 split_left_tree  SplitLeftTree ]
+	[U64 split_right_tree SplitRightTree]
+
+	[U64 drop_target_tree DropTargetTree]
+	[U64 drop_child_index DropChildIndex]
+}
+@Expand(RegistersTable) @Struct([`$(name)` `$(type)`]) Registers
+@Expand(RegistersTable) @Enumeration(`$(upper)`)       RegisterSlot
+
+@Emit
+{
+	`#define beamformer_registers_init_literal \`
+	@Expand(RegistersTable) `	.$(name)$(|)= beamformer_registers()->$(name), \`
+}
+
+@Struct CommandInfo
+{
+	[string      STR]
+	[display     STR]
+	[description STR]
+}
+
+@Table([kind string display_string description]) CommandTable
+{
+	// NOTE(rnp): tab commands
+	[CloseTab  `close_tab`  `Close Tab`  `Closes currently active tab.`]
+	[FocusTab  `focus_tab`  `Focus Tab`  `Focus the currently selected tab in its group.`]
+	[MoveTab   `move_tab`   `Move Tab`   `Moves an exisiting tab to a different group/split.`]
+	[OpenTab   `open_tab`   `Open Tab`   `Opens a new tab with a specified view.`]
+	[SplitTree `split_tree` `Split Tree` `Splits the UI into two new splits.`]
+}
+
+@Enumeration CommandKind
+{
+	Nil
+	@Expand(CommandTable) `$(kind)`
+}
+
+@Emit
+{
+	`read_only global BeamformerCommandInfo beamformer_command_infos[] = {`
+	`	{0},`
+	@Expand(CommandTable) `	{str8_comp("$(string)"), str8_comp("$(display_string)"), str8_comp("$(description)")},`
+	`};`
+}

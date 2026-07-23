@@ -2,12 +2,6 @@
 /* NOTE: inspired by nob: https://github.com/tsoding/nob.h */
 
 /* TODO(rnp):
- * [ ]: refactor: unify struct type paths
- *      - struct printing can do a stack traversal for sub types
- *        but it should not have other branching
- *      - basically we should flatten structs into a base type
- *        similar to ornot where we know the size of everything
- *        and all names are fully resolved
  * [ ]: refactor: allow @Expand to come before the table definition
  * [ ]: cross compile/override baked compiler
  * [ ]: msvc build doesn't detect out of date files correctly
@@ -1001,11 +995,11 @@ meta_push_(MetaprogramContext *m, s8 *items, iz count)
 
 #define meta_pad(m, b, n)                stream_pad(&(m)->stream, (b), (n))
 #define meta_indent(m)                   meta_pad((m), '\t', (m)->indentation_level)
-#define meta_begin_line(m, ...)     do { meta_indent(m); meta_push(m, __VA_ARGS__);                } while(0)
+#define meta_begin_line(m, ...)          meta_indent(m), meta_push(m, __VA_ARGS__)
 #define meta_end_line(m, ...)                            meta_push(m, ##__VA_ARGS__, s8("\n"))
-#define meta_push_line(m, ...)      do { meta_indent(m); meta_push(m, ##__VA_ARGS__, s8("\n"));    } while(0)
-#define meta_begin_scope(m, ...)    do { meta_push_line(m, __VA_ARGS__); (m)->indentation_level++; } while(0)
-#define meta_end_scope(m, ...)      do { (m)->indentation_level--; meta_push_line(m, __VA_ARGS__); } while(0)
+#define meta_push_line(m, ...)           meta_indent(m), meta_push(m, ##__VA_ARGS__, s8("\n"))
+#define meta_begin_scope(m, ...)         meta_push_line(m, __VA_ARGS__), (m)->indentation_level++
+#define meta_end_scope(m, ...)           (m)->indentation_level--, meta_push_line(m, __VA_ARGS__)
 #define meta_push_f64(m, n)              stream_append_f64(&(m)->stream, (n), 1000000)
 #define meta_push_u64(m, n)              stream_append_u64(&(m)->stream, (n))
 #define meta_push_i64(m, n)              stream_append_i64(&(m)->stream, (n))
@@ -1942,6 +1936,7 @@ typedef struct {
 
 	str8 filename;
 	str8 directory;
+	str8 fullpath;
 
 	MetaEntityID                 library_entity;
 	MetaEntityID                 matlab_entity;
@@ -3628,6 +3623,9 @@ meta_push_matlab_properties(MetaprogramContext *m, MetaContext *ctx, MetaStruct 
 function void
 meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 {
+	if (!ctx->base_shader_count)
+		return;
+
 	///////////////////////////////
 	// NOTE(rnp): reloadable infos
 	meta_begin_scope(m, s8("read_only global " META_NAMESPACE_UPPER "ShaderKind " META_NAMESPACE_LOWER "_reloadable_shader_kinds[] = {"));
@@ -3856,8 +3854,29 @@ metagen_emit_c_s8_list(MetaprogramContext *m, s8 *strs, u32 count)
 function b32
 metagen_emit_c_code(MetaContext *ctx, Arena arena)
 {
-	os_make_directory("generated");
-	char *out_meta    = "generated" OS_PATH_SEPARATOR "beamformer.meta.c";
+	b32 result = 1;
+	char *out, *out_shaders;
+	{
+		str8 basename;
+		str8_split(ctx->filename, &basename, 0, '.');
+
+		Stream sb = arena_stream(arena);
+		stream_append_s8s(&sb, s8_from_str8(ctx->directory), s8(OS_PATH_SEPARATOR), s8("generated"));
+		stream_append_byte(&sb, 0);
+		os_make_directory((c8 *)sb.data);
+		stream_reset(&sb, sb.widx - 1);
+
+		stream_append_s8s(&sb, s8(OS_PATH_SEPARATOR), s8_from_str8(basename), s8(".c"));
+		stream_append_byte(&sb, 0);
+
+		out = (c8 *)arena_stream_commit_and_reset(&arena, &sb).data;
+
+		stream_append_s8s(&sb, s8_from_str8(ctx->directory), s8(OS_PATH_SEPARATOR), s8("generated"));
+		stream_append_s8s(&sb, s8(OS_PATH_SEPARATOR), s8_from_str8(basename), s8("_shader_data.c"));
+		stream_append_byte(&sb, 0);
+
+		out_shaders = (c8 *)arena_stream_commit(&arena, &sb).data;
+	}
 
 	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
 
@@ -3865,12 +3884,9 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		build_fatal("Failed to generate C Code");
 	}
 
-	b32 result = 1;
-
 	////////////////////////////
 	// NOTE(rnp): shader baking
-	{
-		char *out_shaders = "generated" OS_PATH_SEPARATOR "beamformer_shaders.c";
+	if (ctx->base_shader_count) {
 		char **deps = push_array(&m->scratch, char *, 2 * ctx->base_shader_count);
 		u32 dep_count = 0;
 		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
@@ -3879,8 +3895,9 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 			if (s->files[1].len > 0)
 				deps[dep_count++] = (c8 *)push_s8_from_parts(&m->scratch, s8(OS_PATH_SEPARATOR), s8("shaders"), s->files[1]).data;
 		}
+
 		if (needs_rebuild_(out_shaders, deps, dep_count)) {
-			build_log_generate("Bake Shaders");
+			build_log_generate("%.*s: baking shaders", (i32)ctx->filename.length, ctx->filename.data);
 			meta_push(m, c_file_header);
 			meta_push_shader_bake(m, ctx);
 			result &= meta_write_and_reset(m, out_shaders);
@@ -3888,10 +3905,15 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		m->scratch = ctx->scratch;
 	}
 
-	if (!needs_rebuild(out_meta, "beamformer.meta"))
-		return result;
+	{
+		CommandList deps = meta_extract_emit_file_dependencies(ctx, &m->scratch);
+		*da_push(&m->scratch, &deps) = (c8 *)ctx->filename.data;
+		if (!needs_rebuild_(out, deps.data, deps.count))
+			return result;
+		m->scratch = ctx->scratch;
+	}
 
-	build_log_generate("Core C Code");
+	build_log_generate("%.*s: C Code", (i32)ctx->filename.length, ctx->filename.data);
 
 	meta_push(m, c_file_header);
 
@@ -3916,7 +3938,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		u32 row_count;
 
 		row_count = 0;
-		meta_push_line(m, s8("// NOTE: Constants (Integer)"));
+		if (integers) meta_push_line(m, s8("// NOTE: Constants (Integer)"));
 		for (da_count constant = 0; constant < ctx->entity_kind_counts[MetaEntityKind_Constant]; constant++) {
 			da_count    id = ctx->entity_kind_ids[MetaEntityKind_Constant][constant];
 			MetaEntity *e  = ctx->entities.data + id;
@@ -3932,7 +3954,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		metagen_push_table(m, m->scratch, str8("#define " META_NAMESPACE_UPPER), str8(")"), columns, row_count, 2);
 
 		row_count = 0;
-		meta_push_line(m, s8("\n// NOTE: Constants (Float)"));
+		if (floats) meta_push_line(m, s8("\n// NOTE: Constants (Float)"));
 		for (da_count constant = 0; constant < ctx->entity_kind_counts[MetaEntityKind_Constant]; constant++) {
 			da_count    id = ctx->entity_kind_ids[MetaEntityKind_Constant][constant];
 			MetaEntity *e  = ctx->entities.data + id;
@@ -3948,8 +3970,9 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		metagen_push_table(m, m->scratch, str8("#define " META_NAMESPACE_UPPER), str8(")"), columns, row_count, 2);
 
 		m->scratch = ctx->scratch;
+
+		if (integers || floats) meta_push(m, s8("\n"));
 	}
-	meta_push(m, s8("\n"));
 
 	/////////////////////////
 	// NOTE(rnp): enumerants
@@ -3969,7 +3992,8 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		}
 	}
 
-	{
+	// TODO(rnp): technically this needs to be namespaced to the file they are coming from
+	if (ctx->entity_kind_counts[MetaEntityKind_Shader]) {
 		s8 kind      = s8(META_NAMESPACE_UPPER "ShaderKind");
 		s8 kind_full = s8(META_NAMESPACE_UPPER "ShaderKind_");
 		meta_begin_scope(m, s8("typedef enum {"));
@@ -4041,7 +4065,9 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	}
 
 	// NOTE: shader bake parameter union
-	meta_begin_scope(m, s8("typedef union {"));
+	if (ctx->entity_kind_counts[MetaEntityKind_BakeParameters])
+	DeferLoop(meta_begin_scope(m, s8("typedef union {")),
+	          meta_end_scope(m, s8("} " META_NAMESPACE_UPPER "ShaderBakeParameters;\n")))
 	{
 		Arena scratch;
 		DeferLoop(scratch = m->scratch, m->scratch = scratch)
@@ -4062,21 +4088,27 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 			metagen_push_table(m, m->scratch, str8(""), str8(";"), columns,
 			                   ctx->entity_kind_counts[MetaEntityKind_BakeParameters], 2);
 		}
-	} meta_end_scope(m, s8("} " META_NAMESPACE_UPPER "ShaderBakeParameters;\n"));
+	}
 
 	metagen_run_emit_set(m, ctx, ctx->emit_sets + MetaEmitLang_C, (s8 *)meta_kind_c_types);
 
 	/////////////////////////////////
 	// NOTE(rnp): shader info tables
-	meta_begin_scope(m, s8("read_only global s8 " META_NAMESPACE_LOWER "_shader_names[] = {"));
-	for (da_count shader = 0; shader < ctx->entity_kind_counts[MetaEntityKind_Shader]; shader++) {
-		da_count id = ctx->entity_kind_ids[MetaEntityKind_Shader][shader];
-		meta_push_line(m, s8("s8_comp(\""), ctx->entity_names.data[id], s8("\"),"));
-	} meta_end_scope(m, s8("};\n"));
+	if (ctx->entity_kind_counts[MetaEntityKind_Shader])
+	DeferLoop(meta_begin_scope(m, s8("read_only global s8 " META_NAMESPACE_LOWER "_shader_names[] = {")),
+	          meta_end_scope(m, s8("};\n")))
+	{
+		for (da_count shader = 0; shader < ctx->entity_kind_counts[MetaEntityKind_Shader]; shader++) {
+			da_count id = ctx->entity_kind_ids[MetaEntityKind_Shader][shader];
+			meta_push_line(m, s8("s8_comp(\""), ctx->entity_names.data[id], s8("\"),"));
+		}
+	}
 
 	meta_push_shader_reload_info(m, ctx);
 
-	meta_begin_scope(m, s8("read_only global i32 *" META_NAMESPACE_LOWER "_shader_header_vectors[] = {"));
+	if (ctx->base_shader_count)
+	DeferLoop(meta_begin_scope(m, s8("read_only global i32 *" META_NAMESPACE_LOWER "_shader_header_vectors[] = {")),
+	          meta_end_scope(m, s8("};\n")))
 	{
 		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
 			da_count    id = ctx->base_shader_ids[bs];
@@ -4095,9 +4127,11 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 				meta_push_line(m, s8("0,"));
 			}
 		}
-	} meta_end_scope(m, s8("};\n"));
+	}
 
-	meta_begin_scope(m, s8("read_only global i32 " META_NAMESPACE_LOWER "_shader_header_vector_lengths[] = {"));
+	if (ctx->base_shader_count)
+	DeferLoop(meta_begin_scope(m, s8("read_only global i32 " META_NAMESPACE_LOWER "_shader_header_vector_lengths[] = {")),
+	          meta_end_scope(m, s8("};\n")))
 	{
 		for (da_count bs= 0; bs < ctx->base_shader_count; bs++) {
 			da_count    id = ctx->base_shader_ids[bs];
@@ -4106,9 +4140,11 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 			meta_push_i64(m, s->entity_reference_ids.count);
 			meta_end_line(m, s8(","));
 		}
-	} meta_end_scope(m, s8("};\n"));
+	}
 
-	meta_begin_scope(m, s8("read_only global s8 *" META_NAMESPACE_LOWER "_shader_bake_parameter_names[] = {"));
+	if (ctx->base_shader_count)
+	DeferLoop(meta_begin_scope(m, s8("read_only global s8 *" META_NAMESPACE_LOWER "_shader_bake_parameter_names[] = {")),
+	          meta_end_scope(m, s8("};\n")))
 	{
 		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
 			da_count    id = ctx->base_shader_ids[bs];
@@ -4121,9 +4157,11 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 				meta_push_line(m, s8("0,"));
 			}
 		}
-	} meta_end_scope(m, s8("};\n"));
+	}
 
-	meta_begin_scope(m, s8("read_only global u32 " META_NAMESPACE_LOWER "_shader_bake_parameter_float_bits[] = {"));
+	if (ctx->base_shader_count)
+	DeferLoop(meta_begin_scope(m, s8("read_only global u32 " META_NAMESPACE_LOWER "_shader_bake_parameter_float_bits[] = {")),
+	          meta_end_scope(m, s8("};\n")))
 	{
 		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
 			da_count    id = ctx->base_shader_ids[bs];
@@ -4143,9 +4181,11 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 			meta_push_u64_hex_width(m, hex, 8);
 			meta_end_line(m, s8("UL,"));
 		}
-	} meta_end_scope(m, s8("};\n"));
+	}
 
-	meta_begin_scope(m, s8("read_only global u8 " META_NAMESPACE_LOWER "_shader_bake_parameter_counts[] = {"));
+	if (ctx->base_shader_count)
+	DeferLoop(meta_begin_scope(m, s8("read_only global u8 " META_NAMESPACE_LOWER "_shader_bake_parameter_counts[] = {")),
+	          meta_end_scope(m, s8("};\n")))
 	{
 		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
 			da_count    id = ctx->base_shader_ids[bs];
@@ -4158,24 +4198,25 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 			meta_push_u64(m, count);
 			meta_end_line(m, s8(","));
 		}
-	} meta_end_scope(m, s8("};\n"));
+	}
 
-	meta_begin_scope(m, s8("read_only global u8 " META_NAMESPACE_LOWER "_shader_push_constant_sizes[] = {"));
-	for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
-		da_count    id = ctx->base_shader_ids[bs];
-		MetaEntity *e  = ctx->entities.data + id;
-		MetaEntityID pc_id = meta_entity_first_child_of_kind(ctx, e, MetaEntityKind_PushConstants);
-		if (pc_id.value != 0) {
-			meta_push_line(m, s8("sizeof(" META_NAMESPACE_UPPER), ctx->entity_names.data[id], s8("PushConstants),"));
-		} else {
-			meta_push_line(m, s8("0,"));
+	if (ctx->base_shader_count)
+	DeferLoop(meta_begin_scope(m, s8("read_only global u8 " META_NAMESPACE_LOWER "_shader_push_constant_sizes[] = {")),
+	          meta_end_scope(m, s8("};\n")))
+	{
+		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
+			da_count    id = ctx->base_shader_ids[bs];
+			MetaEntity *e  = ctx->entities.data + id;
+			MetaEntityID pc_id = meta_entity_first_child_of_kind(ctx, e, MetaEntityKind_PushConstants);
+			if (pc_id.value != 0) {
+				meta_push_line(m, s8("sizeof(" META_NAMESPACE_UPPER), ctx->entity_names.data[id], s8("PushConstants),"));
+			} else {
+				meta_push_line(m, s8("0,"));
+			}
 		}
 	}
-	meta_end_scope(m, s8("};\n"));
 
-	//fprintf(stderr, "%.*s\n", (i32)m.stream.widx, m.stream.data);
-
-	result = meta_write_and_reset(m, out_meta);
+	result = meta_write_and_reset(m, out);
 
 	return result;
 }
@@ -4663,10 +4704,15 @@ metagen_load_context(Arena *arena, char *filename)
 
 	MetaContext *result = ctx;
 
-	ctx->filename  = str8_from_c_str(filename);
+	ctx->filename  = push_str8(ctx->arena, str8_from_c_str(filename));
 	ctx->directory = str8_chop(&ctx->filename, str8_scan_backwards(ctx->filename, OS_PATH_SEPARATOR_CHAR));
-	str8_chop(&ctx->filename, 1);
-	if (ctx->directory.length <= 0) ctx->directory = str8(".");
+	ctx->fullpath  = str8_from_c_str((c8 *)ctx->directory.data);
+	if (ctx->directory.length > 0) str8_chop(&ctx->filename, 1);
+	if (ctx->directory.length <= 0) {
+		ctx->directory = str8(".");
+		ctx->fullpath = push_str8_from_parts(ctx->arena, str8(""), ctx->directory,
+		                                     str8(OS_PATH_SEPARATOR), ctx->filename);
+	}
 
 	Arena scratch = ctx->scratch;
 	MetaEntryStack entries = meta_entry_stack_from_file(ctx->arena, filename);
@@ -5012,35 +5058,7 @@ function b32
 metagen_file_direct(Arena arena, char *filename)
 {
 	MetaContext *ctx = metagen_load_context(&arena, filename);
-	if (!ctx) return 0;
-
-	b32 result = 1;
-	char *out;
-	{
-		str8 basename;
-		str8_split(ctx->filename, &basename, 0, '.');
-
-		Stream sb = arena_stream(arena);
-		stream_append_s8s(&sb, s8_from_str8(ctx->directory), s8(OS_PATH_SEPARATOR), s8("generated"));
-		stream_append_byte(&sb, 0);
-		os_make_directory((c8 *)sb.data);
-		stream_reset(&sb, sb.widx - 1);
-
-		stream_append_s8s(&sb, s8(OS_PATH_SEPARATOR), s8_from_str8(basename), s8(".c"));
-		stream_append_byte(&sb, 0);
-
-		out = (c8 *)arena_stream_commit(&arena, &sb).data;
-	}
-
-	CommandList deps = meta_extract_emit_file_dependencies(ctx, &arena);
-	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
-	if (needs_rebuild_(out, deps.data, deps.count)) {
-		build_log_generate("%s", out);
-		meta_push(m, c_file_header);
-		metagen_run_emit_set(m, ctx, ctx->emit_sets + MetaEmitLang_C, (s8 *)meta_kind_c_types);
-		result &= meta_write_and_reset(m, out);
-	}
-
+	b32 result = ctx && metagen_emit_c_code(ctx, arena);
 	return result;
 }
 
@@ -5057,6 +5075,7 @@ main(i32 argc, char *argv[])
 	os_make_directory(OUTDIR);
 
 	result &= metagen_file_direct(arena, "assets" OS_PATH_SEPARATOR "assets.meta");
+	result &= metagen_file_direct(arena, "beamformer_core.meta");
 
 	MetaContext *meta = metagen_load_context(&arena, "beamformer.meta");
 	if (!meta) return 1;

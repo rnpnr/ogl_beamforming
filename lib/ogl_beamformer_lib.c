@@ -7,7 +7,7 @@
 
 #include "../util.h"
 
-#include "../generated/beamformer.meta.c"
+#include "../generated/beamformer.c"
 #include "ogl_beamformer_lib_base.h"
 
 #if OS_LINUX

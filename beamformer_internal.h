@@ -7,8 +7,9 @@
 #include "util.h"
 #include "opengl.h"
 
-#include "generated/beamformer.meta.c"
-#include "generated/beamformer_shaders.c"
+#include "generated/beamformer.c"
+#include "generated/beamformer_core.c"
+#include "generated/beamformer_shader_data.c"
 
 #include "external/raylib/src/raylib.h"
 #include "external/raylib/src/rlgl.h"
