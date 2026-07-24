@@ -41,16 +41,16 @@ beamformer_debug_hot_reload(OSLibrary library, BeamformerInput *input)
 	BEAMFORMER_DEBUG_ENTRY_POINTS
 	#undef X
 
-	s8 info = beamformer_info("reloaded main executable");
-	os_console_log(info.data, info.len);
+	str8 info = beamformer_info("reloaded main executable");
+	os_console_log(info.data, info.length);
 }
 
 #endif /* BEAMFORMER_DEBUG */
 
 function no_return void
-fatal(s8 message)
+fatal(str8 message)
 {
-	os_fatal(message.data, message.len);
+	os_fatal(message.data, message.length);
 	unreachable();
 }
 
@@ -64,7 +64,7 @@ function void
 gl_debug_logger(u32 src, u32 type, u32 id, u32 lvl, i32 len, const char *msg, const void *userctx)
 {
 	Stream *e = (Stream *)userctx;
-	stream_append_s8s(e, s8("[OpenGL] "), (s8){.len = len, .data = (u8 *)msg}, s8("\n"));
+	stream_append_str8s(e, str8("[OpenGL] "), (str8){.length = len, .data = (u8 *)msg}, str8("\n"));
 	os_console_log(e->data, e->widx);
 	stream_reset(e, 0);
 }
@@ -78,7 +78,7 @@ load_gl(Stream *err)
 	#undef X
 
 	stream_reset(err, 0);
-	#define X(name, ret, params) if (!name) stream_append_s8(err, s8("missing required GL function: " #name "\n"));
+	#define X(name, ret, params) if (!name) stream_append_str8(err, str8("missing required GL function: " #name "\n"));
 	OGLProcedureList
 	OGLRequiredExtensionProcedureListBase
 	#if OS_WINDOWS
@@ -88,7 +88,7 @@ load_gl(Stream *err)
 	#endif
 	#undef X
 
-	if (err->widx) fatal(stream_to_s8(err));
+	if (err->widx) fatal(stream_to_str8(err));
 }
 
 function void
@@ -101,7 +101,7 @@ beamformer_load_cuda_library(BeamformerCtx *ctx, OSLibrary cuda, Arena arena)
 	if (result) {
 		Stream err = arena_stream(arena);
 
-		stream_append_s8(&err, beamformer_info("loading CUDA library functions"));
+		stream_append_str8(&err, beamformer_info("loading CUDA library functions"));
 		#define X(name, symname) cuda_## name = os_lookup_symbol(cuda, symname);
 		CUDALibraryProcedureList
 		#undef X
@@ -235,7 +235,7 @@ beamformer_init(BeamformerInput *input)
 		}
 		if (cs->backlog.buffer->size == 0) {
 			// NOTE(rnp): if this becomes an issue we may be able to get by in some other way
-			fatal(s8("Failed to allocate space for beamformed data\n"));
+			fatal(str8("Failed to allocate space for beamformed data\n"));
 		}
 
 		BeamformerShaderResourceInfo shader_resource_infos[] = {
@@ -255,7 +255,7 @@ beamformer_init(BeamformerInput *input)
 	ctx->shared_memory      = input->shared_memory;
 	ctx->shared_memory_size = input->shared_memory_size;
 	if (ctx->shared_memory_size < (i64)sizeof(*ctx->shared_memory))
-		fatal(s8("Get more ram lol\n"));
+		fatal(str8("Get more ram lol\n"));
 	zero_struct(ctx->shared_memory);
 
 	ctx->shared_memory->version = BEAMFORMER_SHARED_MEMORY_VERSION;
@@ -278,7 +278,7 @@ beamformer_init(BeamformerInput *input)
 	{
 		Stream sb = arena_stream(memory);
 		stream_append(&sb, input->shared_memory_name, input->shared_memory_name_length);
-		stream_append_s8(&sb, s8("_lock_"));
+		stream_append_str8(&sb, str8("_lock_"));
 		i32 start_index = sb.widx;
 		for EachElement(os_w32_shared_memory_semaphores, it) {
 			stream_reset(&sb, start_index);
@@ -326,23 +326,23 @@ beamformer_init(BeamformerInput *input)
 		for EachElement(beamformer_reloadable_compute_shader_info_indices, it) {
 			i32   index = beamformer_reloadable_compute_shader_info_indices[it];
 			Arena temp  = scratch;
-			s8 file = push_s8_from_parts(&temp, os_path_separator(), s8("shaders"),
-			                             beamformer_reloadable_shader_files[index][0]);
+			str8 file = push_str8_from_parts(&temp, os_path_separator(), str8("shaders"),
+			                                 beamformer_reloadable_shader_files[index][0]);
 			BeamformerFileReloadContext *frc = push_struct(&memory, typeof(*frc));
 			frc->kind                 = BeamformerFileReloadKind_ComputeShader;
 			frc->shader_reload.shader = beamformer_reloadable_shader_kinds[index];
-			os_add_file_watch((char *)file.data, file.len, frc);
+			os_add_file_watch((char *)file.data, file.length, frc);
 		}
 
 		for EachElement(beamformer_reloadable_compute_helpers_shader_info_indices, it) {
 			i32   index = beamformer_reloadable_compute_helpers_shader_info_indices[it];
 			Arena temp  = scratch;
-			s8 file = push_s8_from_parts(&temp, os_path_separator(), s8("shaders"),
-			                             beamformer_reloadable_shader_files[index][0]);
+			str8 file = push_str8_from_parts(&temp, os_path_separator(), str8("shaders"),
+			                                 beamformer_reloadable_shader_files[index][0]);
 			BeamformerFileReloadContext *frc = push_struct(&memory, typeof(*frc));
 			frc->kind                 = BeamformerFileReloadKind_ComputeShader;
 			frc->shader_reload.shader = beamformer_reloadable_shader_kinds[index];
-			os_add_file_watch((char *)file.data, file.len, frc);
+			os_add_file_watch((char *)file.data, file.length, frc);
 		}
 	}
 

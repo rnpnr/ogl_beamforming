@@ -1,5 +1,7 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: bug: nil nodes break hot reloading
+ *    - only one that matters is ui_node_nil, for now maybe just put it into ui_context (won't be read_only of course)
  * [ ]: bug: flickering x-scroll bar on switch from ComputeBarGraph to other
  * [ ]: word scan for text input
  * [ ]: animation state
@@ -770,17 +772,17 @@ push_acquisition_kind(Arena *arena, BeamformerAcquisitionKind kind, u32 transmit
 	}
 
 	Stream sb = arena_stream(*arena);
-	stream_append_s8(&sb, s8_from_str8(name));
+	stream_append_str8(&sb, name);
 	if (!fixed_transmits) {
 		stream_append_byte(&sb, '-');
 		stream_append_u64(&sb, transmit_count);
 	}
 
 	if (contrast_mode != BeamformerContrastMode_None)
-		stream_append_s8s(&sb, s8(" ("), s8_from_str8(beamformer_contrast_mode_strings[contrast_mode]), s8(")"));
+		stream_append_str8s(&sb, str8(" ("), beamformer_contrast_mode_strings[contrast_mode], str8(")"));
 
-	s8 result = arena_stream_commit(arena, &sb);
-	return str8_from_s8(result);
+	str8 result = arena_stream_commit(arena, &sb);
+	return result;
 }
 
 function void
@@ -795,7 +797,7 @@ resize_frame_view(BeamformerFrameView *view, uv2 dim)
 	glCreateTextures(GL_TEXTURE_2D, 1, &view->texture);
 
 	/* TODO(rnp): add some ID for the specific view here */
-	s8 label = s8("Frame View Texture");
+	str8 label = str8("Frame View Texture");
 	vk_image_allocate(&view->colour_image, dim.w, dim.h, 1, 1, VulkanImageUsage_Colour,
 	                  VulkanUsageFlag_ImageSampling, &view->export_handle, label);
 
@@ -825,7 +827,7 @@ resize_frame_view(BeamformerFrameView *view, uv2 dim)
 	glTextureParameteri(view->texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	glTextureParameteri(view->texture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 
-	glObjectLabel(GL_TEXTURE, view->texture, (i32)label.len, (char *)label.data);
+	glObjectLabel(GL_TEXTURE, view->texture, (i32)label.length, (char *)label.data);
 }
 
 function void
@@ -844,9 +846,9 @@ beamformer_ui_frame_view_copy_frame(BeamformerFrameView *new, BeamformerFrameVie
 	i64 frame_size = points.x * points.y * points.z * beamformer_data_kind_byte_size[new->frame.data_kind];
 
 	Stream sb = arena_stream(ui_context->arena);
-	stream_append_s8(&sb, s8("Frame Copy ["));
+	stream_append_str8(&sb, str8("Frame Copy ["));
 	stream_append_hex_u64(&sb, new->frame.id);
-	stream_append_s8(&sb, s8("]"));
+	stream_append_str8(&sb, str8("]"));
 	stream_append_byte(&sb, 0);
 
 	GPUBufferAllocateInfo allocate_info = {
@@ -1339,18 +1341,18 @@ draw_view_ruler(BeamformerFrameView *view, Arena a, Rect view_rect, TextSpec ts)
 
 	Stream buf = arena_stream(a);
 	stream_append_f64(&buf, 1e3 * v3_magnitude(v3_sub(end, view->ruler.start)), 100);
-	stream_append_s8(&buf, s8(" mm"));
+	stream_append_str8(&buf, str8(" mm"));
 
-	s8 s = stream_to_s8(&buf);
+	str8 s = stream_to_str8(&buf);
 	v2 txt_p = start_p;
-	v2 txt_s = measure_text(*ts.font, str8_from_s8(s));
+	v2 txt_s = measure_text(*ts.font, s);
 	v2 pixel_delta = v2_sub(start_p, end_p);
 	if (pixel_delta.y < 0) txt_p.y -= txt_s.y;
 	if (pixel_delta.x < 0) txt_p.x -= txt_s.x;
 	if (txt_p.x < view_rect.pos.x) txt_p.x = view_rect.pos.x;
 	if (txt_p.x + txt_s.x > vr_max_p.x) txt_p.x -= (txt_p.x + txt_s.x) - vr_max_p.x;
 
-	draw_text(str8_from_s8(s), txt_p, &ts);
+	draw_text(s, txt_p, &ts);
 }
 
 function void
@@ -2525,7 +2527,7 @@ function UI_CUSTOM_DRAW_FUNCTION(ui_custom_draw_scale_bar)
 		stream_reset(&buf, 0);
 		if (draw_plus && value > 0) stream_append_byte(&buf, '+');
 		stream_append_f64(&buf, value, Abs(value_inc) < 1 ? 100 : 10);
-		stream_append_s8(&buf, s8("mm"));
+		stream_append_str8(&buf, str8("mm"));
 		draw_text(stream_to_str8(&buf), tp, &text_spec);
 
 		value += value_inc;
@@ -3167,7 +3169,7 @@ function UI_CUSTOM_DRAW_FUNCTION(beamformer_ui_custom_draw_compute_bar_graph)
 	f32 remaining_width = node_rect.size.w;
 	f32 average_width   = 0.8f * remaining_width;
 
-	s8 mouse_text = s8("");
+	str8 mouse_text = str8("");
 	v2 text_pos;
 
 	u32 row_index = 0;
@@ -3187,7 +3189,7 @@ function UI_CUSTOM_DRAW_FUNCTION(beamformer_ui_custom_draw_compute_bar_graph)
 				// TODO(rnp): tooltips
 				text_pos  = v2_add(rect.pos, (v2){{UI_NODE_PAD, 3.f}});
 				Stream sb = arena_stream(*ui_build_arena());
-				stream_append_s8s(&sb, beamformer_shader_names[stats->table.shader_ids[i]], s8(": "));
+				stream_append_str8s(&sb, beamformer_shader_names[stats->table.shader_ids[i]], str8(": "));
 				stream_append_f64_e(&sb, stats->table.times[frame_index][i]);
 				mouse_text = arena_stream_commit(ui_build_arena(), &sb);
 			}
@@ -3199,10 +3201,10 @@ function UI_CUSTOM_DRAW_FUNCTION(beamformer_ui_custom_draw_compute_bar_graph)
 	v2 end   = v2_add(start, (v2){.y = node_rect.size.y - 0.02f * node_rect.size.y});
 	DrawLineEx(rl_v2(start), rl_v2(end), 4, colour_from_normalized(FG_COLOUR));
 
-	if (mouse_text.len) {
+	if (mouse_text.length) {
 		TextSpec ts = {.font = &ui_context->small_font, .flags = TF_OUTLINED, .colour = FG_COLOUR,
 		               .outline_colour = {.a = 1.f}, .outline_thick = 1.f};
-		draw_text(str8_from_s8(mouse_text), text_pos, &ts);
+		draw_text(mouse_text, text_pos, &ts);
 	}
 }
 
@@ -3245,7 +3247,7 @@ ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t)
 					label_colour = v4_lerp(FG_COLOUR, FOCUSED_COLOUR, ease_in_out_quartic(broken_shader_t));
 				}
 
-				str8 shader = str8_from_s8(beamformer_shader_names[stats->table.shader_ids[it]]);
+				str8 shader = beamformer_shader_names[stats->table.shader_ids[it]];
 
 				UITextColour(label_colour)
 				UIParent(label_column) ui_labelf("%.*s:###csl%u", (i32)shader.length, shader.data, (u32)it);
@@ -3489,7 +3491,7 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 			UIParent(value_column)
 			UIFlags(UINodeFlag_Scroll)
 			{
-				str8 label = str8_from_s8(beamformer_interpolation_mode_strings[bp->interpolation_mode]);
+				str8 label = beamformer_interpolation_mode_strings[bp->interpolation_mode];
 				UISignal signal = ui_label_button(label);
 				if (ui_pressed(signal) || ui_scrolled(signal)) {
 					i32 delta = signal.scroll.y + ui_pressed(signal);
@@ -3719,30 +3721,30 @@ ui_panel_label(BeamformerUIPanel *panel)
 	Stream sb = arena_stream(*ui_build_arena());
 	switch (panel->kind) {
 	InvalidDefaultCase;
-	case BeamformerPanelKind_ComputeBarGraph:{stream_append_s8(&sb, s8("Compute Bar Graph"));}break;
-	case BeamformerPanelKind_ComputeStats:{stream_append_s8(&sb, s8("Compute Stats"));}break;
-	case BeamformerPanelKind_FrameViewLive:{stream_append_s8(&sb, s8("Frame View"));}break;
-	case BeamformerPanelKind_FrameViewXPlane:{stream_append_s8(&sb, s8("X-Plane View"));}break;
-	case BeamformerPanelKind_LiveImagingControls:{stream_append_s8(&sb, s8("Live Controls"));}break;
+	case BeamformerPanelKind_ComputeBarGraph:{stream_append_str8(&sb, str8("Compute Bar Graph"));}break;
+	case BeamformerPanelKind_ComputeStats:{stream_append_str8(&sb, str8("Compute Stats"));}break;
+	case BeamformerPanelKind_FrameViewLive:{stream_append_str8(&sb, str8("Frame View"));}break;
+	case BeamformerPanelKind_FrameViewXPlane:{stream_append_str8(&sb, str8("X-Plane View"));}break;
+	case BeamformerPanelKind_LiveImagingControls:{stream_append_str8(&sb, str8("Live Controls"));}break;
 	case BeamformerPanelKind_FrameViewCopy:{
-		stream_append_s8(&sb, s8("Frame Copy ["));
+		stream_append_str8(&sb, str8("Frame Copy ["));
 		stream_append_hex_u64(&sb, panel->u.frame_view->frame.id);
-		stream_append_s8(&sb, s8("]#"));
+		stream_append_str8(&sb, str8("]#"));
 	}break;
 	case BeamformerPanelKind_ParameterListing:{
-		stream_append_s8(&sb, s8("Parameter Listing ["));
+		stream_append_str8(&sb, str8("Parameter Listing ["));
 		stream_append_u64(&sb, panel->u.parameter_listing.parameter_block);
-		stream_append_s8(&sb, s8("]#"));
+		stream_append_str8(&sb, str8("]#"));
 	}break;
 	}
-	stream_append_s8(&sb, s8("##"));
+	stream_append_str8(&sb, str8("##"));
 	stream_append_hex_u64(&sb, (u64)panel);
-	s8 title_s8 = arena_stream_commit(ui_build_arena(), &sb);
+	str8 label = arena_stream_commit(ui_build_arena(), &sb);
 
 	UISignal result;
 	UIPrefWidth(ui_text_dim(1.f, 1.f))
 	UIPrefHeight(ui_text_dim(1.4f, 1.f))
-	result = ui_label(str8_from_s8(title_s8));
+	result = ui_label(label);
 
 	return result;
 }
@@ -4397,9 +4399,9 @@ ui_build_drag_overlay(Rect window_rect)
 					// TODO(rnp): cleanup
 					Stream sb = arena_stream(*ui_build_arena());
 					stream_appendf(&sb, "###%p_split", panel);
-					s8 tag = arena_stream_commit(ui_build_arena(), &sb);
+					str8 tag = arena_stream_commit(ui_build_arena(), &sb);
 
-					if (ui_build_drag_split_box(axis, 1, -1, str8_from_s8(tag))) {
+					if (ui_build_drag_split_box(axis, 1, -1, tag)) {
 						beamformer_registers()->split_axis       = axis;
 						beamformer_registers()->split_left_tree  = (u64)panel;
 						beamformer_registers()->split_right_tree = (u64)ui->drag_panel;
@@ -4995,8 +4997,8 @@ ui_init(BeamformerCtx *ctx, Arena store)
 		}
 
 		u32 samples = vk_gpu_info()->max_msaa_samples;
-		vk_image_allocate(&ui->render_3d_image,       FRAME_VIEW_RENDER_TARGET_SIZE, 1, samples, VulkanImageUsage_Colour,       0, 0, s8("Render Target Colour"));
-		vk_image_allocate(&ui->render_3d_depth_image, FRAME_VIEW_RENDER_TARGET_SIZE, 1, samples, VulkanImageUsage_DepthStencil, 0, 0, s8("Render Target Depth"));
+		vk_image_allocate(&ui->render_3d_image,       FRAME_VIEW_RENDER_TARGET_SIZE, 1, samples, VulkanImageUsage_Colour,       0, 0, str8("Render Target Colour"));
+		vk_image_allocate(&ui->render_3d_depth_image, FRAME_VIEW_RENDER_TARGET_SIZE, 1, samples, VulkanImageUsage_DepthStencil, 0, 0, str8("Render Target Depth"));
 
 		glGenSemaphoresEXT(countof(ui->render_semaphores_gl), ui->render_semaphores_gl);
 		for EachElement(ui->render_semaphores, it)
@@ -5023,10 +5025,10 @@ ui_init(BeamformerCtx *ctx, Arena store)
 					frc->shader_reload.pipeline = ui->pipelines + it;
 
 					Arena scratch = ui->arena;
-					s8 file = push_s8_from_parts(&scratch, os_path_separator(), s8("shaders"),
-					                             beamformer_reloadable_shader_files[index][i]);
+					str8 file = push_str8_from_parts(&scratch, os_path_separator(), str8("shaders"),
+					                                 beamformer_reloadable_shader_files[index][i]);
 
-					os_add_file_watch((char *)file.data, file.len, frc);
+					os_add_file_watch((char *)file.data, file.length, frc);
 				}
 			}
 		}
@@ -5105,7 +5107,7 @@ ui_init(BeamformerCtx *ctx, Arena store)
 		rm->normals_offset = round_up_to(sizeof(unit_cube_vertices), 16);
 
 		u64 model_size = 2 * round_up_to(sizeof(unit_cube_vertices), 16);
-		vk_render_model_allocate(&rm->model, unit_cube_indices, countof(unit_cube_indices), model_size, s8("unit_cube_model"));
+		vk_render_model_allocate(&rm->model, unit_cube_indices, countof(unit_cube_indices), model_size, str8("unit_cube_model"));
 		vk_render_model_range_upload(&rm->model, unit_cube_vertices, 0,                  sizeof(unit_cube_vertices), 0);
 		vk_render_model_range_upload(&rm->model, unit_cube_normals,  rm->normals_offset, sizeof(unit_cube_normals),  0);
 	}

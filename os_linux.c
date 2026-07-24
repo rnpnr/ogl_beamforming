@@ -28,7 +28,7 @@ os_write_file(i32 file, void *data, i64 length)
 {
 	i64 offset = 0;
 	while (offset < length) {
-		iz r = write(file, (u8 *)data + offset, (u64)(length - offset));
+		i64 r = write(file, (u8 *)data + offset, (u64)(length - offset));
 		if (r < 0 && errno != EINTR) break;
 		if (r >= 0) offset += r;
 	}
@@ -73,7 +73,7 @@ function OS_ALLOC_ARENA_FN(os_alloc_arena)
 {
 	Arena result = {0};
 	capacity     = round_up_to(capacity, ARCH_X64? (i64)KB(4) : (i64)getauxval(AT_PAGESZ));
-	void *memory = mmap(0, (uz)capacity, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
+	void *memory = mmap(0, (u64)capacity, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
 	if (memory != MAP_FAILED) {
 		result.beg = memory;
 		result.end = result.beg + capacity;
@@ -131,11 +131,11 @@ os_copy_file(char *name, char *new)
 		i32 fd_new = open(new,  O_WRONLY|O_CREAT, sb.st_mode);
 		if (fd_old >= 0 && fd_new >= 0) {
 			u8 buf[4096];
-			iz copied = 0;
+			i64 copied = 0;
 			while (copied != sb.st_size) {
-				iz r = read(fd_old, buf, countof(buf));
+				i64 r = read(fd_old, buf, countof(buf));
 				if (r < 0) break;
-				iz w = write(fd_new, buf, (uz)r);
+				i64 w = write(fd_new, buf, (u64)r);
 				if (w < 0) break;
 				copied += w;
 			}

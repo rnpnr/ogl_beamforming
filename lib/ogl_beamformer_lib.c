@@ -34,18 +34,18 @@ global struct {
 
 #if OS_LINUX
 
-function s8
+function str8
 os_open_shared_memory_area(char *name)
 {
-	s8 result = {0};
+	str8 result = {0};
 	i32 fd = shm_open(name, O_RDWR, S_IRUSR|S_IWUSR);
 	if (fd > 0) {
 		struct stat sb;
 		if (fstat(fd, &sb) != -1) {
 			void *new = mmap(0, sb.st_size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
 			if (new != MAP_FAILED) {
-				result.data = new;
-				result.len  = sb.st_size;
+				result.data   = new;
+				result.length = sb.st_size;
 			}
 		}
 		close(fd);
@@ -69,7 +69,7 @@ os_reserve_region_locks(void)
 {
 	u8 buffer[1024];
 	Stream sb = {.data = buffer, .cap = countof(buffer)};
-	stream_append_s8(&sb, s8(OS_SHARED_MEMORY_NAME "_lock_"));
+	stream_append_str8(&sb, str8(OS_SHARED_MEMORY_NAME "_lock_"));
 
 	i32 start_index    = sb.widx;
 	u32 reserved_count = 0;
@@ -92,7 +92,7 @@ os_reserve_region_locks(void)
 	return result;
 }
 
-function s8
+function str8
 os_open_shared_memory_area(char *name)
 {
 	struct alignas(16) {
@@ -107,7 +107,7 @@ os_open_shared_memory_area(char *name)
 		u32   __alignment2;
 	} memory_basic_info;
 
-	s8 result = {0};
+	str8 result = {0};
 	iptr h = OpenFileMappingA(FILE_MAP_ALL_ACCESS, 0, name);
 	if (h != INVALID_FILE) {
 		// NOTE(rnp): a size of 0 maps the whole region, we can determine its size after
@@ -116,8 +116,8 @@ os_open_shared_memory_area(char *name)
 		    VirtualQuery(new, &memory_basic_info, sizeof(memory_basic_info)) == sizeof(memory_basic_info) &&
 		    os_reserve_region_locks())
 		{
-			result.data = new;
-			result.len  = (i64)memory_basic_info.RegionSize;
+			result.data   = new;
+			result.length = (i64)memory_basic_info.RegionSize;
 		}
 
 		if (new && !result.data)
@@ -151,15 +151,15 @@ check_shared_memory(void)
 {
 	b32 result = g_beamformer_library_context.bp != 0;
 	if unlikely(!g_beamformer_library_context.bp) {
-		s8 shared_memory = os_open_shared_memory_area(OS_SHARED_MEMORY_NAME);
+		str8 shared_memory = os_open_shared_memory_area(OS_SHARED_MEMORY_NAME);
 		if (lib_error_check(shared_memory.data != 0, SharedMemory)) {
 			BeamformerSharedMemory *bp = (BeamformerSharedMemory *)shared_memory.data;
 			result = lib_error_check(bp->version == BEAMFORMER_SHARED_MEMORY_VERSION, VersionMismatch);
 			if (result) {
 				g_beamformer_library_context.bp                 = bp;
-				g_beamformer_library_context.shared_memory_size = shared_memory.len;
+				g_beamformer_library_context.shared_memory_size = shared_memory.length;
 			} else {
-				os_close_shared_memory_area(shared_memory.data, shared_memory.len);
+				os_close_shared_memory_area(shared_memory.data, shared_memory.length);
 			}
 		}
 	}
@@ -711,7 +711,7 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 
 		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
 		                                                       g_beamformer_library_context.shared_memory_size);
-		if (result && out_data) result &= lib_error_check((iz)output_size <= arena_capacity(&scratch, u8), ExportSpaceOverflow);
+		if (result && out_data) result &= lib_error_check((i64)output_size <= arena_capacity(&scratch, u8), ExportSpaceOverflow);
 
 		if (result) {
 			result = beamformer_push_data_with_compute(data, data_size, 0, 0);
@@ -733,7 +733,7 @@ beamformer_compute_timings(BeamformerComputeStatsTable *output, i32 timeout_ms)
 	if (check_shared_memory()) {
 		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
 		                                                       g_beamformer_library_context.shared_memory_size);
-		if (lib_error_check((iz)sizeof(*output) <= arena_capacity(&scratch, u8), ExportSpaceOverflow)) {
+		if (lib_error_check((i64)sizeof(*output) <= arena_capacity(&scratch, u8), ExportSpaceOverflow)) {
 			BeamformerExportContext export;
 			export.kind = BeamformerExportKind_Stats;
 			export.size = sizeof(*output);

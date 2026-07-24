@@ -32,7 +32,7 @@ typedef struct {
 typedef struct {
 	ZBP_DataKind            kind;
 	ZBP_DataCompressionKind compression_kind;
-	s8                      bytes;
+	str8                    bytes;
 } ZBP_Data;
 
 global b32 g_should_exit;
@@ -59,10 +59,10 @@ die_(char *function_name, char *format, ...)
 #include <sys/stat.h>
 #include <unistd.h>
 
-function s8
+function str8
 os_read_file_simp(char *fname)
 {
-	s8 result;
+	str8 result;
 	i32 fd = open(fname, O_RDONLY);
 	if (fd < 0)
 		die("couldn't open file: %s\n", fname);
@@ -71,12 +71,12 @@ os_read_file_simp(char *fname)
 	if (stat(fname, &st) < 0)
 		die("couldn't stat file\n");
 
-	result.len  = st.st_size;
-	result.data = malloc((uz)st.st_size);
+	result.length = st.st_size;
+	result.data   = malloc((u64)st.st_size);
 	if (!result.data)
 		die("couldn't alloc space for reading\n");
 
-	iz rlen = read(fd, result.data, (u32)st.st_size);
+	i64 rlen = read(fd, result.data, (u32)st.st_size);
 	close(fd);
 
 	if (rlen != st.st_size)
@@ -87,10 +87,10 @@ os_read_file_simp(char *fname)
 
 #elif OS_WINDOWS
 
-function s8
+function str8
 os_read_file_simp(char *fname)
 {
-	s8 result;
+	str8 result;
 	iptr h = CreateFileA(fname, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
 	if (h == INVALID_FILE)
 		die("couldn't open file: %s\n", fname);
@@ -99,8 +99,8 @@ os_read_file_simp(char *fname)
 	if (!GetFileInformationByHandle(h, &fileinfo))
 		die("couldn't get file info\n", stderr);
 
-	result.len  = fileinfo.nFileSizeLow;
-	result.data = malloc(fileinfo.nFileSizeLow);
+	result.length = fileinfo.nFileSizeLow;
+	result.data   = malloc(fileinfo.nFileSizeLow);
 	if (!result.data)
 		die("couldn't alloc space for reading\n");
 
@@ -130,12 +130,12 @@ stream_ensure_termination(Stream *s, u8 byte)
 }
 
 function void *
-decompress_zstd_data(s8 raw)
+decompress_zstd_data(str8 raw)
 {
-	uz requested_size = ZSTD_getFrameContentSize(raw.data, (uz)raw.len);
-	void *out         = malloc(requested_size);
+	u64 requested_size = ZSTD_getFrameContentSize(raw.data, (u64)raw.length);
+	void *out          = malloc(requested_size);
 	if (out) {
-		uz decompressed = ZSTD_decompress(out, requested_size, raw.data, (uz)raw.len);
+		u64 decompressed  = ZSTD_decompress(out, requested_size, raw.data, (u64)raw.length);
 		if (decompressed != requested_size) {
 			free(out);
 			out = 0;
@@ -147,8 +147,8 @@ decompress_zstd_data(s8 raw)
 function b32
 beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char *path, ZBP_Data *raw_data)
 {
-	s8 raw = os_read_file_simp(path);
-	if (raw.len < (iz)sizeof(ZBP_BaseHeader) || ((ZBP_BaseHeader *)raw.data)->magic != ZBP_HeaderMagic)
+	str8 raw = os_read_file_simp(path);
+	if (raw.length < (i64)sizeof(ZBP_BaseHeader) || ((ZBP_BaseHeader *)raw.data)->magic != ZBP_HeaderMagic)
 		return 0;
 
 	switch (((ZBP_BaseHeader *)raw.data)->major) {
@@ -264,11 +264,11 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 			raw_data->bytes.data = raw.data + header->raw_data_offset;
 			if (raw_data->compression_kind == ZBP_DataCompressionKind_ZSTD) {
 				// NOTE(rnp): limitation in the header format
-				raw_data->bytes.len  = raw.len - header->raw_data_offset;
+				raw_data->bytes.length  = raw.length - header->raw_data_offset;
 			} else {
-				raw_data->bytes.len  = header->raw_data_dimension[0] * header->raw_data_dimension[1] *
-				                       header->raw_data_dimension[2] * header->raw_data_dimension[3];
-				raw_data->bytes.len *= beamformer_data_kind_byte_size[header->raw_data_kind];
+				raw_data->bytes.length  = header->raw_data_dimension[0] * header->raw_data_dimension[1] *
+				                          header->raw_data_dimension[2] * header->raw_data_dimension[3];
+				raw_data->bytes.length *= beamformer_data_kind_byte_size[header->raw_data_kind];
 			}
 		}
 
@@ -391,18 +391,18 @@ parse_argv(i32 argc, char *argv[])
 	shift(argv, argc);
 
 	while (argc > 0) {
-		s8 arg = c_str_to_s8(*argv);
+		str8 arg = str8_from_c_str(*argv);
 
-		if (s8_equal(arg, s8("--loop"))) {
+		if (str8_equal(arg, str8("--loop"))) {
 			shift(argv, argc);
 			result.loop = 1;
-		} else if (s8_equal(arg, s8("--frame"))) {
+		} else if (str8_equal(arg, str8("--frame"))) {
 			shift(argv, argc);
 			if (argc) {
 				result.frame_number = (u32)atoi(*argv);
 				shift(argv, argc);
 			}
-		} else if (arg.len > 0 && arg.data[0] == '-') {
+		} else if (arg.length > 0 && arg.data[0] == '-') {
 			usage(argv0);
 		} else {
 			break;
@@ -493,15 +493,15 @@ execute_study(Arena arena, Stream path, Options *options)
 	beamformer_set_global_timeout(1000);
 
 	void *data = 0;
-	if (raw_data.bytes.len == 0) {
+	if (raw_data.bytes.length == 0) {
 		// NOTE(rnp): strip ".bp"
 		stream_reset(&path, path_work_index - 3);
 
 		stream_append_byte(&path, '_');
 		stream_append_u64_width(&path, options->frame_number, 2);
-		stream_append_s8(&path, s8(".zst"));
+		stream_append_str8(&path, str8(".zst"));
 		stream_ensure_termination(&path, 0);
-		s8 compressed_data = os_read_file_simp((char *)path.data);
+		str8 compressed_data = os_read_file_simp((char *)path.data);
 
 		data = decompress_zstd_data(compressed_data);
 		if (!data)
@@ -525,9 +525,9 @@ execute_study(Arena arena, Stream path, Options *options)
 			.acquisition_kind_enabled_flags = 1 << bp.acquisition_kind,
 		};
 
-		s8 short_name = s8("Throughput");
-		memory_copy(lip.save_name_tag, short_name.data, (uz)short_name.len);
-		lip.save_name_tag_length = (i32)short_name.len;
+		str8 short_name = str8("Throughput");
+		memory_copy(lip.save_name_tag, short_name.data, (u64)short_name.length);
+		lip.save_name_tag_length = (i32)short_name.length;
 		beamformer_set_live_parameters(&lip);
 
 		u32 frame = 0;
@@ -583,7 +583,7 @@ main(i32 argc, char *argv[])
 
 	Arena arena = os_alloc_arena(KB(8));
 	Stream path = stream_alloc(&arena, KB(4));
-	stream_append_s8(&path, c_str_to_s8(options.remaining[0]));
+	stream_append_str8(&path, str8_from_c_str(options.remaining[0]));
 
 	execute_study(arena, path, &options);
 

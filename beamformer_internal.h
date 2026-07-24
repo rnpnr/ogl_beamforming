@@ -14,9 +14,9 @@
 #include "external/raylib/src/raylib.h"
 #include "external/raylib/src/rlgl.h"
 
-#define beamformer_info(s) s8("[info] " s "\n")
+#define beamformer_info(s) str8("[info] " s "\n")
 
-#define os_path_separator() (s8){.data = &os_system_info()->path_separator_byte, .len = 1}
+#define os_path_separator() (str8){.data = &os_system_info()->path_separator_byte, .length = 1}
 
 typedef struct { u64 value[1]; } VulkanHandle;
 
@@ -55,8 +55,8 @@ typedef enum {
 
 typedef struct {
 	VulkanShaderKind kind;
-	s8               text;
-	s8               name;
+	str8             text;
+	str8             name;
 } VulkanPipelineCreateInfo;
 
 typedef struct {
@@ -86,7 +86,7 @@ typedef enum {
 } GPUVendor;
 
 typedef struct {
-	s8        name;
+	str8      name;
 	GPUVendor vendor;
 
 	f32 timestamp_period_ns;
@@ -153,10 +153,10 @@ DEBUG_IMPORT void vk_buffer_range_download(void *output, GPUBuffer *, u64 source
 DEBUG_IMPORT u64  vk_round_up_to_sync_size(u64, u64 min);
 
 // NOTE: images are 2D only, any other use case should just use a buffer and index in the shader
-DEBUG_IMPORT void vk_image_allocate(GPUImage *, u32 width, u32 height, u32 mips, u32 samples, VulkanImageUsage usage, VulkanUsageFlags flags, OSHandle *export, s8 label);
+DEBUG_IMPORT void vk_image_allocate(GPUImage *, u32 width, u32 height, u32 mips, u32 samples, VulkanImageUsage usage, VulkanUsageFlags flags, OSHandle *export, str8 label);
 DEBUG_IMPORT void vk_image_release(GPUImage *);
 
-DEBUG_IMPORT void vk_render_model_allocate(GPUBuffer *, void *indices, u64 index_count, u64 model_size, s8 label);
+DEBUG_IMPORT void vk_render_model_allocate(GPUBuffer *, void *indices, u64 index_count, u64 model_size, str8 label);
 DEBUG_IMPORT void vk_render_model_range_upload(GPUBuffer *, void *data, u64 offset, u64 size, b32 non_temporal);
 DEBUG_IMPORT void vk_render_model_release(GPUBuffer *);
 
@@ -664,7 +664,7 @@ typedef struct {
 	VulkanShaderKind      shader_kind;
 
 	// NOTE(rnp): based on BakeShaders compile time value
-	s8                    filename_or_data;
+	str8                  filename_or_data;
 
 	BeamformerShaderDescriptor *shader_descriptor;
 

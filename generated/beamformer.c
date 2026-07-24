@@ -481,22 +481,22 @@ read_only global b8 beamformer_data_kind_complex[] = {
 	1,
 };
 
-read_only global s8 beamformer_data_kind_glsl_type[] = {
-	s8_comp("int16_t"),
-	s8_comp("i16vec2"),
-	s8_comp("float32_t"),
-	s8_comp("f32vec2"),
-	s8_comp("float16_t"),
-	s8_comp("f16vec2"),
+read_only global str8 beamformer_data_kind_glsl_type[] = {
+	str8_comp("int16_t"),
+	str8_comp("i16vec2"),
+	str8_comp("float32_t"),
+	str8_comp("f32vec2"),
+	str8_comp("float16_t"),
+	str8_comp("f16vec2"),
 };
 
-read_only global s8 beamformer_data_kind_s8[] = {
-	s8_comp("Int16"),
-	s8_comp("Int16Complex"),
-	s8_comp("Float32"),
-	s8_comp("Float32Complex"),
-	s8_comp("Float16"),
-	s8_comp("Float16Complex"),
+read_only global str8 beamformer_data_kind_str8[] = {
+	str8_comp("Int16"),
+	str8_comp("Int16Complex"),
+	str8_comp("Float32"),
+	str8_comp("Float32Complex"),
+	str8_comp("Float16"),
+	str8_comp("Float16Complex"),
 };
 
 read_only global u8 beamformer_contrast_mode_samples[] = {
@@ -548,32 +548,32 @@ read_only global str8 beamformer_acquisition_kind_strings[] = {
 	str8_comp("ULM"),
 };
 
-read_only global s8 beamformer_filter_kind_strings[] = {
-	s8_comp("Kaiser"),
-	s8_comp("MatchedChirp"),
+read_only global str8 beamformer_filter_kind_strings[] = {
+	str8_comp("Kaiser"),
+	str8_comp("MatchedChirp"),
 };
 
-read_only global s8 beamformer_interpolation_mode_strings[] = {
-	s8_comp("Nearest"),
-	s8_comp("Linear"),
-	s8_comp("Cubic"),
+read_only global str8 beamformer_interpolation_mode_strings[] = {
+	str8_comp("Nearest"),
+	str8_comp("Linear"),
+	str8_comp("Cubic"),
 };
 
-read_only global s8 beamformer_shader_resource_kind_strings[] = {
-	s8_comp("Buffer"),
+read_only global str8 beamformer_shader_resource_kind_strings[] = {
+	str8_comp("Buffer"),
 };
 
-read_only global s8 beamformer_shader_names[] = {
-	s8_comp("Decode"),
-	s8_comp("Filter"),
-	s8_comp("Demodulate"),
-	s8_comp("DAS"),
-	s8_comp("Sum"),
-	s8_comp("MinMax"),
-	s8_comp("Hilbert"),
-	s8_comp("CoherencyWeighting"),
-	s8_comp("Reshape"),
-	s8_comp("RenderBeamformed"),
+read_only global str8 beamformer_shader_names[] = {
+	str8_comp("Decode"),
+	str8_comp("Filter"),
+	str8_comp("Demodulate"),
+	str8_comp("DAS"),
+	str8_comp("Sum"),
+	str8_comp("MinMax"),
+	str8_comp("Hilbert"),
+	str8_comp("CoherencyWeighting"),
+	str8_comp("Reshape"),
+	str8_comp("RenderBeamformed"),
 };
 
 read_only global BeamformerShaderKind beamformer_reloadable_shader_kinds[] = {
@@ -587,15 +587,15 @@ read_only global BeamformerShaderKind beamformer_reloadable_shader_kinds[] = {
 	BeamformerShaderKind_RenderBeamformed,
 };
 
-read_only global s8 *beamformer_reloadable_shader_files[] = {
-	(s8 []){s8_comp("decode.glsl")},
-	(s8 []){s8_comp("filter.glsl")},
-	(s8 []){s8_comp("das.glsl")},
-	(s8 []){s8_comp("sum.glsl")},
-	(s8 []){s8_comp("min_max.glsl")},
-	(s8 []){s8_comp("coherency_weighting.glsl")},
-	(s8 []){s8_comp("reshape.glsl")},
-	(s8 []){s8_comp("render_3d.vert.glsl"), s8_comp("render_3d.frag.glsl")},
+read_only global str8 *beamformer_reloadable_shader_files[] = {
+	(str8 []){str8_comp("decode.glsl")},
+	(str8 []){str8_comp("filter.glsl")},
+	(str8 []){str8_comp("das.glsl")},
+	(str8 []){str8_comp("sum.glsl")},
+	(str8 []){str8_comp("min_max.glsl")},
+	(str8 []){str8_comp("coherency_weighting.glsl")},
+	(str8 []){str8_comp("reshape.glsl")},
+	(str8 []){str8_comp("render_3d.vert.glsl"), str8_comp("render_3d.frag.glsl")},
 };
 
 read_only global i32 beamformer_shader_reloadable_index_by_shader[] = {
@@ -628,34 +628,34 @@ read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
 	7,
 };
 
-read_only global s8 beamformer_shader_global_header_strings[] = {
-	s8_comp(""
+read_only global str8 beamformer_shader_global_header_strings[] = {
+	str8_comp(""
 	"#define DecodeMode_None     0\n"
 	"#define DecodeMode_Hadamard 1\n"
 	"\n"),
-	s8_comp(""
+	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  uint64_t hadamard_buffer;\n"
 	"  uint64_t rf_buffer;\n"
 	"  uint64_t output_buffer;\n"
 	"};\n"
 	"\n"),
-	s8_comp(""
+	str8_comp(""
 	"#define ShaderBufferSlot_BeamformedData 0\n"
 	"#define ShaderBufferSlot_PingPong       1\n"
 	"\n"),
-	s8_comp(""
+	str8_comp(""
 	"#define ShaderResourceKind_Buffer 0\n"
 	"\n"),
-	s8_comp(""
+	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  uint64_t input_data;\n"
 	"  uint64_t filter_coefficients;\n"
 	"  uint32_t output_element_offset;\n"
 	"};\n"
 	"\n"),
-	s8_comp("#define MaxChannelCount (256)\n\n"),
-	s8_comp(""
+	str8_comp("#define MaxChannelCount (256)\n\n"),
+	str8_comp(""
 	"#define AcquisitionKind_FORCES         0\n"
 	"#define AcquisitionKind_UFORCES        1\n"
 	"#define AcquisitionKind_HERCULES       2\n"
@@ -670,24 +670,24 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"#define AcquisitionKind_HERO_PA        11\n"
 	"#define AcquisitionKind_ULM            12\n"
 	"\n"),
-	s8_comp(""
+	str8_comp(""
 	"#define InterpolationMode_Nearest 0\n"
 	"#define InterpolationMode_Linear  1\n"
 	"#define InterpolationMode_Cubic   2\n"
 	"\n"),
-	s8_comp(""
+	str8_comp(""
 	"#define RCAOrientation_None    0\n"
 	"#define RCAOrientation_Rows    1\n"
 	"#define RCAOrientation_Columns 2\n"
 	"\n"),
-	s8_comp(""
+	str8_comp(""
 	"struct DASArrayParameters {\n"
 	"  f32vec2  focal_vectors[MaxChannelCount];\n"
 	"  int16_t  sparse_elements[MaxChannelCount];\n"
 	"  uint16_t transmit_receive_orientations[MaxChannelCount];\n"
 	"};\n"
 	"\n"),
-	s8_comp(""
+	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  f32mat4  xdc_transform;\n"
 	"  f32mat4  voxel_transform;\n"
@@ -703,7 +703,7 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"  int32_t  channel_offset;\n"
 	"};\n"
 	"\n"),
-	s8_comp(""
+	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  uint64_t  output_data;\n"
 	"  uint64_t  input_data;\n"
@@ -711,7 +711,7 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"  float32_t scale;\n"
 	"};\n"
 	"\n"),
-	s8_comp(""
+	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  uint64_t  left_side_buffer;\n"
 	"  uint64_t  right_side_buffer;\n"
@@ -721,14 +721,14 @@ read_only global s8 beamformer_shader_global_header_strings[] = {
 	"  uint32_t  output_size_z;\n"
 	"};\n"
 	"\n"),
-	s8_comp(""
+	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  uint64_t output_buffer;\n"
 	"  uint64_t left_input_buffer;\n"
 	"  uint64_t right_input_buffer;\n"
 	"};\n"
 	"\n"),
-	s8_comp(""
+	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  f32mat4   mvp_matrix;\n"
 	"  uint64_t  positions;\n"
@@ -791,72 +791,72 @@ read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	1,
 };
 
-read_only global s8 *beamformer_shader_bake_parameter_names[] = {
-	(s8 []){
-		s8_comp("UseSharedMemory"),
-		s8_comp("DecodeMode"),
-		s8_comp("OutputChannelStride"),
-		s8_comp("OutputSampleStride"),
-		s8_comp("OutputTransmitStride"),
-		s8_comp("ToProcess"),
-		s8_comp("TransmitCount"),
-		s8_comp("ChunkChannelCount"),
-		s8_comp("CooperativeMatrix"),
-		s8_comp("CooperativeMatrixM"),
-		s8_comp("CooperativeMatrixN"),
-		s8_comp("CooperativeMatrixK"),
+read_only global str8 *beamformer_shader_bake_parameter_names[] = {
+	(str8 []){
+		str8_comp("UseSharedMemory"),
+		str8_comp("DecodeMode"),
+		str8_comp("OutputChannelStride"),
+		str8_comp("OutputSampleStride"),
+		str8_comp("OutputTransmitStride"),
+		str8_comp("ToProcess"),
+		str8_comp("TransmitCount"),
+		str8_comp("ChunkChannelCount"),
+		str8_comp("CooperativeMatrix"),
+		str8_comp("CooperativeMatrixM"),
+		str8_comp("CooperativeMatrixN"),
+		str8_comp("CooperativeMatrixK"),
 	},
-	(s8 []){
-		s8_comp("Demodulate"),
-		s8_comp("ComplexFilter"),
-		s8_comp("DecimationRate"),
-		s8_comp("FilterLength"),
-		s8_comp("InputChannelStride"),
-		s8_comp("InputSampleStride"),
-		s8_comp("InputTransmitStride"),
-		s8_comp("OutputChannelStride"),
-		s8_comp("OutputSampleStride"),
-		s8_comp("OutputTransmitStride"),
-		s8_comp("SampleCount"),
-		s8_comp("BatchSampleCount"),
-		s8_comp("DemodulationFrequency"),
-		s8_comp("SamplingFrequency"),
+	(str8 []){
+		str8_comp("Demodulate"),
+		str8_comp("ComplexFilter"),
+		str8_comp("DecimationRate"),
+		str8_comp("FilterLength"),
+		str8_comp("InputChannelStride"),
+		str8_comp("InputSampleStride"),
+		str8_comp("InputTransmitStride"),
+		str8_comp("OutputChannelStride"),
+		str8_comp("OutputSampleStride"),
+		str8_comp("OutputTransmitStride"),
+		str8_comp("SampleCount"),
+		str8_comp("BatchSampleCount"),
+		str8_comp("DemodulationFrequency"),
+		str8_comp("SamplingFrequency"),
 	},
-	(s8 []){
-		s8_comp("CoherencyWeighting"),
-		s8_comp("SingleFocus"),
-		s8_comp("SingleOrientation"),
-		s8_comp("Sparse"),
-		s8_comp("AcquisitionCount"),
-		s8_comp("AcquisitionKind"),
-		s8_comp("ChannelCount"),
-		s8_comp("ChunkChannelCount"),
-		s8_comp("InterpolationMode"),
-		s8_comp("SampleCount"),
-		s8_comp("TransmitReceiveOrientation"),
-		s8_comp("DemodulationFrequency"),
-		s8_comp("FNumber"),
-		s8_comp("FocusDepth"),
-		s8_comp("SamplingFrequency"),
-		s8_comp("SpeedOfSound"),
-		s8_comp("TimeOffset"),
-		s8_comp("TransmitAngle"),
+	(str8 []){
+		str8_comp("CoherencyWeighting"),
+		str8_comp("SingleFocus"),
+		str8_comp("SingleOrientation"),
+		str8_comp("Sparse"),
+		str8_comp("AcquisitionCount"),
+		str8_comp("AcquisitionKind"),
+		str8_comp("ChannelCount"),
+		str8_comp("ChunkChannelCount"),
+		str8_comp("InterpolationMode"),
+		str8_comp("SampleCount"),
+		str8_comp("TransmitReceiveOrientation"),
+		str8_comp("DemodulationFrequency"),
+		str8_comp("FNumber"),
+		str8_comp("FocusDepth"),
+		str8_comp("SamplingFrequency"),
+		str8_comp("SpeedOfSound"),
+		str8_comp("TimeOffset"),
+		str8_comp("TransmitAngle"),
 	},
 	0,
 	0,
 	0,
-	(s8 []){
-		s8_comp("SizeX"),
-		s8_comp("SizeY"),
-		s8_comp("SizeZ"),
-		s8_comp("InputStrideX"),
-		s8_comp("InputStrideY"),
-		s8_comp("InputStrideZ"),
-		s8_comp("OutputStrideX"),
-		s8_comp("OutputStrideY"),
-		s8_comp("OutputStrideZ"),
-		s8_comp("Interleave"),
-		s8_comp("Deinterleave"),
+	(str8 []){
+		str8_comp("SizeX"),
+		str8_comp("SizeY"),
+		str8_comp("SizeZ"),
+		str8_comp("InputStrideX"),
+		str8_comp("InputStrideY"),
+		str8_comp("InputStrideZ"),
+		str8_comp("OutputStrideX"),
+		str8_comp("OutputStrideY"),
+		str8_comp("OutputStrideZ"),
+		str8_comp("Interleave"),
+		str8_comp("Deinterleave"),
 	},
 	0,
 };

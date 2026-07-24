@@ -80,7 +80,7 @@ make_hadamard_transpose(Arena *a, i32 dim, b32 row_major)
 	b32 power_of_2     = IsPowerOfTwo(dim);
 	b32 multiple_of_12 = dim % 12 == 0;
 	b32 multiple_of_20 = dim % 20 == 0;
-	iz elements        = dim * dim;
+	i64 elements       = dim * dim;
 
 	i32 base_dim = 0;
 	if (power_of_2) {

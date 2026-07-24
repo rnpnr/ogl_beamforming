@@ -36,7 +36,7 @@ typedef struct {
 	u32 reserved5;
 } w32_synchronization_barrier;
 
-W32(u64)    CreateThread(iptr, uz, iptr, iptr, u32, u32 *);
+W32(u64)    CreateThread(iptr, u64, iptr, iptr, u32, u32 *);
 W32(b32)    EnterSynchronizationBarrier(w32_synchronization_barrier *, u32);
 W32(b32)    FreeLibrary(u64);
 W32(void *) GetModuleHandleA(const c8 *);
@@ -218,7 +218,7 @@ os_lookup_symbol(OSLibrary library, const char *symbol)
 }
 
 function void *
-allocate_shared_memory(char *name, iz requested_capacity, u64 *capacity)
+allocate_shared_memory(char *name, i64 requested_capacity, u64 *capacity)
 {
 	u64 rounded_capacity = round_up_to(requested_capacity, os_w32_context.system_info.page_size);
 	void *result = 0;
@@ -401,7 +401,7 @@ debug_library_reload(BeamformerInput *input)
 
 	OSLibrary new_handle = load_library(OS_DEBUG_LIB_NAME, OS_DEBUG_LIB_TEMP_NAME);
 	if (InvalidHandle(beamformer_library_handle) && InvalidHandle(new_handle))
-		fatal(s8("[os] failed to load: " OS_DEBUG_LIB_NAME "\n"));
+		fatal(str8("[os] failed to load: " OS_DEBUG_LIB_NAME "\n"));
 
 	if ValidHandle(new_handle) {
 		beamformer_debug_hot_reload(new_handle, input);
@@ -429,7 +429,7 @@ load_platform_libraries(BeamformerInput *input)
 	#undef X
 
 	if InvalidHandle(input->vulkan_library_handle)
-		fatal(s8("[os] fatal error: failed to find valid vulkan library\n"));
+		fatal(str8("[os] fatal error: failed to find valid vulkan library\n"));
 
 	input->cuda_library_handle = load_library(OS_CUDA_LIB_NAME, OS_CUDA_LIB_TEMP_NAME);
 
@@ -454,7 +454,7 @@ dispatch_file_watch(BeamformerInput *input, Arena arena, u64 current_time, OSW32
 		Stream e = {.data = arena_commit(&arena, KB(1)), .cap = KB(1)};
 
 		if (fni->action != FILE_ACTION_MODIFIED) {
-			stream_append_s8(&e, s8("[os] unknown file watch event: "));
+			stream_append_str8(&e, str8("[os] unknown file watch event: "));
 			stream_append_u64(&e, fni->action);
 			stream_append_byte(&e, '\n');
 			os_write_file(os_w32_context.error_handle, e.data, e.widx);
@@ -536,8 +536,8 @@ main(void)
 	input->shared_memory   = allocate_shared_memory(OS_SHARED_MEMORY_NAME, OS_SHARED_MEMORY_SIZE,
 	                                                &input->shared_memory_size);
 	if (input->shared_memory) {
-		input->shared_memory_name        = s8(OS_SHARED_MEMORY_NAME).data;
-		input->shared_memory_name_length = s8(OS_SHARED_MEMORY_NAME).len;
+		input->shared_memory_name        = str8(OS_SHARED_MEMORY_NAME).data;
+		input->shared_memory_name_length = str8(OS_SHARED_MEMORY_NAME).length;
 	}
 
 	os_push_input_event(input, (BeamformerInputEvent){

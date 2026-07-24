@@ -10,8 +10,8 @@
 
 #define ForceSingleQueue (0)
 
-#define glslang_info(s) s8("[glslang] " s)
-#define vulkan_info(s)  s8("[vulkan]  " s)
+#define glslang_info(s) str8("[glslang] " s)
+#define vulkan_info(s)  str8("[vulkan]  " s)
 
 #define ValidVulkanHandle(h) ((h).value[0] != 0)
 
@@ -190,15 +190,15 @@ read_only global const char *vk_required_instance_extensions[] = {
 	X("VK_KHR_timeline_semaphore") \
 	VK_OS_REQUIRED_DEVICE_EXTENSIONS_LIST
 
-#define X(str) s8_comp(str),
-read_only global s8 vk_required_device_extensions[] = {VK_REQUIRED_DEVICE_EXTENSIONS_LIST};
+#define X(str) str8_comp(str),
+read_only global str8 vk_required_device_extensions[] = {VK_REQUIRED_DEVICE_EXTENSIONS_LIST};
 #undef X
 
 #define VK_OPTIONAL_DEVICE_EXTENSIONS_LIST \
 	X(VK_KHR, cooperative_matrix) \
 
-#define X(p, s, ...) s8_comp(#p "_" #s),
-read_only global s8 vk_optional_device_extensions[] = {VK_OPTIONAL_DEVICE_EXTENSIONS_LIST};
+#define X(p, s, ...) str8_comp(#p "_" #s),
+read_only global str8 vk_optional_device_extensions[] = {VK_OPTIONAL_DEVICE_EXTENSIONS_LIST};
 #undef X
 
 #define VK_REQUIRED_PHYSICAL_FEATURES \
@@ -222,15 +222,15 @@ read_only global s8 vk_optional_device_extensions[] = {VK_OPTIONAL_DEVICE_EXTENS
 	X(VK_KHR, shader_non_semantic_info) \
 	X(VK_KHR, shader_relaxed_extended_instruction) \
 
-#define X(p, s, ...) s8_comp(#p "_" #s),
-read_only global s8 vk_debug_extensions[] = {VK_DEBUG_EXTENSIONS};
+#define X(p, s, ...) str8_comp(#p "_" #s),
+read_only global str8 vk_debug_extensions[] = {VK_DEBUG_EXTENSIONS};
 #undef X
 
 #define VK_INSTANCE_DEBUG_EXTENSIONS_LIST \
 	X(VK_EXT, debug_utils) \
 
-#define X(p, s, ...) s8_comp(#p "_" #s),
-read_only global s8 vk_instance_debug_extensions[] = {VK_INSTANCE_DEBUG_EXTENSIONS_LIST};
+#define X(p, s, ...) str8_comp(#p "_" #s),
+read_only global str8 vk_instance_debug_extensions[] = {VK_INSTANCE_DEBUG_EXTENSIONS_LIST};
 #undef X
 
 #if BEAMFORMER_DEBUG
@@ -408,7 +408,7 @@ vk_label_object_(VkObjectType kind, u64 handle, str8 label, str8 extra)
 	local_persist u8 buffer[1024];
 	Stream sb = arena_stream(arena_from_memory(buffer, sizeof(buffer)));
 	if (vulkan_config.instance.debug_utils && label.length > 0) {
-		stream_append_s8s(&sb, s8_from_str8(label), s8(" ("), s8_from_str8(extra), s8(")"));
+		stream_append_str8s(&sb, label, str8(" ("), extra, str8(")"));
 		stream_append_byte(&sb, 0);
 		if (!sb.errors) {
 			VkDebugUtilsObjectNameInfoEXT object_name_info = {
@@ -467,22 +467,22 @@ vk_command_buffer(VulkanHandle h)
 	return result;
 }
 
-#define glslang_log(a, ...) glslang_log_(a, arg_list(s8, __VA_ARGS__))
+#define glslang_log(a, ...) glslang_log_(a, arg_list(str8, __VA_ARGS__))
 function void
-glslang_log_(Arena arena, s8 *items, uz count)
+glslang_log_(Arena arena, str8 *items, u64 count)
 {
 	Stream sb = arena_stream(arena);
-	stream_append_s8(&sb, glslang_info(""));
-	stream_append_s8s_(&sb, items, count);
+	stream_append_str8(&sb, glslang_info(""));
+	stream_append_str8s_(&sb, items, count);
 	if (sb.data[sb.widx - 1] != '\n') stream_append_byte(&sb, '\n');
 	os_console_log(sb.data, sb.widx);
 }
 
-function s8
-glsl_to_spirv(Arena *arena, u32 kind, s8 shader_text, s8 name)
+function str8
+glsl_to_spirv(Arena *arena, u32 kind, str8 shader_text, str8 name)
 {
 	/* NOTE(rnp): glslang's garbage c interface doesn't expose internal usage of strings with length */
-	assert(shader_text.data[shader_text.len] == 0);
+	assert(shader_text.data[shader_text.length] == 0);
 
 	glslang_input_t input = {
 		.language                          = GLSLANG_SOURCE_GLSL,
@@ -501,23 +501,23 @@ glsl_to_spirv(Arena *arena, u32 kind, s8 shader_text, s8 name)
 	};
 	glslang_shader_t *shader = glslang_shader_create(&input);
 
-	s8 error = {0};
+	str8 error = {0};
 	if (glslang_shader_preprocess(shader, &input)) {
 		if (!glslang_shader_parse(shader, &input))
-			error = s8("parsing failed");
+			error = str8("parsing failed");
 	} else {
-		error = s8("preprocessing failed");
+		error = str8("preprocessing failed");
 	}
 
-	if (error.len) {
-		glslang_log(*arena, name, s8(": "), error, s8("\n"),
-		            c_str_to_s8((c8 *)glslang_shader_get_info_log(shader)),
-		            c_str_to_s8((c8 *)glslang_shader_get_info_debug_log(shader)));
+	if (error.length) {
+		glslang_log(*arena, name, str8(": "), error, str8("\n"),
+		            str8_from_c_str((c8 *)glslang_shader_get_info_log(shader)),
+		            str8_from_c_str((c8 *)glslang_shader_get_info_debug_log(shader)));
 		glslang_shader_delete(shader);
 		shader = 0;
 	}
 
-	s8 result = {0};
+	str8 result = {0};
 	if (shader) {
 		glslang_program_t *program = glslang_program_create();
 		glslang_program_add_shader(program, shader);
@@ -533,20 +533,20 @@ glsl_to_spirv(Arena *arena, u32 kind, s8 shader_text, s8 name)
 				options.emit_nonsemantic_shader_debug_source = 1;
 			}
 
-			glslang_program_add_source_text(program, kind, (c8 *)shader_text.data, shader_text.len);
+			glslang_program_add_source_text(program, kind, (c8 *)shader_text.data, shader_text.length);
 			glslang_program_SPIRV_generate_with_options(program, kind, &options);
 
-			u32 words   = glslang_program_SPIRV_get_size(program);
-			result.data = (u8 *)push_array(arena, u32, words);
-			result.len  = words * sizeof(u32);
+			u32 words     = glslang_program_SPIRV_get_size(program);
+			result.data   = (u8 *)push_array(arena, u32, words);
+			result.length = words * sizeof(u32);
 			glslang_program_SPIRV_get(program, (u32 *)result.data);
 
-			s8 spirv_msg = c_str_to_s8((c8 *)glslang_program_SPIRV_get_messages(program));
-			if (spirv_msg.len) glslang_log(*arena, name, s8(": spirv info: "), spirv_msg);
+			str8 spirv_msg = str8_from_c_str((c8 *)glslang_program_SPIRV_get_messages(program));
+			if (spirv_msg.length) glslang_log(*arena, name, str8(": spirv info: "), spirv_msg);
 		} else {
-			glslang_log(*arena, name, s8(": shader linking failed\n"),
-			            c_str_to_s8((c8 *)glslang_program_get_info_log(program)),
-			            c_str_to_s8((c8 *)glslang_program_get_info_debug_log(program)));
+			glslang_log(*arena, name, str8(": shader linking failed\n"),
+			            str8_from_c_str((c8 *)glslang_program_get_info_log(program)),
+			            str8_from_c_str((c8 *)glslang_program_get_info_debug_log(program)));
 		}
 		glslang_shader_delete(shader);
 		glslang_program_delete(program);
@@ -563,16 +563,16 @@ vk_shader_kind_to_glslang_shader_kind(u32 kind)
 }
 
 function VkShaderModule
-vk_compile_shader_module(Arena arena, u32 kind, s8 text, s8 name)
+vk_compile_shader_module(Arena arena, u32 kind, str8 text, str8 name)
 {
 	VkShaderModule result = {0};
-	s8 spirv = glsl_to_spirv(&arena, vk_shader_kind_to_glslang_shader_kind(kind), text, name);
+	str8 spirv = glsl_to_spirv(&arena, vk_shader_kind_to_glslang_shader_kind(kind), text, name);
 	VkShaderModuleCreateInfo create_info = {
 		.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-		.codeSize = (uz)spirv.len,
+		.codeSize = (u64)spirv.length,
 		.pCode    = (u32 *)spirv.data,
 	};
-	if (spirv.len > 0) vkCreateShaderModule(vulkan_context->device, &create_info, 0, &result);
+	if (spirv.length > 0) vkCreateShaderModule(vulkan_context->device, &create_info, 0, &result);
 
 	return result;
 }
@@ -592,7 +592,7 @@ vk_stage_flags_from_shader_kind(VulkanShaderKind kind)
 }
 
 function VulkanPipeline
-vk_compute_pipeline_from_shader_text(Arena arena, s8 text, s8 name, u32 push_constants_size)
+vk_compute_pipeline_from_shader_text(Arena arena, str8 text, str8 name, u32 push_constants_size)
 {
 	VulkanPipeline result = {.stage_flags = VK_SHADER_STAGE_COMPUTE_BIT};
 	VkShaderModule module = vk_compile_shader_module(arena, VK_SHADER_STAGE_COMPUTE_BIT, text, name);
@@ -626,9 +626,9 @@ vk_compute_pipeline_from_shader_text(Arena arena, s8 text, s8 name, u32 push_con
 
 		vkCreateComputePipelines(vulkan_context->device, 0, 1, &pipeline_create_info, 0, &result.pipeline);
 
-		vk_label_object(PIPELINE,        result.pipeline, str8_from_s8(name), str8("Pipeline"));
-		vk_label_object(PIPELINE_LAYOUT, result.layout,   str8_from_s8(name), str8("Pipeline Layout"));
-		vk_label_object(SHADER_MODULE,   module,          str8_from_s8(name), str8("Module"));
+		vk_label_object(PIPELINE,        result.pipeline, name, str8("Pipeline"));
+		vk_label_object(PIPELINE_LAYOUT, result.layout,   name, str8("Pipeline Layout"));
+		vk_label_object(SHADER_MODULE,   module,          name, str8("Module"));
 
 		vkDestroyShaderModule(vulkan_context->device, module, 0);
 	}
@@ -784,16 +784,16 @@ vk_graphics_pipeline_from_infos(Arena arena, VulkanPipelineCreateInfo *infos, u3
 
 		vkCreateGraphicsPipelines(vulkan_context->device, 0, 1, &pci,0, &result.pipeline);
 
-		s8 extras[] = {
-			[VulkanShaderKind_Vertex]   = s8_comp("Vertex Module"),
-			[VulkanShaderKind_Mesh]     = s8_comp("Mesh Module"),
-			[VulkanShaderKind_Fragment] = s8_comp("Fragment Module"),
+		str8 extras[] = {
+			[VulkanShaderKind_Vertex]   = str8_comp("Vertex Module"),
+			[VulkanShaderKind_Mesh]     = str8_comp("Mesh Module"),
+			[VulkanShaderKind_Fragment] = str8_comp("Fragment Module"),
 		};
 		assert(infos[0].kind < countof(extras));
 		assert(infos[1].kind < countof(extras));
 
-		vk_label_object(PIPELINE,        result.pipeline, str8_from_s8(infos[0].name), str8("Pipeline"));
-		vk_label_object(PIPELINE_LAYOUT, result.layout,   str8_from_s8(infos[0].name), str8("Pipeline Layout"));
+		vk_label_object(PIPELINE,        result.pipeline, infos[0].name, str8("Pipeline"));
+		vk_label_object(PIPELINE_LAYOUT, result.layout,   infos[0].name, str8("Pipeline Layout"));
 		//vk_label_object_(VK_OBJECT_TYPE_SHADER_MODULE, (u64)modules[0], infos[0].name, extras[infos[0].kind]);
 		//vk_label_object_(VK_OBJECT_TYPE_SHADER_MODULE, (u64)modules[1], infos[1].name, extras[infos[1].kind]);
 	}
@@ -1079,26 +1079,26 @@ vk_load_instance(Arena arena, Stream *err)
 
 		if (countof(vk_validation_layers) != enabled_validation_layers_count) {
 			i32 missing_count = countof(vk_validation_layers) - enabled_validation_layers_count;
-			stream_append_s8s(err, vulkan_info("missing validation layer"),
-			                  missing_count > 1 ? s8("s:") : s8(":"), s8("\n"));
+			stream_append_str8s(err, vulkan_info("missing validation layer"),
+			                    missing_count > 1 ? str8("s:") : str8(":"), str8("\n"));
 
 			for EachElement(vk_validation_layers, it)
 				if (vulkan_config.layers.enabled.E[it] == 0)
-					stream_append_s8s(err, s8("    "), s8_from_str8(vk_validation_layers[it]), s8("\n"));
+					stream_append_str8s(err, str8("    "), vk_validation_layers[it], str8("\n"));
 		}
 
 		u32 instance_extension_count = 0;
 		vkEnumerateInstanceExtensionProperties(0, &instance_extension_count, 0);
 
 		VkExtensionProperties *instance_extensions = push_array(&arena, VkExtensionProperties, instance_extension_count);
-		s8                    *instance_ext_s8s    = push_array(&arena, s8,                    instance_extension_count);
+		str8                  *instance_ext_str8s  = push_array(&arena, str8,                  instance_extension_count);
 		vkEnumerateInstanceExtensionProperties(0, &instance_extension_count, instance_extensions);
 		for EachIndex(instance_extension_count, it)
-			instance_ext_s8s[it] = c_str_to_s8(instance_extensions[it].extensionName);
+			instance_ext_str8s[it] = str8_from_c_str(instance_extensions[it].extensionName);
 
 		for EachElement(vk_instance_debug_extensions, it) {
 			for EachIndex(instance_extension_count, i) {
-				if (s8_equal(vk_instance_debug_extensions[it], instance_ext_s8s[i])) {
+				if (str8_equal(vk_instance_debug_extensions[it], instance_ext_str8s[i])) {
 					u32 index = enabled_instance_extensions_count++;
 					enabled_instance_extensions[index] = (char *)vk_instance_debug_extensions[it].data;
 					vulkan_config.instance.E[it] = 1;
@@ -1189,8 +1189,8 @@ vk_load_physical_device(Arena arena, Stream *err)
 
 	vkGetPhysicalDeviceProperties2(vk->physical_device, &dp);
 
-	stream_append_s8s(err, vulkan_info("selecting device: "), c_str_to_s8(dp.properties.deviceName), s8("\n"));
-	stream_append_s8(err, vulkan_info("Vulkan Version: "));
+	stream_append_str8s(err, vulkan_info("selecting device: "), str8_from_c_str(dp.properties.deviceName), str8("\n"));
+	stream_append_str8(err, vulkan_info("Vulkan Version: "));
 	{
 		u32 dv = dp.properties.apiVersion;
 		stream_appendf(err, "%u.%u.%u\n", VK_API_VERSION_MAJOR(dv), VK_API_VERSION_MINOR(dv), VK_API_VERSION_PATCH(dv));
@@ -1203,14 +1203,14 @@ vk_load_physical_device(Arena arena, Stream *err)
 		VkExtensionProperties *extensions = push_array(&scratch, VkExtensionProperties, extension_count);
 		vkEnumerateDeviceExtensionProperties(vk->physical_device, 0, &extension_count, extensions);
 
-		s8 *ext_str8s = push_array(&scratch, s8, extension_count);
+		str8 *ext_str8s = push_array(&scratch, str8, extension_count);
 		for (u32 index = 0; index < extension_count; index++)
-			ext_str8s[index] = c_str_to_s8(extensions[index].extensionName);
+			ext_str8s[index] = str8_from_c_str(extensions[index].extensionName);
 
 		b8 *supported = push_array(&scratch, b8, countof(vk_required_device_extensions));
 		for EachIndex(extension_count, index)
 			for EachElement(vk_required_device_extensions, it)
-				supported[it] |= s8_equal(vk_required_device_extensions[it], ext_str8s[index]);
+				supported[it] |= str8_equal(vk_required_device_extensions[it], ext_str8s[index]);
 
 		u32 supported_count = 0;
 		for EachElement(vk_required_device_extensions, it)
@@ -1218,25 +1218,25 @@ vk_load_physical_device(Arena arena, Stream *err)
 
 		u32 missing_count = countof(vk_required_device_extensions) - supported_count;
 		if (missing_count) {
-			stream_append_s8s(err, vulkan_info("fatal error: missing required device extension"),
-			                  missing_count > 1 ? s8("s") : s8(""), s8(":\n"));
+			stream_append_str8s(err, vulkan_info("fatal error: missing required device extension"),
+			                    missing_count > 1 ? str8("s") : str8(""), str8(":\n"));
 			for EachElement(vk_required_device_extensions, it) {
 				if (!supported[it]) {
-					s8 name = vk_required_device_extensions[it];
-					stream_append_s8s(err, vulkan_info("    "), name, s8("\n"));
+					str8 name = vk_required_device_extensions[it];
+					stream_append_str8s(err, vulkan_info("    "), name, str8("\n"));
 				}
 			}
-			fatal(stream_to_s8(err));
+			fatal(stream_to_str8(err));
 		}
 
 		for EachIndex(extension_count, index)
 			for EachElement(vk_optional_device_extensions, it)
-				vulkan_config.optional.E[it] |= s8_equal(vk_optional_device_extensions[it], ext_str8s[index]);
+				vulkan_config.optional.E[it] |= str8_equal(vk_optional_device_extensions[it], ext_str8s[index]);
 
 		#if BEAMFORMER_DEBUG
 		for EachIndex(extension_count, index)
 			for EachElement(vk_debug_extensions, it)
-				vulkan_config.debug.E[it] |= s8_equal(vk_debug_extensions[it], ext_str8s[index]);
+				vulkan_config.debug.E[it] |= str8_equal(vk_debug_extensions[it], ext_str8s[index]);
 		#endif
 	}
 
@@ -1257,11 +1257,11 @@ vk_load_physical_device(Arena arena, Stream *err)
 			#undef X
 
 			if (!all_supported) {
-				stream_append_s8(err, vulkan_info("fatal error: missing physical device features:\n"));
-				#define X(name, ...) if (!df.features.name) stream_append_s8(err, s8("    " #name "\n"));
+				stream_append_str8(err, vulkan_info("fatal error: missing physical device features:\n"));
+				#define X(name, ...) if (!df.features.name) stream_append_str8(err, str8("    " #name "\n"));
 				VK_REQUIRED_PHYSICAL_FEATURES
 				#undef X
-				fatal(stream_to_s8(err));
+				fatal(stream_to_str8(err));
 			}
 		}
 
@@ -1272,11 +1272,11 @@ vk_load_physical_device(Arena arena, Stream *err)
 			#undef X
 
 			if (!all_supported) {
-				stream_append_s8(err, vulkan_info("fatal error: missing physical device features:\n"));
-				#define X(name, ...) if (!v11f.name) stream_append_s8(err, s8("    " #name "\n"));
+				stream_append_str8(err, vulkan_info("fatal error: missing physical device features:\n"));
+				#define X(name, ...) if (!v11f.name) stream_append_str8(err, str8("    " #name "\n"));
 				VK_REQUIRED_PHYSICAL_11_FEATURES
 				#undef X
-				fatal(stream_to_s8(err));
+				fatal(stream_to_str8(err));
 			}
 		}
 
@@ -1287,11 +1287,11 @@ vk_load_physical_device(Arena arena, Stream *err)
 			#undef X
 
 			if (!all_supported) {
-				stream_append_s8(err, vulkan_info("fatal error: missing physical device features:\n"));
-				#define X(name, ...) if (!v12f.name) stream_append_s8(err, s8("    " #name "\n"));
+				stream_append_str8(err, vulkan_info("fatal error: missing physical device features:\n"));
+				#define X(name, ...) if (!v12f.name) stream_append_str8(err, str8("    " #name "\n"));
 				VK_REQUIRED_PHYSICAL_12_FEATURES
 				#undef X
-				fatal(stream_to_s8(err));
+				fatal(stream_to_str8(err));
 			}
 		}
 
@@ -1302,11 +1302,11 @@ vk_load_physical_device(Arena arena, Stream *err)
 			#undef X
 
 			if (!all_supported) {
-				stream_append_s8(err, vulkan_info("fatal error: missing physical device features:\n"));
-				#define X(name, ...) if (!v13f.name) stream_append_s8(err, s8("    " #name "\n"));
+				stream_append_str8(err, vulkan_info("fatal error: missing physical device features:\n"));
+				#define X(name, ...) if (!v13f.name) stream_append_str8(err, str8("    " #name "\n"));
 				VK_REQUIRED_PHYSICAL_13_FEATURES
 				#undef X
-				fatal(stream_to_s8(err));
+				fatal(stream_to_str8(err));
 			}
 		}
 
@@ -1381,8 +1381,8 @@ vk_load_physical_device(Arena arena, Stream *err)
 
 	// TODO(rnp): this shouldn't be fatal
 	if (bar_index == -1) {
-		stream_append_s8(err, vulkan_info("fatal error: GPU does not support host bar memory\n"));
-		fatal(stream_to_s8(err));
+		stream_append_str8(err, vulkan_info("fatal error: GPU does not support host bar memory\n"));
+		fatal(stream_to_str8(err));
 	}
 
 	vk->memory_info.memory_type_indices[VulkanMemoryKind_BAR] = bar_index;
@@ -1398,8 +1398,8 @@ vk_load_physical_device(Arena arena, Stream *err)
 	}
 
 	if (vk->memory_info.memory_type_indices[VulkanMemoryKind_Host] == -1) {
-		stream_append_s8(err, vulkan_info("fatal error: vulkan driver does not provide host visible memory\n"));
-		fatal(stream_to_s8(err));
+		stream_append_str8(err, vulkan_info("fatal error: vulkan driver does not provide host visible memory\n"));
+		fatal(stream_to_str8(err));
 	}
 
 	for EachElement(vk->memory_info.memory_type_indices, it) {
@@ -1421,7 +1421,7 @@ vk_load_physical_device(Arena arena, Stream *err)
 	vk->gpu_info.max_compute_shared_memory_size = dp.properties.limits.maxComputeSharedMemorySize;
 
 	// IMPORTANT(rnp): memory must only be pushed at the end of the function
-	vk->gpu_info.name = push_s8(&vk->arena, c_str_to_s8(dp.properties.deviceName));
+	vk->gpu_info.name = push_str8(&vk->arena, str8_from_c_str(dp.properties.deviceName));
 
 	#if BEAMFORMER_DEBUG
 	{
@@ -1431,16 +1431,16 @@ vk_load_physical_device(Arena arena, Stream *err)
 			u32 dv = vulkan_config.driver_api_version;
 			if (lv < dv) {
 				mismatch = 1;
-				stream_append_s8s(err, vulkan_info("warning: validaton layer \""),
-				                  s8_from_str8(vk_validation_layers[it]), s8("\" version: "));
+				stream_append_str8s(err, vulkan_info("warning: validaton layer \""),
+				                    vk_validation_layers[it], str8("\" version: "));
 				stream_appendf(err, "%u.%u.%u", VK_API_VERSION_MAJOR(lv), VK_API_VERSION_MINOR(lv), VK_API_VERSION_PATCH(lv));
-				stream_append_s8(err, s8(" lower than driver API version: "));
+				stream_append_str8(err, str8(" lower than driver API version: "));
 				stream_appendf(err, "%u.%u.%u\n", VK_API_VERSION_MAJOR(dv), VK_API_VERSION_MINOR(dv), VK_API_VERSION_PATCH(dv));
 			}
 		}
 
 		if (mismatch)
-			stream_append_s8(err, vulkan_info("DO NOT report any bugs without updating your validation layers!\n"));
+			stream_append_str8(err, vulkan_info("DO NOT report any bugs without updating your validation layers!\n"));
 	}
 	#endif
 }
@@ -1508,11 +1508,11 @@ vk_load_queues(Arena *memory, Stream *err)
 	}
 
 	if (multi_graphics)
-		stream_append_s8(err, vulkan_info("warning: multiple queue families reported graphics support\n"));
+		stream_append_str8(err, vulkan_info("warning: multiple queue families reported graphics support\n"));
 
 	if (queue_indices[VulkanQueueKind_Graphics] == -1) {
-		stream_append_s8(err, vulkan_info("fatal error: GPU does not support graphics presentation\n"));
-		fatal(stream_to_s8(err));
+		stream_append_str8(err, vulkan_info("fatal error: GPU does not support graphics presentation\n"));
+		fatal(stream_to_str8(err));
 	}
 
 	if (queue_indices[VulkanQueueKind_Compute] == -1)
@@ -1520,8 +1520,8 @@ vk_load_queues(Arena *memory, Stream *err)
 			queue_indices[VulkanQueueKind_Compute] = queue_indices[VulkanQueueKind_Graphics];
 
 	if (queue_indices[VulkanQueueKind_Compute] == -1) {
-		stream_append_s8(err, vulkan_info("fatal error: GPU does not support compute\n"));
-		fatal(stream_to_s8(err));
+		stream_append_str8(err, vulkan_info("fatal error: GPU does not support compute\n"));
+		fatal(stream_to_str8(err));
 	}
 
 	if (queue_indices[VulkanQueueKind_Transfer] == -1) {
@@ -1532,8 +1532,8 @@ vk_load_queues(Arena *memory, Stream *err)
 	}
 
 	if (queue_indices[VulkanQueueKind_Transfer] == -1) {
-		stream_append_s8(err, vulkan_info("fatal error: GPU does not support data transfer\n"));
-		fatal(stream_to_s8(err));
+		stream_append_str8(err, vulkan_info("fatal error: GPU does not support data transfer\n"));
+		fatal(stream_to_str8(err));
 	}
 
 	/////////////////////////////////////////////////////////////////
@@ -1839,7 +1839,7 @@ vk_load_descriptor_block(void)
 		Arena scratch = vk->arena;
 		for EachElement(vk->descriptor_sets, it) {
 			Stream sb = arena_stream(scratch);
-			stream_append_s8s(&sb, s8("Beamformer "), beamformer_shader_resource_kind_strings[it], s8("s"));
+			stream_append_str8s(&sb, str8("Beamformer "), beamformer_shader_resource_kind_strings[it], str8("s"));
 			vk_label_object(DESCRIPTOR_SET,        vk->descriptor_sets[it],        stream_to_str8(&sb), str8("Set"));
 			vk_label_object(DESCRIPTOR_SET_LAYOUT, vk->descriptor_set_layouts[it], stream_to_str8(&sb), str8("Set Layout"));
 		}
@@ -1861,8 +1861,8 @@ vk_load(OSLibrary vulkan_library_handle, Arena *memory, Stream *err)
 	#undef X
 
 	if (!vkGetInstanceProcAddr) {
-		stream_append_s8(err, vulkan_info("fatal error: failed to find \"vkGetInstanceProcAddr\"\n"));
-		fatal(stream_to_s8(err));
+		stream_append_str8(err, vulkan_info("fatal error: failed to find \"vkGetInstanceProcAddr\"\n"));
+		fatal(stream_to_str8(err));
 	}
 
 	VulkanContext *vk = vulkan_context;
@@ -1875,20 +1875,20 @@ vk_load(OSLibrary vulkan_library_handle, Arena *memory, Stream *err)
 	vk_load_graphics();
 	vk_load_descriptor_block();
 
-	read_only local_persist s8 default_compute_shader = s8(""
+	read_only local_persist str8 default_compute_shader = str8(""
 		"#version 430 core\n"
 		"layout(push_constant) uniform pc { uint data[256 / 4]; };\n"
 		"void main() {}\n"
 		"\n");
 	vk->default_compute_pipeline = vk_compute_pipeline_from_shader_text(vk->arena, default_compute_shader,
-	                                                                    s8("error_compute_shader"), 256);
+	                                                                    str8("error_compute_shader"), 256);
 
-	read_only local_persist s8 default_vertex_shader = s8(""
+	read_only local_persist str8 default_vertex_shader = str8(""
 		"#version 430 core\n"
 		"layout(push_constant) uniform pc { uint data[256 / 4]; };\n"
 		"void main() {gl_Position = vec4(0);}\n"
 		"\n");
-	read_only local_persist s8 default_fragment_shader = s8(""
+	read_only local_persist str8 default_fragment_shader = str8(""
 		"#version 430 core\n"
 		"layout(location = 0) out vec4 out_colour;"
 		"layout(push_constant) uniform pc { uint data[256 / 4]; };\n"
@@ -1899,12 +1899,12 @@ vk_load(OSLibrary vulkan_library_handle, Arena *memory, Stream *err)
 		{
 			.kind = VulkanShaderKind_Vertex,
 			.text = default_vertex_shader,
-			.name = s8("error_vertex_shader"),
+			.name = str8("error_vertex_shader"),
 		},
 		{
 			.kind = VulkanShaderKind_Fragment,
 			.text = default_fragment_shader,
-			.name = s8("error_fragment_shader"),
+			.name = str8("error_fragment_shader"),
 		},
 	};
 	vk->default_graphics_pipeline = vk_graphics_pipeline_from_infos(vk->arena, pipeline_create_infos, 2, 256);
@@ -2001,8 +2001,8 @@ vk_buffer_needs_sync(GPUBuffer *b)
 DEBUG_IMPORT u64
 vk_round_up_to_sync_size(u64 size, u64 min)
 {
-	iz  round  = (iz)Max(min, vulkan_context->memory_info.non_coherent_atom_size);
-	u64 result = (u64)round_up_to((iz)size, round);
+	i64 round  = (i64)Max(min, vulkan_context->memory_info.non_coherent_atom_size);
+	u64 result = (u64)round_up_to((i64)size, round);
 	return result;
 }
 
@@ -2110,7 +2110,7 @@ vk_render_model_release(GPUBuffer *model)
 }
 
 DEBUG_IMPORT void
-vk_render_model_allocate(GPUBuffer *model, void *indices, u64 index_count, u64 model_size, s8 label)
+vk_render_model_allocate(GPUBuffer *model, void *indices, u64 index_count, u64 model_size, str8 label)
 {
 	vk_render_model_release(model);
 
@@ -2131,7 +2131,7 @@ vk_render_model_allocate(GPUBuffer *model, void *indices, u64 index_count, u64 m
 		.size                    = (u64)size,
 		.flags                   = VulkanUsageFlag_HostReadWrite,
 		.index_type              = index_type,
-		.label                   = str8_from_s8(label),
+		.label                   = label,
 		.queue_family_count      = 1,
 		.queue_family_indices[0] = vulkan_context->queues[VulkanQueueKind_Graphics]->queue_family,
 	};
@@ -2183,7 +2183,7 @@ vk_image_release(GPUImage *image)
 
 DEBUG_IMPORT void
 vk_image_allocate(GPUImage *image, u32 width, u32 height, u32 mips, u32 samples,
-                  VulkanImageUsage usage, VulkanUsageFlags flags, OSHandle *export, s8 label)
+                  VulkanImageUsage usage, VulkanUsageFlags flags, OSHandle *export, str8 label)
 {
 	assert(IsPowerOfTwo(samples));
 
@@ -2284,9 +2284,9 @@ vk_image_allocate(GPUImage *image, u32 width, u32 height, u32 mips, u32 samples,
 		};
 		vkCreateImageView(vk->device, &image_view_info, 0, &vi->view);
 
-		vk_label_object(IMAGE,         vi->image,  str8_from_s8(label), str8("Image"));
-		vk_label_object(IMAGE_VIEW,    vi->view,   str8_from_s8(label), str8("Image View"));
-		vk_label_object(DEVICE_MEMORY, vi->memory, str8_from_s8(label), str8("Memory"));
+		vk_label_object(IMAGE,         vi->image,  label, str8("Image"));
+		vk_label_object(IMAGE_VIEW,    vi->view,   label, str8("Image View"));
+		vk_label_object(DEVICE_MEMORY, vi->memory, label, str8("Memory"));
 	} else {
 		vkDestroyImage(vk->device, vi->image, 0);
 		vk_entity_release(e);

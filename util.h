@@ -33,8 +33,6 @@ typedef u32      b32;
 typedef _Float16 f16;
 typedef float    f32;
 typedef double   f64;
-typedef i64      iz;
-typedef u64      uz;
 typedef i64      iptr;
 typedef u64      uptr;
 
@@ -212,17 +210,10 @@ typedef alignas(16) union {
 typedef struct { u8 *beg, *end; } Arena;
 typedef struct { Arena *arena, original_arena; } TempArena;
 
-typedef struct { i64 len; u8 *data; } s8;
-#define s8(s) (s8){.len = countof(s) - 1, .data = (u8 *)s}
-#define s8_comp(s) {sizeof(s) - 1, (u8 *)s}
-
 typedef struct { i64 length; u8 *data; } str8;
 #define str8(s)        (str8){.length = countof(s) - 1, .data = (u8 *)s}
 #define str8_comp(s)         {sizeof(s) - 1, (u8 *)s}
 #define str8_struct(v) (str8){.length = sizeof(*v), .data = (u8 *)v}
-
-#define str8_from_s8(s) (str8){.length = (s).len, .data = (s).data}
-#define s8_from_str8(s)   (s8){.len = (s).length, .data = (s).data}
 
 typedef struct { i64 length; u16 *data; } str16;
 
@@ -378,7 +369,7 @@ typedef struct {
 	LaneContext lane_context;
 } ThreadContext;
 
-#define OS_ALLOC_ARENA_FN(name)        Arena name(iz capacity)
+#define OS_ALLOC_ARENA_FN(name)        Arena name(i64 capacity)
 #define OS_READ_ENTIRE_FILE_FN(name)   i64   name(const char *file, void *buffer, i64 buffer_capacity)
 #define OS_WAIT_ON_ADDRESS_FN(name)    b32   name(i32 *value, i32 current, u32 timeout_ms)
 #define OS_WAKE_ALL_WAITERS_FN(name)   void  name(i32 *sync)

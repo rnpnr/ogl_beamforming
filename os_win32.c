@@ -61,8 +61,8 @@ typedef struct {
 	u16  architecture;
 	u16  _pad1;
 	u32  page_size;
-	iz   minimum_application_address;
-	iz   maximum_application_address;
+	i64  minimum_application_address;
+	i64  maximum_application_address;
 	u64  active_processor_mask;
 	u32  number_of_processors;
 	u32  processor_type;
@@ -116,10 +116,10 @@ W32(b32)    ReadDirectoryChangesW(iptr, u8 *, u32, b32, u32, u32 *, void *, void
 W32(b32)    ReadFile(iptr, u8 *, i32, i32 *, void *);
 W32(b32)    ReleaseSemaphore(iptr, i32, i32 *);
 W32(u32)    WaitForSingleObject(iptr, u32);
-W32(b32)    WaitOnAddress(void *, void *, uz, u32);
+W32(b32)    WaitOnAddress(void *, void *, u64, u32);
 W32(i32)    WakeByAddressAll(void *);
 W32(b32)    WriteFile(iptr, u8 *, i32, i32 *, void *);
-W32(void *) VirtualAlloc(u8 *, iz, u32, u32);
+W32(void *) VirtualAlloc(u8 *, i64, u32, u32);
 
 function b32
 os_write_file(iptr file, void *data, i64 length)
@@ -179,8 +179,8 @@ BEAMFORMER_IMPORT OS_READ_ENTIRE_FILE_FN(os_read_entire_file)
 	w32_file_info fileinfo;
 	iptr h = CreateFileA((c8 *)file, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
 	if (h >= 0 && GetFileInformationByHandle(h, &fileinfo)) {
-		iz filesize  = (iz)fileinfo.nFileSizeHigh << 32;
-		filesize    |= (iz)fileinfo.nFileSizeLow;
+		i64 filesize  = (i64)fileinfo.nFileSizeHigh << 32;
+		filesize     |= (i64)fileinfo.nFileSizeLow;
 		if (buffer_capacity >= filesize) {
 			result = filesize;
 			i32 rlen;

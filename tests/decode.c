@@ -94,14 +94,14 @@ parse_argv(i32 argc, char *argv[])
 	shift(argv, argc);
 
 	while (argc > 0) {
-		s8 arg = c_str_to_s8(*argv);
+		str8 arg = str8_from_c_str(*argv);
 		shift(argv, argc);
 
-		if (s8_equal(arg, s8("--loop"))) {
+		if (str8_equal(arg, str8("--loop"))) {
 			result.loop = 1;
-		} else if (s8_equal(arg, s8("--full-aperture"))) {
+		} else if (str8_equal(arg, str8("--full-aperture"))) {
 			result.full_aperture = 1;
-		} else if (s8_equal(arg, s8("--dump"))) {
+		} else if (str8_equal(arg, str8("--dump"))) {
 			if (argc) {
 				result.outdir = *argv;
 				result.dump   = 1;
@@ -109,14 +109,14 @@ parse_argv(i32 argc, char *argv[])
 			} else {
 				die("expected directory to dump to\n");
 			}
-		} else if (s8_equal(arg, s8("--once"))) {
+		} else if (str8_equal(arg, str8("--once"))) {
 			result.once = 1;
-		} else if (s8_equal(arg, s8("--warmup"))) {
+		} else if (str8_equal(arg, str8("--warmup"))) {
 			if (argc) {
 				result.warmup_count = (u32)atoi(*argv);
 				shift(argv, argc);
 			}
-		} else if (arg.len > 0 && arg.data[0] == '-') {
+		} else if (arg.length > 0 && arg.data[0] == '-') {
 			usage(argv0);
 		} else {
 			unshift(argv, argc);
@@ -165,8 +165,8 @@ data_size_for_transmit_count(u32 transmit_count, b32 full_aperture)
 function i16 *
 generate_test_data_for_transmit_count(u32 transmit_count, b32 full_aperture)
 {
-	uz  rf_size = data_size_for_transmit_count(transmit_count, full_aperture);
-	i16 *result = malloc(rf_size);
+	u64  rf_size = data_size_for_transmit_count(transmit_count, full_aperture);
+	i16 *result  = malloc(rf_size);
 	if (!result) die("malloc\n");
 	return result;
 }
@@ -176,9 +176,9 @@ dump_stats(BeamformerComputeStatsTable *stats, Options *options, u32 transmit_co
 {
 	char path_buffer[1024];
 	Stream sb = {.data = (u8 *)path_buffer, .cap = sizeof(path_buffer)};
-	stream_append_s8s(&sb, c_str_to_s8(options->outdir), s8(OS_PATH_SEPARATOR), s8("decode_"));
+	stream_append_str8s(&sb, str8_from_c_str(options->outdir), str8(OS_PATH_SEPARATOR "decode_"));
 	stream_append_u64(&sb, transmit_count);
-	stream_append_s8(&sb, s8(".bin"));
+	stream_append_str8(&sb, str8(".bin"));
 	stream_append_byte(&sb, 0);
 	os_write_new_file(path_buffer, str8_struct(stats));
 }
@@ -265,9 +265,9 @@ main(i32 argc, char *argv[])
 	signal(SIGINT, sigint);
 
 	BeamformerLiveImagingParameters lip = {.active = 1, .save_enabled = 1};
-	s8 short_name = s8("Decode Bench");
-	memory_copy(lip.save_name_tag, short_name.data, (u64)short_name.len);
-	lip.save_name_tag_length = (i32)short_name.len;
+	str8 short_name = str8("Decode Bench");
+	memory_copy(lip.save_name_tag, short_name.data, (u64)short_name.length);
+	lip.save_name_tag_length = (i32)short_name.length;
 	beamformer_set_live_parameters(&lip);
 
 	u32 max_transmit_count = decode_transmit_counts[countof(decode_transmit_counts) - 1];
@@ -285,7 +285,7 @@ main(i32 argc, char *argv[])
 		send_frame(data, data_size);
 	} else {
 		BeamformerComputeStatsTable stats = {0};
-		for (iz i = 0; i < countof(decode_transmit_counts); i++) {
+		for (i64 i = 0; i < countof(decode_transmit_counts); i++) {
 			u32 transmit_count = decode_transmit_counts[i];
 			f32 time = execute_study(&options, transmit_count, data);
 			if (options.dump) {

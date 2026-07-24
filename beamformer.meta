@@ -289,12 +289,12 @@
 	@Expand(DataKindTable) `	$(complex),`
 	`};`
 	``
-	`read_only global s8 beamformer_data_kind_glsl_type[] = {`
-	@Expand(DataKindTable) `	s8_comp("$(glsl)"),`
+	`read_only global str8 beamformer_data_kind_glsl_type[] = {`
+	@Expand(DataKindTable) `	str8_comp("$(glsl)"),`
 	`};`
 	``
-	`read_only global s8 beamformer_data_kind_s8[] = {`
-	@Expand(DataKindTable) `	s8_comp("$(name)"),`
+	`read_only global str8 beamformer_data_kind_str8[] = {`
+	@Expand(DataKindTable) `	str8_comp("$(name)"),`
 	`};`
 	``
 	`read_only global u8 beamformer_contrast_mode_samples[] = {`
@@ -317,16 +317,16 @@
 	@Expand(AcquisitionKindTable) `	str8_comp("$(pretty_name)"),`
 	`};`
 	``
-	`read_only global s8 beamformer_filter_kind_strings[] = {`
-	@Expand(FilterKindTable) `	s8_comp("$(name)"),`
+	`read_only global str8 beamformer_filter_kind_strings[] = {`
+	@Expand(FilterKindTable) `	str8_comp("$(name)"),`
 	`};`
 	``
-	`read_only global s8 beamformer_interpolation_mode_strings[] = {`
-	@Expand(InterpolationMode) `	s8_comp("$(name)"),`
+	`read_only global str8 beamformer_interpolation_mode_strings[] = {`
+	@Expand(InterpolationMode) `	str8_comp("$(name)"),`
 	`};`
 	``
-	`read_only global s8 beamformer_shader_resource_kind_strings[] = {`
-	@Expand(ShaderResourceKind) `	s8_comp("$(name)"),`
+	`read_only global str8 beamformer_shader_resource_kind_strings[] = {`
+	@Expand(ShaderResourceKind) `	str8_comp("$(name)"),`
 	`};`
 }
 

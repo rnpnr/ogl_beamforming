@@ -192,9 +192,9 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 		result->ui_voxel_transform = m4_identity();
 
 		Stream label = arena_stream(*arena);
-		stream_append_s8(&label, s8("ComputeParameterArray["));
+		stream_append_str8(&label, str8("ComputeParameterArray["));
 		stream_append_u64(&label, block);
-		stream_append_s8(&label, s8("]"));
+		stream_append_str8(&label, str8("]"));
 		stream_append_byte(&label, 0);
 
 		GPUBufferAllocateInfo allocate_info = {
@@ -212,14 +212,14 @@ function void
 beamformer_filter_update(BeamformerFilter *f, BeamformerFilterParameters fp, u32 block, u32 slot, Arena arena)
 {
 	Stream sb = arena_stream(arena);
-	stream_append_s8s(&sb,
-	                  beamformer_filter_kind_strings[fp.kind % countof(beamformer_filter_kind_strings)],
-	                  s8("Filter["));
+	stream_append_str8s(&sb,
+	                    beamformer_filter_kind_strings[fp.kind % countof(beamformer_filter_kind_strings)],
+	                    str8("Filter["));
 	stream_append_u64(&sb, block);
-	stream_append_s8(&sb, s8("]["));
+	stream_append_str8(&sb, str8("]["));
 	stream_append_u64(&sb, slot);
 	stream_append_byte(&sb, ']');
-	s8 label = arena_stream_commit(&arena, &sb);
+	str8 label = arena_stream_commit(&arena, &sb);
 
 	void *filter = 0;
 	switch (fp.kind) {
@@ -253,7 +253,7 @@ beamformer_filter_update(BeamformerFilter *f, BeamformerFilterParameters fp, u32
 		GPUBufferAllocateInfo allocate_info = {
 			.size  = byte_size,
 			.flags = VulkanUsageFlag_HostReadWrite,
-			.label = str8_from_s8(label),
+			.label = label,
 		};
 		vk_buffer_allocate(&f->buffer, &allocate_info);
 	}
@@ -817,7 +817,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 function void
 stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDescriptor *sd, uv3 layout)
 {
-	stream_append_s8s(s, s8("#version 460 core\n\n"
+	stream_append_str8(s, str8("#version 460 core\n\n"
 	"#extension GL_EXT_buffer_reference : require\n"
 	"#extension GL_EXT_shader_16bit_storage : require\n"
 	"#extension GL_EXT_shader_explicit_arithmetic_types : require\n\n"
@@ -835,26 +835,26 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDes
 	i32  header_vector_length = beamformer_shader_header_vector_lengths[reloadable_index];
 	i32 *header_vector        = beamformer_shader_header_vectors[reloadable_index];
 	for (i32 index = 0; index < header_vector_length; index++)
-		stream_append_s8(s, beamformer_shader_global_header_strings[header_vector[index]]);
+		stream_append_str8(s, beamformer_shader_global_header_strings[header_vector[index]]);
 
 	if (layout.x != 0) {
-		stream_append_s8(s,  s8("layout(local_size_x = "));
-		stream_append_u64(s, layout.x);
-		stream_append_s8(s,  s8(", local_size_y = "));
-		stream_append_u64(s, layout.y);
-		stream_append_s8(s,  s8(", local_size_z = "));
-		stream_append_u64(s, layout.z);
-		stream_append_s8(s,  s8(") in;\n\n"));
+		stream_append_str8(s, str8("layout(local_size_x = "));
+		stream_append_u64(s,  layout.x);
+		stream_append_str8(s, str8(", local_size_y = "));
+		stream_append_u64(s,  layout.y);
+		stream_append_str8(s, str8(", local_size_z = "));
+		stream_append_u64(s,  layout.z);
+		stream_append_str8(s, str8(") in;\n\n"));
 	}
 
 	{
 		u32 max_length = 0;
-		for EachElement(beamformer_data_kind_s8, it)
-			max_length = Max(max_length, (u32)beamformer_data_kind_s8[it].len);
+		for EachElement(beamformer_data_kind_str8, it)
+			max_length = Max(max_length, (u32)beamformer_data_kind_str8[it].length);
 
-		for EachElement(beamformer_data_kind_s8, it) {
-			stream_append_s8s(s, s8("#define DataKind_"), beamformer_data_kind_s8[it]);
-			stream_pad(s, ' ', max_length - beamformer_data_kind_s8[it].len + 1);
+		for EachElement(beamformer_data_kind_str8, it) {
+			stream_append_str8s(s, str8("#define DataKind_"), beamformer_data_kind_str8[it]);
+			stream_pad(s, ' ', max_length - beamformer_data_kind_str8[it].length + 1);
 			stream_append_u64(s, it);
 			stream_append_byte(s, '\n');
 		}
@@ -863,47 +863,47 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDes
 
 	if (sd) {
 		BeamformerDataKind data_kinds[] = {sd->input_data_kind, sd->output_data_kind};
-		s8 line_prefixes[] = {s8_comp("Input"), s8_comp("Output")};
+		str8 line_prefixes[] = {str8_comp("Input"), str8_comp("Output")};
 		for EachElement(data_kinds, it) {
 			if (data_kinds[it] != BeamformerDataKind_Count) {
-				stream_append_s8s(s, s8("#define "), line_prefixes[it], s8("DataType "),
-				                  beamformer_data_kind_glsl_type[data_kinds[it]],
-				                  s8("\n#define "), line_prefixes[it], s8("DataKind DataKind_"),
-				                  beamformer_data_kind_s8[data_kinds[it]],
-				                  s8("\n#define "), line_prefixes[it], s8("DataKindByteSize "));
+				stream_append_str8s(s, str8("#define "), line_prefixes[it], str8("DataType "),
+				                    beamformer_data_kind_glsl_type[data_kinds[it]],
+				                    str8("\n#define "), line_prefixes[it], str8("DataKind DataKind_"),
+				                    beamformer_data_kind_str8[data_kinds[it]],
+				                    str8("\n#define "), line_prefixes[it], str8("DataKindByteSize "));
 				stream_append_u64(s, beamformer_data_kind_byte_size[data_kinds[it]]);
 				stream_append_byte(s, '\n');
 			}
 		}
 		stream_append_byte(s, '\n');
 
-		u32 *parameters = (u32 *)&sd->bake;
-		s8  *names      = beamformer_shader_bake_parameter_names[reloadable_index];
-		u32  float_bits = beamformer_shader_bake_parameter_float_bits[reloadable_index];
-		i32  count      = beamformer_shader_bake_parameter_counts[reloadable_index];
+		u32  *parameters = (u32 *)&sd->bake;
+		str8 *names      = beamformer_shader_bake_parameter_names[reloadable_index];
+		u32   float_bits = beamformer_shader_bake_parameter_float_bits[reloadable_index];
+		i32   count      = beamformer_shader_bake_parameter_counts[reloadable_index];
 
 		for (i32 index = 0; index < count; index++) {
-			stream_append_s8s(s, s8("#define "), names[index],
-			                  (float_bits & (1 << index))? s8(" uintBitsToFloat") : s8(" "), s8("(0x"));
+			stream_append_str8s(s, str8("#define "), names[index],
+			                    (float_bits & (1 << index))? str8(" uintBitsToFloat") : str8(" "), str8("(0x"));
 			stream_append_hex_u64(s, parameters[index]);
-			stream_append_s8(s, s8(")\n"));
+			stream_append_str8(s, str8(")\n"));
 		}
 	}
 
 	if (!renderdoc_attached())
-		stream_append_s8(s, s8("\n\n#line 1\n"));
+		stream_append_str8(s, str8("\n\n#line 1\n"));
 }
 
 function void
 beamformer_reload_pipeline(VulkanHandle *pipeline, BeamformerShaderReloadInfo *sris, u32 count, Arena arena)
 {
 	assume(count <= 2);
-	s8 paths[2];
+	str8 paths[2];
 	VulkanPipelineCreateInfo infos[2];
 
 	if (!BakeShaders) {
 		for (u32 i = 0; i < count; i++)
-			paths[i] = push_s8_from_parts(&arena, os_path_separator(), s8("shaders"), sris[i].filename_or_data);
+			paths[i] = push_str8_from_parts(&arena, os_path_separator(), str8("shaders"), sris[i].filename_or_data);
 	}
 
 	u32 push_constants_size = 0;
@@ -916,7 +916,7 @@ beamformer_reload_pipeline(VulkanHandle *pipeline, BeamformerShaderReloadInfo *s
 		stream_append_shader_header(&shader_stream, reloadable_index, sris[i].shader_descriptor, sris[i].layout);
 
 		if (BakeShaders) {
-			stream_append_s8(&shader_stream, sris[i].filename_or_data);
+			stream_append_str8(&shader_stream, sris[i].filename_or_data);
 		} else {
 			shader_stream.widx += os_read_entire_file((c8 *)paths[i].data,
 			                                          shader_stream.data + shader_stream.widx,
