@@ -6,6 +6,7 @@
 #include "../beamformer.h"
 
 #include "../util.h"
+#include "../meta.h"
 
 #include "../generated/beamformer.c"
 #include "ogl_beamformer_lib_base.h"

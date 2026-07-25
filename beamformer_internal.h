@@ -7,6 +7,7 @@
 #include "util.h"
 #include "opengl.h"
 
+#include "meta.h"
 #include "generated/beamformer.c"
 #include "generated/beamformer_core.c"
 #include "generated/beamformer_shader_data.c"

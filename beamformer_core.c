@@ -877,16 +877,20 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDes
 		}
 		stream_append_byte(s, '\n');
 
-		u32  *parameters = (u32 *)&sd->bake;
-		str8 *names      = beamformer_shader_bake_parameter_names[reloadable_index];
-		u32   float_bits = beamformer_shader_bake_parameter_float_bits[reloadable_index];
-		i32   count      = beamformer_shader_bake_parameter_counts[reloadable_index];
+		i32 struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];
+		if (struct_id != -1) {
+			u32              *parameters = (u32 *)&sd->bake;
+			str8             *names      = beamformer_shader_bake_parameter_names[reloadable_index];
+			MetaStructInfo   *si         = meta_struct_info_by_id + struct_id;
+			MetaStructMember *sm         = meta_struct_members_by_id[struct_id];
 
-		for (i32 index = 0; index < count; index++) {
-			stream_append_str8s(s, str8("#define "), names[index],
-			                    (float_bits & (1 << index))? str8(" uintBitsToFloat") : str8(" "), str8("(0x"));
-			stream_append_hex_u64(s, parameters[index]);
-			stream_append_str8(s, str8(")\n"));
+			for (u32 index = 0; index < si->member_count; index++) {
+				b32 is_float = sm[index].type_id == MetaKind_F32;
+				stream_append_str8s(s, str8("#define "), names[index],
+				                    is_float ? str8(" uintBitsToFloat") : str8(" "), str8("(0x"));
+				stream_append_hex_u64(s, parameters[index]);
+				stream_append_str8(s, str8(")\n"));
+			}
 		}
 	}
 
