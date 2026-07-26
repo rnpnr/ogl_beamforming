@@ -124,6 +124,24 @@ typedef enum {
 } BeamformerLiveImagingDirtyFlags;
 
 typedef enum {
+	BeamformerFilterCompileFlags_ComplexFilter = 1 << 0,
+	BeamformerFilterCompileFlags_Demodulate    = 1 << 1,
+} BeamformerFilterCompileFlags;
+
+typedef enum {
+	BeamformerDecodeCompileFlags_CooperativeMatrix = 1 << 0,
+} BeamformerDecodeCompileFlags;
+
+typedef enum {
+	BeamformerDASCompileFlags_CoherencyWeighting = 1 << 0,
+} BeamformerDASCompileFlags;
+
+typedef enum {
+	BeamformerReshapeCompileFlags_Deinterleave = 1 << 0,
+	BeamformerReshapeCompileFlags_Interleave   = 1 << 1,
+} BeamformerReshapeCompileFlags;
+
+typedef enum {
 	BeamformerShaderKind_Decode             = 0,
 	BeamformerShaderKind_Filter             = 1,
 	BeamformerShaderKind_Demodulate         = 2,
@@ -156,15 +174,12 @@ typedef struct {
 	u32 to_process;
 	u32 transmit_count;
 	u32 chunk_channel_count;
-	b32 cooperative_matrix;
 	u32 cooperative_matrix_m;
 	u32 cooperative_matrix_n;
 	u32 cooperative_matrix_k;
 } BeamformerDecodeBakeParameters;
 
 typedef struct {
-	u32 demodulate;
-	u32 complex_filter;
 	u32 decimation_rate;
 	u32 filter_length;
 	u32 input_channel_stride;
@@ -180,16 +195,15 @@ typedef struct {
 } BeamformerFilterBakeParameters;
 
 typedef struct {
-	u32 coherency_weighting;
-	u32 single_focus;
-	u32 single_orientation;
-	u32 sparse;
-	u32 acquisition_count;
+	b32 single_focus;
+	b32 single_orientation;
+	b32 sparse;
+	i32 acquisition_count;
 	u32 acquisition_kind;
-	u32 channel_count;
-	u32 chunk_channel_count;
+	i32 channel_count;
+	i32 chunk_channel_count;
 	u32 interpolation_mode;
-	u32 sample_count;
+	i32 sample_count;
 	u32 transmit_receive_orientation;
 	f32 demodulation_frequency;
 	f32 f_number;
@@ -210,8 +224,6 @@ typedef struct {
 	u32 output_stride_x;
 	u32 output_stride_y;
 	u32 output_stride_z;
-	b32 interleave;
-	b32 deinterleave;
 } BeamformerReshapeBakeParameters;
 
 typedef struct {
@@ -581,10 +593,9 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{18, 20, 1, 0},
 		{18, 24, 1, 0},
 		{18, 28, 1, 0},
-		{14, 32, 1, 0},
+		{18, 32, 1, 0},
 		{18, 36, 1, 0},
 		{18, 40, 1, 0},
-		{18, 44, 1, 0},
 	},
 	(MetaStructMember []){
 		{18, 0,  1, 0},
@@ -597,30 +608,27 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{18, 28, 1, 0},
 		{18, 32, 1, 0},
 		{18, 36, 1, 0},
-		{18, 40, 1, 0},
-		{18, 44, 1, 0},
-		{8,  48, 1, 0},
-		{8,  52, 1, 0},
+		{8,  40, 1, 0},
+		{8,  44, 1, 0},
 	},
 	(MetaStructMember []){
-		{18, 0,  1, 0},
-		{18, 4,  1, 0},
-		{18, 8,  1, 0},
-		{18, 12, 1, 0},
+		{14, 0,  1, 0},
+		{14, 4,  1, 0},
+		{14, 8,  1, 0},
+		{10, 12, 1, 0},
 		{18, 16, 1, 0},
-		{18, 20, 1, 0},
-		{18, 24, 1, 0},
+		{10, 20, 1, 0},
+		{10, 24, 1, 0},
 		{18, 28, 1, 0},
-		{18, 32, 1, 0},
+		{10, 32, 1, 0},
 		{18, 36, 1, 0},
-		{18, 40, 1, 0},
+		{8,  40, 1, 0},
 		{8,  44, 1, 0},
 		{8,  48, 1, 0},
 		{8,  52, 1, 0},
 		{8,  56, 1, 0},
 		{8,  60, 1, 0},
 		{8,  64, 1, 0},
-		{8,  68, 1, 0},
 	},
 	(MetaStructMember []){
 		{18, 0,  1, 0},
@@ -632,8 +640,6 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{18, 24, 1, 0},
 		{18, 28, 1, 0},
 		{18, 32, 1, 0},
-		{14, 36, 1, 0},
-		{14, 40, 1, 0},
 	},
 };
 
@@ -647,14 +653,11 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("to_process"),
 		str8_comp("transmit_count"),
 		str8_comp("chunk_channel_count"),
-		str8_comp("cooperative_matrix"),
 		str8_comp("cooperative_matrix_m"),
 		str8_comp("cooperative_matrix_n"),
 		str8_comp("cooperative_matrix_k"),
 	},
 	(str8 []){
-		str8_comp("demodulate"),
-		str8_comp("complex_filter"),
 		str8_comp("decimation_rate"),
 		str8_comp("filter_length"),
 		str8_comp("input_channel_stride"),
@@ -669,7 +672,6 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("sampling_frequency"),
 	},
 	(str8 []){
-		str8_comp("coherency_weighting"),
 		str8_comp("single_focus"),
 		str8_comp("single_orientation"),
 		str8_comp("sparse"),
@@ -698,16 +700,14 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("output_stride_x"),
 		str8_comp("output_stride_y"),
 		str8_comp("output_stride_z"),
-		str8_comp("interleave"),
-		str8_comp("deinterleave"),
 	},
 };
 
 read_only global MetaStructInfo meta_struct_info_by_id[] = {
-	{str8_comp("DecodeBakeParameters"),  12, 48, 0},
-	{str8_comp("FilterBakeParameters"),  14, 56, 0},
-	{str8_comp("DASBakeParameters"),     18, 72, 0},
-	{str8_comp("ReshapeBakeParameters"), 11, 44, 0},
+	{str8_comp("DecodeBakeParameters"),  11, 44, 0},
+	{str8_comp("FilterBakeParameters"),  12, 48, 0},
+	{str8_comp("DASBakeParameters"),     17, 68, 0},
+	{str8_comp("ReshapeBakeParameters"), 9,  36, 0},
 };
 
 read_only global str8 beamformer_shader_names[] = {
@@ -781,6 +781,9 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"#define DecodeMode_Hadamard 1\n"
 	"\n"),
 	str8_comp(""
+	"#define CooperativeMatrix ((CompileFlags & (1 << 0)) != 0)\n"
+	"\n"),
+	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  uint64_t hadamard_buffer;\n"
 	"  uint64_t rf_buffer;\n"
@@ -793,6 +796,10 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 	str8_comp(""
 	"#define ShaderResourceKind_Buffer 0\n"
+	"\n"),
+	str8_comp(""
+	"#define ComplexFilter ((CompileFlags & (1 << 0)) != 0)\n"
+	"#define Demodulate    ((CompileFlags & (1 << 1)) != 0)\n"
 	"\n"),
 	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
@@ -826,6 +833,9 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"#define RCAOrientation_None    0\n"
 	"#define RCAOrientation_Rows    1\n"
 	"#define RCAOrientation_Columns 2\n"
+	"\n"),
+	str8_comp(""
+	"#define CoherencyWeighting ((CompileFlags & (1 << 0)) != 0)\n"
 	"\n"),
 	str8_comp(""
 	"struct DASArrayParameters {\n"
@@ -867,6 +877,10 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"  uint32_t  output_size_y;\n"
 	"  uint32_t  output_size_z;\n"
 	"};\n"
+	"\n"),
+	str8_comp(""
+	"#define Deinterleave ((CompileFlags & (1 << 0)) != 0)\n"
+	"#define Interleave   ((CompileFlags & (1 << 1)) != 0)\n"
 	"\n"),
 	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
@@ -917,24 +931,24 @@ read_only global b8 beamformer_shader_primitive_is_vertex[] = {
 };
 
 read_only global i32 *beamformer_shader_header_vectors[] = {
-	(i32 []){0, 1},
-	(i32 []){2, 3, 4},
-	(i32 []){5, 6, 7, 8, 2, 3, 9, 10},
-	(i32 []){11},
-	0,
-	(i32 []){12},
-	(i32 []){13},
+	(i32 []){0, 1, 2},
+	(i32 []){3, 4, 5, 6},
+	(i32 []){7, 8, 9, 10, 3, 4, 11, 12, 13},
 	(i32 []){14},
+	0,
+	(i32 []){15},
+	(i32 []){16, 17},
+	(i32 []){18},
 };
 
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
-	2,
 	3,
-	8,
+	4,
+	9,
 	1,
 	0,
 	1,
-	1,
+	2,
 	1,
 };
 
@@ -948,14 +962,11 @@ read_only global str8 *beamformer_shader_bake_parameter_names[] = {
 		str8_comp("ToProcess"),
 		str8_comp("TransmitCount"),
 		str8_comp("ChunkChannelCount"),
-		str8_comp("CooperativeMatrix"),
 		str8_comp("CooperativeMatrixM"),
 		str8_comp("CooperativeMatrixN"),
 		str8_comp("CooperativeMatrixK"),
 	},
 	(str8 []){
-		str8_comp("Demodulate"),
-		str8_comp("ComplexFilter"),
 		str8_comp("DecimationRate"),
 		str8_comp("FilterLength"),
 		str8_comp("InputChannelStride"),
@@ -970,7 +981,6 @@ read_only global str8 *beamformer_shader_bake_parameter_names[] = {
 		str8_comp("SamplingFrequency"),
 	},
 	(str8 []){
-		str8_comp("CoherencyWeighting"),
 		str8_comp("SingleFocus"),
 		str8_comp("SingleOrientation"),
 		str8_comp("Sparse"),
@@ -1002,8 +1012,6 @@ read_only global str8 *beamformer_shader_bake_parameter_names[] = {
 		str8_comp("OutputStrideX"),
 		str8_comp("OutputStrideY"),
 		str8_comp("OutputStrideZ"),
-		str8_comp("Interleave"),
-		str8_comp("Deinterleave"),
 	},
 	0,
 };

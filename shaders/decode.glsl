@@ -23,8 +23,6 @@ OutputDataType sample_rf_data(u32 index)
 	return result;
 }
 
-#if UseSharedMemory
-
 shared InputDataType rf[gl_WorkGroupSize.y][TransmitCount];
 void run_decode_large(void)
 {
@@ -74,15 +72,14 @@ void run_decode_large(void)
 				Output(output_buffer).x[out_off] = result[i];
 	}
 }
-#endif
 
 #if CooperativeMatrix
+void run_decode_coop_shmem(void)
+{
+}
 
 void run_decode_coop(void)
 {
-	#if UseSharedMemory
-	#else
-
 	u32vec2 tile_index  = gl_WorkGroupID.xy;
 	u32     time_sample = gl_WorkGroupID.z;
 
@@ -117,7 +114,6 @@ void run_decode_coop(void)
 	Output out_buffer = Output(output_buffer);
 	coopMatStore(result, out_buffer.x, offset + TransmitCount * result_row + result_col,
 	             TransmitCount, gl_CooperativeMatrixLayoutRowMajor);
-	#endif
 }
 #endif
 
@@ -158,11 +154,11 @@ void main()
 	switch (DecodeMode) {
 	case DecodeMode_Hadamard:{
 		#if CooperativeMatrix
-			run_decode_coop();
-		#elif UseSharedMemory
-			run_decode_large();
+			if (UseSharedMemory) run_decode_coop_shmem();
+			else                 run_decode_coop();
 		#else
-			run_decode_small();
+			if (UseSharedMemory) run_decode_large();
+			else                 run_decode_small();
 		#endif
 	}break;
 	}

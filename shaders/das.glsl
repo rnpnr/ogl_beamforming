@@ -248,8 +248,8 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 	RESULT_TYPE result = RESULT_TYPE(0);
 	for (f32 chunk_channel = 0; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.0f) {
 		f32 rx_channel  = f32(channel_offset) + chunk_channel;
-		int rf_offset   = int(rf_element_offset) + int(chunk_channel) * SampleCount * AcquisitionCount + Sparse * SampleCount;
-		rf_offset      -= int(InterpolationMode == InterpolationMode_Cubic);
+		s32 rf_offset   = s32(rf_element_offset) + s32(chunk_channel) * SampleCount * AcquisitionCount + s32(Sparse) * SampleCount;
+		rf_offset      -= s32(InterpolationMode == InterpolationMode_Cubic);
 
 		// NOTE(rnp): this wouldn't be so messy if we just forced an orientation like with FORCES
 		vec2 element_receive_delta_squared = xy_world_point;
@@ -259,9 +259,9 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 		if (rx_cols) element_receive_delta_squared.x *= element_receive_delta_squared.x;
 		else         element_receive_delta_squared.y *= element_receive_delta_squared.y;
 
-		for (int transmit = Sparse; transmit < AcquisitionCount; transmit++) {
-			int tx_channel = bool(Sparse) ? ArrayParameters(array_parameters).data.sparse_elements[transmit - Sparse]
-			                              : transmit;
+		for (s32 transmit = s32(Sparse); transmit < AcquisitionCount; transmit++) {
+			s32 tx_channel = Sparse ? ArrayParameters(array_parameters).data.sparse_elements[transmit - s32(Sparse)]
+			                        : transmit;
 
 			if (rx_cols) element_receive_delta_squared.y  = xy_world_point.y - tx_channel * xdc_element_pitch.y;
 			else         element_receive_delta_squared.x  = xy_world_point.x - tx_channel * xdc_element_pitch.x;
@@ -300,14 +300,14 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 		float a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
 
 		if (a_arg < 0.5f) {
-			int rf_offset  = int(rf_element_offset) + int(chunk_channel) * SampleCount * AcquisitionCount + Sparse * SampleCount;
-			rf_offset     -= int(InterpolationMode == InterpolationMode_Cubic);
+			s32 rf_offset  = s32(rf_element_offset) + s32(chunk_channel) * SampleCount * AcquisitionCount + s32(Sparse) * SampleCount;
+			rf_offset     -= s32(InterpolationMode == InterpolationMode_Cubic);
 
 			float receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
 			float apodization   = apodize(a_arg);
-			for (int transmit = Sparse; transmit < AcquisitionCount; transmit++) {
-				int tx_channel = bool(Sparse) ? ArrayParameters(array_parameters).data.sparse_elements[transmit - Sparse]
-				                               : transmit;
+			for (s32 transmit = s32(Sparse); transmit < AcquisitionCount; transmit++) {
+				s32 tx_channel = Sparse ? ArrayParameters(array_parameters).data.sparse_elements[transmit - s32(Sparse)]
+				                        : transmit;
 				float transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_channel;
 				float transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
 

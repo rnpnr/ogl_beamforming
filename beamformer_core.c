@@ -632,7 +632,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 					if (demodulate)
 						decode_sample_count *= 2;
 
-					db->cooperative_matrix   = 1;
+					sd->compile_flags |= BeamformerDecodeCompileFlags_CooperativeMatrix;
 					db->cooperative_matrix_m = 16;
 					db->cooperative_matrix_n = 16;
 					db->cooperative_matrix_k = 16;
@@ -672,12 +672,13 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				b32 demod = node->kind == BeamformerShaderKind_Demodulate;
 				BeamformerFilter *f = cp->filters + sp->filter_slot;
 
+				sd->compile_flags |= BeamformerFilterCompileFlags_Demodulate * demod;
+				sd->compile_flags |= BeamformerFilterCompileFlags_ComplexFilter * f->parameters.complex;
+
 				time_offset += f->time_delay;
 
 				BeamformerFilterBakeParameters *fb = &sd->bake.Filter;
 				fb->filter_length  = (u32)f->length;
-				fb->demodulate     = demod;
-				fb->complex_filter = f->parameters.complex;
 
 				fb->sample_count    = input_sample_count;
 				fb->decimation_rate = demod ? decimation_rate : 1;
@@ -749,8 +750,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->sparse = id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES;
 				db->single_focus        = pb->parameters.single_focus;
 				db->single_orientation  = pb->parameters.single_orientation;
-				db->coherency_weighting = pb->parameters.coherency_weighting;
 
+				sd->compile_flags |= BeamformerDASCompileFlags_CoherencyWeighting * pb->parameters.coherency_weighting;
 				sd->layout   = layout_for_output(cp->output_points);
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
 			}break;
@@ -762,11 +763,13 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 			case BeamformerShaderKind_Reshape:{
 				BeamformerReshapeBakeParameters *rb = &sd->bake.Reshape;
-				rb->deinterleave =  beamformer_data_kind_complex[node->input_data_kind] &&
+				b32 deinterleave =  beamformer_data_kind_complex[node->input_data_kind] &&
 				                   !beamformer_data_kind_complex[node->output_data_kind];
-				rb->interleave   = !beamformer_data_kind_complex[node->input_data_kind] &&
+				b32 interleave   = !beamformer_data_kind_complex[node->input_data_kind] &&
 				                    beamformer_data_kind_complex[node->output_data_kind];
-				assert(rb->interleave == 0 || (rb->interleave != rb->deinterleave));
+				assert(interleave == 0 || (interleave != deinterleave));
+				sd->compile_flags |= BeamformerReshapeCompileFlags_Deinterleave * deinterleave;
+				sd->compile_flags |= BeamformerReshapeCompileFlags_Interleave   * interleave;
 
 				rb->input_stride_x   = node->input_stride.x;
 				rb->input_stride_y   = node->input_stride.y;
@@ -877,19 +880,20 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDes
 		}
 		stream_append_byte(s, '\n');
 
+		stream_append_str8(s, str8("#define CompileFlags (0x"));
+		stream_append_hex_u64_width(s, sd->compile_flags, 8);
+		stream_append_str8(s, str8(")\n"));
+
 		i32 struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];
 		if (struct_id != -1) {
-			u32              *parameters = (u32 *)&sd->bake;
-			str8             *names      = beamformer_shader_bake_parameter_names[reloadable_index];
-			MetaStructInfo   *si         = meta_struct_info_by_id + struct_id;
-			MetaStructMember *sm         = meta_struct_members_by_id[struct_id];
-
+			str8             *names = beamformer_shader_bake_parameter_names[reloadable_index];
+			MetaStructInfo   *si    = meta_struct_info_by_id + struct_id;
+			MetaStructMember *sm    = meta_struct_members_by_id[struct_id];
 			for (u32 index = 0; index < si->member_count; index++) {
-				b32 is_float = sm[index].type_id == MetaKind_F32;
-				stream_append_str8s(s, str8("#define "), names[index],
-				                    is_float ? str8(" uintBitsToFloat") : str8(" "), str8("(0x"));
-				stream_append_hex_u64(s, parameters[index]);
-				stream_append_str8(s, str8(")\n"));
+				str8 type = meta_kind_glsl_types[sm[index].type_id];
+				stream_append_str8(s, str8("layout(constant_id = "));
+				stream_append_u64(s, index);
+				stream_append_str8s(s, str8(") const "), type, str8(" "), names[index], str8(" = "), type, str8("(1);\n"));
 			}
 		}
 	}
@@ -930,15 +934,17 @@ beamformer_reload_pipeline(VulkanHandle *pipeline, BeamformerShaderReloadInfo *s
 		infos[i].kind = sris[i].shader_kind;
 		infos[i].text = arena_stream_commit_zero(&arena, &shader_stream);
 		infos[i].name = beamformer_shader_names[sris[i].shader];
+		infos[i].specialization_data      = sris[i].shader_descriptor ? &sris[i].shader_descriptor->bake : 0;
+		infos[i].specialization_struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];
 
-		//s8 line = s8("---------------\n");
-		//s8 nl   = s8("\n");
-		//os_console_log(line.data, line.len);
-		//os_console_log(infos[i].name.data, infos[i].name.len);
-		//os_console_log(nl.data, nl.len);
-		//os_console_log(line.data, line.len);
-		//os_console_log(infos[i].text.data, infos[i].text.len);
-		//os_console_log(line.data, line.len);
+		//str8 line = str8("---------------\n");
+		//str8 nl   = str8("\n");
+		//os_console_log(line.data, line.length);
+		//os_console_log(infos[i].name.data, infos[i].name.length);
+		//os_console_log(nl.data, nl.length);
+		//os_console_log(line.data, line.length);
+		//os_console_log(infos[i].text.data, infos[i].text.length);
+		//os_console_log(line.data, line.length);
 	}
 
 	vk_pipeline_release(*pipeline);
@@ -1232,7 +1238,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 		memory_copy(pc.voxel_transform.E, cp->das_voxel_transform.E, sizeof(pc.voxel_transform));
 		memory_copy(pc.xdc_transform.E,   cp->xdc_transform.E,       sizeof(pc.xdc_transform));
 
-		b32 coherent = cp->shader_descriptors[shader_slot].bake.DAS.coherency_weighting;
+		b32 coherent = (cp->shader_descriptors[shader_slot].compile_flags & BeamformerDASCompileFlags_CoherencyWeighting) != 0;
 
 		GPUMemoryBarrierInfo memory_barriers[] = {
 			// NOTE(rnp): last stage data output barrier
@@ -1484,7 +1490,9 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 					das_index = (i32)i;
 			}
 
-			b32 das_coherent = das_index >= 0 && cp->shader_descriptors[das_index].bake.DAS.coherency_weighting;
+			b32 das_coherent = das_index >= 0 &&
+			                   (cp->shader_descriptors[das_index].compile_flags &
+			                    BeamformerDASCompileFlags_CoherencyWeighting) != 0;
 			u64 reserved_frame_size = 0;
 
 			if (has_sum)

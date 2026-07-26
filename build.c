@@ -1067,12 +1067,6 @@ typedef enum {
 
 #include "meta.h"
 
-read_only global u8 meta_kind_byte_sizes[] = {
-	#define X(_k, _c, _g, _b, _m, bytes, ...) bytes,
-	META_KIND_LIST
-	#undef X
-};
-
 read_only global u8 meta_kind_elements[] = {
 	#define X(_k, _c, _g, _b, _m, _by, elements, ...) elements,
 	META_KIND_LIST
@@ -1093,12 +1087,6 @@ read_only global str8 meta_kind_matlab_types[] = {
 
 read_only global str8 meta_kind_base_c_types[] = {
 	#define X(_k, _c, _g, base, ...) str8_comp(#base),
-	META_KIND_LIST
-	#undef X
-};
-
-read_only global str8 meta_kind_glsl_types[] = {
-	#define X(_k, _c, glsl, ...) str8_comp(#glsl),
 	META_KIND_LIST
 	#undef X
 };
@@ -3692,6 +3680,13 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 					.suffix              = str8(";\\n\""),
 				});
 				meta_push_line(m, str8("\"};\\n\""));
+				meta_push_line(m, str8("\"\\n\"),"));
+			}break;
+
+			case MetaEntityKind_Flags:{
+				meta_push_line(m, str8("str8_comp(\"\""));
+				metagen_push_counted_enum_body(m, str8(""), str8("\"#define "), str8("((CompileFlags & (1 << "),
+				                               str8(")) != 0)\\n\""), e->table.entries[0], e->table.entry_count);
 				meta_push_line(m, str8("\"\\n\"),"));
 			}break;
 

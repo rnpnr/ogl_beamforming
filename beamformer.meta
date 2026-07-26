@@ -271,6 +271,28 @@
 	[transmit_receive_orientations U16 MaxChannelCount]
 }
 
+@Flags FilterCompileFlags
+{
+	ComplexFilter
+	Demodulate
+}
+
+@Flags DecodeCompileFlags
+{
+	CooperativeMatrix
+}
+
+@Flags DASCompileFlags
+{
+	CoherencyWeighting
+}
+
+@Flags ReshapeCompileFlags
+{
+	Deinterleave
+	Interleave
+}
+
 @Emit
 {
 	`read_only global u8 beamformer_data_kind_element_size[] = {`
@@ -336,6 +358,8 @@
 	{
 		@Enumeration DecodeMode
 
+		@Flags DecodeCompileFlags
+
 		@Bake
 		{
 			[UseSharedMemory      use_shared_memory      B32]
@@ -346,7 +370,6 @@
 			[ToProcess            to_process             U32]
 			[TransmitCount        transmit_count         U32]
 			[ChunkChannelCount    chunk_channel_count    U32]
-			[CooperativeMatrix    cooperative_matrix     B32]
 			[CooperativeMatrixM   cooperative_matrix_m   U32]
 			[CooperativeMatrixN   cooperative_matrix_n   U32]
 			[CooperativeMatrixK   cooperative_matrix_k   U32]
@@ -365,12 +388,12 @@
 		@Enumeration ShaderBufferSlot
 		@Enumeration ShaderResourceKind
 
+		@Flags FilterCompileFlags
+
 		@ShaderAlias Demodulate
 
 		@Bake
 		{
-			[Demodulate            demodulate             U32]
-			[ComplexFilter         complex_filter         U32]
 			[DecimationRate        decimation_rate        U32]
 			[FilterLength          filter_length          U32]
 			[InputChannelStride    input_channel_stride   U32]
@@ -404,20 +427,21 @@
 		@Enumeration ShaderBufferSlot
 		@Enumeration ShaderResourceKind
 
+		@Flags       DASCompileFlags
+
 		@Struct      DASArrayParameters
 
 		@Bake
 		{
-			[CoherencyWeighting         coherency_weighting          U32]
-			[SingleFocus                single_focus                 U32]
-			[SingleOrientation          single_orientation           U32]
-			[Sparse                     sparse                       U32]
-			[AcquisitionCount           acquisition_count            U32]
+			[SingleFocus                single_focus                 B32]
+			[SingleOrientation          single_orientation           B32]
+			[Sparse                     sparse                       B32]
+			[AcquisitionCount           acquisition_count            S32]
 			[AcquisitionKind            acquisition_kind             U32]
-			[ChannelCount               channel_count                U32]
-			[ChunkChannelCount          chunk_channel_count          U32]
+			[ChannelCount               channel_count                S32]
+			[ChunkChannelCount          chunk_channel_count          S32]
 			[InterpolationMode          interpolation_mode           U32]
-			[SampleCount                sample_count                 U32]
+			[SampleCount                sample_count                 S32]
 			[TransmitReceiveOrientation transmit_receive_orientation U32]
 
 			[DemodulationFrequency      demodulation_frequency       F32]
@@ -481,6 +505,7 @@
 
 	@Shader(reshape.glsl) Reshape
 	{
+		@Flags ReshapeCompileFlags
 		@Bake
 		{
 			[SizeX          size_x           U32]
@@ -492,8 +517,6 @@
 			[OutputStrideX  output_stride_x  U32]
 			[OutputStrideY  output_stride_y  U32]
 			[OutputStrideZ  output_stride_z  U32]
-			[Interleave     interleave       B32]
-			[Deinterleave   deinterleave     B32]
 		}
 
 		@PushConstants

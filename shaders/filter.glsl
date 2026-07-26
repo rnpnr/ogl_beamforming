@@ -1,7 +1,7 @@
 /* See LICENSE for license details. */
-#if  (InputDataKind == DataKind_Int16Complex          || \
-      (InputDataKind == DataKind_Int16 && Demodulate) || \
-      (InputDataKind == DataKind_Float16 && Demodulate))
+#if  (InputDataKind == DataKind_Int16Complex         || \
+     (InputDataKind == DataKind_Int16 && Demodulate) || \
+     (InputDataKind == DataKind_Float16 && Demodulate))
   #define SAMPLE_TYPE f16vec2
 #elif InputDataKind == DataKind_Int16
   #define SAMPLE_TYPE f16
@@ -83,7 +83,7 @@ void main()
 		// input strides were specified in terms of a single element. therefore we
 		// must divide this by two. by doing this here we can gracefully handle
 		// the case where there are an odd number of samples (this drops the last one).
-		if (Demodulate != 0)
+		if (Demodulate)
 			in_offset /= 2;
 
 		// NOTE(rnp): broken out to avoid overflow from the subtraction
@@ -122,13 +122,13 @@ void main()
 		                 OutputSampleStride   * out_sample +
 		                 output_element_offset;
 
-		#if BatchSampleCount
-		// NOTE(rnp): deinterleave
-		output_data[out_offset] = OutputDataType(result.x);
-		out_offset += BatchSampleCount;
-		output_data[out_offset] = OutputDataType(result.y);
-		#else
-		output_data[out_offset] = OutputDataType(result);
-		#endif
+		if (BatchSampleCount != 0) {
+			// NOTE(rnp): deinterleave
+			output_data[out_offset] = OutputDataType(result.x);
+			out_offset += BatchSampleCount;
+			output_data[out_offset] = OutputDataType(result.y);
+		} else {
+			output_data[out_offset] = OutputDataType(result);
+		}
 	}
 }

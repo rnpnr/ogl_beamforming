@@ -591,11 +591,26 @@ vk_stage_flags_from_shader_kind(VulkanShaderKind kind)
 	return result;
 }
 
+function VkSpecializationMapEntry *
+vk_specialization_map_from_struct_id(Arena *arena, i32 struct_id)
+{
+	assert(struct_id >= 0);
+	MetaStructInfo   *si = meta_struct_info_by_id + struct_id;
+	MetaStructMember *sm = meta_struct_members_by_id[struct_id];
+	VkSpecializationMapEntry *result = push_array(arena, VkSpecializationMapEntry, si->member_count);
+	for EachIndex(si->member_count, it) {
+		result[it].constantID = it;
+		result[it].offset     = sm[it].offset;
+		result[it].size       = meta_kind_byte_sizes[sm[it].type_id];
+	}
+	return result;
+}
+
 function VulkanPipeline
-vk_compute_pipeline_from_shader_text(Arena arena, str8 text, str8 name, u32 push_constants_size)
+vk_compute_pipeline_from_info(Arena arena, VulkanPipelineCreateInfo *info, u32 push_constants_size)
 {
 	VulkanPipeline result = {.stage_flags = VK_SHADER_STAGE_COMPUTE_BIT};
-	VkShaderModule module = vk_compile_shader_module(arena, VK_SHADER_STAGE_COMPUTE_BIT, text, name);
+	VkShaderModule module = vk_compile_shader_module(arena, VK_SHADER_STAGE_COMPUTE_BIT, info->text, info->name);
 	if (module) {
 		VkPushConstantRange push_constant_range = {
 			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
@@ -624,11 +639,21 @@ vk_compute_pipeline_from_shader_text(Arena arena, str8 text, str8 name, u32 push
 			},
 		};
 
+		VkSpecializationInfo specialization_info = {0};
+		if (info->specialization_data && info->specialization_struct_id >= 0) {
+			MetaStructInfo *si = meta_struct_info_by_id + info->specialization_struct_id;
+			pipeline_create_info.stage.pSpecializationInfo = &specialization_info;
+			specialization_info.pMapEntries   = vk_specialization_map_from_struct_id(&arena, info->specialization_struct_id);
+			specialization_info.mapEntryCount = si->member_count;
+			specialization_info.dataSize      = si->size;
+			specialization_info.pData         = info->specialization_data;
+		}
+
 		vkCreateComputePipelines(vulkan_context->device, 0, 1, &pipeline_create_info, 0, &result.pipeline);
 
-		vk_label_object(PIPELINE,        result.pipeline, name, str8("Pipeline"));
-		vk_label_object(PIPELINE_LAYOUT, result.layout,   name, str8("Pipeline Layout"));
-		vk_label_object(SHADER_MODULE,   module,          name, str8("Module"));
+		vk_label_object(PIPELINE,        result.pipeline, info->name, str8("Pipeline"));
+		vk_label_object(PIPELINE_LAYOUT, result.layout,   info->name, str8("Pipeline Layout"));
+		vk_label_object(SHADER_MODULE,   module,          info->name, str8("Module"));
 
 		vkDestroyShaderModule(vulkan_context->device, module, 0);
 	}
@@ -1880,8 +1905,8 @@ vk_load(OSLibrary vulkan_library_handle, Arena *memory, Stream *err)
 		"layout(push_constant) uniform pc { uint data[256 / 4]; };\n"
 		"void main() {}\n"
 		"\n");
-	vk->default_compute_pipeline = vk_compute_pipeline_from_shader_text(vk->arena, default_compute_shader,
-	                                                                    str8("error_compute_shader"), 256);
+	VulkanPipelineCreateInfo compute_create_info = {.text = default_compute_shader, .name = str8("error_compute_shader")};
+	vk->default_compute_pipeline = vk_compute_pipeline_from_info(vk->arena, &compute_create_info, 256);
 
 	read_only local_persist str8 default_vertex_shader = str8(""
 		"#version 430 core\n"
@@ -2355,7 +2380,7 @@ vk_pipeline(VulkanPipelineCreateInfo *infos, u32 count, u32 push_constants_size)
 		result = (VulkanHandle){(u64)e};
 
 		if (count == 2) e->as.pipeline = vk_graphics_pipeline_from_infos(arena, infos, count, push_constants_size);
-		else            e->as.pipeline = vk_compute_pipeline_from_shader_text(arena, infos[0].text, infos[0].name, push_constants_size);
+		else            e->as.pipeline = vk_compute_pipeline_from_info(arena, infos, push_constants_size);
 	}
 	return result;
 }

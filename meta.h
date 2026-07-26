@@ -23,6 +23,18 @@
 	X(U8,  u8,   uint8_t,   uint8_t,  uint8,   1,  1) \
 	X(STR, str8, error,     error,    error,  16,  1) \
 
+read_only global str8 meta_kind_glsl_types[] = {
+	#define X(_k, _c, glsl, ...) str8_comp(#glsl),
+	META_KIND_LIST
+	#undef X
+};
+
+read_only global u8 meta_kind_byte_sizes[] = {
+	#define X(_k, _c, _g, _b, _m, bytes, ...) bytes,
+	META_KIND_LIST
+	#undef X
+};
+
 typedef enum {
 	#define X(k, ...) MetaKind_## k,
 	META_KIND_LIST

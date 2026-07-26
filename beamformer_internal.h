@@ -56,6 +56,8 @@ typedef enum {
 
 typedef struct {
 	VulkanShaderKind kind;
+	i32              specialization_struct_id;
+	void            *specialization_data;
 	str8             text;
 	str8             name;
 } VulkanPipelineCreateInfo;
@@ -285,6 +287,7 @@ typedef struct {BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST} BeamformerComputeArray
 typedef struct {
 	uv3 layout;
 	uv3 dispatch;
+	u32 compile_flags;
 	BeamformerDataKind input_data_kind;
 	BeamformerDataKind output_data_kind;
 	BeamformerShaderBakeParameters bake;
