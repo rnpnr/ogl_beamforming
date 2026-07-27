@@ -1065,8 +1065,6 @@ typedef enum {
 	MetaEmitLang_Count,
 } MetaEmitLang;
 
-#include "meta.h"
-
 read_only global u8 meta_kind_elements[] = {
 	#define X(_k, _c, _g, _b, _m, _by, elements, ...) elements,
 	META_KIND_LIST

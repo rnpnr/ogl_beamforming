@@ -396,6 +396,7 @@ typedef alignas(16) u8 RenderDocAPI[216];
 #define RENDERDOC_END_FRAME_CAPTURE(a)         (renderdoc_end_frame_capture_fn *)         RENDERDOC_API_FN_ADDR(a, 168)
 #define RENDERDOC_SET_CAPTURE_PATH_TEMPLATE(a) (renderdoc_set_capture_path_template_fn *) RENDERDOC_API_FN_ADDR(a, 184)
 
+#include "meta.h"
 #include "util.c"
 #include "math.c"
 

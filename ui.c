@@ -1,5 +1,6 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: pretty print compile flags in shader bake parameter lister
  * [ ]: bug: nil nodes break hot reloading
  *    - only one that matters is ui_node_nil, for now maybe just put it into ui_context (won't be read_only of course)
  * [ ]: bug: flickering x-scroll bar on switch from ComputeBarGraph to other
@@ -3209,7 +3210,7 @@ function UI_CUSTOM_DRAW_FUNCTION(beamformer_ui_custom_draw_compute_bar_graph)
 }
 
 function void
-ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t)
+ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t, BeamformerUIPanel *panel)
 {
 	ComputeShaderStats *stats = beamformer_context->compute_shader_stats;
 	f32 compute_time_sum = 0;
@@ -3250,9 +3251,69 @@ ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t)
 				str8 shader = beamformer_shader_names[stats->table.shader_ids[it]];
 
 				UITextColour(label_colour)
-				UIParent(label_column) ui_labelf("%.*s:###csl%u", (i32)shader.length, shader.data, (u32)it);
 				UIParent(value_column) ui_labelf("%0.2e###csv%u", stats->average_times[it], (u32)it);
 				UIParent(unit_column)  ui_labelf("[s]###csu%u", (u32)it);
+				UIParent(label_column)
+				{
+					i32 reloadable_index = beamformer_shader_reloadable_index_by_shader[stats->table.shader_ids[it]];
+					UISignal signal;
+					UIFlags(reloadable_index >= 0? UINodeFlag_Clickable|UINodeFlag_DrawHotEffects : 0)
+					signal = ui_labelf("%.*s:###csl%u", (i32)shader.length, shader.data, (u32)it);
+
+					if ui_pressed(signal)
+						ui_context_menu_open(signal.node->key, panel);
+
+					if (ui_node_key_equal(ui_context->context_menu_anchor_key, signal.node->key)) {
+						UIParent(ui_context->context_menu_root)
+						UIChildLayoutAxis(Axis2_X)
+						UIPrefHeight(ui_children_sum(1.f))
+						UIPrefWidth(ui_children_sum(1.f))
+						UIParent(ui_spacer(0))
+						UIChildLayoutAxis(Axis2_Y)
+						{
+							UINode *left, *right;
+							ui_padw(UI_NODE_PAD);
+							left = ui_node_from_string(0, str8("###left"));
+							ui_padw(UI_NODE_PAD * 2.f);
+							right = ui_node_from_string(0, str8("###right"));
+							ui_padw(UI_NODE_PAD);
+
+							UIPrefHeight(ui_text_dim(1.1f, 1.f))
+							UIPrefWidth(ui_text_dim(1.f, 1.f))
+							UIFontSize(24.f)
+							{
+								// TODO(rnp): pretty print the extra compile flags field
+								BeamformerShaderDescriptor *sd = cp->shader_descriptors + it;
+								UIParent(left)  ui_label(str8("Layout"));
+								UIParent(right) ui_labelf("{%u, %u, %u}###layout", sd->layout.x, sd->layout.y, sd->layout.z);
+								UIParent(left)  ui_label(str8("Dispatch"));
+								UIParent(right) ui_labelf("{%u, %u, %u}###dispatch", sd->dispatch.x, sd->dispatch.y, sd->dispatch.z);
+								UIParent(left)  ui_label(str8("Input"));
+								UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
+								                                              beamformer_data_kind_str8[sd->input_data_kind],
+								                                              str8("##input_kind")));
+								UIParent(left)  ui_label(str8("Output"));
+								UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
+								                                              beamformer_data_kind_str8[sd->output_data_kind],
+								                                              str8("##output_kind")));
+
+								i32 struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];
+								if (struct_id != -1) {
+									str8             *names = beamformer_shader_bake_parameter_names[reloadable_index];
+									MetaStructInfo   *si    = meta_struct_info_by_id + struct_id;
+									MetaStructMember *sm    = meta_struct_members_by_id[struct_id];
+									for EachIndex(si->member_count, member) {
+										Stream sb = arena_stream(*ui_build_arena());
+										stream_append_struct_member(&sb, sm + member, &sd->bake);
+										stream_append_str8s(&sb, str8("##"), names[member]);
+										UIParent(left)  ui_label(names[member]);
+										UIParent(right) ui_label(arena_stream_commit(ui_build_arena(), &sb));
+									}
+								}
+							}
+						}
+					}
+				}
 			}
 
 			UIParent(label_column) ui_label(str8("Compute Total:"));
@@ -4135,7 +4196,7 @@ ui_build_regions(UINode *root_node, BeamformerUIPanel *tree_root)
 			BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[selected_plan];
 			if (!cp) cp = &beamformer_nil_compute_plan;
 			f32 t = beamformer_ui_blinker_update(&panel->u.compute_stats_broken_shader_blinker, BLINK_SPEED);
-			ui_build_compute_stats(cp, t);
+			ui_build_compute_stats(cp, t, panel);
 		}break;
 
 		case BeamformerPanelKind_FrameViewXPlane:
@@ -5384,6 +5445,7 @@ beamformer_ui_frame(void)
 
 		ui_layout_nodes(ui->root_node);
 
+		b32 context_menu_ready = 0;
 		if (!ui_node_key_nil(ui->context_menu_anchor_key)) {
 			UIParent(ui->context_menu_root) UIAxisSize(Axis2_X, ui_px(0.f, 0.5f)) ui_padh(0.8f * UI_NODE_PAD);
 
@@ -5391,8 +5453,14 @@ beamformer_ui_frame(void)
 			v2      anchor_p = ui_node_final_position(anchor);
 			ui->context_menu_root->computed_position[Axis2_X] = anchor_p.x;
 			ui->context_menu_root->computed_position[Axis2_Y] = anchor_p.y + anchor->computed_size[Axis2_Y];
+			Rect nr = ui_node_rect(ui->context_menu_root);
+			if (nr.pos.y + nr.size.y > window_rect.size.y)
+				ui->context_menu_root->computed_position[Axis2_Y] += (window_rect.size.y - (nr.pos.y + nr.size.y));
 
 			ui_layout_nodes(ui->context_menu_root);
+
+			nr = ui_node_rect(ui->context_menu_root);
+			context_menu_ready = (nr.pos.y + nr.size.y <= window_rect.size.y);
 		}
 
 		BeginDrawing();
@@ -5400,7 +5468,7 @@ beamformer_ui_frame(void)
 			glClearNamedFramebufferfv(0, GL_DEPTH, 0, (f32 []){1});
 			ui_draw_nodes(ui->root_node, window_rect);
 
-			if (!ui_node_key_nil(ui->context_menu_anchor_key))
+			if (!ui_node_key_nil(ui->context_menu_anchor_key) && context_menu_ready)
 				ui_draw_nodes(ui->context_menu_root, window_rect);
 
 			if (ui->drag_root) {

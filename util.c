@@ -534,6 +534,34 @@ stream_append_f64_e(Stream *s, f64 f)
 	stream_append_u64(s, (u64)Abs(scale));
 }
 
+function void
+stream_append_struct_member(Stream *s, MetaStructMember *m, void *struct_base)
+{
+	switch (m->type_id) {
+	InvalidDefaultCase;
+	case MetaKind_F32:{
+		f32 value;
+		memory_copy(&value, ((u8 *)struct_base + m->offset), sizeof(value));
+		stream_append_f64_e(s, value);
+	}break;
+	case MetaKind_B32:{
+		b32 value;
+		memory_copy(&value, ((u8 *)struct_base + m->offset), sizeof(value));
+		stream_append_str8(s, value ? str8("True") : str8("False"));
+	}break;
+	case MetaKind_U32:{
+		u32 value;
+		memory_copy(&value, ((u8 *)struct_base + m->offset), sizeof(value));
+		stream_append_u64(s, value);
+	}break;
+	case MetaKind_S32:{
+		i32 value;
+		memory_copy(&value, ((u8 *)struct_base + m->offset), sizeof(value));
+		stream_append_i64(s, value);
+	}break;
+	}
+}
+
 function Stream
 arena_stream(Arena a)
 {
