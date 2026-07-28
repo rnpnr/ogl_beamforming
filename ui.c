@@ -2,11 +2,11 @@
 /* TODO(rnp):
  * [ ]: bug: nil nodes break hot reloading
  *    - only one that matters is ui_node_nil, for now maybe just put it into ui_context (won't be read_only of course)
- * [ ]: bug: flickering x-scroll bar on switch from ComputeBarGraph to other
  * [ ]: word scan for text input
  * [ ]: animation state
  * [ ]: tooltips
  * [ ]: extra copy view settings
+ *    - i.e. crop, zoom, pan
  * [ ]: refactor: all drag overlay floating elements can be children of the drag_root.
  *      as long as we layout before chaining them on there won't be an issue.
  * [ ]: refactor: can the scroll container just use the ViewScroll flags like the tab bar?
@@ -14,8 +14,8 @@
  *
  * [ ]: refactor: cross plane view for non XZ/YZ planes. math needs to be cleaned up
  *      to support this.
- *  - model transform needs to first rotate so that Z is normal, then scale, the rotate from Z to Y.
- *  - ideally the hardcoded +0.25f rotation for YZ should just be a consequence of the math
+ *    - model transform needs to first rotate so that Z is normal, then scale, the rotate from Z to Y.
+ *    - ideally the hardcoded +0.25f rotation for YZ should just be a consequence of the math
  * [ ]: command window
  * [ ]: 3D data view
  *    - add extra view controls, change view without recompute
@@ -204,6 +204,7 @@ struct UINode {
 	Axis2      child_layout_axis;
 	f32        font_size;
 
+	u64        first_frame_active_index;
 	u64        last_frame_active_index;
 	UINodeKey  key;
 	UINode    *hash_prev;
@@ -1985,6 +1986,7 @@ ui_build_node_from_key(UINodeFlags flags, UINodeKey key)
 	if (first_frame && !transient) {
 		UINodeHashBucket *hb = ui_context->node_hash_table + (key.value % UI_HASH_TABLE_COUNT);
 		DLLInsert(&ui_node_nil, hb->first, hb->last, result, hash_next, hash_prev);
+		result->first_frame_active_index = ui_context->current_frame_index;
 	}
 
 	#define X(type, name, value_type, ...) result->name = ui_top_##name();
@@ -2322,19 +2324,13 @@ ui_rebuild_das_transform(u32 parameter_block, i32 dimension, v3 min, v3 max)
 function void
 ui_scroll_begin(Axis2 scroll_axis)
 {
-	UINode *outer, *inner, *clip, *child;
+	ui_top_parent()->child_layout_axis = Axis2_Y;
 
-	UIChildLayoutAxis(Axis2_Y)
-	UIParent(ui_spacer(0))
-	{
-		UIChildLayoutAxis(Axis2_X)
-		UIFontSize(30.f)
-		outer = ui_node_from_string(UINodeFlag_Scroll, str8("###scroll_box"));
-
-		ui_padh(UI_NODE_PAD);
-	}
-
-	UIParent(outer)
+	UINode *inner, *clip, *child;
+	UIChildLayoutAxis(Axis2_X)
+	UIPrefWidth(ui_pct(1.f, 0.5f))
+	UIPrefHeight(ui_pct(1.f, 0.5f))
+	UIParent(ui_node_from_string(UINodeFlag_Scroll, str8("###scroll_box")))
 	{
 		ui_padw(UI_NODE_PAD);
 		UIChildLayoutAxis(Axis2_Y)
@@ -2349,6 +2345,8 @@ ui_scroll_begin(Axis2 scroll_axis)
 	case Axis2_Y:{    axis_flags = UINodeFlag_ViewScrollY;}break;
 	}
 	UIParent(inner)
+	UIPrefWidth(ui_pct(1.f, 0.5f))
+	UIPrefHeight(ui_pct(1.f, 0.5f))
 	clip = ui_node_from_string(axis_flags|
 	                           UINodeFlag_Clip|
 	                           UINodeFlag_AllowOverflow|
@@ -2367,7 +2365,6 @@ ui_scroll_begin(Axis2 scroll_axis)
 function void
 ui_scroll_end(void)
 {
-	BeamformerUI *ui = ui_context;
 	UINode *child = ui_pop_parent();
 	UINode *clip  = child->parent;
 	UINode *inner = clip->parent;
@@ -2387,8 +2384,7 @@ ui_scroll_end(void)
 	if (clip->flags & (UINodeFlag_ViewScrollX << axis))
 	UIParent(axis_parents[axis])
 	{
-		b32 build_scrollbar = 2.f * btn_size < clip->computed_size[axis] &&
-		                      child->computed_size[axis] > clip->computed_size[axis];
+		b32 build_scrollbar = Between(clip->computed_size[axis], 2.f * btn_size, child->computed_size[axis]);
 
 		// NOTE(rnp): vertical scroll bar shares padding on bottom with horizontal
 		// scroll bar so padding was already pushed, if we aren't drawing the horizontal
@@ -2451,7 +2447,7 @@ ui_scroll_end(void)
 				bar_flags |= ui_signal_from_node(ui_node_from_string(0, str8("###after"))).flags;
 
 				if (bar_flags & (UISignalFlag_Dragging|UISignalFlag_Pressed)) {
-					f32 off_pct = rect_uv(ui->last_mouse, ui_node_rect(clip)).E[axis] - 0.5f * used_pct;
+					f32 off_pct = rect_uv(ui_context->last_mouse, ui_node_rect(clip)).E[axis] - 0.5f * used_pct;
 					scroll_offset.E[axis] = Clamp01(off_pct) * child->computed_size[axis];
 				}
 
@@ -3149,6 +3145,10 @@ ui_build_frame_view(UINode *container, BeamformerFrameView *view)
 
 function UI_CUSTOM_DRAW_FUNCTION(beamformer_ui_custom_draw_compute_bar_graph)
 {
+	// NOTE(rnp): this node gets the wrong size on first frame and flickers. skip that
+	if unlikely(ui_context->current_frame_index == node->first_frame_active_index)
+		return;
+
 	ComputeShaderStats *stats = beamformer_context->compute_shader_stats;
 
 	UINode *labels = node->previous_sibling->previous_sibling;
@@ -4194,11 +4194,10 @@ ui_build_regions(UINode *root_node, BeamformerUIPanel *tree_root)
 					UIAxisAlign(Axis2_X, Right)
 					label_column = ui_node_from_string(0, str8("###labels"));
 					ui_padw(UI_NODE_PAD);
-
-					f32 bar_width = ui_top_parent()->parent->parent->parent->computed_size[Axis2_X]
-					                - label_column->computed_size[Axis2_X] - UI_NODE_PAD;
+					f32 bar_width = ui_top_parent()->parent->computed_size[Axis2_X]
+					                - label_column->computed_size[Axis2_X] - 1.1f * UI_NODE_PAD;
 					bar_column = ui_node_from_string(UINodeFlag_CustomDraw, str8("###bars"));
-					bar_column->semantic_size[Axis2_X] = ui_px(bar_width, 0.1f);
+					bar_column->semantic_size[Axis2_X] = ui_px(bar_width, 0.f);
 					bar_column->semantic_size[Axis2_Y] = ui_px(label_column->computed_size[Axis2_Y], 1.f);
 					bar_column->custom_draw_function = beamformer_ui_custom_draw_compute_bar_graph;
 				}
