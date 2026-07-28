@@ -166,64 +166,64 @@ typedef enum {
 } BeamformerShaderKind;
 
 typedef struct {
-	b32 use_shared_memory;
-	u32 decode_mode;
-	u32 output_channel_stride;
-	u32 output_sample_stride;
-	u32 output_transmit_stride;
-	u32 to_process;
-	u32 transmit_count;
-	u32 chunk_channel_count;
-	u32 cooperative_matrix_m;
-	u32 cooperative_matrix_n;
-	u32 cooperative_matrix_k;
+	b32 UseSharedMemory;
+	u32 DecodeMode;
+	u32 OutputChannelStride;
+	u32 OutputSampleStride;
+	u32 OutputTransmitStride;
+	u32 ToProcess;
+	u32 TransmitCount;
+	u32 ChunkChannelCount;
+	u32 CooperativeMatrixM;
+	u32 CooperativeMatrixN;
+	u32 CooperativeMatrixK;
 } BeamformerDecodeBakeParameters;
 
 typedef struct {
-	u32 decimation_rate;
-	u32 filter_length;
-	u32 input_channel_stride;
-	u32 input_sample_stride;
-	u32 input_transmit_stride;
-	u32 output_channel_stride;
-	u32 output_sample_stride;
-	u32 output_transmit_stride;
-	u32 sample_count;
-	u32 batch_sample_count;
-	f32 demodulation_frequency;
-	f32 sampling_frequency;
+	f32 SamplingFrequency;
+	f32 DemodulationFrequency;
+	u32 DecimationRate;
+	u32 FilterLength;
+	u32 SampleCount;
+	u32 BatchSampleCount;
+	u32 InputChannelStride;
+	u32 InputSampleStride;
+	u32 InputTransmitStride;
+	u32 OutputChannelStride;
+	u32 OutputSampleStride;
+	u32 OutputTransmitStride;
 } BeamformerFilterBakeParameters;
 
 typedef struct {
-	b32 single_focus;
-	b32 single_orientation;
-	b32 sparse;
-	i32 acquisition_count;
-	u32 acquisition_kind;
-	i32 channel_count;
-	i32 chunk_channel_count;
-	u32 interpolation_mode;
-	i32 sample_count;
-	u32 transmit_receive_orientation;
-	f32 demodulation_frequency;
-	f32 f_number;
-	f32 focus_depth;
-	f32 sampling_frequency;
-	f32 speed_of_sound;
-	f32 time_offset;
-	f32 transmit_angle;
+	u32 AcquisitionKind;
+	b32 Sparse;
+	i32 AcquisitionCount;
+	i32 ChannelCount;
+	i32 ChunkChannelCount;
+	i32 SampleCount;
+	f32 SamplingFrequency;
+	f32 DemodulationFrequency;
+	f32 SpeedOfSound;
+	f32 TimeOffset;
+	u32 InterpolationMode;
+	f32 FNumber;
+	b32 SingleOrientation;
+	u32 TransmitReceiveOrientation;
+	b32 SingleFocus;
+	f32 FocusDepth;
+	f32 TransmitAngle;
 } BeamformerDASBakeParameters;
 
 typedef struct {
-	u32 size_x;
-	u32 size_y;
-	u32 size_z;
-	u32 input_stride_x;
-	u32 input_stride_y;
-	u32 input_stride_z;
-	u32 output_stride_x;
-	u32 output_stride_y;
-	u32 output_stride_z;
+	u32 SizeX;
+	u32 SizeY;
+	u32 SizeZ;
+	u32 InputStrideX;
+	u32 InputStrideY;
+	u32 InputStrideZ;
+	u32 OutputStrideX;
+	u32 OutputStrideY;
+	u32 OutputStrideZ;
 } BeamformerReshapeBakeParameters;
 
 typedef struct {
@@ -598,8 +598,8 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{18, 40, 1, 0},
 	},
 	(MetaStructMember []){
-		{18, 0,  1, 0},
-		{18, 4,  1, 0},
+		{8,  0,  1, 0},
+		{8,  4,  1, 0},
 		{18, 8,  1, 0},
 		{18, 12, 1, 0},
 		{18, 16, 1, 0},
@@ -608,25 +608,25 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{18, 28, 1, 0},
 		{18, 32, 1, 0},
 		{18, 36, 1, 0},
-		{8,  40, 1, 0},
-		{8,  44, 1, 0},
+		{18, 40, 1, 0},
+		{18, 44, 1, 0},
 	},
 	(MetaStructMember []){
-		{14, 0,  1, 0},
+		{18, 0,  1, 0},
 		{14, 4,  1, 0},
-		{14, 8,  1, 0},
+		{10, 8,  1, 0},
 		{10, 12, 1, 0},
-		{18, 16, 1, 0},
+		{10, 16, 1, 0},
 		{10, 20, 1, 0},
-		{10, 24, 1, 0},
-		{18, 28, 1, 0},
-		{10, 32, 1, 0},
-		{18, 36, 1, 0},
-		{8,  40, 1, 0},
+		{8,  24, 1, 0},
+		{8,  28, 1, 0},
+		{8,  32, 1, 0},
+		{8,  36, 1, 0},
+		{18, 40, 1, 0},
 		{8,  44, 1, 0},
-		{8,  48, 1, 0},
-		{8,  52, 1, 0},
-		{8,  56, 1, 0},
+		{14, 48, 1, 0},
+		{18, 52, 1, 0},
+		{14, 56, 1, 0},
 		{8,  60, 1, 0},
 		{8,  64, 1, 0},
 	},
@@ -645,61 +645,61 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 
 read_only global str8 *meta_struct_member_names_by_id[] = {
 	(str8 []){
-		str8_comp("use_shared_memory"),
-		str8_comp("decode_mode"),
-		str8_comp("output_channel_stride"),
-		str8_comp("output_sample_stride"),
-		str8_comp("output_transmit_stride"),
-		str8_comp("to_process"),
-		str8_comp("transmit_count"),
-		str8_comp("chunk_channel_count"),
-		str8_comp("cooperative_matrix_m"),
-		str8_comp("cooperative_matrix_n"),
-		str8_comp("cooperative_matrix_k"),
+		str8_comp("UseSharedMemory"),
+		str8_comp("DecodeMode"),
+		str8_comp("OutputChannelStride"),
+		str8_comp("OutputSampleStride"),
+		str8_comp("OutputTransmitStride"),
+		str8_comp("ToProcess"),
+		str8_comp("TransmitCount"),
+		str8_comp("ChunkChannelCount"),
+		str8_comp("CooperativeMatrixM"),
+		str8_comp("CooperativeMatrixN"),
+		str8_comp("CooperativeMatrixK"),
 	},
 	(str8 []){
-		str8_comp("decimation_rate"),
-		str8_comp("filter_length"),
-		str8_comp("input_channel_stride"),
-		str8_comp("input_sample_stride"),
-		str8_comp("input_transmit_stride"),
-		str8_comp("output_channel_stride"),
-		str8_comp("output_sample_stride"),
-		str8_comp("output_transmit_stride"),
-		str8_comp("sample_count"),
-		str8_comp("batch_sample_count"),
-		str8_comp("demodulation_frequency"),
-		str8_comp("sampling_frequency"),
+		str8_comp("SamplingFrequency"),
+		str8_comp("DemodulationFrequency"),
+		str8_comp("DecimationRate"),
+		str8_comp("FilterLength"),
+		str8_comp("SampleCount"),
+		str8_comp("BatchSampleCount"),
+		str8_comp("InputChannelStride"),
+		str8_comp("InputSampleStride"),
+		str8_comp("InputTransmitStride"),
+		str8_comp("OutputChannelStride"),
+		str8_comp("OutputSampleStride"),
+		str8_comp("OutputTransmitStride"),
 	},
 	(str8 []){
-		str8_comp("single_focus"),
-		str8_comp("single_orientation"),
-		str8_comp("sparse"),
-		str8_comp("acquisition_count"),
-		str8_comp("acquisition_kind"),
-		str8_comp("channel_count"),
-		str8_comp("chunk_channel_count"),
-		str8_comp("interpolation_mode"),
-		str8_comp("sample_count"),
-		str8_comp("transmit_receive_orientation"),
-		str8_comp("demodulation_frequency"),
-		str8_comp("f_number"),
-		str8_comp("focus_depth"),
-		str8_comp("sampling_frequency"),
-		str8_comp("speed_of_sound"),
-		str8_comp("time_offset"),
-		str8_comp("transmit_angle"),
+		str8_comp("AcquisitionKind"),
+		str8_comp("Sparse"),
+		str8_comp("AcquisitionCount"),
+		str8_comp("ChannelCount"),
+		str8_comp("ChunkChannelCount"),
+		str8_comp("SampleCount"),
+		str8_comp("SamplingFrequency"),
+		str8_comp("DemodulationFrequency"),
+		str8_comp("SpeedOfSound"),
+		str8_comp("TimeOffset"),
+		str8_comp("InterpolationMode"),
+		str8_comp("FNumber"),
+		str8_comp("SingleOrientation"),
+		str8_comp("TransmitReceiveOrientation"),
+		str8_comp("SingleFocus"),
+		str8_comp("FocusDepth"),
+		str8_comp("TransmitAngle"),
 	},
 	(str8 []){
-		str8_comp("size_x"),
-		str8_comp("size_y"),
-		str8_comp("size_z"),
-		str8_comp("input_stride_x"),
-		str8_comp("input_stride_y"),
-		str8_comp("input_stride_z"),
-		str8_comp("output_stride_x"),
-		str8_comp("output_stride_y"),
-		str8_comp("output_stride_z"),
+		str8_comp("SizeX"),
+		str8_comp("SizeY"),
+		str8_comp("SizeZ"),
+		str8_comp("InputStrideX"),
+		str8_comp("InputStrideY"),
+		str8_comp("InputStrideZ"),
+		str8_comp("OutputStrideX"),
+		str8_comp("OutputStrideY"),
+		str8_comp("OutputStrideZ"),
 	},
 };
 
@@ -981,70 +981,6 @@ read_only global u8 beamformer_shader_compile_flag_counts[] = {
 	0,
 	0,
 	2,
-	0,
-};
-
-read_only global str8 *beamformer_shader_bake_parameter_names[] = {
-	(str8 []){
-		str8_comp("UseSharedMemory"),
-		str8_comp("DecodeMode"),
-		str8_comp("OutputChannelStride"),
-		str8_comp("OutputSampleStride"),
-		str8_comp("OutputTransmitStride"),
-		str8_comp("ToProcess"),
-		str8_comp("TransmitCount"),
-		str8_comp("ChunkChannelCount"),
-		str8_comp("CooperativeMatrixM"),
-		str8_comp("CooperativeMatrixN"),
-		str8_comp("CooperativeMatrixK"),
-	},
-	(str8 []){
-		str8_comp("DecimationRate"),
-		str8_comp("FilterLength"),
-		str8_comp("InputChannelStride"),
-		str8_comp("InputSampleStride"),
-		str8_comp("InputTransmitStride"),
-		str8_comp("OutputChannelStride"),
-		str8_comp("OutputSampleStride"),
-		str8_comp("OutputTransmitStride"),
-		str8_comp("SampleCount"),
-		str8_comp("BatchSampleCount"),
-		str8_comp("DemodulationFrequency"),
-		str8_comp("SamplingFrequency"),
-	},
-	(str8 []){
-		str8_comp("SingleFocus"),
-		str8_comp("SingleOrientation"),
-		str8_comp("Sparse"),
-		str8_comp("AcquisitionCount"),
-		str8_comp("AcquisitionKind"),
-		str8_comp("ChannelCount"),
-		str8_comp("ChunkChannelCount"),
-		str8_comp("InterpolationMode"),
-		str8_comp("SampleCount"),
-		str8_comp("TransmitReceiveOrientation"),
-		str8_comp("DemodulationFrequency"),
-		str8_comp("FNumber"),
-		str8_comp("FocusDepth"),
-		str8_comp("SamplingFrequency"),
-		str8_comp("SpeedOfSound"),
-		str8_comp("TimeOffset"),
-		str8_comp("TransmitAngle"),
-	},
-	0,
-	0,
-	0,
-	(str8 []){
-		str8_comp("SizeX"),
-		str8_comp("SizeY"),
-		str8_comp("SizeZ"),
-		str8_comp("InputStrideX"),
-		str8_comp("InputStrideY"),
-		str8_comp("InputStrideZ"),
-		str8_comp("OutputStrideX"),
-		str8_comp("OutputStrideY"),
-		str8_comp("OutputStrideZ"),
-	},
 	0,
 };
 

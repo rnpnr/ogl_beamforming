@@ -1728,15 +1728,6 @@ typedef struct {
 typedef enum {META_STRUCT_FIELDS} MetaStructFields;
 #undef X
 
-#define META_BAKE_FIELDS \
-	X(NameUpper, name_upper) \
-	X(NameLower, name_lower) \
-	X(Type,      type)       \
-
-#define X(id, ...) MetaBakeField_##id,
-typedef enum {META_BAKE_FIELDS} MetaBakeFields;
-#undef X
-
 typedef struct {
 	str8  *fields;
 	str8 **entries;
@@ -1788,12 +1779,12 @@ typedef struct {
 	X(Table,              1, 0, 0) \
 	X(Union,              1, 1, 1) \
 
-// X(EntityKind, TypeField, ElementsField, NameField, AllowReferences, Emit)
+// X(EntityKind, AllowReferences, Emit)
 #define META_STRUCT_MAP_LIST \
-	X(BakeParameters, MetaBakeField_Type,   -1,                       MetaBakeField_NameLower, 0, 1) \
-	X(PushConstants,  MetaStructField_Type, MetaStructField_Elements, MetaStructField_Name,    0, 1) \
-	X(Struct,         MetaStructField_Type, MetaStructField_Elements, MetaStructField_Name,    1, 1) \
-	X(Union,          MetaStructField_Type, MetaStructField_Elements, MetaStructField_Name,    1, 0) \
+	X(BakeParameters, 0, 1) \
+	X(PushConstants,  0, 1) \
+	X(Struct,         1, 1) \
+	X(Union,          1, 0) \
 
 
 typedef enum {
@@ -1835,19 +1826,10 @@ read_only global b8 meta_entity_kind_struct_reference_target[] = {META_ENTITY_KI
 #define X(k, ...) MetaEntityKind_##k,
 read_only global MetaEntityKind meta_struct_entity_kinds[] = {META_STRUCT_MAP_LIST};
 #undef X
-#define X(_k, t, ...) t,
-read_only global i32 meta_struct_type_field[] = {META_STRUCT_MAP_LIST};
-#undef X
-#define X(_k, _t, e, ...) e,
-read_only global i32 meta_struct_element_field[] = {META_STRUCT_MAP_LIST};
-#undef X
-#define X(_k, _t, _e, n, ...) n,
-read_only global i32 meta_struct_name_field[] = {META_STRUCT_MAP_LIST};
-#undef X
-#define X(_k, _t, _e, _n, allow, ...) allow,
+#define X(_k, allow, ...) allow,
 read_only global b8 meta_struct_allow_references[] = {META_STRUCT_MAP_LIST};
 #undef X
-#define X(_k, _t, _e, _n, _a, emit, ...) emit,
+#define X(_k, _a, emit, ...) emit,
 read_only global b8 meta_struct_emit[] = {META_STRUCT_MAP_LIST};
 #undef X
 
@@ -2487,16 +2469,6 @@ meta_pack_table_begin(MetaEntry *e, MetaTable *t)
 {
 	switch (e->kind) {
 
-	case MetaEntryKind_Bake:
-	{
-		meta_entry_argument_expected_(e, 0, 0);
-		#define X(_i, name, ...) str8_comp(#name),
-		read_only local_persist str8 bake_fields[] = {META_BAKE_FIELDS};
-		#undef X
-		t->fields      = bake_fields;
-		t->field_count = countof(bake_fields);
-	}break;
-
 	case MetaEntryKind_Enumeration:
 	case MetaEntryKind_Flags:
 	{
@@ -2505,6 +2477,7 @@ meta_pack_table_begin(MetaEntry *e, MetaTable *t)
 		t->field_count = countof(enumeration_fields);
 	}break;
 
+	case MetaEntryKind_Bake:
 	case MetaEntryKind_PushConstants:
 	case MetaEntryKind_Struct:
 	case MetaEntryKind_Union:
@@ -2549,6 +2522,7 @@ meta_pack_table_entity(MetaContext *ctx, MetaEntry *e, i64 entry_count, str8 nam
 	meta_pack_table_begin(e, t);
 
 	b32 structure = e->kind == MetaEntryKind_Struct ||
+	                e->kind == MetaEntryKind_Bake ||
 	                e->kind == MetaEntryKind_PushConstants ||
 	                e->kind == MetaEntryKind_Union;
 
@@ -4228,23 +4202,6 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	}
 
 	if (ctx->base_shader_count)
-	DeferLoop(meta_begin_scope(m, str8("read_only global str8 *" META_NAMESPACE_LOWER "_shader_bake_parameter_names[] = {")),
-	          meta_end_scope(m, str8("};\n")))
-	{
-		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
-			da_count    id = ctx->base_shader_ids[bs];
-			MetaEntity *e  = ctx->entities.data + id;
-			MetaEntityID bp_id = meta_entity_first_child_of_kind(ctx, e, MetaEntityKind_BakeParameters);
-			if (bp_id.value != 0) {
-				MetaEntity *bp = meta_entity(ctx, bp_id);
-				metagen_emit_c_str8_list(m, bp->table.entries[MetaBakeField_NameUpper], bp->table.entry_count);
-			} else {
-				meta_push_line(m, str8("0,"));
-			}
-		}
-	}
-
-	if (ctx->base_shader_count)
 	DeferLoop(meta_begin_scope(m, str8("read_only global i32 "
 	                                   META_NAMESPACE_LOWER "_base_shader_to_bake_struct_id[] = {")),
 	          meta_end_scope(m, str8("};\n")))
@@ -4914,7 +4871,7 @@ metagen_load_context(Arena *arena, char *filename)
 				s->info.name         = ctx->entity_names.data[entity];
 				s->info.member_count = e->table.entry_count;
 				s->info.size         = (u32)-1;
-				s->members           = e->table.entries[meta_struct_name_field[kind_it]];
+				s->members           = e->table.entries[MetaStructField_Name];
 				s->location          = e->location;
 				s->entity            = (MetaEntityID){entity};
 				if (meta_struct_entity_kinds[kind_it] == MetaEntityKind_Union)
@@ -4935,7 +4892,7 @@ metagen_load_context(Arena *arena, char *filename)
 				MetaEntity *e = ctx->entities.data + entity;
 				MetaStruct *s = ctx->struct_infos + e->table.struct_info_id;
 
-				str8 *types = e->table.entries[meta_struct_type_field[kind_it]];
+				str8 *types = e->table.entries[MetaStructField_Type];
 				for EachIndex(s->info.member_count, member) {
 					s->type_ids[member] = meta_lookup_string_slow(meta_kind_meta_types, MetaKind_Count, types[member]);
 
@@ -4969,40 +4926,35 @@ metagen_load_context(Arena *arena, char *filename)
 				MetaEntity *e = ctx->entities.data + entity;
 				MetaStruct *s = ctx->struct_infos + e->table.struct_info_id;
 
-				i32 field = meta_struct_element_field[kind_it];
-				str8 *elements = field >= 0 ? e->table.entries[field] : 0;
+				str8 *elements = e->table.entries[MetaStructField_Elements];
 				for EachIndex(s->info.member_count, member) {
-					if (elements) {
-						NumberConversion integer = integer_from_str8(elements[member]);
-						if (integer.result == NumberConversionResult_Success) {
-							s->elements[member] = integer.U64;
-						} else {
-							str8 ref_name = elements[member];
-							if (ref_name.data[0] == '#') {
-								s->member_flags[member] |= MetaBuildStructMemberFlag_EnumerationCount;
-								str8_chop(&ref_name, 1);
-							} else {
-								s->member_flags[member] |= MetaBuildStructMemberFlag_ReferenceElements;
-							}
-
-							i64 id = meta_lookup_string_slow(ctx->entity_names.data, ctx->entity_names.count, ref_name);
-							if (id >= 0) {
-								MetaEntity *ee = ctx->entities.data + id;
-								b32 valid = ee->kind == MetaEntityKind_Enumeration ||
-								           (ee->kind == MetaEntityKind_Constant && ee->constant.kind == MetaConstantKind_Integer);
-								if (!valid) {
-									// TODO(rnp): point at correct member
-									meta_compiler_error(e->location, "struct '%.*s': element count for field '%.*s'"
-									                                 "references '%.*s' which is not an integer constant\n",
-									                    (i32)s->info.name.length, s->info.name.data,
-									                    (i32)s->members[member].length, s->members[member].data,
-									                    (i32)elements[member].length, elements[member].data);
-								}
-								s->elements[member] = id;
-							}
-						}
+					NumberConversion integer = integer_from_str8(elements[member]);
+					if (integer.result == NumberConversionResult_Success) {
+						s->elements[member] = integer.U64;
 					} else {
-						s->elements[member] = 1;
+						str8 ref_name = elements[member];
+						if (ref_name.data[0] == '#') {
+							s->member_flags[member] |= MetaBuildStructMemberFlag_EnumerationCount;
+							str8_chop(&ref_name, 1);
+						} else {
+							s->member_flags[member] |= MetaBuildStructMemberFlag_ReferenceElements;
+						}
+
+						i64 id = meta_lookup_string_slow(ctx->entity_names.data, ctx->entity_names.count, ref_name);
+						if (id >= 0) {
+							MetaEntity *ee = ctx->entities.data + id;
+							b32 valid = ee->kind == MetaEntityKind_Enumeration ||
+							           (ee->kind == MetaEntityKind_Constant && ee->constant.kind == MetaConstantKind_Integer);
+							if (!valid) {
+								// TODO(rnp): point at correct member
+								meta_compiler_error(e->location, "struct '%.*s': element count for field '%.*s'"
+								                                 "references '%.*s' which is not an integer constant\n",
+								                    (i32)s->info.name.length, s->info.name.data,
+								                    (i32)s->members[member].length, s->members[member].data,
+								                    (i32)elements[member].length, elements[member].data);
+							}
+							s->elements[member] = id;
+						}
 					}
 
 					if (s->elements[member] == -1) {

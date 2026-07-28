@@ -614,20 +614,20 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				BeamformerDecodeBakeParameters *db = &sd->bake.Decode;
 
 				u32 decode_sample_count = input_sample_count;
-				db->decode_mode         = pb->parameters.decode_mode;
-				db->transmit_count      = pb->parameters.acquisition_count;
-				db->chunk_channel_count = chunk_channel_count;
+				db->DecodeMode    = pb->parameters.decode_mode;
+				db->TransmitCount = pb->parameters.acquisition_count;
+				db->ChunkChannelCount = chunk_channel_count;
 
 				// NOTE(rnp): ignored when using coop matrices
-				db->output_sample_stride   = node->output_stride.x;
-				db->output_channel_stride  = node->output_stride.y;
-				db->output_transmit_stride = node->output_stride.z;
+				db->OutputSampleStride   = node->output_stride.x;
+				db->OutputChannelStride  = node->output_stride.y;
+				db->OutputTransmitStride = node->output_stride.z;
 
-				db->to_process = 1;
+				db->ToProcess = 1;
 
 				b32 use_coop_matrix = vk_gpu_info()->cooperative_matrix &&
 				                      node->input_data_kind == BeamformerDataKind_Float16 &&
-				                      (db->transmit_count % 16 == 0) &&
+				                      (db->TransmitCount % 16 == 0) &&
 				                      (chunk_channel_count % 16 == 0);
 				if (use_coop_matrix) {
 					// TODO(rnp): shared memory for larger sizes
@@ -637,26 +637,26 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 						decode_sample_count *= 2;
 
 					sd->compile_flags |= BeamformerDecodeCompileFlags_CooperativeMatrix;
-					db->cooperative_matrix_m = 16;
-					db->cooperative_matrix_n = 16;
-					db->cooperative_matrix_k = 16;
+					db->CooperativeMatrixM = 16;
+					db->CooperativeMatrixN = 16;
+					db->CooperativeMatrixK = 16;
 
-					sd->dispatch.x = db->transmit_count  / db->cooperative_matrix_n;
-					sd->dispatch.y = chunk_channel_count / db->cooperative_matrix_m;
+					sd->dispatch.x = db->TransmitCount   / db->CooperativeMatrixN;
+					sd->dispatch.y = chunk_channel_count / db->CooperativeMatrixM;
 					sd->dispatch.z = decode_sample_count;
-				} else if (db->transmit_count > 40) {
-					db->use_shared_memory = 1;
+				} else if (db->TransmitCount > 40) {
+					db->UseSharedMemory = 1;
 
-					if (db->transmit_count == 48)
-						db->to_process = db->transmit_count / 16;
+					if (db->TransmitCount == 48)
+						db->ToProcess = db->TransmitCount / 16;
 
-					b32 use_16x  = db->transmit_count == 48 || db->transmit_count == 80 ||
-					               db->transmit_count == 96 || db->transmit_count == 160;
+					b32 use_16x  = db->TransmitCount == 48 || db->TransmitCount == 80 ||
+					               db->TransmitCount == 96 || db->TransmitCount == 160;
 					sd->layout.x = use_16x ? 16 : 32;
 					sd->layout.y = 4;
 					sd->layout.z = 1;
 
-					sd->dispatch.x = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.x / (f32)db->to_process);
+					sd->dispatch.x = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.x / (f32)db->ToProcess);
 					sd->dispatch.y = (u32)ceil_f32((f32)chunk_channel_count              / (f32)sd->layout.y);
 					sd->dispatch.z = (u32)ceil_f32((f32)decode_sample_count              / (f32)sd->layout.z);
 				} else {
@@ -682,23 +682,23 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				time_offset += f->time_delay;
 
 				BeamformerFilterBakeParameters *fb = &sd->bake.Filter;
-				fb->filter_length  = (u32)f->length;
+				fb->FilterLength  = (u32)f->length;
 
-				fb->sample_count    = input_sample_count;
-				fb->decimation_rate = demod ? decimation_rate : 1;
+				fb->SampleCount    = input_sample_count;
+				fb->DecimationRate = demod ? decimation_rate : 1;
 
 				b32 deinterleave =  beamformer_data_kind_complex[node->input_data_kind] &&
 				                   !beamformer_data_kind_complex[node->output_data_kind];
 				if (deinterleave)
-					fb->batch_sample_count = chunk_channel_count * input_sample_count * pb->parameters.acquisition_count;
+					fb->BatchSampleCount = chunk_channel_count * input_sample_count * pb->parameters.acquisition_count;
 
-				fb->output_sample_stride   = node->output_stride.x;
-				fb->output_channel_stride  = node->output_stride.y;
-				fb->output_transmit_stride = node->output_stride.z;
+				fb->OutputSampleStride   = node->output_stride.x;
+				fb->OutputChannelStride  = node->output_stride.y;
+				fb->OutputTransmitStride = node->output_stride.z;
 
-				fb->input_sample_stride    = node->input_stride.x;
-				fb->input_channel_stride   = node->input_stride.y;
-				fb->input_transmit_stride  = node->input_stride.z;
+				fb->InputSampleStride    = node->input_stride.x;
+				fb->InputChannelStride   = node->input_stride.y;
+				fb->InputTransmitStride  = node->input_stride.z;
 
 				/* NOTE(rnp): when we are demodulating we pretend that the sampler was alternating
 				 * between sampling the I portion and the Q portion of an IQ signal. Therefore there
@@ -710,8 +710,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				 *   IQ[n] = I[n] - j*Q[n]
 				 */
 				if (demod) {
-					fb->demodulation_frequency = pb->parameters.demodulation_frequency;
-					fb->sampling_frequency     = pb->parameters.sampling_frequency / 2;
+					fb->DemodulationFrequency = pb->parameters.demodulation_frequency;
+					fb->SamplingFrequency     = pb->parameters.sampling_frequency / 2;
 				}
 
 				sd->layout     = (uv3){{subgroup_size, 1, 1}};
@@ -724,20 +724,20 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				cp->first_image_shader_index = cp->pipeline.shader_count;
 
 				BeamformerDASBakeParameters *db = &sd->bake.DAS;
-				db->sampling_frequency     = sampling_frequency;
-				db->demodulation_frequency = pb->parameters.demodulation_frequency;
-				db->speed_of_sound         = pb->parameters.speed_of_sound;
-				db->time_offset            = time_offset;
-				db->f_number               = pb->parameters.f_number;
-				db->acquisition_kind       = pb->parameters.acquisition_kind;
-				db->sample_count           = input_sample_count;
-				db->channel_count          = pb->parameters.channel_count;
-				db->acquisition_count      = pb->parameters.acquisition_count;
-				db->chunk_channel_count    = chunk_channel_count;
-				db->interpolation_mode     = pb->parameters.interpolation_mode;
-				db->transmit_angle         = pb->parameters.focal_vector.E[0];
-				db->focus_depth            = pb->parameters.focal_vector.E[1];
-				db->transmit_receive_orientation = pb->parameters.transmit_receive_orientation;
+				db->SamplingFrequency     = sampling_frequency;
+				db->DemodulationFrequency = pb->parameters.demodulation_frequency;
+				db->SpeedOfSound          = pb->parameters.speed_of_sound;
+				db->TimeOffset            = time_offset;
+				db->FNumber               = pb->parameters.f_number;
+				db->AcquisitionKind       = pb->parameters.acquisition_kind;
+				db->SampleCount           = input_sample_count;
+				db->ChannelCount          = pb->parameters.channel_count;
+				db->AcquisitionCount      = pb->parameters.acquisition_count;
+				db->ChunkChannelCount     = chunk_channel_count;
+				db->InterpolationMode     = pb->parameters.interpolation_mode;
+				db->TransmitAngle         = pb->parameters.focal_vector.E[0];
+				db->FocusDepth            = pb->parameters.focal_vector.E[1];
+				db->TransmitReceiveOrientation = pb->parameters.transmit_receive_orientation;
 
 				// NOTE(rnp): old gcc will miscompile an assignment
 				memory_copy(cp->xdc_transform.E, pb->parameters.xdc_transform.E, sizeof(cp->xdc_transform));
@@ -751,9 +751,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				if (id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_FORCES)
 					cp->das_voxel_transform = m4_mul(cp->xdc_transform, cp->das_voxel_transform);
 
-				db->sparse = id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES;
-				db->single_focus        = pb->parameters.single_focus;
-				db->single_orientation  = pb->parameters.single_orientation;
+				db->Sparse = id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES;
+				db->SingleFocus        = pb->parameters.single_focus;
+				db->SingleOrientation  = pb->parameters.single_orientation;
 
 				sd->compile_flags |= BeamformerDASCompileFlags_CoherencyWeighting * pb->parameters.coherency_weighting;
 				sd->layout   = layout_for_output(cp->output_points);
@@ -775,25 +775,25 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				sd->compile_flags |= BeamformerReshapeCompileFlags_Deinterleave * deinterleave;
 				sd->compile_flags |= BeamformerReshapeCompileFlags_Interleave   * interleave;
 
-				rb->input_stride_x   = node->input_stride.x;
-				rb->input_stride_y   = node->input_stride.y;
-				rb->input_stride_z   = node->input_stride.z;
-				rb->output_stride_x  = node->output_stride.x;
-				rb->output_stride_y  = node->output_stride.y;
-				rb->output_stride_z  = node->output_stride.z;
+				rb->InputStrideX   = node->input_stride.x;
+				rb->InputStrideY   = node->input_stride.y;
+				rb->InputStrideZ   = node->input_stride.z;
+				rb->OutputStrideX  = node->output_stride.x;
+				rb->OutputStrideY  = node->output_stride.y;
+				rb->OutputStrideZ  = node->output_stride.z;
 
 				// NOTE(rnp): order doesn't really matter here but it must match the dispatch layout
-				rb->size_x           = input_sample_count;
-				rb->size_y           = chunk_channel_count;
-				rb->size_z           = acquisition_count;
+				rb->SizeX          = input_sample_count;
+				rb->SizeY          = chunk_channel_count;
+				rb->SizeZ          = acquisition_count;
 
 				sd->layout.x = 1;
-				sd->layout.z = Min(subgroup_size, rb->size_z);
+				sd->layout.z = Min(subgroup_size, rb->SizeZ);
 				sd->layout.y = subgroup_size / sd->layout.z;
 
-				sd->dispatch.x = (u32)(ceil_f32((f32)rb->size_x / sd->layout.x));
-				sd->dispatch.y = (u32)(ceil_f32((f32)rb->size_y / sd->layout.y));
-				sd->dispatch.z = (u32)(ceil_f32((f32)rb->size_z / sd->layout.z));
+				sd->dispatch.x = (u32)(ceil_f32((f32)rb->SizeX / sd->layout.x));
+				sd->dispatch.y = (u32)(ceil_f32((f32)rb->SizeY / sd->layout.y));
+				sd->dispatch.z = (u32)(ceil_f32((f32)rb->SizeZ / sd->layout.z));
 			}break;
 
 			default:{}break;
@@ -890,7 +890,7 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDes
 
 		i32 struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];
 		if (struct_id != -1) {
-			str8             *names = beamformer_shader_bake_parameter_names[reloadable_index];
+			str8             *names = meta_struct_member_names_by_id[struct_id];
 			MetaStructInfo   *si    = meta_struct_info_by_id + struct_id;
 			MetaStructMember *sm    = meta_struct_members_by_id[struct_id];
 			for (u32 index = 0; index < si->member_count; index++) {
@@ -1312,7 +1312,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 		u64 input_pointer = shader_slot == 0 ? rf_pointer : pp_input_pointer;
 		BeamformerReshapePushConstants pc = {
 			.left_input_buffer  = input_pointer,
-			.right_input_buffer = input_pointer + rb->size_x * rb->size_y * rb->size_z
+			.right_input_buffer = input_pointer + rb->SizeX * rb->SizeY * rb->SizeZ
 			                                      * beamformer_data_kind_byte_size[input_data_kind],
 		};
 

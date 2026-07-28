@@ -343,17 +343,17 @@
 
 		@Bake
 		{
-			[UseSharedMemory      use_shared_memory      B32]
-			[DecodeMode           decode_mode            U32]
-			[OutputChannelStride  output_channel_stride  U32]
-			[OutputSampleStride   output_sample_stride   U32]
-			[OutputTransmitStride output_transmit_stride U32]
-			[ToProcess            to_process             U32]
-			[TransmitCount        transmit_count         U32]
-			[ChunkChannelCount    chunk_channel_count    U32]
-			[CooperativeMatrixM   cooperative_matrix_m   U32]
-			[CooperativeMatrixN   cooperative_matrix_n   U32]
-			[CooperativeMatrixK   cooperative_matrix_k   U32]
+			[UseSharedMemory      B32]
+			[DecodeMode           U32]
+			[OutputChannelStride  U32]
+			[OutputSampleStride   U32]
+			[OutputTransmitStride U32]
+			[ToProcess            U32]
+			[TransmitCount        U32]
+			[ChunkChannelCount    U32]
+			[CooperativeMatrixM   U32]
+			[CooperativeMatrixN   U32]
+			[CooperativeMatrixK   U32]
 		}
 
 		@PushConstants
@@ -379,19 +379,18 @@
 
 		@Bake
 		{
-			[DecimationRate        decimation_rate        U32]
-			[FilterLength          filter_length          U32]
-			[InputChannelStride    input_channel_stride   U32]
-			[InputSampleStride     input_sample_stride    U32]
-			[InputTransmitStride   input_transmit_stride  U32]
-			[OutputChannelStride   output_channel_stride  U32]
-			[OutputSampleStride    output_sample_stride   U32]
-			[OutputTransmitStride  output_transmit_stride U32]
-			[SampleCount           sample_count           U32]
-			[BatchSampleCount      batch_sample_count     U32]
-
-			[DemodulationFrequency demodulation_frequency F32]
-			[SamplingFrequency     sampling_frequency     F32]
+			[SamplingFrequency     F32]
+			[DemodulationFrequency F32]
+			[DecimationRate        U32]
+			[FilterLength          U32]
+			[SampleCount           U32]
+			[BatchSampleCount      U32]
+			[InputChannelStride    U32]
+			[InputSampleStride     U32]
+			[InputTransmitStride   U32]
+			[OutputChannelStride   U32]
+			[OutputSampleStride    U32]
+			[OutputTransmitStride  U32]
 		}
 
 		@PushConstants
@@ -421,24 +420,25 @@
 
 		@Bake
 		{
-			[SingleFocus                single_focus                 B32]
-			[SingleOrientation          single_orientation           B32]
-			[Sparse                     sparse                       B32]
-			[AcquisitionCount           acquisition_count            S32]
-			[AcquisitionKind            acquisition_kind             U32]
-			[ChannelCount               channel_count                S32]
-			[ChunkChannelCount          chunk_channel_count          S32]
-			[InterpolationMode          interpolation_mode           U32]
-			[SampleCount                sample_count                 S32]
-			[TransmitReceiveOrientation transmit_receive_orientation U32]
+			[AcquisitionKind            U32]
+			[Sparse                     B32]
+			[AcquisitionCount           S32]
+			[ChannelCount               S32]
+			[ChunkChannelCount          S32]
+			[SampleCount                S32]
 
-			[DemodulationFrequency      demodulation_frequency       F32]
-			[FNumber                    f_number                     F32]
-			[FocusDepth                 focus_depth                  F32]
-			[SamplingFrequency          sampling_frequency           F32]
-			[SpeedOfSound               speed_of_sound               F32]
-			[TimeOffset                 time_offset                  F32]
-			[TransmitAngle              transmit_angle               F32]
+			[SamplingFrequency          F32]
+			[DemodulationFrequency      F32]
+			[SpeedOfSound               F32]
+			[TimeOffset                 F32]
+			[InterpolationMode          U32]
+			[FNumber                    F32]
+
+			[SingleOrientation          B32]
+			[TransmitReceiveOrientation U32]
+			[SingleFocus                B32]
+			[FocusDepth                 F32]
+			[TransmitAngle              F32]
 		}
 
 		@PushConstants
@@ -501,15 +501,15 @@
 
 		@Bake
 		{
-			[SizeX          size_x           U32]
-			[SizeY          size_y           U32]
-			[SizeZ          size_z           U32]
-			[InputStrideX   input_stride_x   U32]
-			[InputStrideY   input_stride_y   U32]
-			[InputStrideZ   input_stride_z   U32]
-			[OutputStrideX  output_stride_x  U32]
-			[OutputStrideY  output_stride_y  U32]
-			[OutputStrideZ  output_stride_z  U32]
+			[SizeX         U32]
+			[SizeY         U32]
+			[SizeZ         U32]
+			[InputStrideX  U32]
+			[InputStrideY  U32]
+			[InputStrideZ  U32]
+			[OutputStrideX U32]
+			[OutputStrideY U32]
+			[OutputStrideZ U32]
 		}
 
 		@PushConstants

@@ -3319,7 +3319,7 @@ ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t, Beamforme
 
 								i32 struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];
 								if (struct_id != -1) {
-									str8             *names = beamformer_shader_bake_parameter_names[reloadable_index];
+									str8             *names = meta_struct_member_names_by_id[struct_id];
 									MetaStructInfo   *si    = meta_struct_info_by_id + struct_id;
 									MetaStructMember *sm    = meta_struct_members_by_id[struct_id];
 									for EachIndex(si->member_count, member) {
