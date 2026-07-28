@@ -3268,6 +3268,18 @@ ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t, Beamforme
 						UIPrefHeight(ui_children_sum(1.f))
 						UIPrefWidth(ui_children_sum(1.f))
 						UIParent(ui_spacer(0))
+						{
+							ui_padw(UI_NODE_PAD);
+							UIPrefHeight(ui_text_dim(1.1f, 1.f))
+							UIPrefWidth(ui_text_dim(1.f, 1.f))
+							ui_label(push_str8_from_parts(ui_build_arena(), str8(""), shader, str8(" Configuration")));
+						}
+
+						UIParent(ui_context->context_menu_root)
+						UIChildLayoutAxis(Axis2_X)
+						UIPrefHeight(ui_children_sum(1.f))
+						UIPrefWidth(ui_children_sum(1.f))
+						UIParent(ui_spacer(0))
 						UIChildLayoutAxis(Axis2_Y)
 						{
 							UINode *left, *right;
