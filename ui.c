@@ -1,6 +1,5 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
- * [ ]: pretty print compile flags in shader bake parameter lister
  * [ ]: bug: nil nodes break hot reloading
  *    - only one that matters is ui_node_nil, for now maybe just put it into ui_context (won't be read_only of course)
  * [ ]: bug: flickering x-scroll bar on switch from ComputeBarGraph to other
@@ -3282,7 +3281,6 @@ ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t, Beamforme
 							UIPrefWidth(ui_text_dim(1.f, 1.f))
 							UIFontSize(24.f)
 							{
-								// TODO(rnp): pretty print the extra compile flags field
 								BeamformerShaderDescriptor *sd = cp->shader_descriptors + it;
 								UIParent(left)  ui_label(str8("Layout"));
 								UIParent(right) ui_labelf("{%u, %u, %u}###layout", sd->layout.x, sd->layout.y, sd->layout.z);
@@ -3296,6 +3294,16 @@ ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t, Beamforme
 								UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
 								                                              beamformer_data_kind_str8[sd->output_data_kind],
 								                                              str8("##output_kind")));
+
+								if (beamformer_shader_compile_flag_counts[reloadable_index])
+								for EachIndex(beamformer_shader_compile_flag_counts[reloadable_index], bit) {
+									str8 *flags = beamformer_shader_compile_flag_names[reloadable_index];
+									b32   set   = sd->compile_flags & (1u << bit);
+									UIParent(left)  ui_label(flags[bit]);
+									UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
+									                                              set ? str8("True") : str8("False"),
+									                                              str8("##"), flags[bit]));
+								}
 
 								i32 struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];
 								if (struct_id != -1) {

@@ -4197,6 +4197,37 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	}
 
 	if (ctx->base_shader_count)
+	DeferLoop(meta_begin_scope(m, str8("read_only global str8 *" META_NAMESPACE_LOWER "_shader_compile_flag_names[] = {")),
+	          meta_end_scope(m, str8("};\n")))
+	{
+		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
+			da_count    id = ctx->base_shader_ids[bs];
+			MetaEntity *e  = ctx->entities.data + id;
+			MetaEntityID fid = meta_entity_first_child_of_kind(ctx, e, MetaEntityKind_Flags);
+			if (fid.value != 0) {
+				MetaEntity *flags = meta_entity(ctx, fid);
+				metagen_emit_c_str8_list(m, flags->table.entries[MetaStructField_Name], flags->table.entry_count);
+			} else {
+				meta_push_line(m, str8("0,"));
+			}
+		}
+	}
+
+	if (ctx->base_shader_count)
+	DeferLoop(meta_begin_scope(m, str8("read_only global u8 " META_NAMESPACE_LOWER "_shader_compile_flag_counts[] = {")),
+	          meta_end_scope(m, str8("};\n")))
+	{
+		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
+			da_count    id = ctx->base_shader_ids[bs];
+			MetaEntity *e  = ctx->entities.data + id;
+			MetaEntityID fid = meta_entity_first_child_of_kind(ctx, e, MetaEntityKind_Flags);
+			meta_indent(m);
+			meta_push_u64(m, ctx->entities.data[fid.value].table.entry_count);
+			meta_end_line(m, str8(","));
+		}
+	}
+
+	if (ctx->base_shader_count)
 	DeferLoop(meta_begin_scope(m, str8("read_only global str8 *" META_NAMESPACE_LOWER "_shader_bake_parameter_names[] = {")),
 	          meta_end_scope(m, str8("};\n")))
 	{

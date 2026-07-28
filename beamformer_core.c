@@ -588,6 +588,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		}
 	}
 
+	// NOTE(rnp): ensure last node descriptor gets proper values for output data kind
+	if (graph.last->output_data_kind == BeamformerDataKind_Count)
+		graph.last->output_data_kind = graph.last->input_data_kind;
+
 	f32 time_offset   = pb->parameters.time_offset;
 	u32 subgroup_size = vk_gpu_info()->subgroup_size;
 

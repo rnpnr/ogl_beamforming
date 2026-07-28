@@ -952,6 +952,38 @@ read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	1,
 };
 
+read_only global str8 *beamformer_shader_compile_flag_names[] = {
+	(str8 []){
+		str8_comp("CooperativeMatrix"),
+	},
+	(str8 []){
+		str8_comp("ComplexFilter"),
+		str8_comp("Demodulate"),
+	},
+	(str8 []){
+		str8_comp("CoherencyWeighting"),
+	},
+	0,
+	0,
+	0,
+	(str8 []){
+		str8_comp("Deinterleave"),
+		str8_comp("Interleave"),
+	},
+	0,
+};
+
+read_only global u8 beamformer_shader_compile_flag_counts[] = {
+	1,
+	2,
+	1,
+	0,
+	0,
+	0,
+	2,
+	0,
+};
+
 read_only global str8 *beamformer_shader_bake_parameter_names[] = {
 	(str8 []){
 		str8_comp("UseSharedMemory"),
