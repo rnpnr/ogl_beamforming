@@ -997,6 +997,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 	          beamformer_parameter_block_unlock(ctx->shared_memory, block))
 	for EachBit(pb->region_update_flags, region)
 	{
+		pb->region_update_flags &= ~(1ul << region);
 		switch (region) {
 		case BeamformerParameterRegionFlag_NotifyUI:{
 			atomic_store_u32(&ctx->ui_dirty_parameter_blocks, 1u << block);

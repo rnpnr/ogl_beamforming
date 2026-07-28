@@ -124,7 +124,7 @@ typedef u64      uptr;
 
 #define DeferLoop(begin, end)          for (i32 _i_ = ((begin), 0); !_i_; _i_ += 1, (end))
 
-#define EachBit(a, it)                 (u64 it = ctz_u64(a); it != 64; a &= ~(1u << (it)), it = ctz_u64(a))
+#define EachBit(a, it)                 (u64 _##it = a, it = ctz_u64( _##it ); it != 64; _##it &= ~(1u << (it)), it = ctz_u64( _##it ))
 #define EachElement(array, it)         (u64 it = 0; it < countof(array); it += 1)
 #define EachEnumValue(type, it)        (type it = (type)0; it < type##_Count; it = (type)(it + 1))
 #define EachNonZeroEnumValue(type, it) (type it = (type)1; it < type##_Count; it = (type)(it + 1))
