@@ -2701,6 +2701,12 @@ meta_pack_shader_common(MetaContext *ctx, MetaEntityID shader_id, MetaEntry *e, 
 		result  = meta_pack_table_entity(ctx, e, entry_count, e->name, shader_id);
 	}break;
 
+	case MetaEntryKind_Flags:{
+		e->name = push_str8_from_parts(ctx->arena, str8(""), ctx->entity_names.data[shader_id.value], str8("CompileFlags"));
+		result  = meta_pack_table_entity(ctx, e, entry_count, e->name, shader_id);
+		goto reference;
+	}break;
+
 	case MetaEntryKind_PushConstants:{
 		e->name = push_str8_from_parts(ctx->arena, str8(""), ctx->entity_names.data[shader_id.value], str8("PushConstants"));
 		result  = meta_pack_table_entity(ctx, e, entry_count, e->name, shader_id);
@@ -2715,7 +2721,6 @@ meta_pack_shader_common(MetaContext *ctx, MetaEntityID shader_id, MetaEntry *e, 
 	}break;
 
 	case MetaEntryKind_Enumeration:
-	case MetaEntryKind_Flags:
 	case MetaEntryKind_Constant:
 	case MetaEntryKind_Struct:
 	reference:

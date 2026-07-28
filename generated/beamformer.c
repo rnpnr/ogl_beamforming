@@ -124,13 +124,13 @@ typedef enum {
 } BeamformerLiveImagingDirtyFlags;
 
 typedef enum {
+	BeamformerDecodeCompileFlags_CooperativeMatrix = 1 << 0,
+} BeamformerDecodeCompileFlags;
+
+typedef enum {
 	BeamformerFilterCompileFlags_ComplexFilter = 1 << 0,
 	BeamformerFilterCompileFlags_Demodulate    = 1 << 1,
 } BeamformerFilterCompileFlags;
-
-typedef enum {
-	BeamformerDecodeCompileFlags_CooperativeMatrix = 1 << 0,
-} BeamformerDecodeCompileFlags;
 
 typedef enum {
 	BeamformerDASCompileFlags_CoherencyWeighting = 1 << 0,
@@ -835,14 +835,14 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"#define RCAOrientation_Columns 2\n"
 	"\n"),
 	str8_comp(""
-	"#define CoherencyWeighting ((CompileFlags & (1 << 0)) != 0)\n"
-	"\n"),
-	str8_comp(""
 	"struct DASArrayParameters {\n"
 	"  f32vec2  focal_vectors[MaxChannelCount];\n"
 	"  int16_t  sparse_elements[MaxChannelCount];\n"
 	"  uint16_t transmit_receive_orientations[MaxChannelCount];\n"
 	"};\n"
+	"\n"),
+	str8_comp(""
+	"#define CoherencyWeighting ((CompileFlags & (1 << 0)) != 0)\n"
 	"\n"),
 	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"

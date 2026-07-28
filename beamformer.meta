@@ -271,28 +271,6 @@
 	[transmit_receive_orientations U16 MaxChannelCount]
 }
 
-@Flags FilterCompileFlags
-{
-	ComplexFilter
-	Demodulate
-}
-
-@Flags DecodeCompileFlags
-{
-	CooperativeMatrix
-}
-
-@Flags DASCompileFlags
-{
-	CoherencyWeighting
-}
-
-@Flags ReshapeCompileFlags
-{
-	Deinterleave
-	Interleave
-}
-
 @Emit
 {
 	`read_only global u8 beamformer_data_kind_element_size[] = {`
@@ -358,7 +336,10 @@
 	{
 		@Enumeration DecodeMode
 
-		@Flags DecodeCompileFlags
+		@Flags
+		{
+			CooperativeMatrix
+		}
 
 		@Bake
 		{
@@ -388,9 +369,13 @@
 		@Enumeration ShaderBufferSlot
 		@Enumeration ShaderResourceKind
 
-		@Flags FilterCompileFlags
-
 		@ShaderAlias Demodulate
+
+		@Flags
+		{
+			ComplexFilter
+			Demodulate
+		}
 
 		@Bake
 		{
@@ -427,9 +412,12 @@
 		@Enumeration ShaderBufferSlot
 		@Enumeration ShaderResourceKind
 
-		@Flags       DASCompileFlags
-
 		@Struct      DASArrayParameters
+
+		@Flags
+		{
+			CoherencyWeighting
+		}
 
 		@Bake
 		{
@@ -505,7 +493,12 @@
 
 	@Shader(reshape.glsl) Reshape
 	{
-		@Flags ReshapeCompileFlags
+		@Flags
+		{
+			Deinterleave
+			Interleave
+		}
+
 		@Bake
 		{
 			[SizeX          size_x           U32]
