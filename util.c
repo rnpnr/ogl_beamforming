@@ -512,6 +512,8 @@ stream_append_f64_e(Stream *s, f64 f)
 	for (i32 i = ABS(scale); i > 0; i--)
 		f *= (scale > 0)? 0.1f : 10.0f;
 	#else
+	f32 sign = Sign(f);
+	f *= sign;
 	i32 scale = 0;
 	if (f != 0) {
 		while (f > 1) {
@@ -526,7 +528,7 @@ stream_append_f64_e(Stream *s, f64 f)
 	#endif
 
 	u32 prec = 100;
-	stream_append_f64(s, f, prec);
+	stream_append_f64(s, sign * f, prec);
 	stream_append_byte(s, 'e');
 	stream_append_byte(s, scale >= 0? '+' : '-');
 	for (u32 i = prec / 10; i > 1; i /= 10)
