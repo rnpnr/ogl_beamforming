@@ -271,14 +271,17 @@ das_valid_points(iv3 points)
 }
 
 function void
-beamformer_update_hadamard(BeamformerComputePlan *cp, i32 order, b32 row_major, Arena arena)
+beamformer_update_hadamard(BeamformerComputePlan *cp, i32 order, b32 row_major, Arena arena, b32 das_matrix)
 {
 	f16 *hadamard = make_hadamard_transpose(&arena, order, row_major);
 	if (hadamard) {
-		u64 offset = offsetof(BeamformerComputeArrayParameters, Hadamard);
-		u64 size   = sizeof(*((BeamformerComputeArrayParameters *)0)->Hadamard) * order * order;
+		u64 offset = das_matrix ? offsetof(BeamformerComputeArrayParameters, DasHadamard)
+		                        : offsetof(BeamformerComputeArrayParameters, DecodeHadamard);
+		u64 size   = das_matrix ? sizeof(*((BeamformerComputeArrayParameters *)0)->DasHadamard)
+		                        : sizeof(*((BeamformerComputeArrayParameters *)0)->DecodeHadamard);
+		size *= order * order;
 		vk_buffer_range_upload(&cp->array_parameters, hadamard, offset, size, 0);
-		cp->hadamard_order = order;
+		if(!das_matrix) cp->hadamard_order = order;
 	}
 }
 
@@ -737,7 +740,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->InterpolationMode     = pb->parameters.interpolation_mode;
 				db->TransmitAngle         = pb->parameters.focal_vector.E[0];
 				db->FocusDepth            = pb->parameters.focal_vector.E[1];
+				db->ReadiGroupCount       = pb->parameters.readi_group_count;
 				db->TransmitReceiveOrientation = pb->parameters.transmit_receive_orientation;
+
+				cp->readi_group = pb->parameters.readi_group;
 
 				// NOTE(rnp): old gcc will miscompile an assignment
 				memory_copy(cp->xdc_transform.E, pb->parameters.xdc_transform.E, sizeof(cp->xdc_transform));
@@ -1060,7 +1066,10 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			if (pb->parameters.decode_mode != BeamformerDecodeMode_None &&
 			    cp->hadamard_order != (i32)cp->acquisition_count)
 			{
-				beamformer_update_hadamard(cp, (i32)cp->acquisition_count, vk_gpu_info()->cooperative_matrix, arena);
+				beamformer_update_hadamard(cp, (i32)cp->acquisition_count, vk_gpu_info()->cooperative_matrix, arena, false);
+
+				if (pb->parameters.readi_group_count > 1)
+					beamformer_update_hadamard(cp, (i32)pb->parameters.readi_group_count, false, arena, true);
 			}
 		}break;
 
@@ -1131,7 +1140,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 
 	case BeamformerShaderKind_Decode:{
 		BeamformerDecodePushConstants pc = {
-			.hadamard_buffer = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, Hadamard),
+			.hadamard_buffer = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, DecodeHadamard),
 			.rf_buffer       = pp_input_pointer,
 		};
 
@@ -1238,6 +1247,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			.output_size_z     = cp->output_points.z,
 			.cycle_t           = das_cycle_t++,
 			.channel_offset    = channel_offset,
+			.readi_group       = cp->readi_group,
 			.array_parameters  = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, FocalVectors),
 		};
 		memory_copy(pc.voxel_transform.E, cp->das_voxel_transform.E, sizeof(pc.voxel_transform));

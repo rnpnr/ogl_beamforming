@@ -266,10 +266,11 @@ typedef struct {
 
 // X(kind, format, elements)
 #define BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST \
-	X(Hadamard,                    f16, BeamformerMaxChannelCount * BeamformerMaxChannelCount) \
+	X(DecodeHadamard,              f16, BeamformerMaxChannelCount * BeamformerMaxChannelCount) \
 	X(FocalVectors,                v2,  BeamformerMaxChannelCount) \
 	X(SparseElements,              i16, BeamformerMaxChannelCount) \
 	X(TransmitReceiveOrientations, u16, BeamformerMaxChannelCount) \
+	X(DasHadamard,                 f16, BeamformerMaxChannelCount * BeamformerMaxChannelCount) \
 
 typedef enum {
 	#define X(k, ...) BeamformerComputeArrayParameterKind_##k,
@@ -324,6 +325,8 @@ struct BeamformerComputePlan {
 	// TODO(rnp): specialization constants
 	v2  xdc_element_pitch;
 	m4  xdc_transform;
+
+	u32  readi_group;
 
 	GPUBuffer array_parameters;
 
