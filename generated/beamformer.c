@@ -212,6 +212,8 @@ typedef struct {
 	b32 SingleFocus;
 	f32 FocusDepth;
 	f32 TransmitAngle;
+	u32 ReadiGroupCount;
+	u32 ReadiGroup;
 } BeamformerDASBakeParameters;
 
 typedef struct {
@@ -251,6 +253,7 @@ typedef struct {
 	u32 output_size_z;
 	u32 cycle_t;
 	i32 channel_offset;
+	u64 hadamard_buffer;
 } BeamformerDASPushConstants;
 
 typedef struct {
@@ -333,6 +336,11 @@ typedef struct {
 } BeamformerFilterParameters;
 
 typedef struct {
+	u32 readi_group_count;
+	u32 readi_group;
+} BeamformerReadiParameters;
+
+typedef struct {
 	m4                        das_voxel_transform;
 	m4                        xdc_transform;
 	v2                        xdc_element_pitch;
@@ -364,6 +372,7 @@ typedef struct {
 typedef struct {
 	BeamformerContrastMode       contrast_mode;
 	BeamformerEmissionParameters emission_parameters;
+	BeamformerReadiParameters    readi_parameters;
 } BeamformerExtraParameters;
 
 typedef struct {
@@ -392,6 +401,7 @@ typedef struct {
 	u32                          decimation_rate;
 	BeamformerContrastMode       contrast_mode;
 	BeamformerEmissionParameters emission_parameters;
+	BeamformerReadiParameters    readi_parameters;
 } BeamformerParameters;
 
 typedef struct {
@@ -420,6 +430,7 @@ typedef struct {
 	u32                          decimation_rate;
 	BeamformerContrastMode       contrast_mode;
 	BeamformerEmissionParameters emission_parameters;
+	BeamformerReadiParameters    readi_parameters;
 	i16                          channel_mapping[BeamformerMaxChannelCount];
 	i16                          sparse_elements[BeamformerMaxEmissionsCount];
 	u8                           transmit_receive_orientations[BeamformerMaxEmissionsCount];
@@ -629,6 +640,8 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{14, 56, 1, 0},
 		{8,  60, 1, 0},
 		{8,  64, 1, 0},
+		{18, 68, 1, 0},
+		{18, 72, 1, 0},
 	},
 	(MetaStructMember []){
 		{18, 0,  1, 0},
@@ -689,6 +702,8 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("SingleFocus"),
 		str8_comp("FocusDepth"),
 		str8_comp("TransmitAngle"),
+		str8_comp("ReadiGroupCount"),
+		str8_comp("ReadiGroup"),
 	},
 	(str8 []){
 		str8_comp("SizeX"),
@@ -706,7 +721,7 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 read_only global MetaStructInfo meta_struct_info_by_id[] = {
 	{str8_comp("DecodeBakeParameters"),  11, 44, 0},
 	{str8_comp("FilterBakeParameters"),  12, 48, 0},
-	{str8_comp("DASBakeParameters"),     17, 68, 0},
+	{str8_comp("DASBakeParameters"),     19, 76, 0},
 	{str8_comp("ReshapeBakeParameters"), 9,  36, 0},
 };
 
@@ -858,6 +873,7 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"  uint32_t output_size_z;\n"
 	"  uint32_t cycle_t;\n"
 	"  int32_t  channel_offset;\n"
+	"  uint64_t hadamard_buffer;\n"
 	"};\n"
 	"\n"),
 	str8_comp(""

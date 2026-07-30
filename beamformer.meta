@@ -168,6 +168,14 @@
 @Library        @Struct FilterParameters
 @MATLAB(Filter) @Struct FilterParameters
 
+@Struct ReadiParameters
+{
+	[readi_group_count  U32]
+	[readi_group        U32]
+}
+@Library 		@Struct ReadiParameters
+@MATLAB(readi) 	@Struct ReadiParameters
+
 @Struct ParametersHead
 {
 	[das_voxel_transform          M4             ]
@@ -203,6 +211,7 @@
 {
 	[contrast_mode       ContrastMode      ]
 	[emission_parameters EmissionParameters]
+	[readi_parameters    ReadiParameters   ]
 }
 
 @Struct Parameters
@@ -439,6 +448,9 @@
 			[SingleFocus                B32]
 			[FocusDepth                 F32]
 			[TransmitAngle              F32]
+
+			[ReadiGroupCount            U32]
+			[ReadiGroup                 U32]
 		}
 
 		@PushConstants
@@ -455,6 +467,7 @@
 			[output_size_z     U32]
 			[cycle_t           U32]
 			[channel_offset    S32]
+			[hadamard_buffer   U64]
 		}
 	}
 

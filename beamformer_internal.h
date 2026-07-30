@@ -270,6 +270,7 @@ typedef struct {
 	X(FocalVectors,                v2,  BeamformerMaxChannelCount) \
 	X(SparseElements,              i16, BeamformerMaxChannelCount) \
 	X(TransmitReceiveOrientations, u16, BeamformerMaxChannelCount) \
+	X(ReadiDasHadamard,            f16, BeamformerMaxChannelCount * BeamformerMaxChannelCount) \
 
 typedef enum {
 	#define X(k, ...) BeamformerComputeArrayParameterKind_##k,

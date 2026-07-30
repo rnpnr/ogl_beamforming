@@ -47,6 +47,10 @@ layout(std430, buffer_reference) buffer IncoherentOutput {
 	f32 x[];
 };
 
+layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer Hadamard {
+	f16 x[];
+};
+
 #define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
 #define TX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 4, 4)
 
@@ -320,6 +324,51 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 	return result;
 }
 
+RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
+{
+	RESULT_TYPE result = RESULT_TYPE(0);
+
+	float z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
+	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;
+	float transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
+
+	// NOTE(tkh): The row we use matches the acquisition group, the column is the element group we are beamforming.
+	s32 hadamard_offset = s32(ReadiGroup) * s32(ReadiGroupCount);
+
+	for (f32 chunk_channel = 0; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.0f) {
+		float rx_channel      = float(channel_offset) + chunk_channel;
+		float receive_x_delta = xdc_world_point.x - rx_channel * xdc_element_pitch.x;
+		float a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
+
+		if (a_arg < 0.5f) {
+			s32 channel_rf_offset  = s32(rf_element_offset) + s32(chunk_channel) * SampleCount * AcquisitionCount;
+			channel_rf_offset     -= s32(InterpolationMode == InterpolationMode_Cubic);
+
+			float receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
+			float apodization   = apodize(a_arg);
+
+			// NOTE(tkh): Iterating over groups of tx elements, each group is AcquisitionCount sequential elements.
+			// The first element in each group is beamformed using the first acquisition, the second element in each group is beamformed using the second acquisition, etc.
+			for (s32 tx_group = 0; tx_group < s32(ReadiGroupCount); tx_group++) {
+				s32 rf_offset = channel_rf_offset;
+				f16 hadamard_value = Hadamard(hadamard_buffer).x[hadamard_offset + tx_group];
+				float group_apodization = apodization * f32(hadamard_value);
+
+				for (s32 tx_event = 0; tx_event < AcquisitionCount; tx_event++) {
+					s32 tx_element = tx_group * AcquisitionCount + tx_event;
+					float transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_element;
+					float transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
+
+					SAMPLE_TYPE value = group_apodization * sample_rf(rf_offset, receive_index + transmit_index);
+					result    += RESULT_STORE(value);
+					rf_offset += SampleCount;
+				}
+			}
+		}
+	}
+	return result;
+}
+
 void main()
 {
 	uvec3 out_voxel = gl_GlobalInvocationID;
@@ -337,7 +386,8 @@ void main()
 	case AcquisitionKind_FORCES:
 	case AcquisitionKind_UFORCES:
 	{
-		sum = FORCES(world_point);
+		if(ReadiGroupCount > 1){ sum = READI_FORCES(world_point); }
+		else { sum = FORCES(world_point); }
 	}break;
 	case AcquisitionKind_HERCULES:
 	case AcquisitionKind_UHERCULES:
