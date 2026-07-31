@@ -750,6 +750,7 @@ beamformer_compute_timings(BeamformerComputeStatsTable *output, i32 timeout_ms)
 			BeamformerExportContext export;
 			export.kind = BeamformerExportKind_Stats;
 			export.size = sizeof(*output);
+			export.count = 0;
 			result = beamformer_export(export, output, timeout_ms);
 		}
 	}
