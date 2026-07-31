@@ -85,6 +85,23 @@ BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_data_with_compute(void *data, uin
                                                                  uint32_t image_plane_tag,
                                                                  uint32_t parameter_slot);
 
+
+/* Returns the last N beamformed frames, ordered from oldest to newest.
+ * out_data: Preallocated output buffer.
+ * out_data_size: Total output buffer size.
+ * count: Number of frames to return.
+ *
+ * NOTE:
+ * - Individual frame sizes are rounded up to 64 byte alignment prior to export
+ *
+ * - Frame size is not guarenteed to be consistent between frames,
+ *   it is the callers responsibility to know the correct dimensions of each frame.
+ *
+ * - The buffer will be filled one frame at a time from oldest to newest,
+ *   if the output buffer is too small the most recent frames will be dropped.
+ */
+BEAMFORMER_LIB_EXPORT uint32_t beamformer_get_last_frames(void *out_data, uint64_t out_data_size, uint32_t count);
+
 ///////////////////////////
 // Parameter Configuration
 BEAMFORMER_LIB_EXPORT uint32_t beamformer_reserve_parameter_blocks(uint32_t count);

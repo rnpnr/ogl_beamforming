@@ -1,5 +1,5 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (32UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (33UL)
 
 typedef enum {
 	BeamformerWorkKind_Compute,
@@ -23,7 +23,8 @@ typedef enum {
 
 typedef struct {
 	BeamformerExportKind kind;
-	u32 size;
+	u32 count; /* Number of items to export */
+	u64 size;  /* Total expected size of the exported data */
 } BeamformerExportContext;
 
 #define BEAMFORMER_SHARED_MEMORY_LOCKS \

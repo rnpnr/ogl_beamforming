@@ -689,6 +689,17 @@ beamformer_export(BeamformerExportContext export, void *out, i32 timeout_ms)
 	return result;
 }
 
+BEAMFORMER_LIB_EXPORT b32
+beamformer_get_last_frames(void *out_data, u64 out_data_size, u32 count)
+{
+	BeamformerExportContext export = {0};
+	export.kind  = BeamformerExportKind_BeamformedData;
+	export.count = count;
+	export.size  = out_data_size;
+	b32 result = out_data && out_data_size && count && beamformer_export(export, out_data, g_beamformer_library_context.timeout_ms);
+	return result;
+}
+
 b32
 beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t data_size,
                          void *out_data, int32_t timeout_ms)
@@ -715,12 +726,8 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 
 		if (result) {
 			result = beamformer_push_data_with_compute(data, data_size, 0, 0);
-			if (result && out_data) {
-				BeamformerExportContext export;
-				export.kind = BeamformerExportKind_BeamformedData;
-				export.size = (u32)output_size;
-				result = beamformer_export(export, out_data, timeout_ms);
-			}
+			if (result && out_data)
+				result = beamformer_get_last_frames(out_data, output_size, 1);
 		}
 	}
 	return result;
@@ -734,7 +741,7 @@ beamformer_compute_timings(BeamformerComputeStatsTable *output, i32 timeout_ms)
 		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
 		                                                       g_beamformer_library_context.shared_memory_size);
 		if (lib_error_check((i64)sizeof(*output) <= arena_capacity(&scratch, u8), ExportSpaceOverflow)) {
-			BeamformerExportContext export;
+			BeamformerExportContext export = {0};
 			export.kind = BeamformerExportKind_Stats;
 			export.size = sizeof(*output);
 			result = beamformer_export(export, output, timeout_ms);

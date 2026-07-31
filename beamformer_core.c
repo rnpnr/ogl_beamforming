@@ -1432,18 +1432,26 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			BeamformerExportContext *ec = &work->export_context;
 			switch (ec->kind) {
 			case BeamformerExportKind_BeamformedData:{
-				BeamformerFrame *f = ctx->latest_frame;
-				if (f) {
+				BeamformerFrameBacklog *bl = &ctx->compute_context.backlog;
+				u32 req_count = Clamp(ec->count, 1, bl->counter);
+				u32 frame_idx = bl->counter - req_count;
+				u8 *sm_output = beamformer_shared_memory_scratch_arena(sm, ctx->shared_memory_size).beg;
+				u64 exported_size = 0;
+				for (u32 export_count = 0; export_count < req_count; export_count++, frame_idx++) {
+					BeamformerFrame *f = bl->frames + frame_idx % countof(bl->frames);
 					u64 frame_size = beamformer_frame_byte_size(f->points, f->data_kind);
 					assert((frame_size & 63) == 0);
-					if (frame_size <= ec->size) {
+					// NOTE(tkh) we don't want to assume that all req_count frames are the same size,
+					// so we either need to count the total size of all requested frames first or
+					// just fill up as much as possible.
+					if (exported_size + frame_size <= ec->size) {
 						vk_host_wait_timeline(VulkanTimeline_Compute, f->timeline_valid_value, -1ULL);
-						vk_buffer_range_download(beamformer_shared_memory_scratch_arena(sm, ctx->shared_memory_size).beg,
-						                         ctx->compute_context.backlog.buffer, f->buffer_offset,
-						                         frame_size, 1);
+						vk_buffer_range_download(sm_output + exported_size, bl->buffer, f->buffer_offset, frame_size, 1);
+						exported_size += frame_size;
 					}
 				}
 			}break;
+
 			case BeamformerExportKind_Stats:{
 				ComputeTimingTable *table = ctx->compute_timing_table;
 				/* NOTE(rnp): do a little spin to let this finish updating */
