@@ -3,8 +3,6 @@
 
 #define BEAMFORMER_IMPORT static
 
-#include "../beamformer.h"
-
 #include "../util.h"
 
 #include "../generated/beamformer.c"
@@ -314,9 +312,9 @@ beamformer_maximum_rf_data_size(void)
 {
 	u64 result = U64_MAX;
 	if (check_shared_memory()) {
-		Arena sm = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
-		                                                  g_beamformer_library_context.shared_memory_size);
-		result = Min((u64)arena_capacity(&sm, u8), g_beamformer_library_context.bp->capabilities.max_rf_data_size);
+		Arena *sm = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
+		                                                   g_beamformer_library_context.shared_memory_size);
+		result = Min(sm->reserved - sm->position, g_beamformer_library_context.bp->capabilities.max_rf_data_size);
 	}
 	return result;
 }
@@ -491,20 +489,21 @@ function b32
 beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 {
 	b32 result = 0;
-	Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
-	                                                       g_beamformer_library_context.shared_memory_size);
+	Arena *scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
+	                                                        g_beamformer_library_context.shared_memory_size);
 	BeamformerParameterBlock *b  = beamformer_parameter_block(g_beamformer_library_context.bp, block);
 	BeamformerParameters     *bp = &b->parameters;
 	BeamformerDataKind     data_kind     = b->pipeline.data_kind;
 	BeamformerContrastMode contrast_mode = bp->contrast_mode;
 
 
+	u64 arena_size  = scratch->reserved - scratch->position;
 	u64 max_rf_size = g_beamformer_library_context.bp->capabilities.max_rf_data_size;
 	u32 rf_size     = bp->acquisition_count * bp->sample_count * bp->channel_count * beamformer_data_kind_byte_size[data_kind];
 	u32 raw_size    = bp->raw_data_dimensions.x * bp->raw_data_dimensions.y * beamformer_data_kind_byte_size[data_kind];
 
 	// TODO(rnp): support multi push upload so that max_rf_size is actual limit
-	if (lib_error_check(rf_size <= arena_capacity(&scratch, u8), BufferOverflow) &&
+	if (lib_error_check(rf_size <= arena_size, BufferOverflow) &&
 	    lib_error_check(rf_size <= max_rf_size, RFDataSizeOverflow) &&
 	    lib_error_check(rf_size <= data_size && data_size == raw_size, DataSizeMismatch))
 	{
@@ -518,11 +517,12 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 					u16 data_channel = (u16)b->channel_mapping[channel];
 					u32 out_off = out_channel_stride * channel;
 					u32 in_off  = in_channel_stride  * data_channel;
+					u8 *memory  = (u8 *)scratch + scratch->position + out_off;
 					switch (contrast_mode) {
 					default:{
 						/* NOTE(rnp): non temporal copy would be better, but we can't ensure
 						 * 64 byte boundaries. */
-						memory_copy(scratch.beg + out_off, (u8 *)data + in_off, out_channel_stride);
+						memory_copy(memory, (u8 *)data + in_off, out_channel_stride);
 					}break;
 
 					case BeamformerContrastMode_A1S2:{
@@ -547,12 +547,10 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 						// like mix of the old and new dataset). Putting this here fixes the issue.
 						// Counter-intuitively this improves throughput on my zen4 test computer,
 						// however it obviously should not be needed.
-						memory_clear(scratch.beg + out_off, 0, out_channel_stride);
+						memory_clear(memory, 0, out_channel_stride);
 
 						u32 sample_count = bp->sample_count * beamformer_data_kind_element_count[data_kind];
-						reduce_a1s2_fn_table[reduce_a1s2_index_map[data_kind]](scratch.beg + out_off,
-						                                                       (u8 *)data + in_off,
-						                                                       sample_count);
+						reduce_a1s2_fn_table[reduce_a1s2_index_map[data_kind]](memory, (u8 *)data + in_off, sample_count);
 					}break;
 					}
 				}
@@ -677,9 +675,9 @@ beamformer_export(BeamformerExportContext export, void *out, i32 timeout_ms)
 
 		if (lib_try_lock(BeamformerSharedMemoryLockKind_ExportSync, timeout_ms)) {
 			if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
-				Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
-				                                                       g_beamformer_library_context.shared_memory_size);
-				memory_copy(out, scratch.beg, export.size);
+				void *sm = beamformer_shared_memory_data_pointer(g_beamformer_library_context.bp,
+				                                                 g_beamformer_library_context.shared_memory_size);
+				memory_copy(out, sm, export.size);
 				lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
 				result = 1;
 			}
@@ -720,9 +718,10 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 		u64 output_size = output_points.x * output_points.y * output_points.z * sizeof(f32);
 		if (complex) output_size *= 2;
 
-		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
-		                                                       g_beamformer_library_context.shared_memory_size);
-		if (result && out_data) result &= lib_error_check((i64)output_size <= arena_capacity(&scratch, u8), ExportSpaceOverflow);
+		Arena *scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
+		                                                        g_beamformer_library_context.shared_memory_size);
+		u64 scratch_size = scratch->reserved - scratch->position;
+		if (result && out_data) result &= lib_error_check(output_size <= scratch_size, ExportSpaceOverflow);
 
 		if (result) {
 			result = beamformer_push_data_with_compute(data, data_size, 0, 0);
@@ -738,9 +737,10 @@ beamformer_compute_timings(BeamformerComputeStatsTable *output, i32 timeout_ms)
 {
 	b32 result = 0;
 	if (check_shared_memory()) {
-		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
-		                                                       g_beamformer_library_context.shared_memory_size);
-		if (lib_error_check((i64)sizeof(*output) <= arena_capacity(&scratch, u8), ExportSpaceOverflow)) {
+		Arena *scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
+		                                                        g_beamformer_library_context.shared_memory_size);
+		u64 scratch_size = scratch->reserved - scratch->position;
+		if (lib_error_check(sizeof(*output) <= scratch_size, ExportSpaceOverflow)) {
 			BeamformerExportContext export = {0};
 			export.kind = BeamformerExportKind_Stats;
 			export.size = sizeof(*output);

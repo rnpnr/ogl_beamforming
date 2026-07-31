@@ -10,7 +10,7 @@ EXPORT i32 AmdPowerXpressRequestHighPerformance = 1;
 #include "beamformer_core.c"
 #else
 
-typedef void beamformer_frame_step_fn(BeamformerInput *);
+typedef void beamformer_frame_step_fn(void *, BeamformerInput *);
 
 #define BEAMFORMER_DEBUG_ENTRY_POINTS \
 	X(beamformer_debug_ui_deinit)  \
@@ -23,10 +23,9 @@ BEAMFORMER_DEBUG_ENTRY_POINTS
 #undef X
 
 BEAMFORMER_EXPORT void
-beamformer_debug_hot_release(BeamformerInput *input)
+beamformer_debug_hot_release(void *memory, BeamformerInput *input)
 {
-	BeamformerCtx *ctx = BeamformerContextMemory(input->memory);
-
+	BeamformerCtx *ctx = memory;
 	// TODO(rnp): this will deadlock if live imaging is active
 	/* NOTE(rnp): spin until compute thread finishes its work (we will probably
 	 * never reload while compute is in progress but just incase). */
@@ -35,7 +34,7 @@ beamformer_debug_hot_release(BeamformerInput *input)
 }
 
 BEAMFORMER_EXPORT void
-beamformer_debug_hot_reload(OSLibrary library, BeamformerInput *input)
+beamformer_debug_hot_reload(OSLibrary library)
 {
 	#define X(name) name = os_lookup_symbol(library, #name);
 	BEAMFORMER_DEBUG_ENTRY_POINTS
@@ -92,14 +91,14 @@ load_gl(Stream *err)
 }
 
 function void
-beamformer_load_cuda_library(BeamformerCtx *ctx, OSLibrary cuda, Arena arena)
+beamformer_load_cuda_library(BeamformerCtx *ctx, OSLibrary cuda, Arena *scratch)
 {
 	/* TODO(rnp): (25.10.30) registering the rf buffer with CUDA is currently
 	 * causing a major performance regression. for now we are disabling its use
 	 * altogether. it will be reenabled once the issue can be fixed */
 	b32 result = 0 && vk_gpu_info()->vendor == GPUVendor_NVIDIA && ValidHandle(cuda);
 	if (result) {
-		Stream err = arena_stream(arena);
+		Stream err = arena_stream(scratch);
 
 		stream_append_str8(&err, beamformer_info("loading CUDA library functions"));
 		#define X(name, symname) cuda_## name = os_lookup_symbol(cuda, symname);
@@ -140,8 +139,7 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 
 	for (;;) {
 		worker_thread_sleep(ctx, beamformer->shared_memory);
-		asan_poison_region(ctx->arena.beg, ctx->arena.end - ctx->arena.beg);
-		beamformer_complete_compute(beamformer, &ctx->arena);
+		beamformer_complete_compute(beamformer, ctx->arena);
 	}
 
 	unreachable();
@@ -164,33 +162,25 @@ function OS_THREAD_ENTRY_POINT_FN(beamformer_upload_entry_point)
 	return 0;
 }
 
-BEAMFORMER_EXPORT void
+BEAMFORMER_EXPORT void *
 beamformer_init(BeamformerInput *input)
 {
-	Arena  memory        = arena_from_memory(input->memory, input->memory_size);
-	Arena  compute_arena = sub_arena_end(&memory, MB(2), KB(4));
-	Arena  upload_arena  = sub_arena_end(&memory, KB(4), KB(4));
-	Arena  ui_arena      = sub_arena_end(&memory, MB(2), KB(4));
-	Stream error         = arena_stream(sub_arena_end(&memory, MB(1), 1));
+	Arena         *memory = arena_create(.name = "Beamformer Memory");
+	Stream         error  = stream_alloc(memory, MB(1));
+	BeamformerCtx *ctx    = push_struct(memory, BeamformerCtx);
 
-	BeamformerCtx *ctx   = push_struct(&memory, BeamformerCtx);
-
-	for EachElement(ctx->frame_arenas, it) {
-		ctx->frame_arenas[it]           = sub_arena(&memory, KB(64), KB(4));
-		ctx->frame_arena_savepoints[it] = begin_temp_arena(ctx->frame_arenas + it);
-	}
+	for EachElement(ctx->frame_arenas, it)
+		ctx->frame_arenas[it] = arena_create();
 
 	str8 window_title = str8("VK Beamformer");
 	ctx->main_window  = os_window_create(window_title.data, window_title.length, 1280, 840);
 	ctx->window_size  = (iv2){{1280, 840}};
 
-	Arena scratch = {.beg = memory.end - 4096L, .end = memory.end};
-	memory.end = scratch.beg;
-
-	ctx->error_stream          = error;
-	ctx->ui_backing_store      = ui_arena;
-	ctx->compute_worker.arena  = compute_arena;
-	ctx->upload_worker.arena   = upload_arena;
+	ctx->arena                = memory;
+	ctx->error_stream         = error;
+	ctx->ui_arena             = arena_create();
+	ctx->compute_worker.arena = arena_create();
+	ctx->upload_worker.arena  = arena_create();
 
 	#if BEAMFORMER_RENDERDOC_HOOKS
 	start_frame_capture       = input->renderdoc_start_frame_capture;
@@ -198,7 +188,7 @@ beamformer_init(BeamformerInput *input)
 	set_capture_path_template = input->renderdoc_set_capture_file_path_template;
 	#endif
 
-	vk_load(input->vulkan_library_handle, &memory, &ctx->error_stream);
+	vk_load(input->vulkan_library_handle, &ctx->error_stream);
 
 	BeamformerComputeContext *cs = &ctx->compute_context;
 
@@ -248,7 +238,8 @@ beamformer_init(BeamformerInput *input)
 		vk_bind_shader_resources(shader_resource_infos, countof(shader_resource_infos));
 	}
 
-	beamformer_load_cuda_library(ctx, input->cuda_library_handle, memory);
+	Arena *scratch = arena_create();
+	beamformer_load_cuda_library(ctx, input->cuda_library_handle, scratch);
 
 	load_gl(&ctx->error_stream);
 
@@ -304,7 +295,7 @@ beamformer_init(BeamformerInput *input)
 	worker->handle       = os_create_thread("[compute]", worker, compute_worker_thread_entry_point);
 
 	GLWorkerThreadContext         *upload = &ctx->upload_worker;
-	BeamformerUploadThreadContext *upctx  = push_struct(&memory, typeof(*upctx));
+	BeamformerUploadThreadContext *upctx  = push_struct(memory, typeof(*upctx));
 	upload->user_context        = (iptr)upctx;
 	upctx->rf_buffer            = &cs->rf_buffer;
 	upctx->shared_memory        = ctx->shared_memory;
@@ -314,45 +305,46 @@ beamformer_init(BeamformerInput *input)
 	upload->handle = os_create_thread("[upload]", upload, beamformer_upload_entry_point);
 
 	/* NOTE: set up OpenGL debug logging */
-	Stream *gl_error_stream = push_struct(&memory, Stream);
-	*gl_error_stream        = stream_alloc(&memory, 1024);
+	Stream *gl_error_stream = push_struct(memory, Stream);
+	*gl_error_stream        = stream_alloc(memory, 1024);
 	glDebugMessageCallback(gl_debug_logger, gl_error_stream);
-#ifdef _DEBUG
+	#ifdef BEAMFORMER_DEBUG
 	glEnable(GL_DEBUG_OUTPUT);
-#endif
+	#endif
 
 	if (!BakeShaders)
 	{
 		for EachElement(beamformer_reloadable_compute_shader_info_indices, it) {
 			i32   index = beamformer_reloadable_compute_shader_info_indices[it];
-			Arena temp  = scratch;
-			str8 file = push_str8_from_parts(&temp, os_path_separator(), str8("shaders"),
+
+			str8 file = push_str8_from_parts(scratch, os_path_separator(), str8("shaders"),
 			                                 beamformer_reloadable_shader_files[index][0]);
-			BeamformerFileReloadContext *frc = push_struct(&memory, typeof(*frc));
+			BeamformerFileReloadContext *frc = push_struct(memory, typeof(*frc));
 			frc->kind                 = BeamformerFileReloadKind_ComputeShader;
 			frc->shader_reload.shader = beamformer_reloadable_shader_kinds[index];
 			os_add_file_watch((char *)file.data, file.length, frc);
 		}
 
 		for EachElement(beamformer_reloadable_compute_helpers_shader_info_indices, it) {
-			i32   index = beamformer_reloadable_compute_helpers_shader_info_indices[it];
-			Arena temp  = scratch;
-			str8 file = push_str8_from_parts(&temp, os_path_separator(), str8("shaders"),
-			                                 beamformer_reloadable_shader_files[index][0]);
-			BeamformerFileReloadContext *frc = push_struct(&memory, typeof(*frc));
+			i32  index = beamformer_reloadable_compute_helpers_shader_info_indices[it];
+			str8 file  = push_str8_from_parts(scratch, os_path_separator(), str8("shaders"),
+			                                  beamformer_reloadable_shader_files[index][0]);
+			BeamformerFileReloadContext *frc = push_struct(memory, typeof(*frc));
 			frc->kind                 = BeamformerFileReloadKind_ComputeShader;
 			frc->shader_reload.shader = beamformer_reloadable_shader_kinds[index];
 			os_add_file_watch((char *)file.data, file.length, frc);
 		}
 	}
 
-	memory.end = scratch.end;
-	ctx->arena = memory;
+	arena_destroy(scratch);
+
 	ctx->state = BeamformerState_Running;
+
+	return ctx;
 }
 
 BEAMFORMER_EXPORT void
-beamformer_terminate(BeamformerInput *input)
+beamformer_terminate(void *memory, BeamformerInput *input)
 {
 	/* NOTE(rnp): work around pebkac when the beamformer is closed while we are doing live
 	 * imaging. if the verasonics is blocked in an external function (calling the library
@@ -361,8 +353,8 @@ beamformer_terminate(BeamformerInput *input)
 	 * into an error state and release dispatch lock so that future calls will error instead
 	 * of blocking.
 	 */
-	BeamformerCtx *          ctx = BeamformerContextMemory(input->memory);
-	BeamformerSharedMemory * sm  = input->shared_memory;
+	BeamformerCtx          *ctx = memory;
+	BeamformerSharedMemory *sm  = input->shared_memory;
 	if (ctx->state != BeamformerState_Terminated) {
 		if (sm) {
 			BeamformerSharedMemoryLockKind lock = BeamformerSharedMemoryLockKind_DispatchCompute;
@@ -382,10 +374,10 @@ beamformer_terminate(BeamformerInput *input)
 }
 
 BEAMFORMER_EXPORT u32
-beamformer_should_close(BeamformerInput *input)
+beamformer_should_close(void *memory, BeamformerInput *input)
 {
-	BeamformerCtx * ctx = BeamformerContextMemory(input->memory);
+	BeamformerCtx *ctx = memory;
 	if (ctx->state == BeamformerState_ShouldClose)
-		beamformer_terminate(input);
+		beamformer_terminate(memory, input);
 	return ctx->state == BeamformerState_Terminated;
 }

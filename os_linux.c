@@ -69,17 +69,59 @@ os_number_of_processors(void)
 	return result > 0 ? result : 1;
 }
 
-function OS_ALLOC_ARENA_FN(os_alloc_arena)
+#ifndef BEAMFORMER_H
+// TODO(rnp): fix main and platform code split
+
+function OSSystemInfo *
+os_system_info(void)
 {
-	Arena result = {0};
-	capacity     = round_up_to(capacity, ARCH_X64? (i64)KB(4) : (i64)getauxval(AT_PAGESZ));
-	void *memory = mmap(0, (u64)capacity, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
-	if (memory != MAP_FAILED) {
-		result.beg = memory;
-		result.end = result.beg + capacity;
-		asan_poison_region(result.beg, result.end - result.beg);
+	local_persist b32 ready = 0;
+	local_persist OSSystemInfo linux_system_info = {0};
+	if unlikely(!ready) {
+		linux_system_info.timer_frequency         = os_timer_frequency();
+		linux_system_info.logical_processor_count = os_number_of_processors();
+		linux_system_info.page_size               = ARCH_X64? KB(4) : getauxval(AT_PAGESZ);
+		linux_system_info.path_separator_byte     = '/';
+		ready = 1;
 	}
+	return &linux_system_info;
+}
+
+#endif
+
+BEAMFORMER_IMPORT void *
+os_memory_reserve(u64 size)
+{
+	void *result = mmap(0, size, PROT_NONE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
+	if (result == MAP_FAILED)
+		result = 0;
 	return result;
+}
+
+BEAMFORMER_IMPORT void
+os_memory_release(void *base, u64 size)
+{
+	munmap(base, size);
+}
+
+BEAMFORMER_IMPORT b32
+os_memory_commit(void *base, u64 size)
+{
+	mprotect(base, size, PROT_READ|PROT_WRITE);
+	return 1;
+}
+
+BEAMFORMER_IMPORT void
+os_memory_uncommit(void *base, u64 size)
+{
+	madvise(base, size, MADV_DONTNEED);
+	mprotect(base, size, PROT_NONE);
+}
+
+BEAMFORMER_IMPORT void
+os_memory_seal(void *base, u64 size)
+{
+	mprotect(base, size, PROT_READ);
 }
 
 BEAMFORMER_IMPORT OS_READ_ENTIRE_FILE_FN(os_read_entire_file)

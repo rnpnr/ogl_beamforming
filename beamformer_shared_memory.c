@@ -47,11 +47,10 @@ typedef struct {
 	BeamformerWorkKind kind;
 	BeamformerSharedMemoryLockKind lock;
 	union {
-		void                                 *generic;
-		BeamformerComputeWorkContext          compute_context;
-		BeamformerCreateFilterContext         create_filter_context;
-		BeamformerExportContext               export_context;
-		BeamformerShaderKind                  reload_shader;
+		BeamformerComputeWorkContext  compute_context;
+		BeamformerCreateFilterContext create_filter_context;
+		BeamformerExportContext       export_context;
+		BeamformerShaderKind          reload_shader;
 	};
 } BeamformWork;
 
@@ -278,13 +277,22 @@ beamformer_parameter_block_unlock(BeamformerSharedMemory *sm, u32 block)
 	beamformer_shared_memory_release_lock(sm, BeamformerSharedMemoryLockKind_Count + block);
 }
 
-function Arena
+function Arena *
 beamformer_shared_memory_scratch_arena(BeamformerSharedMemory *sm, i64 shared_memory_size)
 {
 	assert(sm->reserved_parameter_blocks > 0);
 	BeamformerParameterBlock *last = beamformer_parameter_block(sm, sm->reserved_parameter_blocks - 1);
-	Arena result = {.beg = (u8 *)(last + 1), .end = (u8 *)sm + shared_memory_size};
-	result.beg = arena_aligned_start(result, KB(4));
+	u64 size = (u64)((u8 *)sm + shared_memory_size - (u8 *)(last + 1));
+	Arena *result = arena_create(.optional_backing_store = (last + 1), .reserve_size = size, .commit_size = size, .flags = ArenaFlag_NoChain);
+	arena_pre_align(result, KB(4));
+	return result;
+}
+
+function void *
+beamformer_shared_memory_data_pointer(BeamformerSharedMemory *sm, i64 shared_memory_size)
+{
+	Arena *arena  = beamformer_shared_memory_scratch_arena(sm, shared_memory_size);
+	void  *result = (u8 *)arena + arena->position;
 	return result;
 }
 

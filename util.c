@@ -96,51 +96,38 @@ memory_scan_backwards(void *memory, u8 byte, i64 n)
 	return result;
 }
 
-function Arena
-arena_from_memory(void *memory, u64 size)
+/* NOTE(rnp): from Hacker's Delight */
+function force_inline u64
+round_down_power_of_two(u64 a)
 {
-	Arena result;
-	result.beg = memory;
-	result.end = result.beg + size;
+	u64 result = 0x8000000000000000ULL >> clz_u64(a);
 	return result;
 }
 
-function void *
-align_pointer_up(void *p, u64 alignment)
+function force_inline u64
+round_up_power_of_two(u64 a)
 {
-	u64 padding = -(u64)p & (alignment - 1);
-	void *result = (u8 *)p + padding;
+	u64 result = 0x8000000000000000ULL >> (clz_u64(a - 1) - 1);
 	return result;
 }
 
-function void *
-arena_aligned_start(Arena a, u64 alignment)
+function force_inline i64
+round_up_to(i64 value, i64 multiple)
 {
-	return align_pointer_up(a.beg, alignment);
-}
-
-#define arena_capacity(a, t) arena_capacity_(a, sizeof(t), alignof(t))
-function i64
-arena_capacity_(Arena *a, i64 size, u64 alignment)
-{
-	i64 available = a->end - (u8 *)arena_aligned_start(*a, alignment);
-	i64 result    = available / size;
+	i64 result = value;
+	if (value % multiple != 0)
+		result += multiple - value % multiple;
 	return result;
 }
 
 function u8 *
 arena_commit(Arena *a, i64 size)
 {
-	assert(a->end - a->beg >= size);
-	u8 *result = a->beg;
-	a->beg += size;
+	Arena *current = a->current;
+	assert(current->committed - current->position >= (u64)size);
+	u8 *result = (u8 *)current + current->position;
+	current->position += size;
 	return result;
-}
-
-function void
-arena_pop(Arena *a, i64 length)
-{
-	a->beg -= length;
 }
 
 typedef enum {
@@ -160,61 +147,205 @@ typedef struct {
 #define push_struct(a, t)           push_array(a, t, 1)
 #define push_struct_no_zero(a, t)   push_array_no_zero(a, t, 1)
 
-function void *
-arena_alloc_(Arena *a, ArenaAllocateInfo info)
+#ifndef BEAMFORMER_H
+// TODO(rnp): fix main and platform code split
+typedef struct {
+	u64 timer_frequency;
+	u32 logical_processor_count;
+	u32 page_size;
+	u8  path_separator_byte;
+} OSSystemInfo;
+
+BEAMFORMER_IMPORT OSSystemInfo *os_system_info(void);
+
+BEAMFORMER_IMPORT void *os_memory_reserve(u64 size);
+BEAMFORMER_IMPORT void  os_memory_release(void *base, u64 size);
+BEAMFORMER_IMPORT b32   os_memory_commit(void *base, u64 size);
+BEAMFORMER_IMPORT void  os_memory_uncommit(void *base, u64 size);
+BEAMFORMER_IMPORT void  os_memory_seal(void *base, u64 size);
+#endif
+
+#define arena_create(...) arena_create_((ArenaParameters){\
+	.reserve_size = MB(64),\
+	.commit_size  = KB(64),\
+	.flags        = 0,\
+	.allocation_site_file = __FILE__,\
+	.allocation_site_line = __LINE__,\
+	__VA_ARGS__})
+
+function Arena *
+arena_create_(ArenaParameters ap)
 {
-	void *result = 0;
-	if (a->beg) {
-		u8 *start = arena_aligned_start(*a, info.align);
-		i64 available = a->end - start;
-		assert((available >= 0 && info.count <= available / info.size));
-		asan_unpoison_region(start, info.count * info.size);
-		a->beg = start + info.count * info.size;
-		result = start;
-		if ((info.flags & ArenaAllocateFlags_NoZero) == 0)
-			result = memory_clear(start, 0, info.count * info.size);
+	void *base = ap.optional_backing_store;
+	if (base == 0) {
+		ap.commit_size  = round_up_to(ap.commit_size,  os_system_info()->page_size);
+		ap.reserve_size = round_up_to(ap.reserve_size, os_system_info()->page_size);
+
+		base = os_memory_reserve(ap.reserve_size);
+		os_memory_commit(base, ap.commit_size);
 	}
-	return result;
-}
 
-function Arena
-sub_arena(Arena *a, i64 size, u64 align)
-{
-	Arena result = {.beg = arena_alloc(a, .size = size, .align = align, .flags = ArenaAllocateFlags_NoZero)};
-	result.end   = result.beg + size;
-	return result;
-}
+	Arena *result     = base;
+	result->current   = result;
+	result->position  = sizeof(*result);
+	result->reserved  = ap.reserve_size;
+	result->committed = ap.commit_size;
+	result->flags     = ap.flags;
 
-function Arena
-sub_arena_end(Arena *a, i64 len, u64 align)
-{
-	Arena result;
-	result.beg = (u8 *)((u64)(a->end - len) & ~(align - 1)),
-	result.end = a->end,
+	result->reserve_size = ap.reserve_size;
+	result->commit_size  = ap.commit_size;
 
-	a->end = result.beg;
-	assert(a->end >= a->beg);
+	result->name                 = ap.name;
+	result->allocation_site_file = ap.allocation_site_file;
+	result->allocation_site_line = ap.allocation_site_line;
 
-	return result;
-}
-
-function TempArena
-begin_temp_arena(Arena *a)
-{
-	TempArena result = {.arena = a, .original_arena = *a};
 	return result;
 }
 
 function void
-end_temp_arena(TempArena ta)
+arena_destroy(Arena *arena)
 {
-	Arena *a = ta.arena;
-	if (a) {
-		assert(a->beg >= ta.original_arena.beg);
-		*a = ta.original_arena;
+	for (Arena *a = arena->current, *prev = 0; a; a = prev) {
+		prev = a->prev;
+		os_memory_release(a, a->reserved);
 	}
 }
 
+function void
+arena_seal(Arena *arena)
+{
+	assert(arena == arena->current);
+	u64 position = round_up_to(arena->position, os_system_info()->page_size);
+	if (arena->committed > position) {
+		os_memory_uncommit((u8 *)arena + position, arena->committed - position);
+		arena->committed = position;
+	}
+	if (arena->reserved > arena->committed) {
+		os_memory_release((u8 *)arena + arena->committed, arena->reserved - arena->committed);
+		arena->reserved = arena->committed;
+	}
+	os_memory_seal(arena, arena->reserved);
+}
+
+#define arena_alloc(a, ...)         arena_alloc_(a, (ArenaAllocateInfo){.align = 8, .count = 1, ##__VA_ARGS__})
+#define push_array(a, t, n)         (t *)arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n)
+#define push_array_no_zero(a, t, n) (t *)arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n, .flags = ArenaAllocateFlags_NoZero)
+#define push_struct(a, t)           push_array(a, t, 1)
+#define push_struct_no_zero(a, t)   push_array_no_zero(a, t, 1)
+
+function void *
+arena_alloc_(Arena *arena, ArenaAllocateInfo info)
+{
+	Arena *current = arena->current;
+	u64 size          = info.count * info.size;
+	u64 pre_position  = AlignUpPowerOfTwo(current->position, info.align);
+	u64 post_position = pre_position + size;
+	u64 zero_size     = Min(current->committed, post_position) - pre_position;
+
+	if (current->reserved < post_position && (current->flags & ArenaFlag_NoChain) == 0) {
+		u64 reserve_size = current->reserve_size;
+		u64 commit_size  = current->commit_size;
+		if (size + AlignUpPowerOfTwo(sizeof(*arena), info.align) > reserve_size) {
+			reserve_size = size + AlignUpPowerOfTwo(sizeof(*arena), info.align);
+			commit_size  = size + AlignUpPowerOfTwo(sizeof(*arena), info.align);
+		}
+		Arena *new_arena = arena_create(.reserve_size         = reserve_size,
+		                                .commit_size          = commit_size,
+		                                .flags                = current->flags,
+		                                .allocation_site_file = current->allocation_site_file,
+		                                .allocation_site_line = current->allocation_site_line,
+		                                .name                 = current->name);
+		zero_size = 0;
+
+		new_arena->base_position = current->base_position + current->reserved;
+		SLLStackPush(arena->current, new_arena, prev);
+		current = new_arena;
+		pre_position  = AlignUpPowerOfTwo(current->position, info.align);
+		post_position = pre_position + size;
+	}
+
+	if (current->committed < post_position) {
+		u64 commit_post = post_position + current->commit_size - 1;
+		commit_post -= commit_post % current->commit_size;
+		commit_post  = Min(commit_post, current->reserved);
+		os_memory_commit((u8 *)current + current->committed, commit_post - current->committed);
+		current->committed = commit_post;
+	}
+
+	void *result = 0;
+	if (current->committed >= post_position) {
+		result = (u8 *)current + pre_position;
+		current->position = post_position;
+		if ((info.flags & ArenaAllocateFlags_NoZero) == 0)
+			result = memory_clear(result, 0, zero_size);
+	}
+
+	assert(result);
+
+	return result;
+}
+
+function u64
+arena_position(Arena *arena)
+{
+	Arena *current = arena->current;
+	u64 result = current->base_position + current->position;
+	return result;
+}
+
+function void
+arena_pop_to(Arena *arena, u64 position)
+{
+	position = Max(position, sizeof(*arena));
+	Arena *current = arena->current;
+	for (Arena *prev = 0; current->base_position >= position; current = prev) {
+		prev = current->prev;
+		os_memory_release(current, current->reserved);
+	}
+	arena->current = current;
+	u64 new_position = position - current->base_position;
+	assert(new_position <= current->position);
+	current->position = new_position;
+}
+
+function void
+arena_pop(Arena *arena, u64 size)
+{
+	u64 old_position = arena_position(arena);
+	u64 new_position = old_position;
+	if (size < old_position)
+		new_position = old_position - size;
+	arena_pop_to(arena, new_position);
+}
+
+function void
+arena_clear(Arena *arena)
+{
+	arena_pop_to(arena, 0);
+}
+
+function void
+arena_pre_align(Arena *arena, u64 align)
+{
+	assert(IsPowerOfTwo(align));
+	Arena *current = arena->current;
+	u8 *start = (u8 *)current + current->position;
+	u8 *desired_start = (u8 *)AlignUpPowerOfTwo((u64)start, align);
+	current->position += (u64)(desired_start - start);
+}
+
+function Temp
+temp_begin(Arena *arena)
+{
+	Temp result = {.arena = arena, .position = arena_position(arena)};
+	return result;
+}
+
+function void
+temp_end(Temp t)
+{
+	arena_pop_to(t.arena, t.position);
+}
 
 enum { DA_INITIAL_CAP = 16 };
 
@@ -235,23 +366,36 @@ enum { DA_INITIAL_CAP = 16 };
       (s)->data + (s)->count++  \
     : (s)->data + (s)->count++, 0, sizeof(*(s)->data)))
 
+
+/* NOTE(rnp): handles both 0 initialized DAs and DAs that need to be moved (they started
+ * on the stack or someone allocated something in the middle of the arena during usage) */
 function void *
 da_reserve_(Arena *a, void *data, da_count *capacity, da_count needed, u64 align, i64 size)
 {
 	da_count cap = *capacity;
-
-	/* NOTE(rnp): handle both 0 initialized DAs and DAs that need to be moved (they started
-	 * on the stack or someone allocated something in the middle of the arena during usage) */
-	if (!data || a->beg != (u8 *)data + cap * size) {
-		void *copy = arena_alloc(a, .size = size, .align = align, .count = cap);
-		if (data) memory_copy(copy, data, (u64)(cap * size));
-		data = copy;
-	}
-
 	if (!cap) cap = DA_INITIAL_CAP;
 	while (cap < needed) cap *= 2;
-	arena_alloc(a, .size = size, .align = align, .count = cap - *capacity);
+
+	Arena *current = a->current;
+	u64 needed_size = cap * size;
+	u64 old_size    = *capacity * size;
+	b32 can_extend  = data && (u8 *)current + current->position == (u8 *)data + old_size &&
+	                  (current->reserved - current->position) >= (needed_size - old_size);
+	b32 needs_copy  = data && !can_extend;
+
+	u64 alloc_cap = cap;
+	if (can_extend) alloc_cap -= *capacity;
+
+	void *new = arena_alloc(a, .size = size, .align = align, .count = alloc_cap);
+
+	if (needs_copy)
+		memory_copy(new, data, (u64)(*capacity * size));
+
+	if (!can_extend)
+		data = new;
+
 	*capacity = cap;
+
 	return data;
 }
 
@@ -326,7 +470,7 @@ stream_from_buffer(u8 *buffer, u32 capacity)
 function Stream
 stream_alloc(Arena *a, i32 cap)
 {
-	Stream result = stream_from_buffer(arena_commit(a, cap), (u32)cap);
+	Stream result = stream_from_buffer(push_array_no_zero(a, u8, cap), (u32)cap);
 	return result;
 }
 
@@ -344,14 +488,6 @@ stream_reset(Stream *s, i32 index)
 	s->errors = s->cap <= index;
 	if (!s->errors)
 		s->widx = index;
-}
-
-function void
-stream_commit(Stream *s, i32 count)
-{
-	s->errors |= !Between(s->widx + count, 0, s->cap);
-	if (!s->errors)
-		s->widx += count;
 }
 
 function void
@@ -565,11 +701,12 @@ stream_append_struct_member(Stream *s, MetaStructMember *m, void *struct_base)
 }
 
 function Stream
-arena_stream(Arena a)
+arena_stream(Arena *a)
 {
+	Arena *current = a->current;
 	Stream result = {0};
-	result.data   = a.beg;
-	result.cap    = (i32)(a.end - a.beg);
+	result.data   = (u8 *)current + current->position;
+	result.cap    = (i32)(current->committed - current->position);
 
 	/* TODO(rnp): no idea what to do here if we want to maintain the ergonomics */
 	asan_unpoison_region(result.data, result.cap);
@@ -580,7 +717,8 @@ arena_stream(Arena a)
 function str8
 arena_stream_commit(Arena *a, Stream *s)
 {
-	assert(s->data == a->beg);
+	Arena *current = a->current;
+	assert(s->data == (u8 *)current + current->position);
 	str8 result = stream_to_str8(s);
 	arena_commit(a, result.length);
 	return result;
@@ -601,7 +739,7 @@ function str8
 arena_stream_commit_and_reset(Arena *arena, Stream *s)
 {
 	str8 result = arena_stream_commit_zero(arena, s);
-	*s = arena_stream(*arena);
+	*s = arena_stream(arena);
 	return result;
 }
 
@@ -759,9 +897,9 @@ str8_from_str16(Arena *a, str16 in)
 	if (in.length) {
 		i64 commit = in.length * 4;
 		i64 length = 0;
-		u8 *data = arena_commit(a, commit + 1);
-		u16 *beg = in.data;
-		u16 *end = in.data + in.length;
+		u8  *data = push_array_no_zero(a, u8, commit + 1);
+		u16 *beg  = in.data;
+		u16 *end  = in.data + in.length;
 		while (beg < end) {
 			UnicodeDecode decode = utf16_decode(beg, end - beg);
 			length += utf8_encode(data + length, decode.cp);
@@ -801,7 +939,7 @@ push_str8_from_parts_(Arena *arena, str8 joiner, str8 *parts, i64 count)
 	for (i64 i = 0; i < count; i++)
 		length += parts[i].length;
 
-	str8 result = {.length = length, .data = arena_commit(arena, length + 1)};
+	str8 result = {.length = length, .data = push_array_no_zero(arena, u8, length + 1)};
 
 	i64 offset = 0;
 	for (i64 i = 0; i < count; i++) {
@@ -830,33 +968,9 @@ push_str8(Arena *a, str8 str)
 function str8
 push_str8_fv(Arena *arena, const char *format, va_list args)
 {
-	Stream sb = arena_stream(*arena);
+	Stream sb = arena_stream(arena);
 	stream_appendfv(&sb, format, args);
 	str8 result = arena_stream_commit(arena, &sb);
-	return result;
-}
-
-/* NOTE(rnp): from Hacker's Delight */
-function force_inline u64
-round_down_power_of_two(u64 a)
-{
-	u64 result = 0x8000000000000000ULL >> clz_u64(a);
-	return result;
-}
-
-function force_inline u64
-round_up_power_of_two(u64 a)
-{
-	u64 result = 0x8000000000000000ULL >> (clz_u64(a - 1) - 1);
-	return result;
-}
-
-function force_inline i64
-round_up_to(i64 value, i64 multiple)
-{
-	i64 result = value;
-	if (value % multiple != 0)
-		result += multiple - value % multiple;
 	return result;
 }
 

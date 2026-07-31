@@ -121,7 +121,7 @@ typedef alignas(64) struct {
 } VulkanCommandPool;
 
 typedef struct {
-	Arena             arena;
+	Arena            *arena;
 	i32               arena_lock;
 
 	VkInstance        handle;
@@ -161,8 +161,8 @@ typedef struct {
 	VkFormat          swap_chain_image_format;
 	VkFormat          depth_stencil_format;
 
-	VulkanEntity *    entity_freelist;
-	Arena             entity_arena;
+	VulkanEntity     *entity_freelist;
+	Arena            *entity_arena;
 	i32               entity_lock;
 } VulkanContext;
 
@@ -406,7 +406,7 @@ function void
 vk_label_object_(VkObjectType kind, u64 handle, str8 label, str8 extra)
 {
 	local_persist u8 buffer[1024];
-	Stream sb = arena_stream(arena_from_memory(buffer, sizeof(buffer)));
+	Stream sb = stream_from_buffer(buffer, countof(buffer));
 	if (vulkan_config.instance.debug_utils && label.length > 0) {
 		stream_append_str8s(&sb, label, str8(" ("), extra, str8(")"));
 		stream_append_byte(&sb, 0);
@@ -433,7 +433,7 @@ vk_entity_allocate(VulkanEntityKind kind)
 	DeferLoop(take_lock(&vulkan_context->entity_lock, -1), release_lock(&vulkan_context->entity_lock))
 	{
 		result = SLLPopFreelist(vulkan_context->entity_freelist);
-		if (!result) result = push_array_no_zero(&vulkan_context->entity_arena, VulkanEntity, 1);
+		if (!result) result = push_struct_no_zero(vulkan_context->entity_arena, VulkanEntity);
 	}
 
 	zero_struct(result);
@@ -469,7 +469,7 @@ vk_command_buffer(VulkanHandle h)
 
 #define glslang_log(a, ...) glslang_log_(a, arg_list(str8, __VA_ARGS__))
 function void
-glslang_log_(Arena arena, str8 *items, u64 count)
+glslang_log_(Arena *arena, str8 *items, u64 count)
 {
 	Stream sb = arena_stream(arena);
 	stream_append_str8(&sb, glslang_info(""));
@@ -510,7 +510,7 @@ glsl_to_spirv(Arena *arena, u32 kind, str8 shader_text, str8 name)
 	}
 
 	if (error.length) {
-		glslang_log(*arena, name, str8(": "), error, str8("\n"),
+		glslang_log(arena, name, str8(": "), error, str8("\n"),
 		            str8_from_c_str((c8 *)glslang_shader_get_info_log(shader)),
 		            str8_from_c_str((c8 *)glslang_shader_get_info_debug_log(shader)));
 		glslang_shader_delete(shader);
@@ -542,9 +542,9 @@ glsl_to_spirv(Arena *arena, u32 kind, str8 shader_text, str8 name)
 			glslang_program_SPIRV_get(program, (u32 *)result.data);
 
 			str8 spirv_msg = str8_from_c_str((c8 *)glslang_program_SPIRV_get_messages(program));
-			if (spirv_msg.length) glslang_log(*arena, name, str8(": spirv info: "), spirv_msg);
+			if (spirv_msg.length) glslang_log(arena, name, str8(": spirv info: "), spirv_msg);
 		} else {
-			glslang_log(*arena, name, str8(": shader linking failed\n"),
+			glslang_log(arena, name, str8(": shader linking failed\n"),
 			            str8_from_c_str((c8 *)glslang_program_get_info_log(program)),
 			            str8_from_c_str((c8 *)glslang_program_get_info_debug_log(program)));
 		}
@@ -563,10 +563,10 @@ vk_shader_kind_to_glslang_shader_kind(u32 kind)
 }
 
 function VkShaderModule
-vk_compile_shader_module(Arena arena, u32 kind, str8 text, str8 name)
+vk_compile_shader_module(Arena *arena, u32 kind, str8 text, str8 name)
 {
 	VkShaderModule result = {0};
-	str8 spirv = glsl_to_spirv(&arena, vk_shader_kind_to_glslang_shader_kind(kind), text, name);
+	str8 spirv = glsl_to_spirv(arena, vk_shader_kind_to_glslang_shader_kind(kind), text, name);
 	VkShaderModuleCreateInfo create_info = {
 		.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
 		.codeSize = (u64)spirv.length,
@@ -607,7 +607,7 @@ vk_specialization_map_from_struct_id(Arena *arena, i32 struct_id)
 }
 
 function VulkanPipeline
-vk_compute_pipeline_from_info(Arena arena, VulkanPipelineCreateInfo *info, u32 push_constants_size)
+vk_compute_pipeline_from_info(Arena *arena, VulkanPipelineCreateInfo *info, u32 push_constants_size)
 {
 	VulkanPipeline result = {.stage_flags = VK_SHADER_STAGE_COMPUTE_BIT};
 	VkShaderModule module = vk_compile_shader_module(arena, VK_SHADER_STAGE_COMPUTE_BIT, info->text, info->name);
@@ -643,7 +643,7 @@ vk_compute_pipeline_from_info(Arena arena, VulkanPipelineCreateInfo *info, u32 p
 		if (info->specialization_data && info->specialization_struct_id >= 0) {
 			MetaStructInfo *si = meta_struct_info_by_id + info->specialization_struct_id;
 			pipeline_create_info.stage.pSpecializationInfo = &specialization_info;
-			specialization_info.pMapEntries   = vk_specialization_map_from_struct_id(&arena, info->specialization_struct_id);
+			specialization_info.pMapEntries   = vk_specialization_map_from_struct_id(arena, info->specialization_struct_id);
 			specialization_info.mapEntryCount = si->member_count;
 			specialization_info.dataSize      = si->size;
 			specialization_info.pData         = info->specialization_data;
@@ -663,7 +663,7 @@ vk_compute_pipeline_from_info(Arena arena, VulkanPipelineCreateInfo *info, u32 p
 }
 
 function VulkanPipeline
-vk_graphics_pipeline_from_infos(Arena arena, VulkanPipelineCreateInfo *infos, u32 count, u32 push_constants_size)
+vk_graphics_pipeline_from_infos(Arena *arena, VulkanPipelineCreateInfo *infos, u32 count, u32 push_constants_size)
 {
 	assume(count == 2);
 
@@ -1062,8 +1062,9 @@ vk_buffer_allocate_common(VulkanBuffer *vb, VulkanBufferAllocateInfo *ai)
 }
 
 function void
-vk_load_instance(Arena arena, Stream *err)
+vk_load_instance(Arena *arena, Stream *err)
 {
+	Temp scratch = temp_begin(arena);
 	#define X(name, ...) name = (name##_fn *)vkGetInstanceProcAddr(0, #name);
 	VkBaseProcedureList
 	#undef X
@@ -1083,8 +1084,8 @@ vk_load_instance(Arena arena, Stream *err)
 		u32 layer_count = 0;
 		vkEnumerateInstanceLayerProperties(&layer_count, 0);
 
-		VkLayerProperties *layers      = push_array(&arena, VkLayerProperties, layer_count);
-		str8              *layer_str8s = push_array(&arena, str8,              layer_count);
+		VkLayerProperties *layers      = push_array(arena, VkLayerProperties, layer_count);
+		str8              *layer_str8s = push_array(arena, str8,              layer_count);
 		vkEnumerateInstanceLayerProperties(&layer_count, layers);
 
 		for (u32 i = 0; i < layer_count; i++)
@@ -1115,8 +1116,8 @@ vk_load_instance(Arena arena, Stream *err)
 		u32 instance_extension_count = 0;
 		vkEnumerateInstanceExtensionProperties(0, &instance_extension_count, 0);
 
-		VkExtensionProperties *instance_extensions = push_array(&arena, VkExtensionProperties, instance_extension_count);
-		str8                  *instance_ext_str8s  = push_array(&arena, str8,                  instance_extension_count);
+		VkExtensionProperties *instance_extensions = push_array(arena, VkExtensionProperties, instance_extension_count);
+		str8                  *instance_ext_str8s  = push_array(arena, str8,                  instance_extension_count);
 		vkEnumerateInstanceExtensionProperties(0, &instance_extension_count, instance_extensions);
 		for EachIndex(instance_extension_count, it)
 			instance_ext_str8s[it] = str8_from_c_str(instance_extensions[it].extensionName);
@@ -1174,23 +1175,24 @@ vk_load_instance(Arena arena, Stream *err)
 	#define X(name, ...) name = (name##_fn *)vkGetInstanceProcAddr(vulkan_context->handle, #name);
 	VkInstanceProcedureList
 	#undef X
+	temp_end(scratch);
 }
 
 function void
-vk_load_physical_device(Arena arena, Stream *err)
+vk_load_physical_device(Arena *arena, Stream *err)
 {
+	Temp scratch = temp_begin(arena);
 	VulkanContext *vk = vulkan_context;
 
 	u32 device_count;
 	vkEnumeratePhysicalDevices(vk->handle, &device_count, 0);
 
-	VkPhysicalDevice *devices = push_array(&arena, typeof(*devices), device_count);
+	VkPhysicalDevice *devices = push_array(arena, typeof(*devices), device_count);
 	vkEnumeratePhysicalDevices(vk->handle, &device_count, devices);
 
 	i32 best_index = -1, best_score = -1;
 	for (u32 i = 0; i < device_count; i++) {
-		Arena scratch = arena;
-		VkPhysicalDeviceProperties2 *dp = push_struct(&scratch, typeof(*dp));
+		VkPhysicalDeviceProperties2 *dp = push_struct(arena, typeof(*dp));
 		dp->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
 		vkGetPhysicalDeviceProperties2(devices[i], dp);
 
@@ -1222,17 +1224,16 @@ vk_load_physical_device(Arena arena, Stream *err)
 	}
 
 	{
-		Arena scratch = arena;
 		u32 extension_count = 0;
 		vkEnumerateDeviceExtensionProperties(vk->physical_device, 0, &extension_count, 0);
-		VkExtensionProperties *extensions = push_array(&scratch, VkExtensionProperties, extension_count);
+		VkExtensionProperties *extensions = push_array(arena, VkExtensionProperties, extension_count);
 		vkEnumerateDeviceExtensionProperties(vk->physical_device, 0, &extension_count, extensions);
 
-		str8 *ext_str8s = push_array(&scratch, str8, extension_count);
+		str8 *ext_str8s = push_array(arena, str8, extension_count);
 		for (u32 index = 0; index < extension_count; index++)
 			ext_str8s[index] = str8_from_c_str(extensions[index].extensionName);
 
-		b8 *supported = push_array(&scratch, b8, countof(vk_required_device_extensions));
+		b8 *supported = push_array(arena, b8, countof(vk_required_device_extensions));
 		for EachIndex(extension_count, index)
 			for EachElement(vk_required_device_extensions, it)
 				supported[it] |= str8_equal(vk_required_device_extensions[it], ext_str8s[index]);
@@ -1336,11 +1337,10 @@ vk_load_physical_device(Arena arena, Stream *err)
 		}
 
 		if (vulkan_config.optional.cooperative_matrix) {
-			Arena scratch = arena;
 			u32 property_count = 0;
 			vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR(vk->physical_device, &property_count, 0);
 
-			VkCooperativeMatrixPropertiesKHR *mat = push_array(&scratch, VkCooperativeMatrixPropertiesKHR, property_count);
+			VkCooperativeMatrixPropertiesKHR *mat = push_array(arena, VkCooperativeMatrixPropertiesKHR, property_count);
 
 			// NOTE(rnp): validation layer stupidity
 			for EachIndex(property_count, it)
@@ -1445,8 +1445,9 @@ vk_load_physical_device(Arena arena, Stream *err)
 	vk->gpu_info.subgroup_size             = v11p.subgroupSize;
 	vk->gpu_info.max_compute_shared_memory_size = dp.properties.limits.maxComputeSharedMemorySize;
 
+	temp_end(scratch);
 	// IMPORTANT(rnp): memory must only be pushed at the end of the function
-	vk->gpu_info.name = push_str8(&vk->arena, str8_from_c_str(dp.properties.deviceName));
+	vk->gpu_info.name = push_str8(vk->arena, str8_from_c_str(dp.properties.deviceName));
 
 	#if BEAMFORMER_DEBUG
 	{
@@ -1471,7 +1472,7 @@ vk_load_physical_device(Arena arena, Stream *err)
 }
 
 function void
-vk_load_queues(Arena *memory, Stream *err)
+vk_load_queues(Arena *arena, Stream *err)
 {
 	///////////////////////////////////////////////////////
 	// NOTE(rnp): try to allocate an appropriate queue for
@@ -1486,8 +1487,8 @@ vk_load_queues(Arena *memory, Stream *err)
 	u32 queue_family_count;
 	vkGetPhysicalDeviceQueueFamilyProperties(vk->physical_device, &queue_family_count, 0);
 
-	TempArena arena_save = begin_temp_arena(memory);
-	VkQueueFamilyProperties *queues = push_array(memory, typeof(*queues), queue_family_count);
+	Temp scratch = temp_begin(arena);
+	VkQueueFamilyProperties *queues = push_array(arena, typeof(*queues), queue_family_count);
 	vkGetPhysicalDeviceQueueFamilyProperties(vk->physical_device, &queue_family_count, queues);
 
 	i32 queue_indices[VulkanQueueKind_Count];
@@ -1589,7 +1590,7 @@ vk_load_queues(Arena *memory, Stream *err)
 	for EachElement(assigned_subindices, it)
 		vk->unique_queues += assigned_subindices[it];
 
-	end_temp_arena(arena_save);
+	temp_end(scratch);
 
 	/////////////////////////////////////////////
 	// NOTE(rnp): fill in info and create device
@@ -1602,7 +1603,7 @@ vk_load_queues(Arena *memory, Stream *err)
 
 	for EachElement(vk->queues, it) {
 		if (vk->queues[vk->queue_indices[it]] == 0) {
-			vk->queues[vk->queue_indices[it]] = push_struct(memory, VulkanQueue);
+			vk->queues[vk->queue_indices[it]] = push_struct(vk->arena, VulkanQueue);
 			vk->queues[vk->queue_indices[it]]->queue_family = queue_indices[it];
 			vk->queues[vk->queue_indices[it]]->queue_index  = queue_subindices[it];
 		}
@@ -1610,7 +1611,7 @@ vk_load_queues(Arena *memory, Stream *err)
 	}
 
 	for EachElement(vk->command_pools, it)
-		vk->command_pools[it] = push_struct(memory, VulkanCommandPool);
+		vk->command_pools[it] = push_struct(vk->arena, VulkanCommandPool);
 
 	VkDeviceQueueCreateInfo queue_create_infos[VulkanQueueKind_Count];
 
@@ -1860,10 +1861,12 @@ vk_load_descriptor_block(void)
 
 	vk_label_object(DESCRIPTOR_POOL, vk->descriptor_pool, str8("Beamformer Resources"), str8("Pool"));
 
-	DeferLoop(take_lock(&vk->arena_lock, -1), release_lock(&vk->arena_lock)) {
-		Arena scratch = vk->arena;
+	Temp scratch;
+	DeferLoop(take_lock(&vk->arena_lock, -1), release_lock(&vk->arena_lock))
+	DeferLoop(scratch = temp_begin(vk->arena), temp_end(scratch))
+	{
 		for EachElement(vk->descriptor_sets, it) {
-			Stream sb = arena_stream(scratch);
+			Stream sb = arena_stream(vk->arena);
 			stream_append_str8s(&sb, str8("Beamformer "), beamformer_shader_resource_kind_strings[it], str8("s"));
 			vk_label_object(DESCRIPTOR_SET,        vk->descriptor_sets[it],        stream_to_str8(&sb), str8("Set"));
 			vk_label_object(DESCRIPTOR_SET_LAYOUT, vk->descriptor_set_layouts[it], stream_to_str8(&sb), str8("Set Layout"));
@@ -1879,7 +1882,7 @@ vk_load_descriptor_block(void)
 // NOTE(rnp): User API
 
 DEBUG_IMPORT void
-vk_load(OSLibrary vulkan_library_handle, Arena *memory, Stream *err)
+vk_load(OSLibrary vulkan_library_handle, Stream *err)
 {
 	#define X(name, ...) name = (name##_fn *)os_lookup_symbol(vulkan_library_handle, #name);
 	VkLoaderProcedureList
@@ -1891,12 +1894,12 @@ vk_load(OSLibrary vulkan_library_handle, Arena *memory, Stream *err)
 	}
 
 	VulkanContext *vk = vulkan_context;
-	vk->entity_arena = sub_arena_end(memory, KB(64), KB(4));
-	vk->arena        = sub_arena_end(memory, KB(96), KB(4));
+	vk->arena        = arena_create(.name = "Vulkan Arena");
+	vk->entity_arena = arena_create(.name = "Vulkan Entity Arena");
 
 	vk_load_instance(vk->arena, err);
 	vk_load_physical_device(vk->arena, err);
-	vk_load_queues(&vk->arena, err);
+	vk_load_queues(vk->arena, err);
 	vk_load_graphics();
 	vk_load_descriptor_block();
 
@@ -2372,15 +2375,15 @@ vk_pipeline(VulkanPipelineCreateInfo *infos, u32 count, u32 push_constants_size)
 	assert(count == 2 || infos[0].kind == VulkanShaderKind_Compute);
 
 	VulkanHandle result = {0};
+	Temp scratch;
 	DeferLoop(take_lock(&vulkan_context->arena_lock, -1), release_lock(&vulkan_context->arena_lock))
+	DeferLoop(scratch = temp_begin(vulkan_context->arena), temp_end(scratch))
 	{
-		Arena arena = vulkan_context->arena;
-
 		VulkanEntity *e = vk_entity_allocate(VulkanEntityKind_Pipeline);
 		result = (VulkanHandle){(u64)e};
 
-		if (count == 2) e->as.pipeline = vk_graphics_pipeline_from_infos(arena, infos, count, push_constants_size);
-		else            e->as.pipeline = vk_compute_pipeline_from_info(arena, infos, push_constants_size);
+		if (count == 2) e->as.pipeline = vk_graphics_pipeline_from_infos(scratch.arena, infos, count, push_constants_size);
+		else            e->as.pipeline = vk_compute_pipeline_from_info(scratch.arena, infos, push_constants_size);
 	}
 	return result;
 }
@@ -2533,11 +2536,12 @@ vk_command_buffer_memory_barriers(VulkanHandle command, GPUMemoryBarrierInfo *ba
 		VulkanCommandPool   *vcp = vk->command_pools[vcb->timeline];
 		VulkanQueue         *vq  = vk->queues[vcb->timeline];
 
+		Temp scratch;
 		DeferLoop(take_lock(&vk->arena_lock, -1), release_lock(&vk->arena_lock))
+		DeferLoop(scratch = temp_begin(vk->arena), temp_end(scratch))
 		{
-			Arena arena = vk->arena;
 			u32 valid_count = 0;
-			VkBufferMemoryBarrier2 *memory_barriers = push_array(&arena, VkBufferMemoryBarrier2, count);
+			VkBufferMemoryBarrier2 *memory_barriers = push_array(vk->arena, VkBufferMemoryBarrier2, count);
 			for (u64 it = 0; it < count; it++) {
 				if ValidVulkanHandle(barriers[it].gpu_buffer->handle) {
 					u32           index = valid_count++;

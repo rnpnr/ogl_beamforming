@@ -85,6 +85,12 @@ typedef struct {
 
 BEAMFORMER_IMPORT OSSystemInfo * os_system_info(void);
 
+BEAMFORMER_IMPORT void *         os_memory_reserve(uint64_t size);
+BEAMFORMER_IMPORT void           os_memory_release(void *base, uint64_t size);
+BEAMFORMER_IMPORT uint32_t       os_memory_commit(void *base, uint64_t size);
+BEAMFORMER_IMPORT void           os_memory_uncommit(void *base, uint64_t size);
+BEAMFORMER_IMPORT void           os_memory_seal(void *base, uint64_t size);
+
 BEAMFORMER_IMPORT OSThread       os_create_thread(const char *name, void *user_context, os_thread_entry_point_fn *fn);
 BEAMFORMER_IMPORT OSBarrier      os_barrier_alloc(uint32_t thread_count);
 BEAMFORMER_IMPORT void           os_barrier_enter(OSBarrier);
@@ -317,13 +323,6 @@ typedef struct {
 } BeamformerInputEvent;
 
 typedef struct {
-	/* NOTE(rnp): besides vulkan library code the beamformer will not allocate memory on its
-	 * own. Recommended minimum size is 16MB. If shared memory is not provided it is recommended
-	 * to increase this to at least 1GB to help facilitate loading of external data files (not yet
-	 * implemented). */
-	void *      memory;
-	uint64_t    memory_size;
-
 	/* NOTE(rnp): beamformer will use this to communicate with external processes. While it
 	 * it won't be required in the future it is currently the only way to load data.
 	 * Recommended size is 2-4GB. Currently this size will also limit the size of any data
@@ -355,28 +354,29 @@ typedef struct {
 	#endif
 } BeamformerInput;
 
-BEAMFORMER_EXPORT void beamformer_init(BeamformerInput *);
+// NOTE(rnp): returns the beamformer's memory, to be passed as part of input.
+BEAMFORMER_EXPORT void *beamformer_init(BeamformerInput *);
 
 /* NOTE(rnp): while the platform can also decide to terminate the beamformer,
  * the beamformer itself may indicate that it wants to terminate. If the
  * beamformer itself decides to terminate it is unnecessary to call
  * `beamformer_terminate()` but it will act as a NOP if you do. */
-BEAMFORMER_EXPORT uint32_t beamformer_should_close(BeamformerInput *);
+BEAMFORMER_EXPORT uint32_t beamformer_should_close(void *memory, BeamformerInput *);
 
 /* IMPORTANT(rnp): since the beamformer may be interacting with external hardware
  * it is critical that the platform calls this when it wishes to terminate the
  * beamformer. Otherwise the external hardware may be left in a bad state and require
  * a reboot. The beamformer will not waste time releasing resources unless it was
  * compiled with BEAMFORMER_DEBUG enabled (useful for address sanitizer). */
-BEAMFORMER_EXPORT void beamformer_terminate(BeamformerInput *);
+BEAMFORMER_EXPORT void beamformer_terminate(void *memory, BeamformerInput *);
 
 #if !BEAMFORMER_DEBUG
-BEAMFORMER_EXPORT void beamformer_frame_step(BeamformerInput *);
+BEAMFORMER_EXPORT void beamformer_frame_step(void *memory, BeamformerInput *);
 #endif
 
 #if BEAMFORMER_DEBUG
-BEAMFORMER_EXPORT void beamformer_debug_hot_release(BeamformerInput *);
-BEAMFORMER_EXPORT void beamformer_debug_hot_reload(OSLibrary new_library, BeamformerInput *);
+BEAMFORMER_EXPORT void beamformer_debug_hot_release(void *memory, BeamformerInput *);
+BEAMFORMER_EXPORT void beamformer_debug_hot_reload(OSLibrary new_library);
 #endif
 
 #endif /*BEAMFORMER_H */

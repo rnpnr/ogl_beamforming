@@ -11,9 +11,12 @@
 #define STD_OUTPUT_HANDLE -11
 #define STD_ERROR_HANDLE  -12
 
+#define PAGE_READONLY  0x02
 #define PAGE_READWRITE 0x04
 #define MEM_COMMIT     0x1000
 #define MEM_RESERVE    0x2000
+#define MEM_DECOMMIT   0x4000
+#define MEM_RELEASE    0x8000
 
 #define GENERIC_WRITE  0x40000000
 #define GENERIC_READ   0x80000000
@@ -120,6 +123,8 @@ W32(b32)    WaitOnAddress(void *, void *, u64, u32);
 W32(i32)    WakeByAddressAll(void *);
 W32(b32)    WriteFile(iptr, u8 *, i32, i32 *, void *);
 W32(void *) VirtualAlloc(u8 *, i64, u32, u32);
+W32(b32)    VirtualFree(void *, u64, u32);
+W32(b32)    VirtualProtect(void *, u64, u32, u32 *);
 
 function b32
 os_write_file(iptr file, void *data, i64 length)
@@ -152,25 +157,60 @@ os_timer_count(void)
 	return result;
 }
 
-function u32
-os_get_page_size(void)
+#ifndef BEAMFORMER_H
+// TODO(rnp): fix main and platform code split
+
+function OSSystemInfo *
+os_system_info(void)
 {
-	w32_system_info info = {0};
-	GetSystemInfo(&info);
-	u32 result = info.page_size;
+	local_persist b32 ready = 0;
+	local_persist OSSystemInfo w32_platform_info = {0};
+	if unlikely(!ready) {
+		w32_system_info info = {0};
+		GetSystemInfo(&info);
+		w32_platform_info.timer_frequency         = os_timer_frequency();
+		w32_platform_info.path_separator_byte     = '\\';
+		w32_platform_info.page_size               = info.page_size;
+		w32_platform_info.logical_processor_count = info.number_of_processors;
+		ready = 1;
+	}
+	return &w32_platform_info;
+}
+
+#endif
+
+BEAMFORMER_IMPORT void *
+os_memory_reserve(u64 size)
+{
+	void *result = VirtualAlloc(0, size, MEM_RESERVE, PAGE_READWRITE);
 	return result;
 }
 
-function OS_ALLOC_ARENA_FN(os_alloc_arena)
+BEAMFORMER_IMPORT void
+os_memory_release(void *base, u64 size)
 {
-	Arena result = {0};
-	capacity   = round_up_to(capacity, os_get_page_size());
-	result.beg = VirtualAlloc(0, capacity, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
-	if (result.beg) {
-		result.end = result.beg + capacity;
-		asan_poison_region(result.beg, result.end - result.beg);
-	}
+	// NOTE(rnp): size must be 0 on w32, no partial releasing
+	VirtualFree(base, 0, MEM_RELEASE);
+}
+
+BEAMFORMER_IMPORT b32
+os_memory_commit(void *base, u64 size)
+{
+	b32 result = VirtualAlloc(base, size, MEM_COMMIT, PAGE_READWRITE) != 0;
 	return result;
+}
+
+BEAMFORMER_IMPORT void
+os_memory_uncommit(void *base, u64 size)
+{
+	VirtualFree(base, size, MEM_DECOMMIT);
+}
+
+BEAMFORMER_IMPORT void
+os_memory_seal(void *base, u64 size)
+{
+	u32 w32_dummy;
+	VirtualProtect(base, size, PAGE_READONLY, &w32_dummy);
 }
 
 BEAMFORMER_IMPORT OS_READ_ENTIRE_FILE_FN(os_read_entire_file)

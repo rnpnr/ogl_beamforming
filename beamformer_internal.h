@@ -144,7 +144,7 @@ typedef struct {
 
 ///////////////////////////
 // NOTE: vulkan layer API
-DEBUG_IMPORT void vk_load(OSLibrary vulkan, Arena *memory, Stream *error);
+DEBUG_IMPORT void vk_load(OSLibrary vulkan, Stream *error);
 
 DEBUG_IMPORT GPUInfo *vk_gpu_info(void);
 
@@ -457,12 +457,11 @@ typedef struct {
 } BeamformerComputeContext;
 
 typedef struct {
-	OSThread handle;
-
-	Arena arena;
-	iptr  user_context;
-	i32   sync_variable;
-	b32   awake;
+	Arena    *arena;
+	iptr      user_context;
+	i32       sync_variable;
+	b32       awake;
+	OSThread  handle;
 } GLWorkerThreadContext;
 
 typedef struct {
@@ -606,15 +605,14 @@ typedef struct {
 
 	iv2 window_size;
 
-	Arena  arena;
-	Arena  ui_backing_store;
+	Arena *arena;
+	Arena *ui_arena;
 	void  *ui;
 	u32    ui_dirty_parameter_blocks;
 
-	u64       frame_timestamp;
-	u64       frame_index;
-	Arena     frame_arenas[2];
-	TempArena frame_arena_savepoints[2];
+	u64    frame_timestamp;
+	u64    frame_index;
+	Arena *frame_arenas[2];
 
 	BeamformerUIPanel *auto_live_control_panel;
 	u64                live_imaging_active_frame;
@@ -652,7 +650,6 @@ typedef struct {
 	// TODO(rnp): this should go to the UI eventually
 	OSWindow main_window;
 } BeamformerCtx;
-#define BeamformerContextMemory(m) (BeamformerCtx *)align_pointer_up((m), alignof(BeamformerCtx));
 
 typedef enum {
 	BeamformerFileReloadKind_ComputeInternalShader,

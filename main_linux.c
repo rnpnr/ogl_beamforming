@@ -79,7 +79,7 @@ struct OSLinuxEntity {
 };
 
 typedef struct {
-	Arena         arena;
+	Arena        *arena;
 	i32           arena_lock;
 
 	i32           inotify_handle;
@@ -109,7 +109,7 @@ os_entity_allocate(OSLinuxEntityKind kind)
 	DeferLoop(take_lock(&os_linux_context.arena_lock, -1), release_lock(&os_linux_context.arena_lock))
 	{
 		result = SLLPopFreelist(os_linux_context.entity_freelist);
-		if (!result) result = push_struct_no_zero(&os_linux_context.arena, OSLinuxEntity);
+		if (!result) result = push_struct_no_zero(os_linux_context.arena, OSLinuxEntity);
 	}
 
 	zero_struct(result);
@@ -148,7 +148,7 @@ os_barrier_alloc(u32 count)
 	OSBarrier result = {0};
 	DeferLoop(take_lock(&os_linux_context.arena_lock, -1), release_lock(&os_linux_context.arena_lock))
 	{
-		pthread_barrier_t *barrier = push_struct(&os_linux_context.arena, pthread_barrier_t);
+		pthread_barrier_t *barrier = push_struct(os_linux_context.arena, pthread_barrier_t);
 		pthread_barrier_init(barrier, 0, count);
 		result.value[0] = (u64)barrier;
 	}
@@ -231,7 +231,7 @@ os_linux_add_file_watch(str8 path, void *user_context, OSLinuxFileWatchKind kind
 		          os_linux_context.file_watch_directories.last, dir, next, prev);
 
 		dir->hash   = hash;
-		dir->name   = push_str8(&os_linux_context.arena, directory);
+		dir->name   = push_str8(os_linux_context.arena, directory);
 		u32 mask    = IN_MOVED_TO|IN_CLOSE_WRITE;
 		dir->handle = inotify_add_watch(os_linux_context.inotify_handle, (c8 *)dir->name.data, mask);
 	}
@@ -284,11 +284,11 @@ os_window_create(u8 *title, i64 title_length, i32 width, i32 height)
 	SetConfigFlags(FLAG_VSYNC_HINT|FLAG_WINDOW_ALWAYS_RUN);
 
 	str8 name = {.data = title, .length = title_length};
+	Temp scratch;
 	DeferLoop(take_lock(&os_linux_context.arena_lock, -1), release_lock(&os_linux_context.arena_lock))
+	DeferLoop(scratch = temp_begin(os_linux_context.arena), temp_end(scratch))
 	{
-		Arena scratch = os_linux_context.arena;
-		name.length = Min(name.length, arena_capacity(&scratch, u8) - 1);
-		str8 title_string = push_str8(&scratch, name);
+		str8 title_string = push_str8(scratch.arena, name);
 		InitWindow(width, height, (char *)title_string.data);
 	}
 
@@ -314,12 +314,12 @@ os_get_clipboard_text(i64 *length)
 BEAMFORMER_IMPORT void
 os_set_clipboard_text(u8 *data, i64 length)
 {
+	Temp scratch;
 	DeferLoop(take_lock(&os_linux_context.arena_lock, -1), release_lock(&os_linux_context.arena_lock))
+	DeferLoop(scratch = temp_begin(os_linux_context.arena), temp_end(scratch))
 	{
-		Arena scratch     = os_linux_context.arena;
-		str8  string      = {.data = data, .length = Min(length, arena_capacity(&scratch, u8) - 1)};
-		str8  safe_string = push_str8(&scratch, string);
-		SetClipboardText((char *)safe_string.data);
+		str8 string = push_str8(scratch.arena, (str8){.data = data, .length = length});
+		SetClipboardText((char *)string.data);
 	}
 }
 
@@ -339,12 +339,12 @@ load_library(char *name, char *temp_name, u32 flags)
 
 #if BEAMFORMER_DEBUG
 function void
-debug_library_reload(BeamformerInput *input)
+debug_library_reload(void *beamformer, BeamformerInput *input)
 {
 	local_persist OSLibrary beamformer_library_handle = {OSInvalidHandleValue};
 
 	if ValidHandle(beamformer_library_handle) {
-		beamformer_debug_hot_release(input);
+		beamformer_debug_hot_release(beamformer, input);
 		dlclose((void *)beamformer_library_handle.value[0]);
 		beamformer_library_handle = (OSLibrary){OSInvalidHandleValue};
 	}
@@ -354,19 +354,19 @@ debug_library_reload(BeamformerInput *input)
 		fatal(str8("[os] failed to load: " OS_DEBUG_LIB_NAME "\n"));
 
 	if ValidHandle(new_handle) {
-		beamformer_debug_hot_reload(new_handle, input);
+		beamformer_debug_hot_reload(new_handle);
 		beamformer_library_handle = new_handle;
 	}
 }
 #else
-#define debug_library_reload(a) (void)(a)
+#define debug_library_reload(a, b) (void)(a), (void)(b)
 #endif /* BEAMFORMER_DEBUG */
 
 function void
 load_platform_libraries(BeamformerInput *input)
 {
 	#if BEAMFORMER_DEBUG
-		debug_library_reload(input);
+		debug_library_reload(0, input);
 		os_linux_add_file_watch(str8(OS_DEBUG_LIB_NAME), (void *)BeamformerInputEventKind_ExecutableReload,
 		                        OSLinuxFileWatchKind_Platform);
 	#endif
@@ -391,16 +391,15 @@ load_platform_libraries(BeamformerInput *input)
 }
 
 function void
-dispatch_file_watch_events(BeamformerInput *input)
+dispatch_file_watch_events(void *beamformer, BeamformerInput *input)
 {
-	Arena arena = os_linux_context.arena;
-	u8 *mem     = arena_alloc(&arena, .size = 4096, .align = 16);
+	local_persist alignas(16) u8 mem[KB(4)];
 	struct inotify_event *event;
 
 	u64 current_time = os_timer_count();
 
 	i64 rlen;
-	while ((rlen = read(os_linux_context.inotify_handle, mem, 4096)) > 0) {
+	while ((rlen = read(os_linux_context.inotify_handle, mem, countof(mem))) > 0) {
 		for (u8 *data = mem; data < mem + rlen; data += sizeof(*event) + event->len) {
 			event = (struct inotify_event *)data;
 			for (OSLinuxFileWatchDirectory *dir = os_linux_context.file_watch_directories.first; dir; dir = dir->next) {
@@ -416,7 +415,7 @@ dispatch_file_watch_events(BeamformerInput *input)
 						if (fw->kind == OSLinuxFileWatchKind_Platform) {
 							assert((u64)fw->user_context == BeamformerInputEventKind_ExecutableReload);
 							if ((u64)fw->user_context == BeamformerInputEventKind_ExecutableReload)
-								debug_library_reload(input);
+								debug_library_reload(beamformer, input);
 							input_event.kind = (u64)fw->user_context;
 						} else {
 							input_event.kind = BeamformerInputEventKind_FileEvent;
@@ -440,15 +439,11 @@ main(void)
 	os_linux_context.system_info.page_size               = ARCH_X64? KB(4) : getauxval(AT_PAGESZ);
 	os_linux_context.system_info.path_separator_byte     = '/';
 
-	Arena program_memory = os_alloc_arena(MB(16) + MB(1));
-
-	os_linux_context.arena = sub_arena(&program_memory, MB(1), KB(4));
+	os_linux_context.arena = arena_create(.name = "Platform Arena");
 	os_linux_context.inotify_handle = inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
 
-	BeamformerInput *input = push_struct(&program_memory, BeamformerInput);
+	BeamformerInput *input = push_struct(os_linux_context.arena, BeamformerInput);
 	os_linux_context.input = input;
-	input->memory          = program_memory.beg;
-	input->memory_size     = program_memory.end - program_memory.beg;
 	input->shared_memory   = allocate_shared_memory(OS_SHARED_MEMORY_NAME, OS_SHARED_MEMORY_SIZE,
 	                                                &input->shared_memory_size);
 	if (input->shared_memory) {
@@ -462,20 +457,20 @@ main(void)
 
 	load_platform_libraries(input);
 
-	beamformer_init(input);
+	void *beamformer = beamformer_init(input);
 
 	struct pollfd fds[1] = {{0}};
 	fds[0].fd     = os_linux_context.inotify_handle;
 	fds[0].events = POLLIN;
 
-	while (!WindowShouldClose() && !beamformer_should_close(input)) {
+	while (!WindowShouldClose() && !beamformer_should_close(beamformer, input)) {
 		os_build_frame_input(input);
 
 		poll(fds, countof(fds), 0);
 		if (fds[0].revents & POLLIN)
-			dispatch_file_watch_events(input);
+			dispatch_file_watch_events(beamformer, input);
 
-		beamformer_frame_step(input);
+		beamformer_frame_step(beamformer, input);
 
 		// NOTE(rnp): this must happen at the end of frame to allow the pre loop events through
 		// TODO(rnp): hack: until raylib is removed this happens in ui since raylib will cause
@@ -483,7 +478,7 @@ main(void)
 		//input->event_count = 0;
 	}
 
-	beamformer_terminate(input);
+	beamformer_terminate(beamformer, input);
 
 	/* NOTE: make sure this will get cleaned up after external
 	 * programs release their references */

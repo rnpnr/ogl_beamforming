@@ -8,6 +8,7 @@
  * [ ]: seperate dwarf debug info
  */
 
+#define BEAMFORMER_IMPORT function
 #include "util.h"
 
 #include <stdarg.h>
@@ -49,8 +50,6 @@ global char *g_argv0;
 #define is_clang   COMPILER_CLANG
 #define is_gcc     COMPILER_GCC
 #define is_msvc    COMPILER_MSVC
-
-#define BEAMFORMER_IMPORT function
 
 #if OS_LINUX
 
@@ -191,15 +190,6 @@ build_fatal_(char *format, ...)
 	os_exit(1);
 }
 
-function str8
-read_entire_file(const char *file, Arena *arena)
-{
-	str8 result  = {0};
-	result.length = os_read_entire_file(file, arena->beg, arena_capacity(arena, u8));
-	if (result.length > 0) result.data = arena_commit(arena, result.length);
-	return result;
-}
-
 function b32
 str8_contains(str8 s, u8 byte)
 {
@@ -294,6 +284,31 @@ os_remove_directory_(i32 base_fd, char *name)
 		closedir(dir);
 		result = unlinkat(base_fd, name, AT_REMOVEDIR) == 0;
 	}
+	return result;
+}
+
+function str8
+os_read_file_into_arena(const char *name, Arena *arena)
+{
+	str8 result = {0};
+	struct stat sb;
+	i32 fd = open(name, O_RDONLY);
+	if (fd >= 0 && fstat(fd, &sb) >= 0) {
+		result.data   = push_array_no_zero(arena, u8, sb.st_size);
+		result.length = sb.st_size;
+		i64 total_read = 0;
+		do {
+			i64 rlen = read(fd, (u8 *)result.data + total_read, (u64)(result.length - total_read));
+			if (rlen > 0) total_read += rlen;
+		} while (total_read != result.length && errno != EINTR);
+
+		if (total_read != result.length) {
+			arena_pop(arena, result.length);
+			result = (str8){0};
+		}
+	}
+	if (fd >= 0) close(fd);
+
 	return result;
 }
 
@@ -392,6 +407,30 @@ function void
 os_make_directory(char *name)
 {
 	CreateDirectoryA(name, 0);
+}
+
+function str8
+os_read_file_into_arena(const char *name, Arena *arena)
+{
+	str8 result = {0};
+	w32_file_info fileinfo;
+	iptr h = CreateFileA((c8 *)name, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
+	if (h >= 0 && GetFileInformationByHandle(h, &fileinfo)) {
+		u64 filesize  = (i64)fileinfo.nFileSizeHigh << 32;
+		filesize     |= (i64)fileinfo.nFileSizeLow;
+		if (filesize <= S32_MAX) {
+			result.data   = push_array_no_zero(arena, u8, filesize);
+			result.length = filesize;
+			i32 rlen = 0;
+			if (!ReadFile(h, result.data, (i32)filesize, &rlen, 0) || rlen != filesize) {
+				arena_pop(arena, filesize);
+				result = (str8){0};
+			}
+		}
+	}
+	if (h >= 0) CloseHandle(h);
+
+	return result;
 }
 
 function b32
@@ -506,6 +545,12 @@ os_wait_close_process(iptr handle)
 
 #endif
 
+function str8
+read_entire_file(const char *file, Arena *arena)
+{
+	return os_read_file_into_arena(file, arena);
+}
+
 #define needs_rebuild(b, ...) needs_rebuild_(b, ((char *[]){__VA_ARGS__}), \
                                              (sizeof((char *[]){__VA_ARGS__}) / sizeof(char *)))
 function b32
@@ -522,7 +567,7 @@ needs_rebuild_(char *binary, char *deps[], i64 deps_count)
 }
 
 function b32
-run_synchronous(Arena a, CommandList *command)
+run_synchronous(Arena *a, CommandList *command)
 {
 	Stream sb = arena_stream(a);
 	stream_push_command(&sb, command);
@@ -569,24 +614,24 @@ cmd_base(Arena *a, CommandList *c, b32 cpp, b32 debug)
 }
 
 function void
-check_rebuild_self(Arena arena, i32 argc, char *argv[])
+check_rebuild_self(Arena *arena, i32 argc, char *argv[])
 {
 	char *binary = shift(argv, argc);
 	if (needs_rebuild(binary, __FILE__, "meta.h", "os_win32.c", "os_linux.c", "util.c", "util.h")) {
 		Stream name_buffer = arena_stream(arena);
 		stream_append_str8s(&name_buffer, str8_from_c_str(binary), str8(".old"));
-		char *old_name = (char *)arena_stream_commit_zero(&arena, &name_buffer).data;
+		char *old_name = (char *)arena_stream_commit_zero(arena, &name_buffer).data;
 
 		if (!os_rename_file(binary, old_name))
 			build_fatal("failed to move: %s -> %s", binary, old_name);
 
 		CommandList c = {0};
-		cmd_base(&arena, &c, 0, 0);
-		cmd_append(&arena, &c, EXTRA_FLAGS);
-		if (!is_msvc) cmd_append(&arena, &c, "-Wno-unused-function");
-		cmd_append(&arena, &c, __FILE__, OUTPUT_EXE(binary));
-		if (is_msvc) cmd_append(&arena, &c, "/link", "-incremental:no", "-opt:ref");
-		cmd_append(&arena, &c, (void *)0);
+		cmd_base(arena, &c, 0, 0);
+		cmd_append(arena, &c, EXTRA_FLAGS);
+		if (!is_msvc) cmd_append(arena, &c, "-Wno-unused-function");
+		cmd_append(arena, &c, __FILE__, OUTPUT_EXE(binary));
+		if (is_msvc) cmd_append(arena, &c, "/link", "-incremental:no", "-opt:ref");
+		cmd_append(arena, &c, (void *)0);
 		if (!run_synchronous(arena, &c)) {
 			os_rename_file(old_name, binary);
 			build_fatal("failed to rebuild self");
@@ -594,9 +639,9 @@ check_rebuild_self(Arena arena, i32 argc, char *argv[])
 		os_remove_file(old_name);
 
 		c.count = 0;
-		cmd_append(&arena, &c, binary);
-		cmd_append_count(&arena, &c, argv, argc);
-		cmd_append(&arena, &c, (void *)0);
+		cmd_append(arena, &c, binary);
+		cmd_append_count(arena, &c, argv, argc);
+		cmd_append(arena, &c, (void *)0);
 		if (!run_synchronous(arena, &c))
 			os_exit(1);
 
@@ -649,7 +694,7 @@ cmd_pdb(Arena *a, CommandList *cmd, char *name)
 	if (is_w32 && is_clang) {
 		cmd_append(a, cmd, "-fuse-ld=lld", "-g", "-gcodeview", "-Wl,--pdb=");
 	} else if (is_msvc) {
-		Stream sb = arena_stream(*a);
+		Stream sb = arena_stream(a);
 		stream_append_str8s(&sb, str8("-PDB:"), str8_from_c_str(name), str8(".pdb"));
 		char *pdb = (char *)arena_stream_commit_zero(a, &sb).data;
 		cmd_append(a, cmd, "/link", "-incremental:no", "-opt:ref", "-DEBUG", pdb);
@@ -657,67 +702,67 @@ cmd_pdb(Arena *a, CommandList *cmd, char *name)
 }
 
 function void
-git_submodule_update(Arena a, char *name)
+git_submodule_update(Arena *a, char *name)
 {
 	Stream sb = arena_stream(a);
 	stream_append_str8s(&sb, str8_from_c_str(name), str8(OS_PATH_SEPARATOR), str8(".git"));
-	arena_stream_commit_zero(&a, &sb);
+	arena_stream_commit_zero(a, &sb);
 
 	CommandList git = {0};
 	/* NOTE(rnp): cryptic bs needed to get a simple exit code if name is dirty */
-	cmd_append(&a, &git, "git", "diff-index", "--quiet", "HEAD", "--", name, (void *)0);
+	cmd_append(a, &git, "git", "diff-index", "--quiet", "HEAD", "--", name, (void *)0);
 	if (!os_file_exists((c8 *)sb.data) || !run_synchronous(a, &git)) {
 		git.count = 1;
-		cmd_append(&a, &git, "submodule", "update", "--init", "--depth=1", name, (void *)0);
+		cmd_append(a, &git, "submodule", "update", "--init", "--depth=1", name, (void *)0);
 		if (!run_synchronous(a, &git))
 			build_fatal("failed to clone required module: %s", name);
 	}
 }
 
 function b32
-build_shared_library(Arena a, CommandList cc, char *name, char *output, char **libs, i64 libs_count, char **srcs, i64 srcs_count)
+build_shared_library(Arena *a, CommandList cc, char *name, char *output, char **libs, i64 libs_count, char **srcs, i64 srcs_count)
 {
-	cmd_append_count(&a, &cc, srcs, srcs_count);
-	cmd_append(&a, &cc, OUTPUT_DLL(output));
-	cmd_pdb(&a, &cc, name);
-	cmd_append_count(&a, &cc, libs, libs_count);
-	cmd_append(&a, &cc, (void *)0);
+	cmd_append_count(a, &cc, srcs, srcs_count);
+	cmd_append(a, &cc, OUTPUT_DLL(output));
+	cmd_pdb(a, &cc, name);
+	cmd_append_count(a, &cc, libs, libs_count);
+	cmd_append(a, &cc, (void *)0);
 	b32 result = run_synchronous(a, &cc);
 	if (!result) build_log_failure("%s", output);
 	return result;
 }
 
 function b32
-cc_single_file(Arena a, CommandList cc, char *exe, char *src, char *dest, char **tail, i64 tail_count)
+cc_single_file(Arena *a, CommandList cc, char *exe, char *src, char *dest, char **tail, i64 tail_count)
 {
 	char *executable[] = {src, is_msvc? "/Fe:" : "-o", dest};
 	char *object[]     = {is_msvc? "/c" : "-c", src, is_msvc? "/Fo:" : "-o", dest};
 
-	cmd_append_count(&a, &cc, exe? executable : object,
+	cmd_append_count(a, &cc, exe? executable : object,
 	                 exe? countof(executable) : countof(object));
-	if (exe) cmd_pdb(&a, &cc, exe);
-	cmd_append_count(&a, &cc, tail, tail_count);
-	cmd_append(&a, &cc, (void *)0);
+	if (exe) cmd_pdb(a, &cc, exe);
+	cmd_append_count(a, &cc, tail, tail_count);
+	cmd_append(a, &cc, (void *)0);
 	b32 result = run_synchronous(a, &cc);
 	if (!result) build_log_failure("%s", dest);
 	return result;
 }
 
 function b32
-build_static_library_from_objects(Arena a, char *name, char **flags, i64 flags_count, char **objects, i64 count)
+build_static_library_from_objects(Arena *a, char *name, char **flags, i64 flags_count, char **objects, i64 count)
 {
 	CommandList ar = {0};
-	cmd_append(&a, &ar, STATIC_LIBRARY_BEGIN(name));
-	cmd_append_count(&a, &ar, flags, flags_count);
-	cmd_append_count(&a, &ar, objects, count);
-	cmd_append(&a, &ar, (void *)0);
+	cmd_append(a, &ar, STATIC_LIBRARY_BEGIN(name));
+	cmd_append_count(a, &ar, flags, flags_count);
+	cmd_append_count(a, &ar, objects, count);
+	cmd_append(a, &ar, (void *)0);
 	b32 result = run_synchronous(a, &ar);
 	if (!result) build_log_failure("%s", name);
 	return result;
 }
 
 function b32
-build_static_library(Arena a, CommandList cc, char *name, char **deps, char **outputs, i64 count)
+build_static_library(Arena *a, CommandList cc, char *name, char **deps, char **outputs, i64 count)
 {
 	/* TODO(rnp): refactor to not need outputs */
 	b32 result = 1;
@@ -728,7 +773,7 @@ build_static_library(Arena a, CommandList cc, char *name, char **deps, char **ou
 }
 
 function b32
-build_raylib(Arena a)
+build_raylib(Arena *a)
 {
 	b32 result = 1, shared = config.debug;
 	char *libraylib = shared ? OS_SHARED_LINK_LIB("raylib") : OUTPUT_LIB(OS_STATIC_LIB("raylib"));
@@ -736,11 +781,11 @@ build_raylib(Arena a)
 		git_submodule_update(a, "external/raylib");
 
 		CommandList cc = {0};
-		cmd_base(&a, &cc, 0, config.debug);
-		if (is_unix) cmd_append(&a, &cc, "-D_GLFW_X11");
-		cmd_append(&a, &cc, "-DPLATFORM_DESKTOP_GLFW");
-		if (!is_msvc) cmd_append(&a, &cc, "-Wno-unused-but-set-variable");
-		cmd_append(&a, &cc, "-Iexternal/include", "-Iexternal/raylib/src", "-Iexternal/raylib/src/external/glfw/include");
+		cmd_base(a, &cc, 0, config.debug);
+		if (is_unix) cmd_append(a, &cc, "-D_GLFW_X11");
+		cmd_append(a, &cc, "-DPLATFORM_DESKTOP_GLFW");
+		if (!is_msvc) cmd_append(a, &cc, "-Wno-unused-but-set-variable");
+		cmd_append(a, &cc, "-Iexternal/include", "-Iexternal/raylib/src", "-Iexternal/raylib/src/external/glfw/include");
 		#define RAYLIB_SOURCES \
 			X(rglfw)     \
 			X(rshapes)   \
@@ -757,7 +802,7 @@ build_raylib(Arena a)
 		if (shared) {
 			char *libs[] = {LINK_LIB("user32"), LINK_LIB("shell32"), LINK_LIB("gdi32"), LINK_LIB("winmm")};
 			i64 libs_count = is_w32 ? countof(libs) : 0;
-			cmd_append(&a, &cc, "-DBUILD_LIBTYPE_SHARED", "-D_GLFW_BUILD_DLL");
+			cmd_append(a, &cc, "-DBUILD_LIBTYPE_SHARED", "-D_GLFW_BUILD_DLL");
 			result = build_shared_library(a, cc, "raylib", libraylib, libs, libs_count, srcs, countof(srcs));
 		} else {
 			result = build_static_library(a, cc, libraylib, srcs, outs, countof(srcs));
@@ -767,7 +812,7 @@ build_raylib(Arena a)
 }
 
 function b32
-build_glslang(Arena a)
+build_glslang(Arena *a)
 {
 	b32 result = 1;
 	char *lib = OUTPUT_LIB(OS_STATIC_LIB("glslang"));
@@ -776,9 +821,9 @@ build_glslang(Arena a)
 
 		// NOTE(rnp): do not build this with debug symbols. The size explodes because c++
 		CommandList cc = {0};
-		cmd_base(&a, &cc, 1, 0);
-		cmd_append(&a, &cc, "-std=c++17", "-fno-rtti", "-fno-exceptions", "-Wno-unused-but-set-variable");
-		cmd_append(&a, &cc, "-Iexternal/glslang_local", "-Iexternal/glslang");
+		cmd_base(a, &cc, 1, 0);
+		cmd_append(a, &cc, "-std=c++17", "-fno-rtti", "-fno-exceptions", "-Wno-unused-but-set-variable");
+		cmd_append(a, &cc, "-Iexternal/glslang_local", "-Iexternal/glslang");
 
 		#if OS_WINDOWS
 		  #define GLSLANG_SOURCES_OS X(ossource, "glslang/glslang/OSDependent/Windows/")
@@ -807,11 +852,11 @@ build_glslang(Arena a)
 }
 
 function b32
-build_helper_library(Arena arena)
+build_helper_library(Arena *arena)
 {
 	CommandList cc = {0};
-	cmd_base(&arena, &cc, 0, 0);
-	cmd_append(&arena, &cc, EXTRA_FLAGS);
+	cmd_base(arena, &cc, 0, 0);
+	cmd_append(arena, &cc, EXTRA_FLAGS);
 
 	/////////////
 	// library
@@ -819,7 +864,7 @@ build_helper_library(Arena arena)
 	char *libs[]  = {LINK_LIB("Synchronization")};
 	i64 libs_count = is_w32 ? countof(libs) : 0;
 
-	if (!is_msvc) cmd_append(&arena, &cc, "-Wno-unused-function");
+	if (!is_msvc) cmd_append(arena, &cc, "-Wno-unused-function");
 	b32 result = build_shared_library(arena, cc, "ogl_beamformer_lib", library,
 	                                  libs, libs_count, (char *[]){"lib/ogl_beamformer_lib.c"}, 1);
 	return result;
@@ -839,43 +884,43 @@ cmd_beamformer_base(Arena *a, CommandList *c)
 }
 
 function b32
-build_beamformer_main(Arena arena)
+build_beamformer_main(Arena *arena)
 {
 	CommandList c = {0};
-	cmd_beamformer_base(&arena, &c);
+	cmd_beamformer_base(arena, &c);
 
-	cmd_append(&arena, &c, OS_MAIN, OUTPUT_EXE("ogl"));
-	cmd_pdb(&arena, &c, "ogl");
+	cmd_append(arena, &c, OS_MAIN, OUTPUT_EXE("ogl"));
+	cmd_pdb(arena, &c, "ogl");
 	if (config.debug) {
-		if (!is_w32)  cmd_append(&arena, &c, "-Wl,--export-dynamic", "-Wl,-rpath,.");
-		if (!is_msvc) cmd_append(&arena, &c, "-L.");
-		cmd_append(&arena, &c, LINK_LIB("raylib"));
+		if (!is_w32)  cmd_append(arena, &c, "-Wl,--export-dynamic", "-Wl,-rpath,.");
+		if (!is_msvc) cmd_append(arena, &c, "-L.");
+		cmd_append(arena, &c, LINK_LIB("raylib"));
 	} else {
-		if (!is_msvc) cmd_append(&arena, &c, "-flto");
-		cmd_append(&arena, &c, OUTPUT(OS_STATIC_LIB("raylib")));
+		if (!is_msvc) cmd_append(arena, &c, "-flto");
+		cmd_append(arena, &c, OUTPUT(OS_STATIC_LIB("raylib")));
 	}
 	// TODO(rnp): not sure how to do this with msvc. we don't want a runtime dependence on libc++
-	cmd_append(&arena, &c, OUTPUT(OS_STATIC_LIB("glslang")), "-Wl,-Bstatic", "-lstdc++", "-Wl,-Bdynamic");
+	cmd_append(arena, &c, OUTPUT(OS_STATIC_LIB("glslang")), "-Wl,-Bstatic", "-lstdc++", "-Wl,-Bdynamic");
 
-	if (!is_msvc) cmd_append(&arena, &c, "-lm");
-	if (is_unix)  cmd_append(&arena, &c, "-lGL");
+	if (!is_msvc) cmd_append(arena, &c, "-lm");
+	if (is_unix)  cmd_append(arena, &c, "-lGL");
 
 	if (is_w32) {
-		cmd_append(&arena, &c, LINK_LIB("user32"), LINK_LIB("shell32"), LINK_LIB("gdi32"),
+		cmd_append(arena, &c, LINK_LIB("user32"), LINK_LIB("shell32"), LINK_LIB("gdi32"),
 		           LINK_LIB("opengl32"), LINK_LIB("winmm"), LINK_LIB("Synchronization"));
-		if (!is_msvc) cmd_append(&arena, &c, "-Wl,--out-implib," OUTPUT(OS_STATIC_LIB("main")));
+		if (!is_msvc) cmd_append(arena, &c, "-Wl,--out-implib," OUTPUT(OS_STATIC_LIB("main")));
 	}
 
-	cmd_append(&arena, &c, (void *)0);
+	cmd_append(arena, &c, (void *)0);
 
 	return run_synchronous(arena, &c);
 }
 
 function b32
-build_beamformer_as_library(Arena arena)
+build_beamformer_as_library(Arena *arena)
 {
 	CommandList cc = {0};
-	cmd_beamformer_base(&arena, &cc);
+	cmd_beamformer_base(arena, &cc);
 
 	if (is_msvc) {
 		build_static_library_from_objects(arena, OUTPUT_LIB(OS_STATIC_LIB("main")),
@@ -888,26 +933,26 @@ build_beamformer_as_library(Arena arena)
 	                 LINK_LIB("shell32"), LINK_LIB("user32"), LINK_LIB("opengl32"),
 	                 LINK_LIB("winmm"), LINK_LIB("Synchronization"), OUTPUT("main.lib")};
 	i64 libs_count = is_w32 ? countof(libs) : 0;
-	cmd_append(&arena, &cc, "-D_BEAMFORMER_DLL");
+	cmd_append(arena, &cc, "-D_BEAMFORMER_DLL");
 	b32 result = build_shared_library(arena, cc, "beamformer", library,
 	                                  libs, libs_count, arg_list(char *, "beamformer_core.c"));
 	return result;
 }
 
 function b32
-build_tests(Arena arena)
+build_tests(Arena *arena)
 {
 	CommandList cc = {0};
-	cmd_base(&arena, &cc, 0, config.debug);
-	cmd_append(&arena, &cc, EXTRA_FLAGS);
+	cmd_base(arena, &cc, 0, config.debug);
+	cmd_append(arena, &cc, EXTRA_FLAGS);
 
 	#define TEST_PROGRAMS \
 		X("throughput", LINK_LIB("m"), LINK_LIB("zstd"), W32_DECL(LINK_LIB("Synchronization"))) \
 		X("decode", LINK_LIB("m"), W32_DECL(LINK_LIB("Synchronization"))) \
 
 	os_make_directory(OUTPUT("tests"));
-	if (!is_msvc) cmd_append(&arena, &cc, "-Wno-unused-function");
-	cmd_append(&arena, &cc, "-I.", "-Ilib");
+	if (!is_msvc) cmd_append(arena, &cc, "-Wno-unused-function");
+	cmd_append(arena, &cc, "-I.", "-Ilib");
 
 	b32 result = 1;
 	i64 cc_count = cc.count;
@@ -961,9 +1006,9 @@ str8_trim(str8 in)
 }
 
 typedef struct {
-	Stream stream;
-	Arena  scratch;
-	i32    indentation_level;
+	Stream  stream;
+	Arena  *scratch;
+	i32     indentation_level;
 } MetaprogramContext;
 
 function b32
@@ -1421,8 +1466,8 @@ meta_parser_unexpected_token(MetaParser *p, MetaParseToken t)
 function void
 meta_parser_fill_argument_array(MetaParser *p, MetaEntryArgument *array, Arena *arena)
 {
+	str8_list strings = {0};
 	array->kind     = MetaEntryArgumentKind_Array;
-	array->strings  = arena_aligned_start(*arena, alignof(str8));
 	array->location = p->p.location;
 	for (MetaParseToken token = meta_parser_token(p);
 	     token != MetaParseToken_EndArray;
@@ -1432,13 +1477,14 @@ meta_parser_fill_argument_array(MetaParser *p, MetaEntryArgument *array, Arena *
 		case MetaParseToken_RawString:
 		case MetaParseToken_String:
 		{
-			assert((u8 *)(array->strings + array->count) == arena->beg);
-			*push_struct(arena, str8) = p->u.string;
-			array->count++;
+			*da_push(arena, &strings) = p->u.string;
 		}break;
 		default:{ meta_parser_unexpected_token(p, token); }break;
 		}
 	}
+	array->strings = strings.data;
+	array->count   = strings.count;
+	arena_pop(arena, (strings.capacity - strings.count) * sizeof(*strings.data));
 }
 
 function void
@@ -1447,13 +1493,17 @@ meta_parser_arguments(MetaParser *p, MetaEntry *e, Arena *arena)
 	if (meta_parser_peek_token(p) == MetaParseToken_BeginArgs) {
 		meta_parser_commit(p);
 
-		e->arguments = arena_aligned_start(*arena, alignof(MetaEntryArgument));
+		struct {
+			MetaEntryArgument *data;
+			da_count count;
+			da_count capacity;
+		} arguments = {0};
+
 		for (MetaParseToken token = meta_parser_token(p);
 		     token != MetaParseToken_EndArgs;
 		     token = meta_parser_token(p))
 		{
-			e->argument_count++;
-			MetaEntryArgument *arg = push_struct(arena, MetaEntryArgument);
+			MetaEntryArgument *arg = da_push(arena, &arguments);
 			switch (token) {
 			case MetaParseToken_RawString:
 			case MetaParseToken_String:
@@ -1468,6 +1518,10 @@ meta_parser_arguments(MetaParser *p, MetaEntry *e, Arena *arena)
 			default:{ meta_parser_unexpected_token(p, token); }break;
 			}
 		}
+		e->arguments      = arguments.data;
+		e->argument_count = arguments.count;
+		// TODO(rnp): we should count arguments first so that we don't need to leave a hole
+		//arena_pop(arena, (arguments.capacity - arguments.count) * sizeof(*arguments.data));
 	}
 }
 
@@ -1853,7 +1907,7 @@ typedef struct {
 } MetaStruct;
 
 typedef struct {
-	Arena *arena, scratch;
+	Arena *arena, *scratch;
 
 	str8 filename;
 	str8 directory;
@@ -2024,9 +2078,9 @@ function MetaEntityID
 meta_entity_reference(MetaContext *ctx, str8 name, MetaLocation location)
 {
 	MetaEntityID result = {0};
-	Arena scratch;
-	DeferLoop(scratch = ctx->scratch, ctx->scratch = scratch) {
-		str8 ref_name = push_str8_from_parts(&ctx->scratch, str8(""), str8("R"), name);
+	Temp scratch;
+	DeferLoop(scratch = temp_begin(ctx->scratch), temp_end(scratch)) {
+		str8 ref_name = push_str8_from_parts(ctx->scratch, str8(""), str8("R"), name);
 		result = meta_intern_entity(ctx, ref_name, MetaEntityKind_Reference,
 		                            meta_root_entity_id(ctx), location, 1);
 		MetaEntity *r = meta_entity(ctx, result);
@@ -2046,9 +2100,9 @@ meta_entity_reference_reference(MetaContext *ctx, str8 name, str8 scope_name, Me
 	// NOTE(rnp): base reference
 	MetaEntityID ref_id = meta_entity_reference(ctx, name, location);
 
-	Arena scratch;
-	DeferLoop(scratch = ctx->scratch, ctx->scratch = scratch) {
-		str8 refref_name = push_str8_from_parts(&ctx->scratch, str8(""), prefix, str8("RR"), name);
+	Temp scratch;
+	DeferLoop(scratch = temp_begin(ctx->scratch), temp_end(scratch)) {
+		str8 refref_name = push_str8_from_parts(ctx->scratch, str8(""), prefix, str8("RR"), name);
 		result = meta_intern_entity(ctx, refref_name, MetaEntityKind_ReferenceReference,
 		                            parent, location, 1);
 
@@ -2453,7 +2507,7 @@ meta_expand_table_entity_id(MetaContext *ctx, MetaEntry *e)
 function str8
 meta_expand_parts_to_str8_at_index(MetaContext *ctx, u64 table_index, MetaExpansionPartList parts)
 {
-	Stream sb = arena_stream(*ctx->arena);
+	Stream sb = arena_stream(ctx->arena);
 	for EachIndex((u64)parts.count, part) {
 		MetaExpansionPart *p = parts.data + part;
 		u32 index = 0;
@@ -2527,9 +2581,10 @@ meta_pack_table_entity(MetaContext *ctx, MetaEntry *e, i64 entry_count, str8 nam
 	                e->kind == MetaEntryKind_Union;
 
 	MetaEntryScope scope = meta_entry_extract_scope(e, entry_count);
-	if (scope.consumed > 1) {
-		Arena scratch = ctx->scratch;
-
+	Temp scratch;
+	if (scope.consumed > 1)
+	DeferLoop(scratch = temp_begin(ctx->scratch), temp_end(scratch))
+	{
 		// NOTE(rnp): count expands
 		i64 expand_count = 0;
 		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++)
@@ -2540,7 +2595,7 @@ meta_pack_table_entity(MetaContext *ctx, MetaEntry *e, i64 entry_count, str8 nam
 		da_count *table_ids = 0;
 		i64 table_id_index = 0;
 		if (expand_count > 0) {
-			table_ids = push_array(&ctx->scratch, da_count, expand_count);
+			table_ids = push_array(ctx->scratch, da_count, expand_count);
 			for (MetaEntry *row = scope.start; row != scope.one_past_last; row++)
 				if (row->kind == MetaEntryKind_Expand)
 					table_ids[table_id_index++] = meta_expand_table_entity_id(ctx, row);
@@ -2615,7 +2670,7 @@ meta_pack_table_entity(MetaContext *ctx, MetaEntry *e, i64 entry_count, str8 nam
 				for EachIndex(argument_count, it) {
 					working_row_index = row_index;
 					str8 expand = row->arguments ? row->arguments->strings[it] : row->name;
-					MetaExpansionPartList parts = meta_generate_expansion_set(ctx, &ctx->scratch, expand, table, row->location);
+					MetaExpansionPartList parts = meta_generate_expansion_set(ctx, ctx->scratch, expand, table, row->location);
 					for EachIndex(table->table.entry_count, entry_index)
 						t->entries[it][working_row_index++] = meta_expand_parts_to_str8_at_index(ctx, entry_index, parts);
 				}
@@ -2639,8 +2694,6 @@ meta_pack_table_entity(MetaContext *ctx, MetaEntry *e, i64 entry_count, str8 nam
 				row_index++;
 			}
 		}
-
-		ctx->scratch = scratch;
 	}
 
 	MetaEntity *entity = meta_entity(ctx, entity_id);
@@ -2822,17 +2875,22 @@ meta_pack_references(MetaContext *ctx, MetaEntry *entries, i64 entry_count, Meta
 }
 
 function str8 *
-meta_expand_to_str8_array(MetaContext *ctx, Arena scratch, str8 expand, MetaEntity *table, MetaLocation location)
+meta_expand_to_str8_array(MetaContext *ctx, str8 expand, MetaEntity *table, MetaLocation location)
 {
-	MetaExpansionPartList parts = meta_generate_expansion_set(ctx, &scratch, expand, table, location);
-	str8 *result = push_array(ctx->arena, str8, table->table.entry_count);
-	for EachIndex(table->table.entry_count, expansion)
-		result[expansion] = meta_expand_parts_to_str8_at_index(ctx, expansion, parts);
+	str8 *result = 0;
+	Temp scratch;
+	DeferLoop(scratch = temp_begin(ctx->scratch), temp_end(scratch))
+	{
+		MetaExpansionPartList parts = meta_generate_expansion_set(ctx, ctx->scratch, expand, table, location);
+		result = push_array(ctx->arena, str8, table->table.entry_count);
+		for EachIndex(table->table.entry_count, expansion)
+			result[expansion] = meta_expand_parts_to_str8_at_index(ctx, expansion, parts);
+	}
 	return result;
 }
 
 function i64
-meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, i64 entry_count, MetaEmitOperationList *ops)
+meta_expand(MetaContext *ctx, MetaEntry *e, i64 entry_count, MetaEmitOperationList *ops)
 {
 	assert(e->kind == MetaEntryKind_Expand);
 
@@ -2871,7 +2929,7 @@ meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, i64 entry_count, Meta
 			meta_pack_table_begin(&entry, &new->table);
 			new->table.entries     = push_array(ctx->arena, str8 *, new->table.field_count);
 			new->table.entry_count = table->table.entry_count;
-			new->table.entries[0]  = meta_expand_to_str8_array(ctx, scratch, expand, table, row->location);
+			new->table.entries[0]  = meta_expand_to_str8_array(ctx, expand, table, row->location);
 		}break;
 
 		case MetaEntryKind_Struct:
@@ -2893,12 +2951,12 @@ meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, i64 entry_count, Meta
 			meta_pack_table_begin(&entry, &new->table);
 			new->table.entries     = push_array(ctx->arena, str8 *, new->table.field_count);
 			new->table.entry_count = table->table.entry_count;
-			new->table.entries[MetaStructField_Name] = meta_expand_to_str8_array(ctx, scratch, fields.strings[0],
+			new->table.entries[MetaStructField_Name] = meta_expand_to_str8_array(ctx, fields.strings[0],
 			                                                                     table, row->location);
-			new->table.entries[MetaStructField_Type] = meta_expand_to_str8_array(ctx, scratch, fields.strings[1],
+			new->table.entries[MetaStructField_Type] = meta_expand_to_str8_array(ctx, fields.strings[1],
 			                                                                     table, row->location);
 			if (fields.count == 3) {
-				new->table.entries[MetaStructField_Elements] = meta_expand_to_str8_array(ctx, scratch, fields.strings[2],
+				new->table.entries[MetaStructField_Elements] = meta_expand_to_str8_array(ctx, fields.strings[2],
 				                                                                         table, row->location);
 			} else {
 				new->table.entries[MetaStructField_Elements] = push_array(ctx->arena, str8, table->table.entry_count);
@@ -2918,7 +2976,7 @@ meta_expand(MetaContext *ctx, Arena scratch, MetaEntry *e, i64 entry_count, Meta
 }
 
 function void
-meta_embed(MetaContext *ctx, Arena scratch, MetaEntry *e, i64 entry_count)
+meta_embed(MetaContext *ctx, MetaEntry *e, i64 entry_count)
 {
 	assert(e->kind == MetaEntryKind_Embed);
 
@@ -3000,7 +3058,7 @@ meta_pack_constant(MetaContext *ctx, MetaEntry *e)
 }
 
 function i64
-meta_pack_emit(MetaContext *ctx, Arena scratch, MetaEntry *e, i64 entry_count)
+meta_pack_emit(MetaContext *ctx, MetaEntry *e, i64 entry_count)
 {
 	assert(e->kind == MetaEntryKind_Emit);
 
@@ -3025,7 +3083,7 @@ meta_pack_emit(MetaContext *ctx, Arena scratch, MetaEntry *e, i64 entry_count)
 			op->location = row->location;
 		}break;
 		case MetaEntryKind_Expand:{
-			row += meta_expand(ctx, scratch, row, entry_count - (row - e), ops);
+			row += meta_expand(ctx, row, entry_count - (row - e), ops);
 		}break;
 		default:{ meta_entry_nesting_error(row, MetaEntryKind_Emit); }break;
 		}
@@ -3068,30 +3126,33 @@ metagen_push_byte_array(MetaprogramContext *m, str8 bytes)
 }
 
 function void
-metagen_push_table(MetaprogramContext *m, Arena scratch, str8 row_start, str8 row_end,
-                   str8 **column_strings, u64 rows, u64 columns)
+metagen_push_table(MetaprogramContext *m, str8 row_start, str8 row_end, str8 **column_strings, u64 rows, u64 columns)
 {
-	u32 *column_widths = 0;
-	if (columns > 1) {
-		column_widths = push_array(&scratch, u32, columns - 1);
-		for (u64 column = 0; column < columns - 1; column++) {
-			str8 *strings = column_strings[column];
-			for (u64 row = 0; row < rows; row++)
-				column_widths[column] = Max(column_widths[column], (u32)strings[row].length);
+	Temp scratch;
+	DeferLoop(scratch = temp_begin(m->scratch), temp_end(scratch))
+	{
+		u32 *column_widths = 0;
+		if (columns > 1) {
+			column_widths = push_array(m->scratch, u32, columns - 1);
+			for (u64 column = 0; column < columns - 1; column++) {
+				str8 *strings = column_strings[column];
+				for (u64 row = 0; row < rows; row++)
+					column_widths[column] = Max(column_widths[column], (u32)strings[row].length);
+			}
 		}
-	}
 
-	for (u64 row = 0; row < rows; row++) {
-		meta_begin_line(m, row_start);
-		for (u64 column = 0; column < columns; column++) {
-			str8 text = column_strings[column][row];
-			meta_push(m, text);
-			i32 pad = columns > 1 ? 1 : 0;
-			if (column_widths && column < columns - 1)
-				pad += (i32)column_widths[column] - (i32)text.length;
-			if (column < columns - 1) meta_pad(m, ' ', pad);
+		for (u64 row = 0; row < rows; row++) {
+			meta_begin_line(m, row_start);
+			for (u64 column = 0; column < columns; column++) {
+				str8 text = column_strings[column][row];
+				meta_push(m, text);
+				i32 pad = columns > 1 ? 1 : 0;
+				if (column_widths && column < columns - 1)
+					pad += (i32)column_widths[column] - (i32)text.length;
+				if (column < columns - 1) meta_pad(m, ' ', pad);
+			}
+			meta_end_line(m, row_end);
 		}
-		meta_end_line(m, row_end);
 	}
 }
 
@@ -3151,88 +3212,93 @@ metagen_run_emit(MetaprogramContext *m, MetaContext *ctx, MetaEmitOperationList 
 		switch (op->kind) {
 		case MetaEmitOperationKind_String:{ meta_push_line(m, op->string); }break;
 		case MetaEmitOperationKind_FileBytes:{
-			Arena scratch = m->scratch;
-			str8 filename = push_str8_from_parts(&scratch, str8(OS_PATH_SEPARATOR), ctx->directory, op->string);
-			str8 file     = read_entire_file((c8 *)filename.data, &scratch);
-			m->indentation_level++;
-			metagen_push_byte_array(m, file);
-			m->indentation_level--;
+			Temp scratch;
+			DeferLoop(scratch = temp_begin(m->scratch), temp_end(scratch))
+			{
+				str8 filename = push_str8_from_parts(m->scratch, str8(OS_PATH_SEPARATOR), ctx->directory, op->string);
+				str8 file     = read_entire_file((c8 *)filename.data, m->scratch);
+				m->indentation_level++;
+				metagen_push_byte_array(m, file);
+				m->indentation_level--;
+			}
 		}break;
 		case MetaEmitOperationKind_Expand:{
-			Arena scratch = m->scratch;
+			Temp scratch;
+			DeferLoop(scratch = temp_begin(m->scratch), temp_end(scratch))
+			{
+				MetaEmitOperationExpansion *eop = &op->expansion_operation;
+				MetaTable *t = &ctx->entities.data[eop->table_entity_id].table;
+				str8 table_name = ctx->entity_names.data[eop->table_entity_id];
 
-			MetaEmitOperationExpansion *eop = &op->expansion_operation;
-			MetaTable *t = &ctx->entities.data[eop->table_entity_id].table;
-			str8 table_name = ctx->entity_names.data[eop->table_entity_id];
-
-			u32 alignment_count  = 1;
-			u32 evaluation_count = 0;
-			for (u32 part = 0; part < eop->part_count; part++) {
-				if (eop->parts[part].kind == MetaExpansionPartKind_Alignment)
-					alignment_count++;
-				if (eop->parts[part].kind == MetaExpansionPartKind_EvalKind ||
-				    eop->parts[part].kind == MetaExpansionPartKind_EvalKindCount)
-					evaluation_count++;
-			}
-
-			MetaKind **evaluation_columns = push_array(&scratch, MetaKind *, evaluation_count);
-			for (u32 column = 0; column < evaluation_count; column++)
-				evaluation_columns[column] = push_array(&scratch, MetaKind, t->entry_count);
-
-			for (u32 part = 0; part < eop->part_count; part++) {
-				u32 eval_column = 0;
-				MetaExpansionPart *p = eop->parts + part;
-				if (p->kind == MetaExpansionPartKind_EvalKind) {
-					for (u32 entry = 0; entry < t->entry_count; entry++) {
-						evaluation_columns[eval_column][entry] = meta_map_kind(p->strings[entry],
-						                                                       table_name, op->location);
-					}
-					eval_column++;
-				}
-			}
-
-			str8 **columns = push_array(&scratch, str8 *, alignment_count);
-			for (u32 column = 0; column < alignment_count; column++)
-				columns[column] = push_array(&scratch, str8, t->entry_count);
-
-			Stream sb = arena_stream(scratch);
-			for (u32 entry = 0; entry < t->entry_count; entry++) {
-				u32 column      = 0;
-				u32 eval_column = 0;
+				u32 alignment_count  = 1;
+				u32 evaluation_count = 0;
 				for (u32 part = 0; part < eop->part_count; part++) {
+					if (eop->parts[part].kind == MetaExpansionPartKind_Alignment)
+						alignment_count++;
+					if (eop->parts[part].kind == MetaExpansionPartKind_EvalKind ||
+					    eop->parts[part].kind == MetaExpansionPartKind_EvalKindCount)
+						evaluation_count++;
+				}
+
+				MetaKind **evaluation_columns = push_array(m->scratch, MetaKind *, evaluation_count);
+				for (u32 column = 0; column < evaluation_count; column++)
+					evaluation_columns[column] = push_array(m->scratch, MetaKind, t->entry_count);
+
+				for (u32 part = 0; part < eop->part_count; part++) {
+					u32 eval_column = 0;
 					MetaExpansionPart *p = eop->parts + part;
-					switch (p->kind) {
-					case MetaExpansionPartKind_Alignment:{
-						columns[column][entry] = arena_stream_commit_and_reset(&scratch, &sb);
-						column++;
-					}break;
-
-					case MetaExpansionPartKind_Conditional:{
-						if (!meta_expansion_part_conditional(p, entry, table_name, op->location))
-							part += p->conditional.instruction_skip;
-					}break;
-
-					case MetaExpansionPartKind_EvalKind:{
-						str8 kind = evaluation_table[evaluation_columns[eval_column][entry]];
-						stream_append_str8(&sb, kind);
-					}break;
-
-					case MetaExpansionPartKind_EvalKindCount:{
-						stream_append_u64(&sb, meta_kind_elements[evaluation_columns[eval_column][entry]]);
-					}break;
-
-					case MetaExpansionPartKind_Reference:
-					case MetaExpansionPartKind_String:
-					{
-						str8 string = p->kind == MetaExpansionPartKind_Reference ? p->strings[entry] : p->string;
-						stream_append_str8(&sb, string);
-					}break;
+					if (p->kind == MetaExpansionPartKind_EvalKind) {
+						for (u32 entry = 0; entry < t->entry_count; entry++) {
+							evaluation_columns[eval_column][entry] = meta_map_kind(p->strings[entry],
+							                                                       table_name, op->location);
+						}
+						eval_column++;
 					}
 				}
 
-				columns[column][entry] = arena_stream_commit_and_reset(&scratch, &sb);
+				str8 **columns = push_array(m->scratch, str8 *, alignment_count);
+				for (u32 column = 0; column < alignment_count; column++)
+					columns[column] = push_array(m->scratch, str8, t->entry_count);
+
+				Stream sb = arena_stream(m->scratch);
+				for (u32 entry = 0; entry < t->entry_count; entry++) {
+					u32 column      = 0;
+					u32 eval_column = 0;
+					for (u32 part = 0; part < eop->part_count; part++) {
+						MetaExpansionPart *p = eop->parts + part;
+						switch (p->kind) {
+						case MetaExpansionPartKind_Alignment:{
+							columns[column][entry] = arena_stream_commit_and_reset(m->scratch, &sb);
+							column++;
+						}break;
+
+						case MetaExpansionPartKind_Conditional:{
+							if (!meta_expansion_part_conditional(p, entry, table_name, op->location))
+								part += p->conditional.instruction_skip;
+						}break;
+
+						case MetaExpansionPartKind_EvalKind:{
+							str8 kind = evaluation_table[evaluation_columns[eval_column][entry]];
+							stream_append_str8(&sb, kind);
+						}break;
+
+						case MetaExpansionPartKind_EvalKindCount:{
+							stream_append_u64(&sb, meta_kind_elements[evaluation_columns[eval_column][entry]]);
+						}break;
+
+						case MetaExpansionPartKind_Reference:
+						case MetaExpansionPartKind_String:
+						{
+							str8 string = p->kind == MetaExpansionPartKind_Reference ? p->strings[entry] : p->string;
+							stream_append_str8(&sb, string);
+						}break;
+						}
+					}
+
+					columns[column][entry] = arena_stream_commit_and_reset(m->scratch, &sb);
+				}
+				metagen_push_table(m, str8(""), str8(""), columns, t->entry_count, alignment_count);
 			}
-			metagen_push_table(m, scratch, str8(""), str8(""), columns, t->entry_count, alignment_count);
 		}break;
 		InvalidDefaultCase;
 		}
@@ -3297,50 +3363,13 @@ metagen_push_counted_enum_body_from_ids(MetaprogramContext *m, str8 kind, str8 p
 }
 
 function void
-metagen_push_c_enum(MetaprogramContext *m, Arena scratch, str8 kind, b32 flags, str8 *ids, i64 ids_count)
+metagen_push_c_enum(MetaprogramContext *m, str8 kind, b32 flags, str8 *ids, i64 ids_count)
 {
-	str8 kind_full = push_str8_from_parts(&scratch, str8(""), kind, str8("_"));
+	str8 kind_full = push_str8_from_parts(m->scratch, str8(""), kind, str8("_"));
 	meta_begin_scope(m, str8("typedef enum {"));
 	metagen_push_counted_enum_body(m, kind_full, str8(""), flags ? str8("= 1 << ") : str8("= "), str8(","), ids, ids_count);
 	if (!flags) meta_push_line(m, kind_full, str8("Count,"));
 	meta_end_scope(m, str8("} "), kind, str8(";\n"));
-}
-
-function u32
-meta_struct_flattened_member_count(Arena scratch, MetaContext *ctx, MetaStruct *meta_struct)
-{
-	struct stack_item {MetaStruct *s; u32 member_offset;} init[16];
-	struct {
-		struct stack_item *data;
-		da_count count;
-		da_count capacity;
-	} stack = {init, 0, countof(init)};
-
-	u32 result = 0;
-	*da_push(&scratch, &stack) = (struct stack_item){meta_struct, 0};
-	while (stack.count > 0) {
-		stack.count--;
-		MetaStruct *s = stack.data[stack.count].s;
-		u32 member    = stack.data[stack.count].member_offset;
-		while (member < s->info.member_count) {
-			if (s->members[member].length == 0) {
-				assert(s->member_flags[member] & MetaStructMemberFlag_ReferenceType);
-				MetaStruct *ss = ctx->struct_infos + ctx->entities.data[s->type_ids[member]].table.struct_info_id;
-				if (ss->info.flags & MetaStructFlag_Union) {
-					member++;
-					result++;
-				} else {
-					*da_push(&scratch, &stack) = (struct stack_item){s,  member + 1};
-					*da_push(&scratch, &stack) = (struct stack_item){ss, 0};
-					break;
-				}
-			} else {
-				member++;
-				result++;
-			}
-		}
-	}
-	return result;
 }
 
 typedef enum {
@@ -3364,7 +3393,6 @@ function void
 meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struct_entity,
                       MetaPushStructParameters p)
 {
-	MetaStruct *meta_struct = ctx->struct_infos + struct_entity->table.struct_info_id;
 	struct stack_item {MetaEntity *se; u32 member_offset;} init[16];
 	struct {
 		struct stack_item *data;
@@ -3372,14 +3400,41 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 		da_count capacity;
 	} stack = {init, 0, countof(init)};
 
-	u32 flattened_member_count = meta_struct_flattened_member_count(m->scratch, ctx, meta_struct);
+	Temp scratch = temp_begin(m->scratch);
+
+	u32 flattened_member_count = 0;
+
+	*da_push(m->scratch, &stack) = (struct stack_item){struct_entity, 0};
+	while (stack.count > 0) {
+		stack.count--;
+		MetaEntity *se = stack.data[stack.count].se;
+		MetaStruct *s  = ctx->struct_infos + se->table.struct_info_id;
+		u32 member     = stack.data[stack.count].member_offset;
+		while (member < s->info.member_count) {
+			if (s->members[member].length == 0) {
+				assert(s->member_flags[member] & MetaStructMemberFlag_ReferenceType);
+				MetaStruct *ss = ctx->struct_infos + ctx->entities.data[s->type_ids[member]].table.struct_info_id;
+				if (ss->info.flags & MetaStructFlag_Union) {
+					member++;
+					flattened_member_count++;
+				} else {
+					*da_push(ctx->scratch, &stack) = (struct stack_item){se, member + 1};
+					*da_push(ctx->scratch, &stack) = (struct stack_item){ctx->entities.data + s->type_ids[member], 0};
+					break;
+				}
+			} else {
+				member++;
+				flattened_member_count++;
+			}
+		}
+	}
 
 	str8 *columns[2];
-	columns[0] = push_array(&m->scratch, str8, flattened_member_count);
-	columns[1] = push_array(&m->scratch, str8, flattened_member_count);
+	columns[0] = push_array(m->scratch, str8, flattened_member_count);
+	columns[1] = push_array(m->scratch, str8, flattened_member_count);
 
 	u32 row = 0, scope = 0;
-	*da_push(&m->scratch, &stack) = (struct stack_item){struct_entity, 0};
+	*da_push(m->scratch, &stack) = (struct stack_item){struct_entity, 0};
 	while (stack.count > 0) {
 		stack.count--;
 		MetaEntity *se = stack.data[stack.count].se;
@@ -3396,12 +3451,12 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 			if (s->members[member].length == 0 &&
 			    (p.union_style != MetaPushStructStyle_MATLAB || ctx->entities.data[type_id].kind != MetaEntityKind_Union))
 			{
-				*da_push(&m->scratch, &stack) = (struct stack_item){se, member + 1};
-				*da_push(&m->scratch, &stack) = (struct stack_item){ctx->entities.data + type_id, 0};
+				*da_push(m->scratch, &stack) = (struct stack_item){se, member + 1};
+				*da_push(m->scratch, &stack) = (struct stack_item){ctx->entities.data + type_id, 0};
 
 				MetaStruct *ss = ctx->struct_infos + ctx->entities.data[type_id].table.struct_info_id;
 				if (p.layout_style == MetaPushStructStyle_C && ss->info.flags & MetaStructFlag_Union) {
-					metagen_push_table(m, m->scratch, p.prefix, p.suffix, columns, row, 2);
+					metagen_push_table(m, p.prefix, p.suffix, columns, row, 2);
 					meta_begin_scope(m, str8("union {"));
 					row = 0;
 					scope++;
@@ -3454,7 +3509,7 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 							stream_append_u64(&sb, resolved_element_count);
 						}
 						stream_append_str8(&sb, elements_count_close[p.layout_style]);
-						columns[name_column[p.layout_style]][row] = arena_stream_commit_and_reset(&m->scratch, &sb);
+						columns[name_column[p.layout_style]][row] = arena_stream_commit_and_reset(m->scratch, &sb);
 					} else {
 						columns[name_column[p.layout_style]][row] = member_name;
 					}
@@ -3500,7 +3555,7 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 							                    rs ? rs->info.name : ctx->entity_names.data[type_id]);
 						}
 
-						columns[type_column[p.layout_style]][row] = arena_stream_commit_and_reset(&m->scratch, &sb);
+						columns[type_column[p.layout_style]][row] = arena_stream_commit_and_reset(m->scratch, &sb);
 					} else {
 						columns[type_column[p.layout_style]][row] = p.base_types[type_id];
 					}
@@ -3512,7 +3567,7 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 		}
 
 		if (member == s->info.member_count && s->info.flags & MetaStructFlag_Union && p.layout_style == MetaPushStructStyle_C) {
-			metagen_push_table(m, m->scratch, p.prefix, p.suffix, columns, row, 2);
+			metagen_push_table(m, p.prefix, p.suffix, columns, row, 2);
 			while (scope > 0) {
 				meta_end_scope(m, str8("};"));
 				scope--;
@@ -3520,7 +3575,9 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 			row = 0;
 		}
 	}
-	metagen_push_table(m, m->scratch, p.prefix, p.suffix, columns, row, 2);
+	metagen_push_table(m, p.prefix, p.suffix, columns, row, 2);
+
+	temp_end(scratch);
 }
 
 function void
@@ -3611,7 +3668,11 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 
 	////////////////////////////////////
 	// NOTE(rnp): shader header strings
-	meta_begin_scope(m, str8("read_only global str8 " META_NAMESPACE_LOWER "_shader_global_header_strings[] = {"));
+	Temp scratch;
+	DeferLoop(scratch = temp_begin(m->scratch), temp_end(scratch))
+	DeferLoop(meta_begin_scope(m, str8("read_only global str8 " META_NAMESPACE_LOWER
+	                                   "_shader_global_header_strings[] = {")),
+	          meta_end_scope(m, str8("};\n")))
 	{
 		for (da_count ref = 0; ref < ctx->shader_entity_references.count; ref++) {
 			da_count    entity_id   = ctx->shader_entity_references.data[ref];
@@ -3668,7 +3729,7 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 			}break;
 
 			case MetaEntityKind_Enumeration:{
-				str8 kind_name = push_str8_from_parts(&m->scratch, str8(""), entity_name, str8("_"));
+				str8 kind_name = push_str8_from_parts(m->scratch, str8(""), entity_name, str8("_"));
 				meta_push_line(m, str8("str8_comp(\"\""));
 				metagen_push_counted_enum_body(m, kind_name, str8("\"#define "), str8(""), str8("\\n\""),
 				                               e->table.entries[0], e->table.entry_count);
@@ -3677,10 +3738,8 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 
 			InvalidDefaultCase;
 			}
-
-			m->scratch = ctx->scratch;
 		}
-	} meta_end_scope(m, str8("};\n"));
+	}
 
 	meta_begin_scope(m, str8("read_only global b8 " META_NAMESPACE_LOWER "_shader_has_primitive[] = {"));
 	for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
@@ -3715,12 +3774,14 @@ meta_push_shader_bake(MetaprogramContext *m, MetaContext *ctx)
 				if (s->kind == MetaShaderKind_Render)
 					meta_push(m, it == 0 ? str8("_primitive") : str8("_fragment"));
 
-				meta_begin_scope(m, str8("_bytes[] = {")); {
-					Arena scratch = m->scratch;
-					str8 filename = push_str8_from_parts(&scratch, str8(OS_PATH_SEPARATOR), str8("shaders"), s->files[it]);
-					str8 file     = read_entire_file((c8 *)filename.data, &scratch);
+				Temp scratch;
+				DeferLoop(meta_begin_scope(m, str8("_bytes[] = {")), meta_end_scope(m, str8("};\n")))
+				DeferLoop(scratch = temp_begin(m->scratch), temp_end(scratch))
+				{
+					str8 filename = push_str8_from_parts(m->scratch, str8(OS_PATH_SEPARATOR), str8("shaders"), s->files[it]);
+					str8 file     = read_entire_file((c8 *)filename.data, m->scratch);
 					metagen_push_byte_array(m, file);
-				} meta_end_scope(m, str8("};\n"));
+				}
 			}
 		}
 	}
@@ -3781,7 +3842,7 @@ metagen_emit_c_str8_list(MetaprogramContext *m, str8 *strs, u32 count)
 }
 
 function b32
-metagen_emit_c_code(MetaContext *ctx, Arena arena)
+metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 {
 	b32 result = 1;
 	char *out, *out_shaders;
@@ -3798,16 +3859,18 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		stream_append_str8s(&sb, str8(OS_PATH_SEPARATOR), basename, str8(".c"));
 		stream_append_byte(&sb, 0);
 
-		out = (c8 *)arena_stream_commit_and_reset(&arena, &sb).data;
+		out = (c8 *)arena_stream_commit_and_reset(arena, &sb).data;
 
 		stream_append_str8s(&sb, ctx->directory, str8(OS_PATH_SEPARATOR), str8("generated"));
 		stream_append_str8s(&sb, str8(OS_PATH_SEPARATOR), basename, str8("_shader_data.c"));
 		stream_append_byte(&sb, 0);
 
-		out_shaders = (c8 *)arena_stream_commit_zero(&arena, &sb).data;
+		out_shaders = (c8 *)arena_stream_commit_zero(arena, &sb).data;
 	}
 
 	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
+
+	arena_clear(m->scratch);
 
 	if (setjmp(compiler_jmp_buf)) {
 		build_fatal("Failed to generate C Code");
@@ -3816,14 +3879,14 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	////////////////////////////
 	// NOTE(rnp): shader baking
 	if (ctx->base_shader_count) {
-		char **deps = push_array(&m->scratch, char *, 2 * ctx->base_shader_count);
+		char **deps = push_array(m->scratch, char *, 2 * ctx->base_shader_count);
 		u32 dep_count = 0;
 		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
 			MetaShader *s = &ctx->entities.data[ctx->base_shader_ids[bs]].shader;
-			deps[dep_count++] = (c8 *)push_str8_from_parts(&m->scratch, str8(OS_PATH_SEPARATOR),
+			deps[dep_count++] = (c8 *)push_str8_from_parts(m->scratch, str8(OS_PATH_SEPARATOR),
 			                                               str8("shaders"), s->files[0]).data;
 			if (s->files[1].length > 0)
-				deps[dep_count++] = (c8 *)push_str8_from_parts(&m->scratch, str8(OS_PATH_SEPARATOR),
+				deps[dep_count++] = (c8 *)push_str8_from_parts(m->scratch, str8(OS_PATH_SEPARATOR),
 				                                               str8("shaders"), s->files[1]).data;
 		}
 
@@ -3833,16 +3896,18 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 			meta_push_shader_bake(m, ctx);
 			result &= meta_write_and_reset(m, out_shaders);
 		}
-		m->scratch = ctx->scratch;
 	}
 
+	arena_clear(m->scratch);
+
 	{
-		CommandList deps = meta_extract_emit_file_dependencies(ctx, &m->scratch);
-		*da_push(&m->scratch, &deps) = (c8 *)ctx->fullpath.data;
+		CommandList deps = meta_extract_emit_file_dependencies(ctx, m->scratch);
+		*da_push(m->scratch, &deps) = (c8 *)ctx->fullpath.data;
 		if (!needs_rebuild_(out, deps.data, deps.count))
 			return result;
-		m->scratch = ctx->scratch;
 	}
+
+	arena_clear(m->scratch);
 
 	build_log_generate("%.*s: C Code", (i32)ctx->filename.length, ctx->filename.data);
 
@@ -3863,8 +3928,8 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 
 		u32 row_alloc_count = Max(integers, floats);
 		str8 *columns[2];
-		columns[0] = push_array(&m->scratch, str8, row_alloc_count);
-		columns[1] = push_array(&m->scratch, str8, row_alloc_count);
+		columns[0] = push_array(m->scratch, str8, row_alloc_count);
+		columns[1] = push_array(m->scratch, str8, row_alloc_count);
 
 		u32 row_count;
 
@@ -3878,11 +3943,11 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 				stream_append_str8(&sb, str8("("));
 				stream_append_u64(&sb, e->constant.U64);
 				columns[0][row_count] = ctx->entity_names.data[id];
-				columns[1][row_count] = arena_stream_commit(&m->scratch, &sb);
+				columns[1][row_count] = arena_stream_commit(m->scratch, &sb);
 				row_count++;
 			}
 		}
-		metagen_push_table(m, m->scratch, str8("#define " META_NAMESPACE_UPPER), str8(")"), columns, row_count, 2);
+		metagen_push_table(m, str8("#define " META_NAMESPACE_UPPER), str8(")"), columns, row_count, 2);
 
 		row_count = 0;
 		if (floats) meta_push_line(m, str8("\n// NOTE: Constants (Float)"));
@@ -3894,16 +3959,16 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 				stream_append_str8(&sb, str8("("));
 				stream_append_f64(&sb, e->constant.F64, 1000000);
 				columns[0][row_count] = ctx->entity_names.data[id];
-				columns[1][row_count] = arena_stream_commit(&m->scratch, &sb);
+				columns[1][row_count] = arena_stream_commit(m->scratch, &sb);
 				row_count++;
 			}
 		}
-		metagen_push_table(m, m->scratch, str8("#define " META_NAMESPACE_UPPER), str8(")"), columns, row_count, 2);
-
-		m->scratch = ctx->scratch;
+		metagen_push_table(m, str8("#define " META_NAMESPACE_UPPER), str8(")"), columns, row_count, 2);
 
 		if (integers || floats) meta_push(m, str8("\n"));
 	}
+
+	arena_clear(m->scratch);
 
 	/////////////////////////
 	// NOTE(rnp): enumerants
@@ -3916,12 +3981,13 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 			da_count    id = ctx->entity_kind_ids[enums[it].kind][kind];
 			MetaEntity *e  = ctx->entities.data + id;
 
-			str8 enum_name = push_str8_from_parts(&m->scratch, str8(""), str8(META_NAMESPACE_UPPER),
+			str8 enum_name = push_str8_from_parts(m->scratch, str8(""), str8(META_NAMESPACE_UPPER),
 			                                      ctx->entity_names.data[id]);
-			metagen_push_c_enum(m, m->scratch, enum_name, enums[it].flags, e->table.entries[0], e->table.entry_count);
-			m->scratch = ctx->scratch;
+			metagen_push_c_enum(m, enum_name, enums[it].flags, e->table.entries[0], e->table.entry_count);
 		}
 	}
+
+	arena_clear(m->scratch);
 
 	// TODO(rnp): technically this needs to be namespaced to the file they are coming from
 	if (ctx->entity_kind_counts[MetaEntityKind_Shader]) {
@@ -3934,8 +4000,8 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		meta_push_line(m, kind_full, str8("Count,\n"));
 
 		str8 *columns[2];
-		columns[0] = push_array(&m->scratch, str8, ctx->entity_kind_counts[MetaEntityKind_ShaderGroup] * 3);
-		columns[1] = push_array(&m->scratch, str8, ctx->entity_kind_counts[MetaEntityKind_ShaderGroup] * 3);
+		columns[0] = push_array(m->scratch, str8, ctx->entity_kind_counts[MetaEntityKind_ShaderGroup] * 3);
+		columns[1] = push_array(m->scratch, str8, ctx->entity_kind_counts[MetaEntityKind_ShaderGroup] * 3);
 
 		u32 rows = 0;
 		for (da_count group = 0; group < ctx->entity_kind_counts[MetaEntityKind_ShaderGroup]; group++) {
@@ -3950,26 +4016,27 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 				str8 first_name = ctx->entity_names.data[ctx->entities.data[child.value].previous_sibling.value];
 				str8 last_name  = ctx->entity_names.data[child.value];
 
-				columns[0][3 * group + 0] = push_str8_from_parts(&m->scratch, str8(""), kind, str8("_"), name, str8("First"));
-				columns[1][3 * group + 0] = push_str8_from_parts(&m->scratch, str8(""), str8("= "), kind, str8("_"), first_name);
+				columns[0][3 * group + 0] = push_str8_from_parts(m->scratch, str8(""), kind, str8("_"), name, str8("First"));
+				columns[1][3 * group + 0] = push_str8_from_parts(m->scratch, str8(""), str8("= "), kind, str8("_"), first_name);
 
-				columns[0][3 * group + 1] = push_str8_from_parts(&m->scratch, str8(""), kind, str8("_"), name, str8("Last"));
-				columns[1][3 * group + 1] = push_str8_from_parts(&m->scratch, str8(""),str8("= "), kind, str8("_"), last_name);
+				columns[0][3 * group + 1] = push_str8_from_parts(m->scratch, str8(""), kind, str8("_"), name, str8("Last"));
+				columns[1][3 * group + 1] = push_str8_from_parts(m->scratch, str8(""),str8("= "), kind, str8("_"), last_name);
 
-				columns[0][3 * group + 2] = push_str8_from_parts(&m->scratch, str8(""), kind, str8("_"), name, str8("Count"));
+				columns[0][3 * group + 2] = push_str8_from_parts(m->scratch, str8(""), kind, str8("_"), name, str8("Count"));
 				Stream sb = arena_stream(m->scratch);
 				stream_append_str8(&sb, str8("= "));
 				stream_append_i64(&sb, shader_count);
-				columns[1][3 * group + 2] = arena_stream_commit(&m->scratch, &sb);
+				columns[1][3 * group + 2] = arena_stream_commit(m->scratch, &sb);
 
 				rows += 3;
 			}
 		}
-		metagen_push_table(m, m->scratch, str8(""), str8(","), columns, rows, 2);
+		metagen_push_table(m, str8(""), str8(","), columns, rows, 2);
 
 		meta_end_scope(m, str8("} "), kind, str8(";\n"));
-		m->scratch = ctx->scratch;
 	}
+
+	arena_clear(m->scratch);
 
 	//////////////////////
 	// NOTE(rnp): structs
@@ -4000,25 +4067,23 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	DeferLoop(meta_begin_scope(m, str8("typedef union {")),
 	          meta_end_scope(m, str8("} " META_NAMESPACE_UPPER "ShaderBakeParameters;\n")))
 	{
-		Arena scratch;
-		DeferLoop(scratch = m->scratch, m->scratch = scratch)
-		{
-			str8 *columns[2];
-			columns[0] = push_array(&m->scratch, str8, ctx->entity_kind_counts[MetaEntityKind_BakeParameters]);
-			columns[1] = push_array(&m->scratch, str8, ctx->entity_kind_counts[MetaEntityKind_BakeParameters]);
+		str8 *columns[2];
+		columns[0] = push_array(m->scratch, str8, ctx->entity_kind_counts[MetaEntityKind_BakeParameters]);
+		columns[1] = push_array(m->scratch, str8, ctx->entity_kind_counts[MetaEntityKind_BakeParameters]);
 
-			for (da_count bake = 0; bake < ctx->entity_kind_counts[MetaEntityKind_BakeParameters]; bake++) {
-				da_count id = ctx->entity_kind_ids[MetaEntityKind_BakeParameters][bake];
+		for (da_count bake = 0; bake < ctx->entity_kind_counts[MetaEntityKind_BakeParameters]; bake++) {
+			da_count id = ctx->entity_kind_ids[MetaEntityKind_BakeParameters][bake];
 
-				str8 bake_name   = ctx->entity_names.data[id];
-				str8 shader_name = {.data = bake_name.data, .length = bake_name.length - str8("BakeParameters").length};
+			str8 bake_name   = ctx->entity_names.data[id];
+			str8 shader_name = {.data = bake_name.data, .length = bake_name.length - str8("BakeParameters").length};
 
-				columns[0][bake] = push_str8_from_parts(&m->scratch, str8(""), str8(META_NAMESPACE_UPPER), bake_name);
-				columns[1][bake] = shader_name;
-			}
-			metagen_push_table(m, m->scratch, str8(""), str8(";"), columns,
-			                   ctx->entity_kind_counts[MetaEntityKind_BakeParameters], 2);
+			columns[0][bake] = push_str8_from_parts(m->scratch, str8(""), str8(META_NAMESPACE_UPPER), bake_name);
+			columns[1][bake] = shader_name;
 		}
+		metagen_push_table(m, str8(""), str8(";"), columns,
+		                   ctx->entity_kind_counts[MetaEntityKind_BakeParameters], 2);
+
+		arena_clear(m->scratch);
 	}
 
 	metagen_run_emit_set(m, ctx, ctx->emit_sets + MetaEmitLang_C, meta_kind_c_types);
@@ -4035,7 +4100,6 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 		                                        ctx->entity_kind_counts[MetaEntityKind_BakeParameters]);
 		meta_push_line(m, kind_full, str8("Count,"));
 	}
-	m->scratch = ctx->scratch;
 
 	// TODO(rnp): we may want this to include more than just the bake structs
 	if (ctx->base_shader_count)
@@ -4048,7 +4112,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 
 			str8 *columns[4];
 			for EachElement(columns, it)
-				columns[it] = push_array(&m->scratch, str8, s->info.member_count);
+				columns[it] = push_array(m->scratch, str8, s->info.member_count);
 
 			u32 offset = 0;
 			for EachIndex((u64)s->info.member_count, member) {
@@ -4057,13 +4121,13 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 
 				Stream sb = arena_stream(m->scratch);
 				stream_append_u64(&sb, s->type_ids[member]); stream_append_byte(&sb, ',');
-				columns[0][member] = arena_stream_commit_and_reset(&m->scratch, &sb);
+				columns[0][member] = arena_stream_commit_and_reset(m->scratch, &sb);
 
 				stream_append_u64(&sb, offset); stream_append_byte(&sb, ',');
-				columns[1][member] = arena_stream_commit_and_reset(&m->scratch, &sb);
+				columns[1][member] = arena_stream_commit_and_reset(m->scratch, &sb);
 
 				stream_append_u64(&sb, s->elements[member]); stream_append_byte(&sb, ',');
-				columns[2][member] = arena_stream_commit_and_reset(&m->scratch, &sb);
+				columns[2][member] = arena_stream_commit_and_reset(m->scratch, &sb);
 
 				columns[3][member] = str8("0"); // TODO(rnp): reference type flag
 
@@ -4071,8 +4135,9 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 			}
 
 			DeferLoop(meta_begin_scope(m, str8("(MetaStructMember []){")), meta_end_scope(m, str8("},")))
-				metagen_push_table(m, m->scratch, str8("{"), str8("},"), columns, s->info.member_count, countof(columns));
-			m->scratch = ctx->scratch;
+				metagen_push_table(m, str8("{"), str8("},"), columns, s->info.member_count, countof(columns));
+
+			arena_clear(m->scratch);
 		}
 	}
 
@@ -4096,28 +4161,29 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 	{
 		str8 *columns[4];
 		for EachElement(columns, it)
-			columns[it] = push_array(&m->scratch, str8, ctx->entity_kind_counts[MetaEntityKind_BakeParameters]);
+			columns[it] = push_array(m->scratch, str8, ctx->entity_kind_counts[MetaEntityKind_BakeParameters]);
 
 		for EachIndex((u64)ctx->entity_kind_counts[MetaEntityKind_BakeParameters], id) {
 			da_count entity = ctx->entity_kind_ids[MetaEntityKind_BakeParameters][id];
 			MetaTable  *t = &ctx->entities.data[entity].table;
 			MetaStruct *s = ctx->struct_infos + t->struct_info_id;
 
-			columns[0][id] = push_str8_from_parts(&m->scratch, str8(""), ctx->entity_names.data[entity], str8("\"),"));
+			columns[0][id] = push_str8_from_parts(m->scratch, str8(""), ctx->entity_names.data[entity], str8("\"),"));
 
 			Stream sb = arena_stream(m->scratch);
 			stream_append_u64(&sb, s->info.member_count); stream_append_byte(&sb, ',');
-			columns[1][id] = arena_stream_commit_and_reset(&m->scratch, &sb);
+			columns[1][id] = arena_stream_commit_and_reset(m->scratch, &sb);
 
 			stream_append_u64(&sb, s->info.size); stream_append_byte(&sb, ',');
-			columns[2][id] = arena_stream_commit_and_reset(&m->scratch, &sb);
+			columns[2][id] = arena_stream_commit_and_reset(m->scratch, &sb);
 
 			columns[3][id] = str8("0"); // TODO(rnp): union flags
 		}
 
-		metagen_push_table(m, m->scratch, str8("{str8_comp(\""), str8("},"), columns,
+		metagen_push_table(m, str8("{str8_comp(\""), str8("},"), columns,
 		                   ctx->entity_kind_counts[MetaEntityKind_BakeParameters], countof(columns));
-		m->scratch = ctx->scratch;
+
+		arena_clear(m->scratch);
 	}
 
 	/////////////////////////////////
@@ -4235,6 +4301,8 @@ metagen_emit_c_code(MetaContext *ctx, Arena arena)
 
 	result = meta_write_and_reset(m, out);
 
+	arena_clear(m->scratch);
+
 	return result;
 }
 
@@ -4243,10 +4311,10 @@ metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaStruct *u, str
 {
 	b32 result = 1;
 
-	Arena scratch;
-	DeferLoop(scratch = m->scratch, m->scratch = scratch)
+	Temp scratch;
+	DeferLoop(scratch = temp_begin(m->scratch), temp_end(scratch))
 	{
-		str8 outfile = push_str8_from_parts(&m->scratch, str8(OS_PATH_SEPARATOR), outdir, str8("Base.m"));
+		str8 outfile = push_str8_from_parts(m->scratch, str8(OS_PATH_SEPARATOR), outdir, str8("Base.m"));
 		meta_begin_scope(m, str8("classdef Base"));
 		{
 			meta_begin_scope(m, str8("properties (Constant)"));
@@ -4272,11 +4340,11 @@ metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaStruct *u, str
 			break;
 		}
 
-		DeferLoop(scratch = m->scratch, m->scratch = scratch)
+		DeferLoop(scratch = temp_begin(m->scratch), temp_end(scratch))
 		{
 			MetaStruct *s = ctx->struct_infos + ctx->entities.data[u->type_ids[union_member]].table.struct_info_id;
 			str8 sub_name = u->members[union_member];
-			str8 outfile  = push_str8_from_parts(&m->scratch, str8(""), outdir, str8(OS_PATH_SEPARATOR), sub_name, str8(".m"));
+			str8 outfile  = push_str8_from_parts(m->scratch, str8(""), outdir, str8(OS_PATH_SEPARATOR), sub_name, str8(".m"));
 			DeferLoop(meta_begin_scope(m, str8("classdef "), sub_name, str8(" < " MATLAB_NAMESPACE META_NAMESPACE_UPPER),
 			                           namespace, str8(".Base")),
 			          meta_end_scope(m, str8("end")))
@@ -4297,9 +4365,9 @@ metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaStruct *u, str
 						meta_push_line(m, str8("bytes = zeros(1, obj.byteSize, 'uint8');"));
 
 						str8 *columns[3];
-						columns[0] = push_array(&m->scratch, str8, s->info.member_count);
-						columns[1] = push_array(&m->scratch, str8, s->info.member_count);
-						columns[2] = push_array(&m->scratch, str8, s->info.member_count);
+						columns[0] = push_array(m->scratch, str8, s->info.member_count);
+						columns[1] = push_array(m->scratch, str8, s->info.member_count);
+						columns[2] = push_array(m->scratch, str8, s->info.member_count);
 
 						u32 offset = 1;
 						for EachIndex(s->info.member_count, member) {
@@ -4332,7 +4400,7 @@ metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaStruct *u, str
 							stream_append_byte(&sb, ')');
 							offset += member_size;
 
-							columns[0][member] = arena_stream_commit_and_reset(&m->scratch, &sb);
+							columns[0][member] = arena_stream_commit_and_reset(m->scratch, &sb);
 
 							stream_append_str8s(&sb, str8("= typecast(obj."), s->members[member]);
 							if (s->member_flags[member] & MetaStructMemberFlag_ReferenceType) {
@@ -4349,11 +4417,11 @@ metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaStruct *u, str
 							}
 							stream_append_byte(&sb, ',');
 
-							columns[1][member] = arena_stream_commit_and_reset(&m->scratch, &sb);
+							columns[1][member] = arena_stream_commit_and_reset(m->scratch, &sb);
 							columns[2][member] = str8("'uint8');");
 						}
 
-						metagen_push_table(m, m->scratch, str8("bytes("), str8(""), columns, s->info.member_count, 3);
+						metagen_push_table(m, str8("bytes("), str8(""), columns, s->info.member_count, 3);
 					}
 				}
 			}
@@ -4365,7 +4433,7 @@ metagen_matlab_union(MetaprogramContext *m, MetaContext *ctx, MetaStruct *u, str
 }
 
 function b32
-metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
+metagen_emit_matlab_code(MetaContext *ctx, Arena *arena)
 {
 	b32 result = 1;
 	if (!needs_rebuild(OUTPUT("matlab/OGLBeamformerShaderStage.m"), "beamformer.meta"))
@@ -4386,6 +4454,8 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 
 	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
 
+	arena_clear(m->scratch);
+
 	meta_begin_matlab_class(m, "OGLBeamformerShaderStage", "int32");
 	meta_begin_scope(m, str8("enumeration"));
 	{
@@ -4401,12 +4471,12 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 		if (group_id != -1) {
 			da_count children;
 			da_count *ids = meta_entity_extract_children(ctx, (MetaEntityID){.value = group_id},
-			                                             &children, &m->scratch);
+			                                             &children, m->scratch);
 			if (children > 0) {
 				metagen_push_counted_enum_body_from_ids(m, str8(""), str8(""), str8("("), str8(")"), ids,
 				                                        ctx->entity_names.data, children);
 			}
-			m->scratch = ctx->scratch;
+			arena_clear(m->scratch);
 		} else {
 			build_log_failure("failed to find Compute shader group in meta info\n");
 		}
@@ -4415,10 +4485,9 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 	result &= meta_end_and_write_matlab(m, OUTPUT("matlab/OGLBeamformerShaderStage.m"));
 
 	for (da_count kind = 0; kind < ctx->entity_kind_counts[MetaEntityKind_Enumeration]; kind++) {
-		Arena scratch = ctx->scratch;
 		da_count id = ctx->entity_kind_ids[MetaEntityKind_Enumeration][kind];
 		str8 name   = ctx->entity_names.data[id];
-		str8 output = push_str8_from_parts(&scratch, str8(""), str8(OUTPUT("matlab/OGLBeamformer")), name, str8(".m"));
+		str8 output = push_str8_from_parts(m->scratch, str8(""), str8(OUTPUT("matlab/OGLBeamformer")), name, str8(".m"));
 
 		MetaTable *etable = &ctx->entities.data[id].table;
 		str8 *kinds = etable->entries[0];
@@ -4428,6 +4497,8 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 		if (etable->entry_count > 0 && IsDigit(kinds[0].data[0])) prefix = str8("m");
 		metagen_push_counted_enum_body(m, str8(""), prefix, str8("("), str8(")"), kinds, etable->entry_count);
 		result &= meta_end_and_write_matlab(m, (c8 *)output.data);
+
+		arena_clear(m->scratch);
 	}
 
 	////////////////////
@@ -4436,14 +4507,14 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 		MetaEmitOperationListSet *emit_set = ctx->emit_sets + MetaEmitLang_MATLAB;
 		for (da_count list = 0; list < emit_set->count; list++) {
 			MetaEmitOperationList *ops = emit_set->data + list;
-			Arena scratch = m->scratch;
-			str8 output = push_str8_from_parts(&m->scratch, str8(""),
+			str8 output = push_str8_from_parts(m->scratch, str8(""),
 			                                   str8(OUTPUT("matlab") OS_PATH_SEPARATOR "OGLBeamformer"),
 			                                   ops->filename, str8(".m"));
 			meta_push_line(m, str8("% GENERATED CODE"));
 			metagen_run_emit(m, ctx, ops, meta_kind_matlab_types);
 			result &= meta_write_and_reset(m, (c8 *)output.data);
-			m->scratch = scratch;
+
+			arena_clear(m->scratch);
 		}
 	}
 
@@ -4451,7 +4522,7 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 	// NOTE(rnp): entities marked @MATLAB
 	{
 		da_count  children;
-		da_count *ids = meta_entity_extract_children(ctx, ctx->matlab_entity, &children, &m->scratch);
+		da_count *ids = meta_entity_extract_children(ctx, ctx->matlab_entity, &children, m->scratch);
 
 		for EachIndex((u64)children, it) {
 			MetaEntity *rr  = ctx->entities.data + ids[it];
@@ -4461,11 +4532,12 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 			switch (re->kind) {
 			InvalidDefaultCase;
 			case MetaEntityKind_Union:{
-				Arena scratch;
-				DeferLoop(scratch = m->scratch, m->scratch = scratch) {
+				Temp scratch;
+				DeferLoop(scratch = temp_begin(m->scratch), temp_end(scratch))
+				{
 					MetaStruct *s = ctx->struct_infos + re->table.struct_info_id;
 					str8 name   = (rr->reference.scope_name.length > 0) ? rr->reference.scope_name : s->info.name;
-					str8 outdir = push_str8_from_parts(&m->scratch, str8(""), str8(OUTPUT("matlab") OS_PATH_SEPARATOR),
+					str8 outdir = push_str8_from_parts(m->scratch, str8(""), str8(OUTPUT("matlab") OS_PATH_SEPARATOR),
 					                                   str8("+" MATLAB_NAMESPACE META_NAMESPACE_UPPER), name);
 					os_make_directory((c8 *)outdir.data);
 					result &= metagen_matlab_union(m, ctx, s, outdir, name);
@@ -4475,7 +4547,7 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 			case MetaEntityKind_Struct:{
 				MetaStruct *s = ctx->struct_infos + re->table.struct_info_id;
 				str8 name    = (rr->reference.scope_name.length > 0) ? rr->reference.scope_name : s->info.name;
-				str8 outfile = push_str8_from_parts(&m->scratch, str8(""), str8(OUTPUT("matlab") OS_PATH_SEPARATOR),
+				str8 outfile = push_str8_from_parts(m->scratch, str8(""), str8(OUTPUT("matlab") OS_PATH_SEPARATOR),
 				                                    str8(MATLAB_NAMESPACE META_NAMESPACE_UPPER), name, str8(".m"));
 				meta_begin_scope(m, str8("classdef " MATLAB_NAMESPACE META_NAMESPACE_UPPER), name);
 				{
@@ -4486,8 +4558,9 @@ metagen_emit_matlab_code(MetaContext *ctx, Arena arena)
 
 			}
 		}
-		m->scratch = ctx->scratch;
 	}
+
+	arena_clear(m->scratch);
 
 	return result;
 }
@@ -4509,8 +4582,8 @@ meta_push_helper_library_header_base(MetaprogramContext *m, MetaContext *ctx)
 		}
 
 		str8 *columns[2];
-		columns[0] = push_array(&m->scratch, str8, integers);
-		columns[1] = push_array(&m->scratch, str8, integers);
+		columns[0] = push_array(m->scratch, str8, integers);
+		columns[1] = push_array(m->scratch, str8, integers);
 
 		u32 row_count = 0;
 		meta_push_line(m, str8("// NOTE: Constants (Integer)"));
@@ -4522,13 +4595,15 @@ meta_push_helper_library_header_base(MetaprogramContext *m, MetaContext *ctx)
 				stream_append_str8(&sb, str8("("));
 				stream_append_u64(&sb, e->constant.U64);
 				columns[0][row_count] = ctx->entity_names.data[id];
-				columns[1][row_count] = arena_stream_commit(&m->scratch, &sb);
+				columns[1][row_count] = arena_stream_commit(m->scratch, &sb);
 				row_count++;
 			}
 		}
-		metagen_push_table(m, m->scratch, str8("#define " META_NAMESPACE_UPPER), str8(")"), columns, row_count, 2);
+		metagen_push_table(m, str8("#define " META_NAMESPACE_UPPER), str8(")"), columns, row_count, 2);
 		meta_push(m, str8("\n"));
 	}
+
+	arena_clear(m->scratch);
 
 	/////////////////////////
 	// NOTE(rnp): enumerants
@@ -4536,10 +4611,11 @@ meta_push_helper_library_header_base(MetaprogramContext *m, MetaContext *ctx)
 		da_count    id = ctx->entity_kind_ids[MetaEntityKind_Enumeration][kind];
 		MetaEntity *e  = ctx->entities.data + id;
 
-		str8 enum_name = push_str8_from_parts(&m->scratch, str8(""), str8(META_NAMESPACE_UPPER),
+		str8 enum_name = push_str8_from_parts(m->scratch, str8(""), str8(META_NAMESPACE_UPPER),
 		                                      ctx->entity_names.data[id]);
-		metagen_push_c_enum(m, m->scratch, enum_name, 0, e->table.entries[0], e->table.entry_count);
-		m->scratch = ctx->scratch;
+		metagen_push_c_enum(m, enum_name, 0, e->table.entries[0], e->table.entry_count);
+
+		arena_clear(m->scratch);
 	}
 
 	{
@@ -4556,7 +4632,7 @@ meta_push_helper_library_header_base(MetaprogramContext *m, MetaContext *ctx)
 		if (group_id != -1) {
 			da_count children;
 			da_count *ids = meta_entity_extract_children(ctx, (MetaEntityID){.value = group_id},
-			                                             &children, &m->scratch);
+			                                             &children, m->scratch);
 			if (children > 0) {
 				str8 kind      = str8(META_NAMESPACE_UPPER "ShaderKind");
 				str8 kind_full = str8(META_NAMESPACE_UPPER "ShaderKind_");
@@ -4567,13 +4643,12 @@ meta_push_helper_library_header_base(MetaprogramContext *m, MetaContext *ctx)
 					meta_push_line(m, kind_full, str8("Count,"));
 				} meta_end_scope(m, str8("} "), kind, str8(";\n"));
 
-				m->scratch = ctx->scratch;
-
 				meta_begin_line(m, str8("#define "), kind_full, str8("ComputeCount ("));
 				meta_push_i64(m, children);
 				meta_end_line(m, str8(")\n"));
 			}
-			m->scratch = ctx->scratch;
+
+			arena_clear(m->scratch);
 		} else {
 			build_log_failure("failed to find Compute shader group in meta info\n");
 		}
@@ -4596,7 +4671,7 @@ meta_entity_resolve_references(MetaContext *ctx, da_count *ids, u64 id_count)
 }
 
 function b32
-metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
+metagen_emit_helper_library_header(MetaContext *ctx, Arena *arena)
 {
 	b32 result = 1;
 	char *out = OUTPUT("ogl_beamformer_lib.h");
@@ -4605,16 +4680,18 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 
 	build_log_generate("Library Header");
 
-	str8 base_header = read_entire_file("lib/ogl_beamformer_lib_base.h", &arena);
+	str8 base_header = read_entire_file("lib/ogl_beamformer_lib_base.h", arena);
 
 	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
 
 	meta_push_helper_library_header_base(m, ctx);
+
+	arena_clear(m->scratch);
 	/////////////////////////
 	// NOTE(rnp): entities marked @Library
 	{
 		da_count  children;
-		da_count *ids = meta_entity_extract_children(ctx, ctx->library_entity, &children, &m->scratch);
+		da_count *ids = meta_entity_extract_children(ctx, ctx->library_entity, &children, m->scratch);
 
 		meta_entity_resolve_references(ctx, ids, children);
 
@@ -4642,7 +4719,8 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 
 			}
 		}
-		m->scratch = ctx->scratch;
+
+		arena_clear(m->scratch);
 	}
 
 	metagen_run_emit_set(m, ctx, ctx->emit_sets + MetaEmitLang_CLibrary, meta_kind_base_c_types);
@@ -4659,7 +4737,7 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 		// NOTE(rnp): entities marked @Library
 		{
 			da_count  children;
-			da_count *ids = meta_entity_extract_children(ctx, ctx->library_entity, &children, &m->scratch);
+			da_count *ids = meta_entity_extract_children(ctx, ctx->library_entity, &children, m->scratch);
 
 			meta_entity_resolve_references(ctx, ids, children);
 
@@ -4684,8 +4762,9 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 				case MetaEntityKind_Union:{}break;
 				}
 			}
-			m->scratch = ctx->scratch;
 		}
+
+		arena_clear(m->scratch);
 
 		metagen_run_emit_set(m, ctx, ctx->emit_sets + MetaEmitLang_CLibrary, meta_kind_base_c_types);
 
@@ -4695,11 +4774,11 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena arena)
 		result &= meta_write_and_reset(m, OUTPUT("ogl_beamformer_lib_matlab.h"));
 	}
 
-	{
-		CommandList cpp = {0};
-		cmd_append(&arena, &cpp, PREPROCESSOR, out, COMPILER_OUTPUT, OUTPUT("ogl_beamformer_lib_python_ffi.h"));
-		result &= run_synchronous(arena, &cpp);
-	}
+	CommandList cpp = {0};
+	cmd_append(m->scratch, &cpp, PREPROCESSOR, out, COMPILER_OUTPUT, OUTPUT("ogl_beamformer_lib_python_ffi.h"));
+	result &= run_synchronous(m->scratch, &cpp);
+
+	arena_clear(m->scratch);
 
 	return result;
 }
@@ -4713,7 +4792,7 @@ metagen_load_context(Arena *arena, char *filename)
 	}
 
 	MetaContext *ctx = push_struct(arena, MetaContext);
-	ctx->scratch     = sub_arena(arena, MB(1), 16);
+	ctx->scratch     = arena_create(.commit_size = MB(1));
 	ctx->arena       = arena;
 
 	// NOTE(rnp): nil entity
@@ -4732,7 +4811,6 @@ metagen_load_context(Arena *arena, char *filename)
 		                                     str8(OS_PATH_SEPARATOR), ctx->filename);
 	}
 
-	Arena scratch = ctx->scratch;
 	MetaEntryStack entries = meta_entry_stack_from_file(ctx->arena, filename);
 
 	for (i64 i = 0; i < entries.count; i++) {
@@ -4744,15 +4822,15 @@ metagen_load_context(Arena *arena, char *filename)
 		}break;
 
 		case MetaEntryKind_Emit:{
-			i += meta_pack_emit(ctx, scratch, e, entries.count - i);
+			i += meta_pack_emit(ctx, e, entries.count - i);
 		}break;
 
 		case MetaEntryKind_Embed:{
-			meta_embed(ctx, scratch, e, entries.count - i);
+			meta_embed(ctx, e, entries.count - i);
 		}break;
 
 		case MetaEntryKind_Expand:{
-			i += meta_expand(ctx, scratch, e, entries.count - i, 0);
+			i += meta_expand(ctx, e, entries.count - i, 0);
 		}break;
 
 		case MetaEntryKind_Library:
@@ -5063,14 +5141,15 @@ metagen_load_context(Arena *arena, char *filename)
 		}
 	}
 
+	arena_clear(ctx->scratch);
 	result->arena = 0;
 	return result;
 }
 
 function b32
-metagen_file_direct(Arena arena, char *filename)
+metagen_file_direct(Arena *arena, char *filename)
 {
-	MetaContext *ctx = metagen_load_context(&arena, filename);
+	MetaContext *ctx = metagen_load_context(arena, filename);
 	b32 result = ctx && metagen_emit_c_code(ctx, arena);
 	return result;
 }
@@ -5082,20 +5161,31 @@ main(i32 argc, char *argv[])
 	g_argv0 = argv[0];
 
 	b32 result  = 1;
-	Arena arena = os_alloc_arena(MB(8));
+	Arena *arena = arena_create(.commit_size = MB(8));
+
 	check_rebuild_self(arena, argc, argv);
+	arena_clear(arena);
 
 	os_make_directory(OUTDIR);
 
 	result &= metagen_file_direct(arena, "assets" OS_PATH_SEPARATOR "assets.meta");
-	result &= metagen_file_direct(arena, "beamformer_core.meta");
+	arena_clear(arena);
 
-	MetaContext *meta = metagen_load_context(&arena, "beamformer.meta");
+	result &= metagen_file_direct(arena, "beamformer_core.meta");
+	arena_clear(arena);
+
+	MetaContext *meta = metagen_load_context(arena, "beamformer.meta");
 	if (!meta) return 1;
 
-	result &= metagen_emit_c_code(meta, arena);
-	result &= metagen_emit_helper_library_header(meta, arena);
-	result &= metagen_emit_matlab_code(meta, arena);
+	Temp scratch;
+	DeferLoop(scratch = temp_begin(arena), temp_end(scratch))
+		result &= metagen_emit_c_code(meta, arena);
+	DeferLoop(scratch = temp_begin(arena), temp_end(scratch))
+		result &= metagen_emit_helper_library_header(meta, arena);
+	DeferLoop(scratch = temp_begin(arena), temp_end(scratch))
+		result &= metagen_emit_matlab_code(meta, arena);
+
+	arena_clear(arena);
 
 	parse_config(argc, argv);
 

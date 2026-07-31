@@ -348,8 +348,8 @@ struct V4Node {V4Node *next; v4 v;};
 
 
 typedef struct {
-	u64   current_frame_index;
-	Arena arena;
+	u64    current_frame_index;
+	Arena *arena;
 
 	v2    current_mouse;
 	v2    last_mouse;
@@ -414,8 +414,7 @@ typedef struct {
 	// NOTE(rnp): Builder State
 	UINode          *node_freelist;
 	UINode          *root_node;
-	Arena            build_arenas[2];
-	TempArena        build_arena_savepoints[2];
+	Arena           *build_arenas[2];
 	// NOTE(rnp): Builder Stacks
 	#define X(type, name, ...) struct {type *top; type *free; u64 count;} name##_node_stack;
 	UI_STACK_LIST
@@ -466,7 +465,7 @@ UI_STACK_LIST
 #undef X
 
 #define ui_node_is_nil(n) ((n) == 0 || (n) == &ui_node_nil)
-#define ui_build_arena()  (ui_context->build_arenas + (ui_context->current_frame_index % countof(ui_context->build_arenas)))
+#define ui_build_arena()  (ui_context->build_arenas[(ui_context->current_frame_index % countof(ui_context->build_arenas))])
 
 #define UIStackPushBody(name_upper, name_lower, type, new_value) \
 	name_upper *node = SLLPop(ui_context->name_lower##_node_stack.free, next); \
@@ -772,7 +771,7 @@ push_acquisition_kind(Arena *arena, BeamformerAcquisitionKind kind, u32 transmit
 		fixed_transmits = beamformer_acquisition_kind_has_fixed_transmits[kind];
 	}
 
-	Stream sb = arena_stream(*arena);
+	Stream sb = arena_stream(arena);
 	stream_append_str8(&sb, name);
 	if (!fixed_transmits) {
 		stream_append_byte(&sb, '-');
@@ -871,7 +870,7 @@ beamformer_ui_frame_view_new(BeamformerFrameViewKind kind)
 {
 	BeamformerFrameView *old    = (BeamformerFrameView *)beamformer_registers()->frame_view;
 	BeamformerFrameView *result = SLLPopFreelist(ui_context->view_freelist);
-	if (!result) result = push_struct_no_zero(&ui_context->arena, typeof(*result));
+	if (!result) result = push_struct_no_zero(ui_context->arena, typeof(*result));
 	zero_struct(result);
 	DLLInsertLast(0, ui_context->view_first, ui_context->view_last, result, next, prev);
 
@@ -1309,7 +1308,7 @@ world_point_to_screen_2d(v2 p, v2 world_min, v2 world_max, v2 screen_min, v2 scr
 }
 
 function void
-draw_view_ruler(BeamformerFrameView *view, Arena a, Rect view_rect, TextSpec ts)
+draw_view_ruler(BeamformerFrameView *view, Rect view_rect, TextSpec ts)
 {
 	// TODO(rnp): merge this into draw function, tons of duplicate code
 	v2 vr_max_p = v2_add(view_rect.pos, view_rect.size);
@@ -1340,7 +1339,7 @@ draw_view_ruler(BeamformerFrameView *view, Arena a, Rect view_rect, TextSpec ts)
 	if (start_in_bounds) DrawCircleV(rl_v2(start_p), 3, rl_colour);
 	if (end_in_bounds)   DrawCircleV(rl_v2(end_p),   3, rl_colour);
 
-	Stream buf = arena_stream(a);
+	Stream buf = arena_stream(ui_build_arena());
 	stream_append_f64(&buf, 1e3 * v3_magnitude(v3_sub(end, view->ruler.start)), 100);
 	stream_append_str8(&buf, str8(" mm"));
 
@@ -1569,8 +1568,7 @@ ui_text_input_update(BeamformerInput *input)
 {
 	UITextInputState *tis = &ui_context->text_input_state;
 
-	Arena  scratch = *ui_build_arena();
-	Stream sb = arena_stream(scratch);
+	Stream sb = arena_stream(ui_build_arena());
 
 	enum {
 		DeltaPicksSide  = (1 << 0),
@@ -1971,7 +1969,7 @@ ui_build_node_from_key(UINodeFlags flags, UINodeKey key)
 		if (!ui_node_is_nil(result)) {
 			SLLStackPop(ui_context->node_freelist, next_sibling);
 		} else {
-			result = push_struct_no_zero(transient ? ui_build_arena() : &ui_context->arena, UINode);
+			result = push_struct_no_zero(transient ? ui_build_arena() : ui_context->arena, UINode);
 		}
 		zero_struct(result);
 	}
@@ -2268,7 +2266,7 @@ function UI_CUSTOM_DRAW_FUNCTION(beamformer_custom_draw_frame_view)
 	                      .colour = RULER_COLOUR, .outline_thick = 1, .outline_colour.a = 1,
 	                      .limits.size.x = node_rect.size.w};
 	if (view->kind != BeamformerFrameViewKind_3DXPlane && view->ruler.state != RulerState_None)
-		draw_view_ruler(view, *ui_build_arena(), node_rect, text_spec);
+		draw_view_ruler(view, node_rect, text_spec);
 }
 
 function b32
@@ -2504,7 +2502,7 @@ function UI_CUSTOM_DRAW_FUNCTION(ui_custom_draw_scale_bar)
 	rlTranslatef(start_point.x, start_point.y, 0);
 	rlRotatef(atan2_f32(end_point.y, end_point.x) * 180 / PI, 0, 0, 1);
 
-	Stream buf = arena_stream(*ui_build_arena());
+	Stream buf = arena_stream(ui_build_arena());
 	f32 inc       = v2_magnitude(end_point) / (f32)info->segments;
 	f32 value_inc = (info->end_value - info->start_value) / (f32)info->segments;
 	f32 value     = info->start_value;
@@ -3188,7 +3186,7 @@ function UI_CUSTOM_DRAW_FUNCTION(beamformer_ui_custom_draw_compute_bar_graph)
 			if (point_in_rect(ui_context->last_mouse, rect)) {
 				// TODO(rnp): tooltips
 				text_pos  = v2_add(rect.pos, (v2){{UI_NODE_PAD, 3.f}});
-				Stream sb = arena_stream(*ui_build_arena());
+				Stream sb = arena_stream(ui_build_arena());
 				stream_append_str8s(&sb, beamformer_shader_names[stats->table.shader_ids[i]], str8(": "));
 				stream_append_f64_e(&sb, stats->table.times[frame_index][i]);
 				mouse_text = arena_stream_commit(ui_build_arena(), &sb);
@@ -3323,7 +3321,7 @@ ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t, Beamforme
 									MetaStructInfo   *si    = meta_struct_info_by_id + struct_id;
 									MetaStructMember *sm    = meta_struct_members_by_id[struct_id];
 									for EachIndex(si->member_count, member) {
-										Stream sb = arena_stream(*ui_build_arena());
+										Stream sb = arena_stream(ui_build_arena());
 										stream_append_struct_member(&sb, sm + member, &sd->bake);
 										stream_append_str8s(&sb, str8("##"), names[member]);
 										UIParent(left)  ui_label(names[member]);
@@ -3799,7 +3797,7 @@ ui_build_live_imaging_controls(BeamformerUIPanel *panel)
 function UISignal
 ui_panel_label(BeamformerUIPanel *panel)
 {
-	Stream sb = arena_stream(*ui_build_arena());
+	Stream sb = arena_stream(ui_build_arena());
 	switch (panel->kind) {
 	InvalidDefaultCase;
 	case BeamformerPanelKind_ComputeBarGraph:{stream_append_str8(&sb, str8("Compute Bar Graph"));}break;
@@ -4477,7 +4475,7 @@ ui_build_drag_overlay(Rect window_rect)
 				UIParent(ui_spacer(0))
 				{
 					// TODO(rnp): cleanup
-					Stream sb = arena_stream(*ui_build_arena());
+					Stream sb = arena_stream(ui_build_arena());
 					stream_appendf(&sb, "###%p_split", panel);
 					str8 tag = arena_stream_commit(ui_build_arena(), &sb);
 
@@ -4986,7 +4984,7 @@ beamformer_ui_push_panel_node(BeamformerUIPanel *parent)
 	BeamformerUI *ui = ui_context;
 	BeamformerUIPanel *result = ui->tree_node_freelist;
 	if (result) SLLStackPop(ui->tree_node_freelist, next_sibling);
-	else result = push_struct_no_zero(&ui->arena, BeamformerUIPanel);
+	else result = push_struct_no_zero(ui->arena, BeamformerUIPanel);
 	zero_struct(result);
 
 	result->parent = parent;
@@ -5034,17 +5032,15 @@ DEBUG_EXPORT BEAMFORMER_DEBUG_UI_DEINIT_FN(beamformer_debug_ui_deinit)
 }
 
 function void
-ui_init(BeamformerCtx *ctx, Arena store)
+ui_init(BeamformerCtx *ctx, Arena *store)
 {
 	BeamformerUI *ui = ui_context = ctx->ui;
 	if (!ui) {
-		ui = ui_context = ctx->ui = push_struct(&store, typeof(*ui));
+		ui = ui_context = ctx->ui = push_struct(store, typeof(*ui));
 		ui->arena = store;
 
-		for EachElement(ui->build_arenas, it) {
-			ui->build_arenas[it] = sub_arena(&ui->arena, KB(128), KB(4));
-			ui->build_arena_savepoints[it] = begin_temp_arena(ui->build_arenas + it);
-		}
+		for EachElement(ui->build_arenas, it)
+			ui->build_arenas[it] = arena_create();
 		ui->node_freelist = &ui_node_nil;
 
 		/* TODO(rnp): better font, this one is jank at small sizes */
@@ -5099,16 +5095,17 @@ ui_init(BeamformerCtx *ctx, Arena store)
 			for EachElement(beamformer_reloadable_render_shader_info_indices, it) {
 				i32 index = beamformer_reloadable_render_shader_info_indices[it];
 				for (u32 i = 0; i < 2; i++) {
-					BeamformerFileReloadContext *frc = push_struct(&ui->arena, typeof(*frc));
+					BeamformerFileReloadContext *frc = push_struct(ui->arena, typeof(*frc));
 					frc->kind                   = BeamformerFileReloadKind_RenderShader;
 					frc->shader_reload.shader   = beamformer_reloadable_shader_kinds[index];
 					frc->shader_reload.pipeline = ui->pipelines + it;
 
-					Arena scratch = ui->arena;
-					str8 file = push_str8_from_parts(&scratch, os_path_separator(), str8("shaders"),
+					Temp scratch = temp_begin(ui->arena);
+					str8 file = push_str8_from_parts(ui->arena, os_path_separator(), str8("shaders"),
 					                                 beamformer_reloadable_shader_files[index][i]);
 
 					os_add_file_watch((char *)file.data, file.length, frc);
+					temp_end(scratch);
 				}
 			}
 		}
@@ -5335,7 +5332,7 @@ beamformer_ui_frame(void)
 	{
 		////////////////////////////
 		// NOTE(rnp): Build Pass
-		end_temp_arena(ui->build_arena_savepoints[ui->current_frame_index % countof(ui->build_arenas)]);
+		arena_clear(ui_build_arena());
 		// NOTE(rnp): reset last frame's build stacks
 		{
 			#define X(type, name, ...) \

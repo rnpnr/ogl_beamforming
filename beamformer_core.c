@@ -75,7 +75,7 @@ global BeamformerCtx   *beamformer_context;
 global BeamformerInput *beamformer_input;
 global f32 dt_for_frame;
 
-#define beamformer_frame_arena() (beamformer_context->frame_arenas + beamformer_context->frame_index % countof(beamformer_context->frame_arenas))
+#define beamformer_frame_arena() (beamformer_context->frame_arenas[beamformer_context->frame_index % countof(beamformer_context->frame_arenas)])
 #define beamformer_registers() (&beamformer_context->registers->v)
 #define beamformer_push_registers(...) beamformer_push_registers_(&(BeamformerRegisters){beamformer_registers_init_literal __VA_ARGS__})
 #define BeamformerRegistersScope(...) DeferLoop(beamformer_push_registers(__VA_ARGS__), beamformer_pop_registers())
@@ -191,7 +191,7 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 
 		result->ui_voxel_transform = m4_identity();
 
-		Stream label = arena_stream(*arena);
+		Stream label = arena_stream(arena);
 		stream_append_str8(&label, str8("ComputeParameterArray["));
 		stream_append_u64(&label, block);
 		stream_append_str8(&label, str8("]"));
@@ -209,8 +209,9 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 }
 
 function void
-beamformer_filter_update(BeamformerFilter *f, BeamformerFilterParameters fp, u32 block, u32 slot, Arena arena)
+beamformer_filter_update(BeamformerFilter *f, BeamformerFilterParameters fp, u32 block, u32 slot, Arena *arena)
 {
+	Temp scratch = temp_begin(arena);
 	Stream sb = arena_stream(arena);
 	stream_append_str8s(&sb,
 	                    beamformer_filter_kind_strings[fp.kind % countof(beamformer_filter_kind_strings)],
@@ -219,14 +220,14 @@ beamformer_filter_update(BeamformerFilter *f, BeamformerFilterParameters fp, u32
 	stream_append_str8(&sb, str8("]["));
 	stream_append_u64(&sb, slot);
 	stream_append_byte(&sb, ']');
-	str8 label = arena_stream_commit(&arena, &sb);
+	str8 label = arena_stream_commit(arena, &sb);
 
 	void *filter = 0;
 	switch (fp.kind) {
 	case BeamformerFilterKind_Kaiser:{
 		/* TODO(rnp): this should also support complex */
 		/* TODO(rnp): implement this as an IFIR filter instead to reduce computation */
-		filter = kaiser_low_pass_filter(&arena, fp.kaiser.cutoff_frequency, fp.sampling_frequency,
+		filter = kaiser_low_pass_filter(arena, fp.kaiser.cutoff_frequency, fp.sampling_frequency,
 		                                fp.kaiser.beta, (i32)fp.kaiser.length);
 		f->length     = (i32)fp.kaiser.length;
 		f->time_delay = (f32)f->length / 2.0f / fp.sampling_frequency;
@@ -236,10 +237,10 @@ beamformer_filter_update(BeamformerFilter *f, BeamformerFilterParameters fp, u32
 		f32 fs    = fp.sampling_frequency;
 		f->length = (i32)(mc->duration * fs);
 		if (fp.complex) {
-			filter = baseband_chirp(&arena, mc->min_frequency, mc->max_frequency, fs, f->length, 1, 0.5f);
+			filter = baseband_chirp(arena, mc->min_frequency, mc->max_frequency, fs, f->length, 1, 0.5f);
 			f->time_delay = complex_filter_first_moment(filter, f->length, fs);
 		} else {
-			filter = rf_chirp(&arena, mc->min_frequency, mc->max_frequency, fs, f->length, 1);
+			filter = rf_chirp(arena, mc->min_frequency, mc->max_frequency, fs, f->length, 1);
 			f->time_delay = real_filter_first_moment(filter, f->length, fs);
 		}
 	}break;
@@ -258,6 +259,8 @@ beamformer_filter_update(BeamformerFilter *f, BeamformerFilterParameters fp, u32
 		vk_buffer_allocate(&f->buffer, &allocate_info);
 	}
 	vk_buffer_range_upload(&f->buffer, filter, 0, byte_size, 0);
+
+	temp_end(scratch);
 }
 
 function iv3
@@ -271,9 +274,9 @@ das_valid_points(iv3 points)
 }
 
 function void
-beamformer_update_hadamard(BeamformerComputePlan *cp, i32 order, b32 row_major, Arena arena, b32 das_matrix)
+beamformer_update_hadamard(BeamformerComputePlan *cp, i32 order, b32 row_major, b32 das_matrix, Arena *arena)
 {
-	f16 *hadamard = make_hadamard_transpose(&arena, order, row_major);
+	f16 *hadamard = make_hadamard_transpose(arena, order, row_major);
 	if (hadamard) {
 		u64 offset = das_matrix ? offsetof(BeamformerComputeArrayParameters, DasHadamard)
 		                        : offsetof(BeamformerComputeArrayParameters, DecodeHadamard);
@@ -407,7 +410,7 @@ push_compute_graph_node(BeamformerComputeGraph *graph, BeamformerShaderKind kind
 }
 
 function void
-plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, Arena scratch)
+plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, Arena *scratch)
 {
 	b32 run_hilbert = 0;
 	b32 demodulate  = 0;
@@ -465,7 +468,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	//////////////////////////////////////
 	// NOTE(rnp): First Pass: build initial graph and insert hard layout constraints
 	BeamformerComputeGraph graph = {0};
-	BeamformerComputeGraphNode *root_node = push_compute_graph_node(&graph, BeamformerShaderKind_Count, &scratch);
+	BeamformerComputeGraphNode *root_node = push_compute_graph_node(&graph, BeamformerShaderKind_Count, scratch);
 	root_node->input_data_kind  = input_data_kind;
 	root_node->input_stride.x   = 1;                                               // Sample Stride
 	root_node->input_stride.y   = pb->parameters.sample_count * acquisition_count; // Channel Stride
@@ -495,7 +498,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		default:{}break;
 		}
 
-		BeamformerComputeGraphNode *node = push_compute_graph_node(&graph, pb->pipeline.shaders[it], &scratch);
+		BeamformerComputeGraphNode *node = push_compute_graph_node(&graph, pb->pipeline.shaders[it], scratch);
 		node->user_pipeline_index = (i32)it;
 		switch (pb->pipeline.shaders[it]) {
 		case BeamformerShaderKind_Decode:{
@@ -532,7 +535,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 			// NOTE(rnp): insert implicit CoherencyWeighting node
 			if (pb->parameters.coherency_weighting)
-				node = push_compute_graph_node(&graph, BeamformerShaderKind_CoherencyWeighting, &scratch);
+				node = push_compute_graph_node(&graph, BeamformerShaderKind_CoherencyWeighting, scratch);
 		}break;
 
 		default:{}break;
@@ -580,7 +583,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 		// NOTE(rnp): insert reshape if needed
 		if (needs_reshape) {
-			BeamformerComputeGraphNode *new = push_compute_graph_node(0, BeamformerShaderKind_Reshape, &scratch);
+			BeamformerComputeGraphNode *new = push_compute_graph_node(0, BeamformerShaderKind_Reshape, scratch);
 			BeamformerComputeGraphNode *last  = node->prev;
 			DLLInsertLast(0, node, last, new, next, prev);
 			graph.count++;
@@ -913,7 +916,7 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDes
 }
 
 function void
-beamformer_reload_pipeline(VulkanHandle *pipeline, BeamformerShaderReloadInfo *sris, u32 count, Arena arena)
+beamformer_reload_pipeline(VulkanHandle *pipeline, BeamformerShaderReloadInfo *sris, u32 count, Arena *scratch)
 {
 	assume(count <= 2);
 	str8 paths[2];
@@ -921,12 +924,12 @@ beamformer_reload_pipeline(VulkanHandle *pipeline, BeamformerShaderReloadInfo *s
 
 	if (!BakeShaders) {
 		for (u32 i = 0; i < count; i++)
-			paths[i] = push_str8_from_parts(&arena, os_path_separator(), str8("shaders"), sris[i].filename_or_data);
+			paths[i] = push_str8_from_parts(scratch, os_path_separator(), str8("shaders"), sris[i].filename_or_data);
 	}
 
 	u32 push_constants_size = 0;
 	for (u32 i = 0; i < count; i++) {
-		Stream shader_stream = arena_stream(arena);
+		Stream shader_stream = arena_stream(scratch);
 		i32 reloadable_index = beamformer_shader_reloadable_index_by_shader[sris[i].shader];
 		if (i == 0) push_constants_size = beamformer_shader_push_constant_sizes[reloadable_index];
 		else        assert(push_constants_size == beamformer_shader_push_constant_sizes[reloadable_index]);
@@ -942,7 +945,7 @@ beamformer_reload_pipeline(VulkanHandle *pipeline, BeamformerShaderReloadInfo *s
 		}
 
 		infos[i].kind = sris[i].shader_kind;
-		infos[i].text = arena_stream_commit_zero(&arena, &shader_stream);
+		infos[i].text = arena_stream_commit_zero(scratch, &shader_stream);
 		infos[i].name = beamformer_shader_names[sris[i].shader];
 		infos[i].specialization_data      = sris[i].shader_descriptor ? &sris[i].shader_descriptor->bake : 0;
 		infos[i].specialization_struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];
@@ -962,7 +965,7 @@ beamformer_reload_pipeline(VulkanHandle *pipeline, BeamformerShaderReloadInfo *s
 }
 
 function void
-beamformer_reload_render_pipeline(VulkanHandle *pipeline, BeamformerShaderKind shader, Arena arena)
+beamformer_reload_render_pipeline(VulkanHandle *pipeline, BeamformerShaderKind shader, Arena *scratch)
 {
 	i32 index = beamformer_shader_reloadable_index_by_shader[shader];
 	BeamformerShaderReloadInfo infos[2] = {
@@ -979,12 +982,12 @@ beamformer_reload_render_pipeline(VulkanHandle *pipeline, BeamformerShaderKind s
 			                                : beamformer_reloadable_shader_files[index][1],
 		},
 	};
-	beamformer_reload_pipeline(pipeline, infos, countof(infos), arena);
+	beamformer_reload_pipeline(pipeline, infos, countof(infos), scratch);
 }
 
 function void
 beamformer_reload_compute_pipeline(VulkanHandle *pipeline, BeamformerShaderKind shader,
-                                   BeamformerShaderDescriptor *shader_descriptor, Arena arena)
+                                   BeamformerShaderDescriptor *shader_descriptor, Arena *scratch)
 {
 	i32 index  = beamformer_shader_reloadable_index_by_shader[shader];
 	uv3 layout = shader_descriptor ? shader_descriptor->layout : (uv3){{vk_gpu_info()->subgroup_size, 1, 1}};
@@ -996,11 +999,11 @@ beamformer_reload_compute_pipeline(VulkanHandle *pipeline, BeamformerShaderKind 
 		                                 : beamformer_reloadable_shader_files[index][0],
 		.layout            = layout,
 	};
-	beamformer_reload_pipeline(pipeline, &info, 1, arena);
+	beamformer_reload_pipeline(pipeline, &info, 1, scratch);
 }
 
 function void
-beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 block, Arena arena)
+beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 block, Arena *scratch)
 {
 	BeamformerParameterBlock *pb;
 	DeferLoop(pb = beamformer_parameter_block_lock(ctx->shared_memory, block, -1),
@@ -1019,7 +1022,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			cp->output_points  = das_valid_points(pb->parameters.output_points.xyz);
 			cp->average_frames = pb->parameters.output_points.E[3];
 
-			plan_compute_pipeline(cp, pb, arena);
+			plan_compute_pipeline(cp, pb, scratch);
 
 			/* NOTE(rnp): these are both handled by plan_compute_pipeline() */
 			u32 mask = 1 << BeamformerParameterBlockRegion_ComputePipeline |
@@ -1066,10 +1069,9 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			if (pb->parameters.decode_mode != BeamformerDecodeMode_None &&
 			    cp->hadamard_order != (i32)cp->acquisition_count)
 			{
-				beamformer_update_hadamard(cp, (i32)cp->acquisition_count, vk_gpu_info()->cooperative_matrix, arena, false);
-
+				beamformer_update_hadamard(cp, (i32)cp->acquisition_count, vk_gpu_info()->cooperative_matrix, 0, scratch);
 				if (pb->parameters.readi_group_count > 1)
-					beamformer_update_hadamard(cp, (i32)pb->parameters.readi_group_count, false, arena, true);
+					beamformer_update_hadamard(cp, (i32)pb->parameters.readi_group_count, 0, 1, scratch);
 			}
 		}break;
 
@@ -1082,8 +1084,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			u64 offset = beamformer_compute_array_parameter_offsets[kind];
 			u64 size   = beamformer_compute_array_parameter_sizes[kind];
 			{
-				Arena scratch = arena;
-				u16 *u16s = push_array(&scratch, u16, countof(pb->transmit_receive_orientations));
+				u16 *u16s = push_array(scratch, u16, countof(pb->transmit_receive_orientations));
 				for (u32 i = 0; i < countof(pb->transmit_receive_orientations); i++)
 					u16s[i] = pb->transmit_receive_orientations[i];
 
@@ -1117,7 +1118,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 
 function void
 do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *cp, BeamformerFrame *frame,
-                  u32 shader_slot, u32 channel_offset, u64 rf_pointer, Arena arena)
+                  u32 shader_slot, u32 channel_offset, u64 rf_pointer)
 {
 	BeamformerComputeContext *cc = &ctx->compute_context;
 
@@ -1435,7 +1436,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				BeamformerFrameBacklog *bl = &ctx->compute_context.backlog;
 				u32 req_count = Clamp(ec->count, 1, bl->counter);
 				u32 frame_idx = bl->counter - req_count;
-				u8 *sm_output = beamformer_shared_memory_scratch_arena(sm, ctx->shared_memory_size).beg;
+				u8 *sm_output = beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size);
 				u64 exported_size = 0;
 				for (u32 export_count = 0; export_count < req_count; export_count++, frame_idx++) {
 					BeamformerFrame *f = bl->frames + frame_idx % countof(bl->frames);
@@ -1458,7 +1459,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				spin_wait(table->write_index != atomic_load_u32(&table->read_index));
 				ComputeShaderStats *stats = ctx->compute_shader_stats;
 				if (sizeof(stats->table) <= ec->size)
-					memory_copy(beamformer_shared_memory_scratch_arena(sm, ctx->shared_memory_size).beg,
+					memory_copy(beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size),
 					         &stats->table, sizeof(stats->table));
 			}break;
 			InvalidDefaultCase;
@@ -1473,7 +1474,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			u32 block = fctx->parameter_block;
 			u32 slot  = fctx->filter_slot;
 			BeamformerComputePlan *cp = beamformer_compute_plan_for_block(cs, block, arena);
-			beamformer_filter_update(cp->filters + slot, fctx->parameters, block, slot, *arena);
+			beamformer_filter_update(cp->filters + slot, fctx->parameters, block, slot, arena);
 		}break;
 
 		case BeamformerWorkKind_ComputeIndirect:
@@ -1485,7 +1486,9 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			BeamformerComputePlan *cp = beamformer_compute_plan_for_block(cs, work->compute_context.parameter_block, arena);
 			if unlikely(beamformer_parameter_block_dirty(sm, work->compute_context.parameter_block)) {
 				u32 block = work->compute_context.parameter_block;
-				beamformer_commit_parameter_block(ctx, cp, block, *arena);
+				Temp scratch = temp_begin(arena);
+				beamformer_commit_parameter_block(ctx, cp, block, arena);
+				temp_end(scratch);
 			}
 
 			post_sync_barrier(ctx->shared_memory, BeamformerSharedMemoryLockKind_DispatchCompute);
@@ -1495,9 +1498,11 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			if unlikely(dirty_programs) {
 				for EachBit(dirty_programs, slot) {
 					assert(slot < BeamformerMaxComputeShaderStages);
+					Temp scratch = temp_begin(arena);
 					beamformer_reload_compute_pipeline(cp->vulkan_pipelines + slot,
 					                                   cp->pipeline.shaders[slot],
-					                                   cp->shader_descriptors + slot, *arena);
+					                                   cp->shader_descriptors + slot, arena);
+					temp_end(scratch);
 				}
 			}
 
@@ -1573,13 +1578,13 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				u64 rf_pointer = rf->buffer.gpu_pointer + slot * rf->active_rf_size;
 				rf_pointer += cp->raw_channel_byte_stride * channel_offset;
 				for (u32 i = 0; i < cp->first_image_shader_index; i++) {
-					do_compute_shader(ctx, cmd, cp, frame, i, channel_offset, rf_pointer, *arena);
+					do_compute_shader(ctx, cmd, cp, frame, i, channel_offset, rf_pointer);
 					vk_command_timestamp(cmd);
 				}
 			}
 
 			for (u32 i = cp->first_image_shader_index; i < cp->pipeline.shader_count; i++) {
-				do_compute_shader(ctx, cmd, cp, frame, i, 0, 0, *arena);
+				do_compute_shader(ctx, cmd, cp, frame, i, 0, 0);
 				vk_command_timestamp(cmd);
 			}
 
@@ -1591,10 +1596,11 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 
 			atomic_store_u64(&frame->timeline_valid_value, end_timeline_value);
 
+			Temp scratch;
+			DeferLoop(scratch = temp_begin(arena), temp_end(scratch))
 			{
-				Arena scratch    = *arena;
 				/* NOTE(rnp): this blocks until work completes */
-				u64 *timestamps  = vk_command_read_timestamps(VulkanTimeline_Compute, &scratch);
+				u64 *timestamps  = vk_command_read_timestamps(VulkanTimeline_Compute, arena);
 
 				i32 steps        = ((i32)cp->channel_count / BeamformerChunkChannelCount) - 1;
 				i32 step         = 0;
@@ -1746,7 +1752,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		spin_wait(atomic_load_u64(&rf->compute_index) < rf->insertion_index);
 		vk_host_wait_timeline(VulkanTimeline_Compute, rf->compute_complete_values[slot], -1ULL);
 
-		vk_buffer_range_upload(&rf->buffer, beamformer_shared_memory_scratch_arena(sm, ctx->shared_memory_size).beg,
+		vk_buffer_range_upload(&rf->buffer, beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size),
 		                       slot * rf->active_rf_size, rf->active_rf_size, 1);
 		store_fence();
 
@@ -1803,7 +1809,7 @@ beamformer_process_input_events(BeamformerCtx *ctx, BeamformerInput *input,
 		{}break;
 
 		case BeamformerInputEventKind_ExecutableReload:{
-			ui_init(ctx, ctx->ui_backing_store);
+			ui_init(ctx, ctx->ui_arena);
 		}break;
 
 		case BeamformerInputEventKind_FileEvent:{
@@ -1869,9 +1875,9 @@ beamformer_panel_group_insert_at(BeamformerUIPanel *group, BeamformerUIPanel *ta
 }
 
 BEAMFORMER_EXPORT void
-beamformer_frame_step(BeamformerInput *input)
+beamformer_frame_step(void *memory, BeamformerInput *input)
 {
-	BeamformerCtx *ctx = beamformer_context = BeamformerContextMemory(input->memory);
+	BeamformerCtx *ctx = beamformer_context = memory;
 	beamformer_input = input;
 
 	u64 current_time = os_timer_count();
@@ -1887,7 +1893,7 @@ beamformer_frame_step(BeamformerInput *input)
 		swap(ctx->command_queues[0], ctx->command_queues[1]);
 		zero_struct(ctx->command_queues + 0);
 		//zero_struct(ctx->registers);
-		end_temp_arena(ctx->frame_arena_savepoints[ctx->frame_index % countof(ctx->frame_arenas)]);
+		arena_clear(beamformer_frame_arena());
 	}
 
 	beamformer_process_input_events(ctx, input, input->event_queue, input->event_count);

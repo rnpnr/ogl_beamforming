@@ -416,18 +416,18 @@ parse_argv(i32 argc, char *argv[])
 }
 
 function b32
-send_frame(void *restrict data, BeamformerSimpleParameters *restrict bp)
+send_frame(void *restrict data, BeamformerSimpleParameters *restrict bp, BeamformerViewPlaneTag tag, u32 slot)
 {
 	u32 data_size = bp->raw_data_dimensions.E[0] * bp->raw_data_dimensions.E[1]
 	                * beamformer_data_kind_byte_size[bp->data_kind];
-	b32 result    = beamformer_push_data_with_compute(data, data_size, BeamformerViewPlaneTag_XZ, 0);
+	b32 result    = beamformer_push_data_with_compute(data, data_size, tag, slot);
 	if (!result && !g_should_exit) printf("lib error: %s\n", beamformer_get_last_error_string());
 
 	return result;
 }
 
 function void
-execute_study(Arena arena, Stream path, Options *options)
+execute_study(Arena *arena, Stream path, Options *options)
 {
 	i32 path_work_index = path.widx;
 	stream_ensure_termination(&path, 0);
@@ -457,9 +457,8 @@ execute_study(Arena arena, Stream path, Options *options)
 	bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_Decode;
 	bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_DAS;
 
+	BeamformerFilterParameters filter = {.sampling_frequency = bp.sampling_frequency / 2};
 	{
-		BeamformerFilterParameters filter = {.sampling_frequency = bp.sampling_frequency / 2};
-
 		BeamformerEmissionParameters *ep = &bp.emission_parameters;
 		switch (bp.emission_parameters.kind) {
 
@@ -537,7 +536,7 @@ execute_study(Arena arena, Stream path, Options *options)
 		u64 start = os_timer_count();
 		f64 frequency = os_timer_frequency();
 		for (;!g_should_exit;) {
-			if (send_frame(data, &bp)) {
+			if (send_frame(data, &bp, BeamformerViewPlaneTag_XZ, 0)) {
 				u64 now   = os_timer_count();
 				f64 delta = (now - start) / frequency;
 				start = now;
@@ -561,7 +560,7 @@ execute_study(Arena arena, Stream path, Options *options)
 		lip.active = 0;
 		beamformer_set_live_parameters(&lip);
 	} else {
-		send_frame(data, &bp);
+		send_frame(data, &bp, BeamformerViewPlaneTag_XZ, 0);
 	}
 }
 
@@ -581,8 +580,8 @@ main(i32 argc, char *argv[])
 
 	signal(SIGINT, sigint);
 
-	Arena arena = os_alloc_arena(KB(8));
-	Stream path = stream_alloc(&arena, KB(4));
+	Arena  *arena = arena_create();
+	Stream  path  = stream_alloc(arena, KB(4));
 	stream_append_str8(&path, str8_from_c_str(options.remaining[0]));
 
 	execute_study(arena, path, &options);

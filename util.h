@@ -113,7 +113,9 @@ typedef u64      uptr;
 #define Clamp01(x)       Clamp(x, 0, 1)
 #define Min(a, b)        ((a) < (b) ? (a) : (b))
 #define Max(a, b)        ((a) > (b) ? (a) : (b))
-#define IsPowerOfTwo(a)  (((a) & ((a) - 1)) == 0)
+
+#define IsPowerOfTwo(a)         (((a) & ((a) - 1)) == 0)
+#define AlignUpPowerOfTwo(v, a) (((v) + (a) - 1) & (~((a) - 1)))
 
 #define IsDigit(c)       (Between((c), '0', '9'))
 #define IsUpper(c)       (((c) & 0x20u) == 0)
@@ -181,6 +183,7 @@ typedef u64      uptr;
 
 #define I8_MAX           (0x0000007FL)
 #define I32_MAX          (0x7FFFFFFFL)
+#define S32_MAX          (0x7FFFFFFFL)
 #define U8_MAX           (0x000000FFUL)
 #define U16_MAX          (0x0000FFFFUL)
 #define U32_MAX          (0xFFFFFFFFUL)
@@ -207,8 +210,46 @@ typedef alignas(16) union {
 	u32x4 U32x4;
 } u128;
 
-typedef struct { u8 *beg, *end; } Arena;
-typedef struct { Arena *arena, original_arena; } TempArena;
+typedef enum {
+	ArenaFlag_NoChain = 1 << 0,
+
+	ArenaFlag_CreationMask = ArenaFlag_NoChain,
+
+	ArenaFlag_Sealed  = 1 << 31,
+} ArenaFlags;
+
+typedef struct {
+	u64        reserve_size;
+	u64        commit_size;
+	ArenaFlags flags;
+
+	void *optional_backing_store;
+
+	char *name;
+	char *allocation_site_file;
+	i32   allocation_site_line;
+} ArenaParameters;
+
+typedef struct Arena Arena;
+struct Arena {
+	u64    position;
+	u64    committed;
+	u64    reserved;
+
+	// NOTE(rnp): arena chain
+	u64    base_position; // position relative to first arena in chain
+	Arena *prev;
+	Arena *current;
+
+	u64        reserve_size;
+	u64        commit_size;
+	ArenaFlags flags;
+
+	char *name;
+	char *allocation_site_file;
+	i32   allocation_site_line;
+};
+typedef struct { Arena *arena; u64 position; } Temp;
 
 typedef struct { i64 length; u8 *data; } str8;
 #define str8(s)        (str8){.length = countof(s) - 1, .data = (u8 *)s}
@@ -369,7 +410,6 @@ typedef struct {
 	LaneContext lane_context;
 } ThreadContext;
 
-#define OS_ALLOC_ARENA_FN(name)        Arena name(i64 capacity)
 #define OS_READ_ENTIRE_FILE_FN(name)   i64   name(const char *file, void *buffer, i64 buffer_capacity)
 #define OS_WAIT_ON_ADDRESS_FN(name)    b32   name(i32 *value, i32 current, u32 timeout_ms)
 #define OS_WAKE_ALL_WAITERS_FN(name)   void  name(i32 *sync)

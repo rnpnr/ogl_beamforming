@@ -33,7 +33,7 @@ kronecker_product_f16(f16 *out, f16 *a, iv2 a_dim, f16 *b, iv2 b_dim)
 
 /* NOTE/TODO: to support even more hadamard sizes use the Paley construction */
 function f16 *
-make_hadamard_transpose(Arena *a, i32 dim, b32 row_major)
+make_hadamard_transpose(Arena *arena, i32 dim, b32 row_major)
 {
 	read_only local_persist	f16 hadamard_12_12_transpose[] = {
 		1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
@@ -93,11 +93,11 @@ make_hadamard_transpose(Arena *a, i32 dim, b32 row_major)
 		dim      /= 12;
 	}
 
-	if (power_of_2 && base_dim && arena_capacity(a, f16) >= elements * (1 + (dim != base_dim))) {
-		result = push_array(a, f16, elements);
+	if (power_of_2 && base_dim) {
+		result = push_array(arena, f16, elements);
 
-		Arena tmp = *a;
-		f16 *m = dim == base_dim ? result : push_array(&tmp, f16, elements);
+		Temp scratch = temp_begin(arena);
+		f16 *m = dim == base_dim ? result : push_array(arena, f16, elements);
 
 		#define IND(i, j) ((i) * dim + (j))
 		m[0] = 1;
@@ -120,6 +120,8 @@ make_hadamard_transpose(Arena *a, i32 dim, b32 row_major)
 		case 20:{ m2 = hadamard_20_20_transpose; m2_dim = (iv2){{20, 20}}; }break;
 		}
 		if (m2) kronecker_product_f16(result, m, (iv2){{dim, dim}}, m2, m2_dim);
+
+		temp_end(scratch);
 	}
 
 	if (row_major) {
