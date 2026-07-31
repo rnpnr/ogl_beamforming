@@ -719,11 +719,24 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 				BeamformerExportContext export;
 				export.kind = BeamformerExportKind_BeamformedData;
 				export.size = (u32)output_size;
+				export.count = 1;
 				result = beamformer_export(export, out_data, timeout_ms);
 			}
 		}
 	}
 	return result;
+}
+
+BEAMFORMER_LIB_EXPORT b32 
+beamformer_get_last_frames(void* out_data, uint32_t memory_size, uint32_t count)
+{
+	if (!out_data || memory_size == 0 || count == 0) return 0;
+
+	BeamformerExportContext export;
+	export.kind = BeamformerExportKind_BeamformedData;
+	export.size = memory_size;
+	export.count = count;
+	return beamformer_export(export, out_data, g_beamformer_library_context.timeout_ms);
 }
 
 BEAMFORMER_LIB_EXPORT b32

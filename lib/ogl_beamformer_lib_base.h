@@ -85,6 +85,8 @@ BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_data_with_compute(void *data, uin
                                                                  uint32_t image_plane_tag,
                                                                  uint32_t parameter_slot);
 
+BEAMFORMER_LIB_EXPORT uint32_t beamformer_get_last_frames(void* out_data, uint32_t frame_size, uint32_t count);
+
 ///////////////////////////
 // Parameter Configuration
 BEAMFORMER_LIB_EXPORT uint32_t beamformer_reserve_parameter_blocks(uint32_t count);
