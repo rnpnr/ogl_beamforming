@@ -9,7 +9,20 @@
  */
 
 #define BEAMFORMER_IMPORT function
+#define BASE_EXPORT       function
+#define BASE_IMPORT       function
+
 #include "util.h"
+
+#define BUILD_DEPS_LIST \
+	X("base_compiler.h") \
+	X("base_linux.c") \
+	X("base_platform.h") \
+	X("base_types.h") \
+	X("base_win32.c") \
+	X("meta.h") \
+	X("util.c") \
+	X("util.h") \
 
 #include <stdarg.h>
 #include <setjmp.h>
@@ -59,7 +72,7 @@ global char *g_argv0;
   #include <sys/select.h>
   #include <sys/wait.h>
 
-  #include "os_linux.c"
+  #include "base_linux.c"
 
   #define W32_DECL(x)
 
@@ -72,7 +85,7 @@ global char *g_argv0;
 
   #include <string.h>
 
-  #include "os_win32.c"
+  #include "base_win32.c"
 
   #define W32_DECL(x) x
 
@@ -545,12 +558,6 @@ os_wait_close_process(iptr handle)
 
 #endif
 
-function str8
-read_entire_file(const char *file, Arena *arena)
-{
-	return os_read_file_into_arena(file, arena);
-}
-
 #define needs_rebuild(b, ...) needs_rebuild_(b, ((char *[]){__VA_ARGS__}), \
                                              (sizeof((char *[]){__VA_ARGS__}) / sizeof(char *)))
 function b32
@@ -617,7 +624,10 @@ function void
 check_rebuild_self(Arena *arena, i32 argc, char *argv[])
 {
 	char *binary = shift(argv, argc);
-	if (needs_rebuild(binary, __FILE__, "meta.h", "os_win32.c", "os_linux.c", "util.c", "util.h")) {
+	#define X(file, ...) file,
+	char *deps[] = {__FILE__, BUILD_DEPS_LIST};
+	#undef X
+	if (needs_rebuild_(binary, deps, countof(deps))) {
 		Stream name_buffer = arena_stream(arena);
 		stream_append_str8s(&name_buffer, str8_from_c_str(binary), str8(".old"));
 		char *old_name = (char *)arena_stream_commit_zero(arena, &name_buffer).data;
@@ -1561,7 +1571,7 @@ meta_entry_extract_scope(MetaEntry *base, i64 entry_count)
 function MetaEntryStack
 meta_entry_stack_from_file(Arena *arena, char *file)
 {
-	MetaParser     parser = {.p.s = read_entire_file(file, arena)};
+	MetaParser     parser = {.p.s = os_read_entire_file(arena, file)};
 	MetaEntryStack result = {.raw = parser.p.s};
 
 	compiler_file = file;
@@ -3216,7 +3226,7 @@ metagen_run_emit(MetaprogramContext *m, MetaContext *ctx, MetaEmitOperationList 
 			DeferLoop(scratch = temp_begin(m->scratch), temp_end(scratch))
 			{
 				str8 filename = push_str8_from_parts(m->scratch, str8(OS_PATH_SEPARATOR), ctx->directory, op->string);
-				str8 file     = read_entire_file((c8 *)filename.data, m->scratch);
+				str8 file     = os_read_entire_file(m->scratch, (c8 *)filename.data);
 				m->indentation_level++;
 				metagen_push_byte_array(m, file);
 				m->indentation_level--;
@@ -3779,7 +3789,7 @@ meta_push_shader_bake(MetaprogramContext *m, MetaContext *ctx)
 				DeferLoop(scratch = temp_begin(m->scratch), temp_end(scratch))
 				{
 					str8 filename = push_str8_from_parts(m->scratch, str8(OS_PATH_SEPARATOR), str8("shaders"), s->files[it]);
-					str8 file     = read_entire_file((c8 *)filename.data, m->scratch);
+					str8 file     = os_read_entire_file(m->scratch, (c8 *)filename.data);
 					metagen_push_byte_array(m, file);
 				}
 			}
@@ -4680,7 +4690,7 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena *arena)
 
 	build_log_generate("Library Header");
 
-	str8 base_header = read_entire_file("lib/ogl_beamformer_lib_base.h", arena);
+	str8 base_header = os_read_entire_file(arena, "lib/ogl_beamformer_lib_base.h");
 
 	MetaprogramContext m[1] = {{.stream = arena_stream(arena), .scratch = ctx->scratch}};
 
@@ -5154,8 +5164,8 @@ metagen_file_direct(Arena *arena, char *filename)
 	return result;
 }
 
-i32
-main(i32 argc, char *argv[])
+BASE_IMPORT void
+entry_point(i32 argc, char *argv[])
 {
 	u64 start_time = os_timer_count();
 	g_argv0 = argv[0];
@@ -5175,7 +5185,7 @@ main(i32 argc, char *argv[])
 	arena_clear(arena);
 
 	MetaContext *meta = metagen_load_context(arena, "beamformer.meta");
-	if (!meta) return 1;
+	if (!meta) os_exit(1);
 
 	Temp scratch;
 	DeferLoop(scratch = temp_begin(arena), temp_end(scratch))
@@ -5189,8 +5199,8 @@ main(i32 argc, char *argv[])
 
 	parse_config(argc, argv);
 
-	if (!build_raylib(arena))  return 1;
-	if (!build_glslang(arena)) return 1;
+	if (!build_raylib(arena))  os_exit(1);
+	if (!build_glslang(arena)) os_exit(1);
 
 	/////////////////
 	// lib/tests
@@ -5213,5 +5223,5 @@ main(i32 argc, char *argv[])
 		build_log_info("took %0.03f [s]", seconds);
 	}
 
-	return result != 1;
+	os_exit(result != 1);
 }

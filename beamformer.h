@@ -4,7 +4,7 @@
 
 #include <stdint.h>
 
-#define BEAMFORMER_NAME_STRING "OGL Beamformer"
+#define BEAMFORMER_NAME_STRING "VK Beamformer"
 
 ///////////////////////////////
 // COMPILE TIME CONFIGURATION
@@ -64,50 +64,17 @@
 
 ///////////////////
 // REQUIRED OS API
-#define OSInvalidHandleValue ((u64)-1)
-typedef struct { uint64_t value[1]; } OSBarrier;
-typedef struct { uint64_t value[1]; } OSHandle;
-typedef struct { uint64_t value[1]; } OSLibrary;
-typedef struct { uint64_t value[1]; } OSThread;
-typedef struct { uint64_t value[1]; } OSWindow;
-typedef struct { uint64_t value[1]; } OSW32Semaphore;
-
-typedef uint64_t os_thread_entry_point_fn(void *user_context);
-
-typedef struct {
-	uint64_t timer_frequency;
-
-	uint32_t logical_processor_count;
-	uint32_t page_size;
-
-	uint8_t  path_separator_byte;
-} OSSystemInfo;
-
-BEAMFORMER_IMPORT OSSystemInfo * os_system_info(void);
-
-BEAMFORMER_IMPORT void *         os_memory_reserve(uint64_t size);
-BEAMFORMER_IMPORT void           os_memory_release(void *base, uint64_t size);
-BEAMFORMER_IMPORT uint32_t       os_memory_commit(void *base, uint64_t size);
-BEAMFORMER_IMPORT void           os_memory_uncommit(void *base, uint64_t size);
-BEAMFORMER_IMPORT void           os_memory_seal(void *base, uint64_t size);
-
-BEAMFORMER_IMPORT OSThread       os_create_thread(const char *name, void *user_context, os_thread_entry_point_fn *fn);
-BEAMFORMER_IMPORT OSBarrier      os_barrier_alloc(uint32_t thread_count);
-BEAMFORMER_IMPORT void           os_barrier_enter(OSBarrier);
-
-/* NOTE(rnp): since the beamformer may spawn threads, which may need to keep time,
- * passing in a single timer value with the rest of the input is insufficient. */
-BEAMFORMER_IMPORT uint64_t       os_timer_count(void);
+//
+// NOTE(rnp): in addition to the platform layer defined in base_platform.h
+// the beamformer additionally requires the following functions.
 
 BEAMFORMER_IMPORT void           os_add_file_watch(const char *path, int64_t path_length, void *user_context);
-BEAMFORMER_IMPORT int64_t        os_read_entire_file(const char *file, void *buffer, int64_t buffer_capacity);
 
 BEAMFORMER_IMPORT void *         os_lookup_symbol(OSLibrary library, const char *symbol);
 
-/* NOTE(rnp): memory watch timed waiting functions. (-1) is an infinite timeout. the beamformer
- * will use these with the intention of yielding the thread back to the OS. */
-BEAMFORMER_IMPORT uint32_t       os_wait_on_address(int32_t *lock, int32_t current, uint32_t timeout_ms);
-BEAMFORMER_IMPORT void           os_wake_all_waiters(int32_t *lock);
+BEAMFORMER_IMPORT OSThread       os_create_thread(const char *name, void *user_context, os_thread_entry_point_fn *fn);
+BEAMFORMER_IMPORT OSBarrier      os_barrier_alloc(u32 thread_count);
+BEAMFORMER_IMPORT void           os_barrier_enter(OSBarrier);
 
 // NOTE(rnp): currently beamformer will only create one window.
 // once raylib is removed it may request multiple
@@ -122,18 +89,8 @@ BEAMFORMER_IMPORT void           os_set_clipboard_text(uint8_t *data, int64_t le
 BEAMFORMER_IMPORT void           os_console_log(uint8_t *data, int64_t length);
 BEAMFORMER_IMPORT void           os_fatal(uint8_t *data, int64_t length);
 
-
 // NOTE(rnp): for vulkan cross API export on win32 (will be removed eventually)
 BEAMFORMER_IMPORT void           os_release_handle(OSHandle handle);
-
-/* NOTE(rnp): this functionality is only needed on win32 to provide cross process
- * synchronization. While posix has equivalent functionality there is no reason to
- * use it over a value located in shared memory. */
-#if defined(_WIN32)
-BEAMFORMER_IMPORT OSW32Semaphore os_w32_create_semaphore(const char *name, int32_t initial_count, int32_t maximum_count);
-BEAMFORMER_IMPORT uint32_t       os_w32_semaphore_wait(OSW32Semaphore, uint32_t timeout_ms);
-BEAMFORMER_IMPORT void           os_w32_semaphore_release(OSW32Semaphore, int32_t count);
-#endif
 
 //////////////////////////////
 // BEAMFORMER APPLICATION API

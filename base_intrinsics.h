@@ -1,5 +1,21 @@
 /* See LICENSE for license details. */
-#include "compiler.h"
+#ifndef BASE_INTRINSICS_H
+#define BASE_INTRINSICS_H
+
+#include "base_compiler.h"
+#include "base_types.h"
+
+#define function      static
+#define global        static
+#define local_persist static
+
+#ifndef asm
+#define asm __asm__
+#endif
+
+#ifndef typeof
+#define typeof __typeof__
+#endif
 
 #if COMPILER_CLANG || COMPILER_GCC
   #define force_inline inline __attribute__((always_inline))
@@ -124,6 +140,10 @@
   #define popcount_u64(a) (u64)__builtin_popcountll(a)
 #endif
 
+#define KB(a)            ((u64)(a) << 10ULL)
+#define MB(a)            ((u64)(a) << 20ULL)
+#define GB(a)            ((u64)(a) << 30ULL)
+
 #if COMPILER_MSVC
 
 function force_inline u64
@@ -232,3 +252,5 @@ inf32(void)
 	result.u = 0x7F800000u;
 	return result.f;
 }
+
+#endif /* BASE_INTRINSICS_H */

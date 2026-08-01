@@ -1,5 +1,8 @@
 /* See LICENSE for license details. */
-#define LIB_FN function
+#define BASE_EXPORT           function
+#define BASE_IMPORT           function
+#define BEAMFORMER_LIB_EXPORT function
+#include "base_platform.h"
 #include "ogl_beamformer_lib.c"
 
 #include <signal.h>
@@ -252,8 +255,8 @@ sigint(i32 _signo)
 	g_should_exit = 1;
 }
 
-extern i32
-main(i32 argc, char *argv[])
+BASE_IMPORT void
+entry_point(i32 argc, char *argv[])
 {
 	Options options = parse_argv(argc, argv);
 
@@ -298,6 +301,4 @@ main(i32 argc, char *argv[])
 
 	lip.active = 0;
 	beamformer_set_live_parameters(&lip);
-
-	return 0;
 }

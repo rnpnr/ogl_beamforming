@@ -1,5 +1,16 @@
 /* See LICENSE for license details. */
-#include "compiler.h"
+#ifdef BEAMFORMER_DEBUG
+  #define BEAMFORMER_IMPORT __declspec(dllexport)
+  #define BASE_EXPORT       __declspec(dllexport)
+#else
+  #define BEAMFORMER_IMPORT static
+  #define BEAMFORMER_EXPORT static
+  #define BASE_EXPORT       static
+#endif
+
+#define BASE_IMPORT static
+
+#include "base_platform.h"
 
 // NOTE(rnp): for test compilations on linux (we don't use headers from windows) */
 #if OS_LINUX
@@ -18,15 +29,8 @@
 #error This file is only meant to be compiled for Win32
 #endif
 
-#ifdef BEAMFORMER_DEBUG
-  #define BEAMFORMER_IMPORT __declspec(dllexport)
-#else
-  #define BEAMFORMER_IMPORT static
-  #define BEAMFORMER_EXPORT static
-#endif
-
 #include "beamformer.c"
-#include "os_win32.c"
+#include "base_win32.c"
 
 typedef struct {
 	u32 reserved1;
@@ -133,8 +137,6 @@ typedef struct {
 	} windows;
 
 	OSW32Entity *entity_freelist;
-
-	OSSystemInfo system_info;
 } OSW32_Context;
 global OSW32_Context os_w32_context;
 
@@ -151,12 +153,6 @@ os_entity_allocate(OSW32EntityKind kind)
 	zero_struct(result);
 	result->kind = kind;
 	return result;
-}
-
-BEAMFORMER_IMPORT OSSystemInfo *
-os_system_info(void)
-{
-	return &os_w32_context.system_info;
 }
 
 BEAMFORMER_IMPORT OSThread
@@ -210,6 +206,13 @@ os_fatal(u8 *data, i64 length)
 	unreachable();
 }
 
+BEAMFORMER_IMPORT void
+os_release_handle(OSHandle h)
+{
+	if ValidHandle(h)
+		CloseHandle(h.value[0]);
+}
+
 BEAMFORMER_IMPORT void *
 os_lookup_symbol(OSLibrary library, const char *symbol)
 {
@@ -221,7 +224,7 @@ os_lookup_symbol(OSLibrary library, const char *symbol)
 function void *
 allocate_shared_memory(char *name, i64 requested_capacity, u64 *capacity)
 {
-	u64 rounded_capacity = round_up_to(requested_capacity, os_w32_context.system_info.page_size);
+	u64 rounded_capacity = round_up_to(requested_capacity, win32_system_info.page_size);
 	void *result = 0;
 	iptr h = CreateFileMappingA(-1, 0, PAGE_READWRITE, (rounded_capacity >> 32u),
 	                            (rounded_capacity & 0xFFFFFFFFul), name);
@@ -506,22 +509,12 @@ clear_io_queue(void *beamformer, BeamformerInput *input, Arena *scratch)
 	}
 }
 
-extern i32
-main(void)
+BASE_IMPORT void
+entry_point(i32 argc, char *argv[])
 {
-	os_w32_context.error_handle                    = GetStdHandle(STD_ERROR_HANDLE);
-	os_w32_context.io_completion_handle            = CreateIoCompletionPort(INVALID_FILE, 0, 0, 0);
-	os_w32_context.system_info.timer_frequency     = os_timer_frequency();
-	os_w32_context.system_info.path_separator_byte = '\\';
-	{
-		w32_system_info info = {0};
-		GetSystemInfo(&info);
-
-		os_w32_context.system_info.page_size               = info.page_size;
-		os_w32_context.system_info.logical_processor_count = info.number_of_processors;
-	}
-
-	os_w32_context.arena = arena_create(.name = "Platform Arena");
+	os_w32_context.arena                = arena_create(.name = "Platform Arena");
+	os_w32_context.error_handle         = GetStdHandle(STD_ERROR_HANDLE);
+	os_w32_context.io_completion_handle = CreateIoCompletionPort(INVALID_FILE, 0, 0, 0);
 
 	BeamformerInput *input = push_struct(os_w32_context.arena, BeamformerInput);
 	os_w32_context.input   = input;

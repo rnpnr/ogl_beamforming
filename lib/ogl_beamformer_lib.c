@@ -1,7 +1,10 @@
 /* See LICENSE for license details. */
-#include "../compiler.h"
-
 #define BEAMFORMER_IMPORT static
+
+#ifndef BASE_PLATFORM_H
+#define BASE_PLATFORM_NO_MAIN 1
+#define BASE_EXPORT static
+#endif
 
 #include "../util.h"
 
@@ -9,9 +12,9 @@
 #include "ogl_beamformer_lib_base.h"
 
 #if OS_LINUX
-#include "../os_linux.c"
+#include "../base_linux.c"
 #elif OS_WINDOWS
-#include "../os_win32.c"
+#include "../base_win32.c"
 
 W32(iptr) OpenFileMappingA(u32, b32, c8 *);
 

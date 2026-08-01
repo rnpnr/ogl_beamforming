@@ -1,17 +1,20 @@
 /* See LICENSE for license details. */
-#include "compiler.h"
+#ifndef BEAMFORMER_DEBUG
+  #define BEAMFORMER_IMPORT static
+  #define BEAMFORMER_EXPORT static
+  #define BASE_EXPORT       static
+#endif
+
+#define BASE_IMPORT static
+
+#include "base_platform.h"
 
 #if !OS_LINUX
 #error This file is only meant to be compiled for Linux
 #endif
 
-#ifndef BEAMFORMER_DEBUG
-  #define BEAMFORMER_IMPORT static
-  #define BEAMFORMER_EXPORT static
-#endif
-
 #include "beamformer.c"
-#include "os_linux.c"
+#include "base_linux.c"
 
 #define OS_SHARED_MEMORY_SIZE  GB(2)
 
@@ -86,8 +89,6 @@ typedef struct {
 
 	BeamformerInput *input;
 
-	OSSystemInfo system_info;
-
 	struct {
 		OSLinuxFileWatchDirectory *first;
 		OSLinuxFileWatchDirectory *last;
@@ -115,12 +116,6 @@ os_entity_allocate(OSLinuxEntityKind kind)
 	zero_struct(result);
 	result->kind = kind;
 	return result;
-}
-
-BEAMFORMER_IMPORT OSSystemInfo *
-os_system_info(void)
-{
-	return &os_linux_context.system_info;
 }
 
 BEAMFORMER_IMPORT OSThread
@@ -176,6 +171,13 @@ os_fatal(u8 *data, i64 length)
 	unreachable();
 }
 
+BEAMFORMER_IMPORT void
+os_release_handle(OSHandle h)
+{
+	if ValidHandle(h)
+		close(h.value[0]);
+}
+
 BEAMFORMER_IMPORT void *
 os_lookup_symbol(OSLibrary library, const char *symbol)
 {
@@ -187,7 +189,7 @@ os_lookup_symbol(OSLibrary library, const char *symbol)
 function void *
 allocate_shared_memory(char *name, i64 requested_capacity, u64 *capacity)
 {
-	u64 rounded_capacity = round_up_to(requested_capacity, ARCH_X64? KB(4) : os_linux_context.system_info.page_size);
+	u64 rounded_capacity = round_up_to(requested_capacity, ARCH_X64? KB(4) : linux_system_info.page_size);
 	void *result = 0;
 	i32 fd = shm_open(name, O_CREAT|O_RDWR, S_IRUSR|S_IWUSR);
 	if (fd > 0 && ftruncate(fd, rounded_capacity) != -1) {
@@ -431,15 +433,10 @@ dispatch_file_watch_events(void *beamformer, BeamformerInput *input)
 	}
 }
 
-extern i32
-main(void)
+BASE_IMPORT void
+entry_point(i32 argc, char *argv[])
 {
-	os_linux_context.system_info.timer_frequency         = os_timer_frequency();
-	os_linux_context.system_info.logical_processor_count = os_number_of_processors();
-	os_linux_context.system_info.page_size               = ARCH_X64? KB(4) : getauxval(AT_PAGESZ);
-	os_linux_context.system_info.path_separator_byte     = '/';
-
-	os_linux_context.arena = arena_create(.name = "Platform Arena");
+	os_linux_context.arena          = arena_create(.name = "Platform Arena");
 	os_linux_context.inotify_handle = inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
 
 	BeamformerInput *input = push_struct(os_linux_context.arena, BeamformerInput);

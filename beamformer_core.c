@@ -21,7 +21,7 @@
  * [ ]: bug: reinit cuda on hot-reload
  */
 
-#include "compiler.h"
+#include "base_platform.h"
 
 #if defined(BEAMFORMER_DEBUG) && !defined(BEAMFORMER_EXPORT) && OS_WINDOWS
   #define BEAMFORMER_EXPORT __declspec(dllexport)
@@ -936,16 +936,19 @@ beamformer_reload_pipeline(VulkanHandle *pipeline, BeamformerShaderReloadInfo *s
 
 		stream_append_shader_header(&shader_stream, reloadable_index, sris[i].shader_descriptor, sris[i].layout);
 
+		str8 shader_text;
 		if (BakeShaders) {
 			stream_append_str8(&shader_stream, sris[i].filename_or_data);
+			shader_text = arena_stream_commit_zero(scratch, &shader_stream);
 		} else {
-			shader_stream.widx += os_read_entire_file((c8 *)paths[i].data,
-			                                          shader_stream.data + shader_stream.widx,
-			                                          shader_stream.cap  - shader_stream.widx);
+			str8 stream_data = arena_stream_commit(scratch, &shader_stream);
+			str8 shader_data = os_read_entire_file(scratch, (c8 *)paths[i].data);
+			// NOTE(rnp): kinda sucky but need to make sure these are a contiguous string
+			shader_text = push_str8_from_parts(scratch, str8(""), stream_data, shader_data);
 		}
 
 		infos[i].kind = sris[i].shader_kind;
-		infos[i].text = arena_stream_commit_zero(scratch, &shader_stream);
+		infos[i].text = shader_text;
 		infos[i].name = beamformer_shader_names[sris[i].shader];
 		infos[i].specialization_data      = sris[i].shader_descriptor ? &sris[i].shader_descriptor->bake : 0;
 		infos[i].specialization_struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];

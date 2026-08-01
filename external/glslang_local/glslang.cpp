@@ -1,7 +1,7 @@
 /* See LICENSE for license details. */
 // NOTE(rnp): an almost single file build for glslang
 
-#include "../../compiler.h"
+#include "../../base_compiler.h"
 
 #include "SPIRV/SpvBuilder.cpp"
 

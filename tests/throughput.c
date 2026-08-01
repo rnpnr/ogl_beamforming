@@ -5,7 +5,10 @@
  * [ ]: bug: we aren't inserting rf data between each frame
  */
 
+#define BASE_EXPORT           function
+#define BASE_IMPORT           function
 #define BEAMFORMER_LIB_EXPORT function
+#include "base_platform.h"
 #include "ogl_beamformer_lib.c"
 
 #include <signal.h>
@@ -570,8 +573,8 @@ sigint(i32 _signo)
 	g_should_exit = 1;
 }
 
-extern i32
-main(i32 argc, char *argv[])
+BASE_IMPORT void
+entry_point(i32 argc, char *argv[])
 {
 	Options options = parse_argv(argc, argv);
 
@@ -585,6 +588,4 @@ main(i32 argc, char *argv[])
 	stream_append_str8(&path, str8_from_c_str(options.remaining[0]));
 
 	execute_study(arena, path, &options);
-
-	return 0;
 }

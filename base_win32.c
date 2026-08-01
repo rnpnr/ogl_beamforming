@@ -1,9 +1,13 @@
 /* See LICENSE for license details. */
 
+/* NOTE(rnp): provides the platform layer for everything in this repo. */
+
 #define OS_SHARED_MEMORY_NAME "Local\\ogl_beamformer_parameters"
 
 #define OS_PATH_SEPARATOR_CHAR '\\'
 #define OS_PATH_SEPARATOR      "\\"
+
+#include "base_platform.h"
 
 #include "util.h"
 
@@ -126,6 +130,8 @@ W32(void *) VirtualAlloc(u8 *, i64, u32, u32);
 W32(b32)    VirtualFree(void *, u64, u32);
 W32(b32)    VirtualProtect(void *, u64, u32, u32 *);
 
+global OSSystemInfo win32_system_info;
+
 function b32
 os_write_file(iptr file, void *data, i64 length)
 {
@@ -134,10 +140,10 @@ os_write_file(iptr file, void *data, i64 length)
 	return length == wlen;
 }
 
-function no_return void
+BASE_EXPORT no_return void
 os_exit(i32 code)
 {
-	ExitProcess(1);
+	ExitProcess(code);
 	unreachable();
 }
 
@@ -149,7 +155,7 @@ os_timer_frequency(void)
 	return result;
 }
 
-BEAMFORMER_IMPORT u64
+BASE_EXPORT u64
 os_timer_count(void)
 {
 	u64 result;
@@ -157,75 +163,97 @@ os_timer_count(void)
 	return result;
 }
 
-#ifndef BEAMFORMER_H
-// TODO(rnp): fix main and platform code split
-
-function OSSystemInfo *
-os_system_info(void)
+function void
+os_system_info_init(void)
 {
-	local_persist b32 ready = 0;
-	local_persist OSSystemInfo w32_platform_info = {0};
-	if unlikely(!ready) {
-		w32_system_info info = {0};
-		GetSystemInfo(&info);
-		w32_platform_info.timer_frequency         = os_timer_frequency();
-		w32_platform_info.path_separator_byte     = '\\';
-		w32_platform_info.page_size               = info.page_size;
-		w32_platform_info.logical_processor_count = info.number_of_processors;
-		ready = 1;
-	}
-	return &w32_platform_info;
+	w32_system_info info = {0};
+	GetSystemInfo(&info);
+
+	win32_system_info.timer_frequency         = os_timer_frequency();
+	win32_system_info.logical_processor_count = info.number_of_processors;
+	win32_system_info.page_size               = info.page_size;
+	win32_system_info.path_separator_byte     = '\\';
 }
 
-#endif
+BASE_EXPORT OSSystemInfo *
+os_system_info(void)
+{
+	#if BASE_PLATFORM_NO_MAIN
+	if unlikely(win32_system_info.path_separator_byte == 0)
+		os_system_info_init();
+	#endif
+	return &win32_system_info;
+}
 
-BEAMFORMER_IMPORT void *
+BASE_EXPORT void *
 os_memory_reserve(u64 size)
 {
 	void *result = VirtualAlloc(0, size, MEM_RESERVE, PAGE_READWRITE);
 	return result;
 }
 
-BEAMFORMER_IMPORT void
+BASE_EXPORT void
 os_memory_release(void *base, u64 size)
 {
 	// NOTE(rnp): size must be 0 on w32, no partial releasing
 	VirtualFree(base, 0, MEM_RELEASE);
 }
 
-BEAMFORMER_IMPORT b32
+BASE_EXPORT b32
 os_memory_commit(void *base, u64 size)
 {
 	b32 result = VirtualAlloc(base, size, MEM_COMMIT, PAGE_READWRITE) != 0;
 	return result;
 }
 
-BEAMFORMER_IMPORT void
+BASE_EXPORT void
 os_memory_uncommit(void *base, u64 size)
 {
 	VirtualFree(base, size, MEM_DECOMMIT);
 }
 
-BEAMFORMER_IMPORT void
+BASE_EXPORT void
 os_memory_seal(void *base, u64 size)
 {
 	u32 w32_dummy;
 	VirtualProtect(base, size, PAGE_READONLY, &w32_dummy);
 }
 
-BEAMFORMER_IMPORT OS_READ_ENTIRE_FILE_FN(os_read_entire_file)
+BASE_EXPORT OSW32Semaphore
+os_w32_create_semaphore(const char *name, i32 initial_count, i32 maximum_count)
 {
-	i64 result = 0;
+	OSW32Semaphore result = {(u64)CreateSemaphoreA(0, initial_count, maximum_count, (c8 *)name)};
+	return result;
+}
+
+BASE_EXPORT u32
+os_w32_semaphore_wait(OSW32Semaphore handle, u32 timeout_ms)
+{
+	b32 result = !WaitForSingleObject(handle.value[0], timeout_ms);
+	return result;
+}
+
+BASE_EXPORT void
+os_w32_semaphore_release(OSW32Semaphore handle, i32 count)
+{
+	ReleaseSemaphore(handle.value[0], count, 0);
+}
+
+BASE_EXPORT str8
+os_read_entire_file(Arena *arena, const char *file)
+{
+	str8 result = {0};
 	w32_file_info fileinfo;
 	iptr h = CreateFileA((c8 *)file, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
 	if (h >= 0 && GetFileInformationByHandle(h, &fileinfo)) {
 		i64 filesize  = (i64)fileinfo.nFileSizeHigh << 32;
 		filesize     |= (i64)fileinfo.nFileSizeLow;
-		if (buffer_capacity >= filesize) {
-			result = filesize;
-			i32 rlen;
-			if (!ReadFile(h, buffer, (i32)filesize, &rlen, 0) || rlen != filesize)
-				result = 0;
+		result.data   = push_array(arena, u8, filesize);
+		result.length = filesize;
+		i32 rlen;
+		if (!ReadFile(h, result.data, (i32)filesize, &rlen, 0) || rlen != filesize) {
+			arena_pop(arena, filesize);
+			zero_struct(&result);
 		}
 	}
 	if (h >= 0) CloseHandle(h);
@@ -233,7 +261,8 @@ BEAMFORMER_IMPORT OS_READ_ENTIRE_FILE_FN(os_read_entire_file)
 	return result;
 }
 
-function OS_WRITE_NEW_FILE_FN(os_write_new_file)
+function b32
+os_write_new_file(char *fname, str8 raw)
 {
 	b32 result = 0;
 	iptr h = CreateFileA(fname, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, 0);
@@ -262,19 +291,14 @@ os_copy_file(char *name, char *new)
 	return CopyFileA(name, new, 0);
 }
 
-BEAMFORMER_IMPORT void
-os_release_handle(OSHandle h)
-{
-	if ValidHandle(h)
-		CloseHandle(h.value[0]);
-}
-
-BEAMFORMER_IMPORT OS_WAIT_ON_ADDRESS_FN(os_wait_on_address)
+BASE_EXPORT b32
+os_wait_on_address(i32 *value, i32 current, u32 timeout_ms)
 {
 	return WaitOnAddress(value, &current, sizeof(*value), timeout_ms);
 }
 
-BEAMFORMER_IMPORT OS_WAKE_ALL_WAITERS_FN(os_wake_all_waiters)
+BASE_EXPORT void
+os_wake_all_waiters(i32 *sync)
 {
 	if (sync) {
 		atomic_store_u32(sync, 0);
@@ -282,22 +306,16 @@ BEAMFORMER_IMPORT OS_WAKE_ALL_WAITERS_FN(os_wake_all_waiters)
 	}
 }
 
-BEAMFORMER_IMPORT OSW32Semaphore
-os_w32_create_semaphore(const char *name, i32 initial_count, i32 maximum_count)
-{
-	OSW32Semaphore result = {(u64)CreateSemaphoreA(0, initial_count, maximum_count, (c8 *)name)};
-	return result;
-}
+#if !BASE_PLATFORM_NO_MAIN
+BASE_IMPORT void entry_point(i32 argc, char *argv[]);
 
-BEAMFORMER_IMPORT u32
-os_w32_semaphore_wait(OSW32Semaphore handle, u32 timeout_ms)
+extern i32
+main(i32 argc, char *argv[])
 {
-	b32 result = !WaitForSingleObject(handle.value[0], timeout_ms);
-	return result;
-}
+	os_system_info_init();
 
-BEAMFORMER_IMPORT void
-os_w32_semaphore_release(OSW32Semaphore handle, i32 count)
-{
-	ReleaseSemaphore(handle.value[0], count, 0);
+	entry_point(argc, argv);
+
+	return 0;
 }
+#endif

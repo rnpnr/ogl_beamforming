@@ -147,24 +147,6 @@ typedef struct {
 #define push_struct(a, t)           push_array(a, t, 1)
 #define push_struct_no_zero(a, t)   push_array_no_zero(a, t, 1)
 
-#ifndef BEAMFORMER_H
-// TODO(rnp): fix main and platform code split
-typedef struct {
-	u64 timer_frequency;
-	u32 logical_processor_count;
-	u32 page_size;
-	u8  path_separator_byte;
-} OSSystemInfo;
-
-BEAMFORMER_IMPORT OSSystemInfo *os_system_info(void);
-
-BEAMFORMER_IMPORT void *os_memory_reserve(u64 size);
-BEAMFORMER_IMPORT void  os_memory_release(void *base, u64 size);
-BEAMFORMER_IMPORT b32   os_memory_commit(void *base, u64 size);
-BEAMFORMER_IMPORT void  os_memory_uncommit(void *base, u64 size);
-BEAMFORMER_IMPORT void  os_memory_seal(void *base, u64 size);
-#endif
-
 #define arena_create(...) arena_create_((ArenaParameters){\
 	.reserve_size = MB(64),\
 	.commit_size  = KB(64),\

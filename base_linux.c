@@ -1,12 +1,13 @@
 /* See LICENSE for license details. */
 
-/* NOTE(rnp): provides the platform layer for the beamformer. This code must
- * be provided by any platform the beamformer is ported to. */
+/* NOTE(rnp): provides the platform layer for everything in this repo. */
 
-#define OS_SHARED_MEMORY_NAME "/ogl_beamformer_shared_memory"
+#define OS_SHARED_MEMORY_NAME  "/ogl_beamformer_shared_memory"
 
 #define OS_PATH_SEPARATOR_CHAR '/'
 #define OS_PATH_SEPARATOR      "/"
+
+#include "base_platform.h"
 
 #include "util.h"
 
@@ -23,6 +24,8 @@
 #include <sys/sysinfo.h>
 #include <unistd.h>
 
+global OSSystemInfo linux_system_info;
+
 function b32
 os_write_file(i32 file, void *data, i64 length)
 {
@@ -35,7 +38,7 @@ os_write_file(i32 file, void *data, i64 length)
 	return offset == length;
 }
 
-function no_return void
+BASE_EXPORT no_return void
 os_exit(i32 code)
 {
 	_exit(code);
@@ -48,7 +51,7 @@ os_timer_frequency(void)
 	return 1000000000ULL;
 }
 
-BEAMFORMER_IMPORT u64
+BASE_EXPORT u64
 os_timer_count(void)
 {
 	struct timespec time = {0};
@@ -69,27 +72,26 @@ os_number_of_processors(void)
 	return result > 0 ? result : 1;
 }
 
-#ifndef BEAMFORMER_H
-// TODO(rnp): fix main and platform code split
+function void
+os_system_info_init(void)
+{
+	linux_system_info.timer_frequency         = os_timer_frequency();
+	linux_system_info.logical_processor_count = os_number_of_processors();
+	linux_system_info.page_size               = ARCH_X64? KB(4) : getauxval(AT_PAGESZ);
+	linux_system_info.path_separator_byte     = '/';
+}
 
-function OSSystemInfo *
+BASE_EXPORT OSSystemInfo *
 os_system_info(void)
 {
-	local_persist b32 ready = 0;
-	local_persist OSSystemInfo linux_system_info = {0};
-	if unlikely(!ready) {
-		linux_system_info.timer_frequency         = os_timer_frequency();
-		linux_system_info.logical_processor_count = os_number_of_processors();
-		linux_system_info.page_size               = ARCH_X64? KB(4) : getauxval(AT_PAGESZ);
-		linux_system_info.path_separator_byte     = '/';
-		ready = 1;
-	}
+	#if BASE_PLATFORM_NO_MAIN
+	if unlikely(linux_system_info.path_separator_byte == 0)
+		os_system_info_init();
+	#endif
 	return &linux_system_info;
 }
 
-#endif
-
-BEAMFORMER_IMPORT void *
+BASE_EXPORT void *
 os_memory_reserve(u64 size)
 {
 	void *result = mmap(0, size, PROT_NONE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0);
@@ -98,44 +100,47 @@ os_memory_reserve(u64 size)
 	return result;
 }
 
-BEAMFORMER_IMPORT void
+BASE_EXPORT void
 os_memory_release(void *base, u64 size)
 {
 	munmap(base, size);
 }
 
-BEAMFORMER_IMPORT b32
+BASE_EXPORT b32
 os_memory_commit(void *base, u64 size)
 {
 	mprotect(base, size, PROT_READ|PROT_WRITE);
 	return 1;
 }
 
-BEAMFORMER_IMPORT void
+BASE_EXPORT void
 os_memory_uncommit(void *base, u64 size)
 {
 	madvise(base, size, MADV_DONTNEED);
 	mprotect(base, size, PROT_NONE);
 }
 
-BEAMFORMER_IMPORT void
+BASE_EXPORT void
 os_memory_seal(void *base, u64 size)
 {
 	mprotect(base, size, PROT_READ);
 }
 
-BEAMFORMER_IMPORT OS_READ_ENTIRE_FILE_FN(os_read_entire_file)
+BASE_EXPORT str8
+os_read_entire_file(Arena *arena, const char *file)
 {
-	i64 result = 0;
+	str8 result = {0};
 	struct stat sb;
 	i32 fd = open(file, O_RDONLY);
 	if (fd >= 0 && fstat(fd, &sb) >= 0) {
-		if (buffer_capacity >= sb.st_size) {
-			do {
-				i64 rlen = read(fd, (u8 *)buffer + result, (u64)(sb.st_size - result));
-				if (rlen > 0) result += rlen;
-			} while (result != sb.st_size && errno != EINTR);
-			if (result != sb.st_size) result = 0;
+		result.data = push_array(arena, u8, sb.st_size);
+		do {
+			i64 rlen = read(fd, result.data + result.length, (u64)(sb.st_size - result.length));
+			if (rlen > 0) result.length += rlen;
+		} while (result.length != sb.st_size && errno != EINTR);
+		if (result.length != sb.st_size) {
+			arena_pop(arena, sb.st_size);
+			zero_struct(&result);
 		}
 	}
 	if (fd >= 0) close(fd);
@@ -143,7 +148,8 @@ BEAMFORMER_IMPORT OS_READ_ENTIRE_FILE_FN(os_read_entire_file)
 	return result;
 }
 
-function OS_WRITE_NEW_FILE_FN(os_write_new_file)
+function b32
+os_write_new_file(char *fname, str8 raw)
 {
 	b32 result = 0;
 	i32 fd = open(fname, O_WRONLY|O_TRUNC|O_CREAT, 0600);
@@ -189,14 +195,8 @@ os_copy_file(char *name, char *new)
 	return result;
 }
 
-BEAMFORMER_IMPORT void
-os_release_handle(OSHandle h)
-{
-	if ValidHandle(h)
-		close(h.value[0]);
-}
-
-BEAMFORMER_IMPORT OS_WAIT_ON_ADDRESS_FN(os_wait_on_address)
+BASE_EXPORT b32
+os_wait_on_address(i32 *value, i32 current, u32 timeout_ms)
 {
 	struct timespec *timeout = 0, timeout_value;
 	if (timeout_ms != (u32)-1) {
@@ -207,10 +207,25 @@ BEAMFORMER_IMPORT OS_WAIT_ON_ADDRESS_FN(os_wait_on_address)
 	return syscall(SYS_futex, value, FUTEX_WAIT, current, timeout, 0, 0) == 0;
 }
 
-BEAMFORMER_IMPORT OS_WAKE_ALL_WAITERS_FN(os_wake_all_waiters)
+BASE_EXPORT void
+os_wake_all_waiters(i32 *sync)
 {
 	if (sync) {
 		atomic_store_u32(sync, 0);
 		syscall(SYS_futex, sync, FUTEX_WAKE, I32_MAX, 0, 0, 0);
 	}
 }
+
+#if !BASE_PLATFORM_NO_MAIN
+BASE_IMPORT void entry_point(i32 argc, char *argv[]);
+
+extern i32
+main(i32 argc, char *argv[])
+{
+	os_system_info_init();
+
+	entry_point(argc, argv);
+
+	return 0;
+}
+#endif
