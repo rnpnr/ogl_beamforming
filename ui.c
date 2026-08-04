@@ -1,7 +1,5 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
- * [ ]: bug: nil nodes break hot reloading
- *    - only one that matters is ui_node_nil, for now maybe just put it into ui_context (won't be read_only of course)
  * [ ]: word scan for text input
  * [ ]: animation state
  * [ ]: tooltips
@@ -335,7 +333,7 @@ struct V4Node {V4Node *next; v4 v;};
 	X(F32Node,         border_thickness,       f32,         UI_BORDER_THICK) \
 	X(F32Node,         text_outline_thickness, f32,         0) \
 	X(UINodeFlagsNode, flags,                  UINodeFlags, 0) \
-	X(UIParentNode,    parent,                 UINode *,    (&ui_node_nil)) \
+	X(UIParentNode,    parent,                 UINode *,    (ui_context->nil_node)) \
 	X(UISizeNode,      semantic_height,        UISize,      {0}) \
 	X(UISizeNode,      semantic_width,         UISize,      {0}) \
 	X(UIAlignNode,     alignment_y,            UIAlign,     0) \
@@ -420,6 +418,14 @@ typedef struct {
 	UI_STACK_LIST
 	#undef X
 
+	Arena  *nil_arena;
+	UINode *nil_node;
+	struct {
+		#define X(type, name, ...) type *name;
+		UI_STACK_LIST
+		#undef X
+	} nil_nodes;
+
 	UINodeHashBucket node_hash_table[UI_HASH_TABLE_COUNT];
 
 	UITextInputState text_input_state;
@@ -452,19 +458,7 @@ typedef struct {
 global BeamformerUI    *ui_context;
 global BeamformerInput *beamformer_input;
 
-read_only global UINode ui_node_nil = {
-	.parent           = &ui_node_nil,
-	.first_child      = &ui_node_nil,
-	.last_child       = &ui_node_nil,
-	.previous_sibling = &ui_node_nil,
-	.next_sibling     = &ui_node_nil,
-};
-
-#define X(type, name, _t, impl) read_only global type ui_##name##_node_nil = {.v = impl};
-UI_STACK_LIST
-#undef X
-
-#define ui_node_is_nil(n) ((n) == 0 || (n) == &ui_node_nil)
+#define ui_node_is_nil(n) ((n) == 0 || (n) == ui_context->nil_node)
 #define ui_build_arena()  (ui_context->build_arenas[(ui_context->current_frame_index % countof(ui_context->build_arenas))])
 
 #define UIStackPushBody(name_upper, name_lower, type, new_value) \
@@ -479,7 +473,7 @@ UI_STACK_LIST
 #define UIStackPopBody(name_upper, name_lower, type) \
 	name_upper *node = ui_context->name_lower##_node_stack.top; \
 	type result = node->v; \
-	if (node != &ui_##name_lower##_node_nil) { \
+	if (node != ui_context->nil_nodes.name_lower) { \
 		node = SLLPop(ui_context->name_lower##_node_stack.top, next); \
 		SLLStackPush(ui_context->name_lower##_node_stack.free, node, next); \
 	} \
@@ -1397,7 +1391,7 @@ function UINode *
 ui_node_from_key(UINodeKey key)
 {
 	UINodeHashBucket *hb     = ui_context->node_hash_table + (key.value % UI_HASH_TABLE_COUNT);
-	UINode           *result = &ui_node_nil;
+	UINode           *result = ui_context->nil_node;
 
 	for (UINode *b = hb->first; !ui_node_is_nil(b); b = b->hash_next) {
 		if (ui_node_key_equal(b->key, key)) {
@@ -1976,14 +1970,14 @@ ui_build_node_from_key(UINodeFlags flags, UINodeKey key)
 
 	// NOTE(rnp): reassigned per frame
 	{
-		result->parent = result->first_child = result->last_child = &ui_node_nil;
-		result->next_sibling = result->previous_sibling = &ui_node_nil;
+		result->parent = result->first_child = result->last_child = ui_context->nil_node;
+		result->next_sibling = result->previous_sibling = ui_context->nil_node;
 		result->child_count = 0;
 	}
 
 	if (first_frame && !transient) {
 		UINodeHashBucket *hb = ui_context->node_hash_table + (key.value % UI_HASH_TABLE_COUNT);
-		DLLInsert(&ui_node_nil, hb->first, hb->last, result, hash_next, hash_prev);
+		DLLInsert(ui_context->nil_node, hb->first, hb->last, result, hash_next, hash_prev);
 		result->first_frame_active_index = ui_context->current_frame_index;
 	}
 
@@ -1996,7 +1990,7 @@ ui_build_node_from_key(UINodeFlags flags, UINodeKey key)
 	result->flags |= flags;
 
 	if (!ui_node_is_nil(result->parent)) {
-		DLLInsertLast(&ui_node_nil, result->parent->first_child, result->parent->last_child,
+		DLLInsertLast(ui_context->nil_node, result->parent->first_child, result->parent->last_child,
 		              result, next_sibling, previous_sibling);
 		result->parent->child_count++;
 	}
@@ -5039,9 +5033,27 @@ ui_init(BeamformerCtx *ctx, Arena *store)
 		ui = ui_context = ctx->ui = push_struct(store, typeof(*ui));
 		ui->arena = store;
 
+		ui->nil_arena = arena_create(.commit_size = KB(4), .reserve_size = KB(16), .name = "UI Nil Arena");
+		{
+			ui->nil_node = push_struct(ui->nil_arena, UINode);
+			*ui->nil_node = (UINode){
+				.parent           = ui->nil_node,
+				.first_child      = ui->nil_node,
+				.last_child       = ui->nil_node,
+				.previous_sibling = ui->nil_node,
+				.next_sibling     = ui->nil_node,
+			};
+			#define X(type, name, value_type, impl, ...) \
+				ui->nil_nodes.name = push_struct(ui->nil_arena, type);\
+				ui->nil_nodes.name->v = (value_type)impl;
+			UI_STACK_LIST
+			#undef X
+		}
+		arena_seal(ui->nil_arena);
+
 		for EachElement(ui->build_arenas, it)
 			ui->build_arenas[it] = arena_create();
-		ui->node_freelist = &ui_node_nil;
+		ui->node_freelist = ui->nil_node;
 
 		/* TODO(rnp): better font, this one is jank at small sizes */
 		ui->font       = LoadFontFromMemory(".ttf", beamformer_base_font, sizeof(beamformer_base_font), 28, 0, 0);
@@ -5336,7 +5348,7 @@ beamformer_ui_frame(void)
 		// NOTE(rnp): reset last frame's build stacks
 		{
 			#define X(type, name, ...) \
-				ui->name##_node_stack.top   = &ui_##name##_node_nil; \
+				ui->name##_node_stack.top   = ui_context->nil_nodes.name; \
 				ui->name##_node_stack.free  = 0; \
 				ui->name##_node_stack.count = 0;
 			UI_STACK_LIST
@@ -5425,7 +5437,7 @@ beamformer_ui_frame(void)
 						if (ui_node_key_equal(ui->active_node_key[k], b->key))
 							ui->active_node_key[k] = ui_node_key_zero();
 
-					DLLRemove(&ui_node_nil, hb->first, hb->last, b, hash_next, hash_prev);
+					DLLRemove(ui_context->nil_node, hb->first, hb->last, b, hash_next, hash_prev);
 					SLLStackPush(ui->node_freelist, b, next_sibling);
 				}
 			}
