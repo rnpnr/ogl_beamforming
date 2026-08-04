@@ -23,8 +23,8 @@ typedef enum {
 
 typedef struct {
 	BeamformerExportKind kind;
-	u32 size; /* Total expected size of the exported data */
 	u32 count; /* Number of items to export */
+	u64 size; /* Total expected size of the exported data */
 } BeamformerExportContext;
 
 #define BEAMFORMER_SHARED_MEMORY_LOCKS \

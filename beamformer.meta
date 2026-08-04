@@ -1,11 +1,12 @@
-@Constant(16)   ChunkChannelCount
-@Constant(4)    FilterSlots
-@Constant(4096) MaxBacklogFrames
-@Constant(256)  MaxChannelCount
-@Constant(256)  MaxEmissionsCount
-@Constant(16)   MaxComputeShaderStages
-@Constant(16)   MaxParameterBlocks
-@Constant(3)    MaxRawDataFramesInFlight
+@Constant(16)     ChunkChannelCount
+@Constant(4)      FilterSlots
+@Constant(4096)   MaxBacklogFrames
+@Constant(256)    MaxChannelCount
+@Constant(256)    MaxEmissionsCount
+@Constant(16)     MaxComputeShaderStages
+@Constant(16)     MaxParameterBlocks
+@Constant(3)      MaxRawDataFramesInFlight
+@Constant(65536)  MaxHadamardElements
 
 @Enumeration ShaderResourceKind
 {
@@ -168,14 +169,6 @@
 @Library        @Struct FilterParameters
 @MATLAB(Filter) @Struct FilterParameters
 
-@Struct ReadiParameters
-{
-	[readi_group_count  U32]
-	[readi_group        U32]
-}
-@Library 		@Struct ReadiParameters
-@MATLAB(readi) 	@Struct ReadiParameters
-
 @Struct ParametersHead
 {
 	[das_voxel_transform          M4             ]
@@ -211,7 +204,8 @@
 {
 	[contrast_mode       ContrastMode      ]
 	[emission_parameters EmissionParameters]
-	[readi_parameters    ReadiParameters   ]
+	[readi_group_count   U32]
+	[readi_group         U32]
 }
 
 @Struct Parameters
@@ -278,6 +272,7 @@
 	[focal_vectors                 V2  MaxChannelCount]
 	[sparse_elements               S16 MaxChannelCount]
 	[transmit_receive_orientations U16 MaxChannelCount]
+	[hadamard_matrix               F16 MaxHadamardElements]
 }
 
 @Emit
@@ -413,6 +408,7 @@
 	@Shader(das.glsl) DAS
 	{
 		@Constant    MaxChannelCount
+		@Constant    MaxHadamardElements
 
 		@Enumeration AcquisitionKind
 		@Enumeration InterpolationMode
@@ -450,7 +446,6 @@
 			[TransmitAngle              F32]
 
 			[ReadiGroupCount            U32]
-			[ReadiGroup                 U32]
 		}
 
 		@PushConstants
@@ -467,7 +462,7 @@
 			[output_size_z     U32]
 			[cycle_t           U32]
 			[channel_offset    S32]
-			[hadamard_buffer   U64]
+			[readi_group       U32]
 		}
 	}
 

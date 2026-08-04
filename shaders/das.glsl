@@ -47,10 +47,6 @@ layout(std430, buffer_reference) buffer IncoherentOutput {
 	f32 x[];
 };
 
-layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer Hadamard {
-	f16 x[];
-};
-
 #define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
 #define TX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 4, 4)
 
@@ -333,7 +329,7 @@ RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
 	float transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
 
 	// NOTE(tkh): The row we use matches the acquisition group, the column is the element group we are beamforming.
-	s32 hadamard_offset = s32(ReadiGroup) * s32(ReadiGroupCount);
+	s32 hadamard_offset = s32(readi_group) * s32(ReadiGroupCount);
 
 	for (f32 chunk_channel = 0; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.0f) {
 		float rx_channel      = float(channel_offset) + chunk_channel;
@@ -351,7 +347,7 @@ RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
 			// The first element in each group is beamformed using the first acquisition, the second element in each group is beamformed using the second acquisition, etc.
 			for (s32 tx_group = 0; tx_group < s32(ReadiGroupCount); tx_group++) {
 				s32 rf_offset = channel_rf_offset;
-				f16 hadamard_value = Hadamard(hadamard_buffer).x[hadamard_offset + tx_group];
+				f16 hadamard_value = ArrayParameters(array_parameters).data.hadamard_matrix[hadamard_offset + tx_group];
 				float group_apodization = apodization * f32(hadamard_value);
 
 				for (s32 tx_event = 0; tx_event < AcquisitionCount; tx_event++) {

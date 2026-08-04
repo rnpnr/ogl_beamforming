@@ -689,6 +689,18 @@ beamformer_export(BeamformerExportContext export, void *out, i32 timeout_ms)
 	return result;
 }
 
+BEAMFORMER_LIB_EXPORT b32 
+beamformer_get_last_frames(void* out_data, uint64_t out_data_size, uint32_t count)
+{
+	if (!out_data || out_data_size == 0 || count == 0) return 0;
+
+	BeamformerExportContext export = {0};
+	export.kind = BeamformerExportKind_BeamformedData;
+	export.size = out_data_size;
+	export.count = count;
+	return beamformer_export(export, out_data, g_beamformer_library_context.timeout_ms);
+}
+
 b32
 beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t data_size,
                          void *out_data, int32_t timeout_ms)
@@ -716,27 +728,11 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 		if (result) {
 			result = beamformer_push_data_with_compute(data, data_size, 0, 0);
 			if (result && out_data) {
-				BeamformerExportContext export;
-				export.kind = BeamformerExportKind_BeamformedData;
-				export.size = (u32)output_size;
-				export.count = 1;
-				result = beamformer_export(export, out_data, timeout_ms);
+				result = beamformer_get_last_frames(out_data, output_size, 1);
 			}
 		}
 	}
 	return result;
-}
-
-BEAMFORMER_LIB_EXPORT b32 
-beamformer_get_last_frames(void* out_data, uint32_t memory_size, uint32_t count)
-{
-	if (!out_data || memory_size == 0 || count == 0) return 0;
-
-	BeamformerExportContext export;
-	export.kind = BeamformerExportKind_BeamformedData;
-	export.size = memory_size;
-	export.count = count;
-	return beamformer_export(export, out_data, g_beamformer_library_context.timeout_ms);
 }
 
 BEAMFORMER_LIB_EXPORT b32
@@ -747,7 +743,7 @@ beamformer_compute_timings(BeamformerComputeStatsTable *output, i32 timeout_ms)
 		Arena scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
 		                                                       g_beamformer_library_context.shared_memory_size);
 		if (lib_error_check((i64)sizeof(*output) <= arena_capacity(&scratch, u8), ExportSpaceOverflow)) {
-			BeamformerExportContext export;
+			BeamformerExportContext export = {0};
 			export.kind = BeamformerExportKind_Stats;
 			export.size = sizeof(*output);
 			export.count = 0;
