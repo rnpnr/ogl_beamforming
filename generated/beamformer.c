@@ -854,6 +854,12 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"  uint16_t  transmit_receive_orientations[MaxChannelCount];\n"
 	"  float16_t hadamard_matrix[MaxHadamardElements];\n"
 	"};\n"
+	"layout(std430, buffer_reference) buffer DASArrayParametersReference {\n"
+	"  f32vec2   focal_vectors[MaxChannelCount];\n"
+	"  int16_t   sparse_elements[MaxChannelCount];\n"
+	"  uint16_t  transmit_receive_orientations[MaxChannelCount];\n"
+	"  float16_t hadamard_matrix[MaxHadamardElements];\n"
+	"};\n"
 	"\n"),
 	str8_comp(""
 	"#define CoherencyWeighting ((CompileFlags & (1 << 0)) != 0)\n"

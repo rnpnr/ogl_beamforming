@@ -35,10 +35,6 @@ layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_PingPong) rea
 	InputDataType rf[];
 };
 
-layout(std430, buffer_reference) restrict readonly buffer ArrayParameters {
-	DASArrayParameters data;
-};
-
 layout(std430, buffer_reference) buffer Output {
 	OutputDataType x[];
 };
@@ -171,18 +167,18 @@ float cylindrical_wave_transmit_distance(const vec3 point, const float focal_dep
 	return distance(rca_plane_projection(point, tx_rows), f);
 }
 
-uint16_t tx_rx_orientation_for_acquisition(const int16_t acquisition)
+u16 tx_rx_orientation_for_acquisition(const s16 acquisition)
 {
-	uint16_t result = uint16_t(TransmitReceiveOrientation);
-	if (!bool(SingleOrientation))
-		result = ArrayParameters(array_parameters).data.transmit_receive_orientations[acquisition];
+	u16 result = u16(TransmitReceiveOrientation);
+	DASArrayParametersReference dp = DASArrayParametersReference(array_parameters);
+	if (!SingleOrientation) result = dp.transmit_receive_orientations[acquisition];
 	return result;
 }
 
-vec2 focal_vector_for_acquisition(const int16_t acquisition)
+f32vec2 focal_vector_for_acquisition(const s16 acquisition)
 {
-	vec2 result = bool(SingleFocus) ? vec2(TransmitAngle, FocusDepth)
-	                                : ArrayParameters(array_parameters).data.focal_vectors[acquisition];
+	DASArrayParametersReference dp = DASArrayParametersReference(array_parameters);
+	f32vec2 result = SingleFocus ? f32vec2(TransmitAngle, FocusDepth) : dp.focal_vectors[acquisition];
 	return result;
 }
 
@@ -234,6 +230,8 @@ RESULT_TYPE RCA(const vec3 world_point)
 
 RESULT_TYPE HERCULES(const vec3 world_point)
 {
+	DASArrayParametersReference dp = DASArrayParametersReference(array_parameters);
+
 	const uint16_t tx_rx_orientation = tx_rx_orientation_for_acquisition(int16_t(0));
 	const bool     rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
 	const vec2     focal_vector      = focal_vector_for_acquisition(int16_t(0));
@@ -260,8 +258,7 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 		else         element_receive_delta_squared.y *= element_receive_delta_squared.y;
 
 		for (s32 transmit = s32(Sparse); transmit < AcquisitionCount; transmit++) {
-			s32 tx_channel = Sparse ? ArrayParameters(array_parameters).data.sparse_elements[transmit - s32(Sparse)]
-			                        : transmit;
+			s32 tx_channel = Sparse ? dp.sparse_elements[transmit - s32(Sparse)] : transmit;
 
 			if (rx_cols) element_receive_delta_squared.y  = xy_world_point.y - tx_channel * xdc_element_pitch.y;
 			else         element_receive_delta_squared.x  = xy_world_point.x - tx_channel * xdc_element_pitch.x;
@@ -290,6 +287,8 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
+	DASArrayParametersReference dp = DASArrayParametersReference(array_parameters);
+
 	float z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
 	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;
 	float transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
@@ -306,8 +305,7 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 			float receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
 			float apodization   = apodize(a_arg);
 			for (s32 transmit = s32(Sparse); transmit < AcquisitionCount; transmit++) {
-				s32 tx_channel = Sparse ? ArrayParameters(array_parameters).data.sparse_elements[transmit - s32(Sparse)]
-				                        : transmit;
+				s32 tx_channel = Sparse ? dp.sparse_elements[transmit - s32(Sparse)] : transmit;
 				float transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_channel;
 				float transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
 
@@ -324,6 +322,8 @@ RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
+	DASArrayParametersReference dp = DASArrayParametersReference(array_parameters);
+
 	float z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
 	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;
 	float transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
@@ -332,28 +332,28 @@ RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
 	s32 hadamard_offset = s32(readi_group) * s32(ReadiGroupCount);
 
 	for (f32 chunk_channel = 0; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.0f) {
-		float rx_channel      = float(channel_offset) + chunk_channel;
-		float receive_x_delta = xdc_world_point.x - rx_channel * xdc_element_pitch.x;
-		float a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
+		f32 rx_channel      = float(channel_offset) + chunk_channel;
+		f32 receive_x_delta = xdc_world_point.x - rx_channel * xdc_element_pitch.x;
+		f32 a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
 
 		if (a_arg < 0.5f) {
 			s32 channel_rf_offset  = s32(rf_element_offset) + s32(chunk_channel) * SampleCount * AcquisitionCount;
 			channel_rf_offset     -= s32(InterpolationMode == InterpolationMode_Cubic);
 
-			float receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
-			float apodization   = apodize(a_arg);
+			f32 receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
+			f32 apodization   = apodize(a_arg);
 
-			// NOTE(tkh): Iterating over groups of tx elements, each group is AcquisitionCount sequential elements.
-			// The first element in each group is beamformed using the first acquisition, the second element in each group is beamformed using the second acquisition, etc.
+			// NOTE(tkh): Iterating over groups of tx elements, each group is AcquisitionCount
+			// sequential elements. The first element in each group is beamformed using the first
+			// acquisition, the second element in each group is beamformed using the second acquisition, etc.
 			for (s32 tx_group = 0; tx_group < s32(ReadiGroupCount); tx_group++) {
+				f32 group_apodization = apodization * dp.hadamard_matrix[hadamard_offset + tx_group];
 				s32 rf_offset = channel_rf_offset;
-				f16 hadamard_value = ArrayParameters(array_parameters).data.hadamard_matrix[hadamard_offset + tx_group];
-				float group_apodization = apodization * f32(hadamard_value);
 
 				for (s32 tx_event = 0; tx_event < AcquisitionCount; tx_event++) {
 					s32 tx_element = tx_group * AcquisitionCount + tx_event;
-					float transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_element;
-					float transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
+					f32 transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_element;
+					f32 transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
 
 					SAMPLE_TYPE value = group_apodization * sample_rf(rf_offset, receive_index + transmit_index);
 					result    += RESULT_STORE(value);

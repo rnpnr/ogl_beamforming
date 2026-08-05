@@ -3713,6 +3713,16 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 					.suffix              = str8(";\\n\""),
 				});
 				meta_push_line(m, str8("\"};\\n\""));
+				meta_push_line(m, str8("\"layout(std430, buffer_reference) buffer "), entity_name, str8("Reference {\\n\""));
+				meta_push_struct_body(ctx, m, e, (MetaPushStructParameters){
+					.layout_style        = MetaPushStructStyle_C,
+					.union_style         = MetaPushStructStyle_C,
+					.element_count_style = MetaPushStructStyle_C,
+					.base_types          = meta_kind_glsl_types,
+					.prefix              = str8("\"  "),
+					.suffix              = str8(";\\n\""),
+				});
+				meta_push_line(m, str8("\"};\\n\""));
 				meta_push_line(m, str8("\"\\n\"),"));
 			}break;
 
