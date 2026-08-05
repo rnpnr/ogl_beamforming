@@ -1,5 +1,10 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: track active panel
+ *    - when beamformer gets command to open tab it goes to this location by default
+ * [ ]: track last active live control panel
+ *    - when live imaging starts make this panel the focus
+ *    - if this exists do not auto open a panel
  * [ ]: word scan for text input
  * [ ]: when dragging only tab from group close old group on release
  *    - only keep layout when closing tabs
@@ -3242,87 +3247,88 @@ ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t, Beamforme
 				}
 
 				str8 shader = beamformer_shader_names[stats->table.shader_ids[it]];
+				i32 reloadable_index = beamformer_shader_reloadable_index_by_shader[stats->table.shader_ids[it]];
 
+				UISignal signal;
 				UITextColour(label_colour)
-				UIParent(value_column) ui_labelf("%0.2e###csv%u", stats->average_times[it], (u32)it);
-				UIParent(unit_column)  ui_labelf("[s]###csu%u", (u32)it);
-				UIParent(label_column)
 				{
-					i32 reloadable_index = beamformer_shader_reloadable_index_by_shader[stats->table.shader_ids[it]];
-					UISignal signal;
-					UIFlags(reloadable_index >= 0? UINodeFlag_Clickable|UINodeFlag_DrawHotEffects : 0)
-					signal = ui_labelf("%.*s:###csl%u", (i32)shader.length, shader.data, (u32)it);
+					UIParent(value_column) ui_labelf("%0.2e###csv%u", stats->average_times[it], (u32)it);
+					UIParent(unit_column)  ui_labelf("[s]###csu%u", (u32)it);
+					UIParent(label_column)
+					{
+						UIFlags(reloadable_index >= 0? UINodeFlag_Clickable|UINodeFlag_DrawHotEffects : 0)
+						signal = ui_labelf("%.*s:###csl%u", (i32)shader.length, shader.data, (u32)it);
+						if ui_pressed(signal)
+							ui_context_menu_open(signal.node->key, panel);
+					}
+				}
 
-					if ui_pressed(signal)
-						ui_context_menu_open(signal.node->key, panel);
+				if (ui_node_key_equal(ui_context->context_menu_anchor_key, signal.node->key)) {
+					UIParent(ui_context->context_menu_root)
+					UIChildLayoutAxis(Axis2_X)
+					UIPrefHeight(ui_children_sum(1.f))
+					UIPrefWidth(ui_children_sum(1.f))
+					UIParent(ui_spacer(0))
+					{
+						ui_padw(UI_NODE_PAD);
+						UIPrefHeight(ui_text_dim(1.1f, 1.f))
+						UIPrefWidth(ui_text_dim(1.f, 1.f))
+						ui_label(push_str8_from_parts(ui_build_arena(), str8(""), shader, str8(" Configuration")));
+					}
 
-					if (ui_node_key_equal(ui_context->context_menu_anchor_key, signal.node->key)) {
-						UIParent(ui_context->context_menu_root)
-						UIChildLayoutAxis(Axis2_X)
-						UIPrefHeight(ui_children_sum(1.f))
-						UIPrefWidth(ui_children_sum(1.f))
-						UIParent(ui_spacer(0))
+					UIParent(ui_context->context_menu_root)
+					UIChildLayoutAxis(Axis2_X)
+					UIPrefHeight(ui_children_sum(1.f))
+					UIPrefWidth(ui_children_sum(1.f))
+					UIParent(ui_spacer(0))
+					UIChildLayoutAxis(Axis2_Y)
+					{
+						UINode *left, *right;
+						ui_padw(UI_NODE_PAD);
+						left = ui_node_from_string(0, str8("###left"));
+						ui_padw(UI_NODE_PAD * 2.f);
+						right = ui_node_from_string(0, str8("###right"));
+						ui_padw(UI_NODE_PAD);
+
+						UIPrefHeight(ui_text_dim(1.1f, 1.f))
+						UIPrefWidth(ui_text_dim(1.f, 1.f))
+						UIFontSize(24.f)
 						{
-							ui_padw(UI_NODE_PAD);
-							UIPrefHeight(ui_text_dim(1.1f, 1.f))
-							UIPrefWidth(ui_text_dim(1.f, 1.f))
-							ui_label(push_str8_from_parts(ui_build_arena(), str8(""), shader, str8(" Configuration")));
-						}
+							BeamformerShaderDescriptor *sd = cp->shader_descriptors + it;
+							UIParent(left)  ui_label(str8("Layout"));
+							UIParent(right) ui_labelf("{%u, %u, %u}###layout", sd->layout.x, sd->layout.y, sd->layout.z);
+							UIParent(left)  ui_label(str8("Dispatch"));
+							UIParent(right) ui_labelf("{%u, %u, %u}###dispatch", sd->dispatch.x, sd->dispatch.y, sd->dispatch.z);
+							UIParent(left)  ui_label(str8("Input"));
+							UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
+							                                              beamformer_data_kind_str8[sd->input_data_kind],
+							                                              str8("##input_kind")));
+							UIParent(left)  ui_label(str8("Output"));
+							UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
+							                                              beamformer_data_kind_str8[sd->output_data_kind],
+							                                              str8("##output_kind")));
 
-						UIParent(ui_context->context_menu_root)
-						UIChildLayoutAxis(Axis2_X)
-						UIPrefHeight(ui_children_sum(1.f))
-						UIPrefWidth(ui_children_sum(1.f))
-						UIParent(ui_spacer(0))
-						UIChildLayoutAxis(Axis2_Y)
-						{
-							UINode *left, *right;
-							ui_padw(UI_NODE_PAD);
-							left = ui_node_from_string(0, str8("###left"));
-							ui_padw(UI_NODE_PAD * 2.f);
-							right = ui_node_from_string(0, str8("###right"));
-							ui_padw(UI_NODE_PAD);
-
-							UIPrefHeight(ui_text_dim(1.1f, 1.f))
-							UIPrefWidth(ui_text_dim(1.f, 1.f))
-							UIFontSize(24.f)
-							{
-								BeamformerShaderDescriptor *sd = cp->shader_descriptors + it;
-								UIParent(left)  ui_label(str8("Layout"));
-								UIParent(right) ui_labelf("{%u, %u, %u}###layout", sd->layout.x, sd->layout.y, sd->layout.z);
-								UIParent(left)  ui_label(str8("Dispatch"));
-								UIParent(right) ui_labelf("{%u, %u, %u}###dispatch", sd->dispatch.x, sd->dispatch.y, sd->dispatch.z);
-								UIParent(left)  ui_label(str8("Input"));
+							if (beamformer_shader_compile_flag_counts[reloadable_index])
+							for EachIndex(beamformer_shader_compile_flag_counts[reloadable_index], bit) {
+								str8 *flags = beamformer_shader_compile_flag_names[reloadable_index];
+								b32   set   = sd->compile_flags & (1u << bit);
+								UIParent(left)  ui_label(flags[bit]);
 								UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
-								                                              beamformer_data_kind_str8[sd->input_data_kind],
-								                                              str8("##input_kind")));
-								UIParent(left)  ui_label(str8("Output"));
-								UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
-								                                              beamformer_data_kind_str8[sd->output_data_kind],
-								                                              str8("##output_kind")));
+								                                              set ? str8("True") : str8("False"),
+								                                              str8("##"), flags[bit]));
+							}
 
-								if (beamformer_shader_compile_flag_counts[reloadable_index])
-								for EachIndex(beamformer_shader_compile_flag_counts[reloadable_index], bit) {
-									str8 *flags = beamformer_shader_compile_flag_names[reloadable_index];
-									b32   set   = sd->compile_flags & (1u << bit);
-									UIParent(left)  ui_label(flags[bit]);
-									UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
-									                                              set ? str8("True") : str8("False"),
-									                                              str8("##"), flags[bit]));
-								}
-
-								i32 struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];
-								if (struct_id != -1) {
-									str8             *names = meta_struct_member_names_by_id[struct_id];
-									MetaStructInfo   *si    = meta_struct_info_by_id + struct_id;
-									MetaStructMember *sm    = meta_struct_members_by_id[struct_id];
-									for EachIndex(si->member_count, member) {
-										Stream sb = arena_stream(ui_build_arena());
-										stream_append_struct_member(&sb, sm + member, &sd->bake);
-										stream_append_str8s(&sb, str8("##"), names[member]);
-										UIParent(left)  ui_label(names[member]);
-										UIParent(right) ui_label(arena_stream_commit(ui_build_arena(), &sb));
-									}
+							i32 struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];
+							if (struct_id != -1) {
+								str8             *names = meta_struct_member_names_by_id[struct_id];
+								MetaStructInfo   *si    = meta_struct_info_by_id + struct_id;
+								MetaStructMember *sm    = meta_struct_members_by_id[struct_id];
+								for EachIndex(si->member_count, member) {
+									Stream sb = arena_stream(ui_build_arena());
+									stream_append_struct_member(&sb, sm + member, &sd->bake);
+									stream_append_str8s(&sb, str8("##"), names[member]);
+									UIParent(left)  ui_label(names[member]);
+									UIParent(right) ui_label(arena_stream_commit(ui_build_arena(), &sb));
 								}
 							}
 						}
