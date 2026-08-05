@@ -1422,6 +1422,10 @@ vk_load_physical_device(Arena *arena, Stream *err)
 		}
 	}
 
+	// NOTE(rnp): some devices are fully unified so the only memory type is BAR memory
+	if (vk->memory_info.memory_type_indices[VulkanMemoryKind_Host] == -1 && bar_index != -1)
+		vk->memory_info.memory_type_indices[VulkanMemoryKind_Host] = bar_index;
+
 	if (vk->memory_info.memory_type_indices[VulkanMemoryKind_Host] == -1) {
 		stream_append_str8(err, vulkan_info("fatal error: vulkan driver does not provide host visible memory\n"));
 		fatal(stream_to_str8(err));
