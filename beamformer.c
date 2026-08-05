@@ -114,15 +114,19 @@ beamformer_load_cuda_library(BeamformerCtx *ctx, OSLibrary cuda, Arena *scratch)
 }
 
 function void
-worker_thread_sleep(GLWorkerThreadContext *ctx, BeamformerSharedMemory *sm)
+worker_thread_sleep(GLWorkerThreadContext *ctx)
 {
+	u64 timer_frequency = os_system_info()->timer_frequency;
+	u64 start_time      = os_timer_count();
 	for (;;) {
-		i32 expected = 0;
-		if (atomic_cas_u32(&ctx->sync_variable, &expected, 1) ||
-		    atomic_load_u32(&sm->live_imaging_parameters.active))
-		{
-			break;
+		i32 done, expected = 0;
+		while (os_timer_count() - start_time < timer_frequency) {
+			done = atomic_cas_u32(&ctx->sync_variable, &expected, 1);
+			if (done) break;
+			cpu_yield();
 		}
+
+		if (done) break;
 
 		/* TODO(rnp): clean this crap up; we shouldn't need two values to communicate this */
 		atomic_store_u32(&ctx->awake, 0);
@@ -135,11 +139,9 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 {
 	GLWorkerThreadContext *ctx = user_context;
 
-	BeamformerCtx *beamformer = (BeamformerCtx *)ctx->user_context;
-
 	for (;;) {
-		worker_thread_sleep(ctx, beamformer->shared_memory);
-		beamformer_complete_compute(beamformer, ctx->arena);
+		worker_thread_sleep(ctx);
+		beamformer_complete_compute((BeamformerCtx *)ctx->user_context, ctx->arena);
 	}
 
 	unreachable();
@@ -149,12 +151,10 @@ function OS_THREAD_ENTRY_POINT_FN(compute_worker_thread_entry_point)
 
 function OS_THREAD_ENTRY_POINT_FN(beamformer_upload_entry_point)
 {
-	GLWorkerThreadContext         *ctx = user_context;
-	BeamformerUploadThreadContext *up  = (typeof(up))ctx->user_context;
-
+	GLWorkerThreadContext *ctx = user_context;
 	for (;;) {
-		worker_thread_sleep(ctx, up->shared_memory);
-		beamformer_rf_upload(up);
+		worker_thread_sleep(ctx);
+		beamformer_rf_upload((BeamformerUploadThreadContext *)ctx->user_context);
 	}
 
 	unreachable();
