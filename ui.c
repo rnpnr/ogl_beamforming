@@ -1,6 +1,8 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
  * [ ]: word scan for text input
+ * [ ]: when dragging only tab from group close old group on release
+ *    - only keep layout when closing tabs
  * [ ]: animation state
  * [ ]: tooltips
  * [ ]: extra copy view settings
@@ -3616,6 +3618,7 @@ ui_build_live_imaging_controls(BeamformerUIPanel *panel)
 	UIScroll(Axis2_Count)
 	{
 		ui_top_parent()->child_layout_axis = Axis2_Y;
+		ui_top_parent()->semantic_width    = ui_px(4.f * UI_NODE_PAD + 200.f, 1.f);
 
 		if (popcount_u64(lip->acquisition_kind_enabled_flags) > 1)
 		UIPrefWidth(ui_children_sum(1.f))
@@ -3679,7 +3682,7 @@ ui_build_live_imaging_controls(BeamformerUIPanel *panel)
 				v4 hsv_power_slider = {{0.35f * ease_in_out_cubic(1.0f - lip->transmit_power), 0.65f, 0.65f, 1}};
 				UIBGColour(hsv_to_rgb(hsv_power_slider))
 				UIPrefHeight(ui_px(row_height, 1.f))
-				UIPrefWidth(ui_pct(1.f, 0.5f))
+				UIPrefWidth(ui_pct(1.f, 0.f))
 				signal = ui_slider(lip->transmit_power, str8("###transmit_power"));
 				if (signal.flags) {
 					lip->transmit_power = ui_slider_update_from_signal(lip->transmit_power, signal);
@@ -3700,7 +3703,7 @@ ui_build_live_imaging_controls(BeamformerUIPanel *panel)
 					ui_padw(2 * UI_NODE_PAD);
 					UIBGColour(g_colour_palette[1])
 					UIPrefHeight(ui_px(row_height, 1.f))
-					UIPrefWidth(ui_pct(1.f, 0.5f))
+					UIPrefWidth(ui_pct(1.f, 0.f))
 					signal = ui_sliderf(lip->tgc_control_points[it], "###tgc_%u", (u32)it);
 					if (signal.flags) {
 						lip->tgc_control_points[it] = ui_slider_update_from_signal(lip->tgc_control_points[it], signal);
@@ -3750,11 +3753,12 @@ ui_build_live_imaging_controls(BeamformerUIPanel *panel)
 
 				ui_padh(UI_NODE_PAD);
 
-				UIChildLayoutAxis(Axis2_Y)
-				UIAxisAlign(Axis2_X, Center)
-				UIPrefWidth(ui_children_sum(1.f))
+				UIPrefWidth(ui_pct(1.f, 1.f))
 				UIPrefHeight(ui_children_sum(1.f))
+				UIChildLayoutAxis(Axis2_X)
+				UIAxisAlign(Axis2_X, Center)
 				spacer = ui_spacer(0);
+				UIParent(spacer)
 
 				UIParent(spacer)
 				UITextAlign(Center)
@@ -3774,15 +3778,27 @@ ui_build_live_imaging_controls(BeamformerUIPanel *panel)
 						atomic_or_u32(&beamformer_context->shared_memory->live_imaging_dirty_flags,
 						              BeamformerLiveImagingDirtyFlags_SaveData);
 					}
-
-					ui_padh(UI_NODE_PAD);
-
-					UIBorderColour((v4){.a = 0.6f})
-					signal = ui_button(str8("Stop Imaging"));
-					if ui_pressed(signal)
-						atomic_or_u32(&beamformer_context->shared_memory->live_imaging_dirty_flags,
-						              BeamformerLiveImagingDirtyFlags_StopImaging);
 				}
+			}
+
+			ui_padh(UI_NODE_PAD);
+
+			UIAxisAlign(Axis2_X, Center)
+			UIPrefWidth(ui_pct(1.f, 1.f))
+			UIPrefHeight(ui_children_sum(1.f))
+			spacer = ui_spacer(0);
+
+			UIParent(spacer)
+			UITextAlign(Center)
+			UIBGColour((v4){0})
+			UIPrefWidth(ui_text_dim(1.3f, 1.f))
+			UIPrefHeight(ui_text_dim(1.3f, 1.f))
+			{
+				UIBorderColour((v4){.a = 0.6f})
+				signal = ui_button(str8("Stop Imaging"));
+				if ui_pressed(signal)
+					atomic_or_u32(&beamformer_context->shared_memory->live_imaging_dirty_flags,
+					              BeamformerLiveImagingDirtyFlags_StopImaging);
 			}
 		}
 	}
