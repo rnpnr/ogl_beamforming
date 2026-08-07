@@ -107,7 +107,7 @@
   #if ARCH_ARM64
     /* TODO? debuggers just loop here forever and need a manual PC increment (step over) */
     #define debugbreak()   asm volatile ("brk 0xf000")
-    #define cpu_yield()    asm volatile ("yield")
+    #define cpu_yield()    asm volatile ("isb")
     #define store_fence()  asm volatile ("dmb ishst" ::: "memory")
   #else
     #define debugbreak()   asm volatile ("int3; nop")
