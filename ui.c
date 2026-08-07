@@ -3053,14 +3053,22 @@ ui_build_frame_view(UINode *container, BeamformerFrameView *view)
 
 	b32 rebuild_transform = 0;
 
+	UINode *group;
+	UIAxisAlign(Axis2_X, Center)
+	UIChildLayoutAxis(Axis2_Y)
+	UIPrefHeight(ui_children_sum(1.f))
+	UIPrefWidth(ui_children_sum(1.f))
 	UIParent(container)
+		group = ui_spacer(0);
+
+	UIParent(group)
 	{
 		ui_padh(UI_NODE_PAD);
 
 		UINode *frame_top, *frame_view;
-		UIChildLayoutAxis(Axis2_X)
 		UIPrefHeight(ui_children_sum(1.f))
 		UIPrefWidth(ui_children_sum(1.f))
+		UIChildLayoutAxis(Axis2_X)
 		frame_top = ui_node_from_string(0, str8("###frame_view_top"));
 
 		UIParent(frame_top)
@@ -4258,7 +4266,7 @@ ui_build_regions(UINode *root_node, BeamformerUIPanel *tree_root)
 				UIChildLayoutAxis(Axis2_Y)
 				UIPrefWidth(ui_pct(1.f, 0.5f))
 				UIPrefHeight(ui_pct(1.f, 0.5f))
-				UIAxisAlign(Axis2_X, Center)
+				UIAxisAlign(Axis2_Y, Center)
 					container = ui_node_from_string(0, str8("###frame_view_container"));
 				ui_build_frame_view(container, view);
 			}
