@@ -22,11 +22,12 @@ typedef enum {
 	BeamformerRegisterSlot_Window         = 2,
 	BeamformerRegisterSlot_Frame          = 3,
 	BeamformerRegisterSlot_FrameView      = 4,
-	BeamformerRegisterSlot_SplitAxis      = 5,
-	BeamformerRegisterSlot_SplitLeftTree  = 6,
-	BeamformerRegisterSlot_SplitRightTree = 7,
-	BeamformerRegisterSlot_DropTargetTree = 8,
-	BeamformerRegisterSlot_DropChildIndex = 9,
+	BeamformerRegisterSlot_LiveControls   = 5,
+	BeamformerRegisterSlot_SplitAxis      = 6,
+	BeamformerRegisterSlot_SplitLeftTree  = 7,
+	BeamformerRegisterSlot_SplitRightTree = 8,
+	BeamformerRegisterSlot_DropTargetTree = 9,
+	BeamformerRegisterSlot_DropChildIndex = 10,
 	BeamformerRegisterSlot_Count,
 } BeamformerRegisterSlot;
 
@@ -59,6 +60,7 @@ typedef struct {
 	u64  window;
 	u64  frame;
 	u64  frame_view;
+	u64  live_controls;
 	u64  split_axis;
 	u64  split_left_tree;
 	u64  split_right_tree;
@@ -91,6 +93,7 @@ read_only global BeamformerPanelInfo beamformer_panel_infos[] = {
 	.window           = beamformer_registers()->window, \
 	.frame            = beamformer_registers()->frame, \
 	.frame_view       = beamformer_registers()->frame_view, \
+	.live_controls    = beamformer_registers()->live_controls, \
 	.split_axis       = beamformer_registers()->split_axis, \
 	.split_left_tree  = beamformer_registers()->split_left_tree, \
 	.split_right_tree = beamformer_registers()->split_right_tree, \

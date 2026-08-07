@@ -44,6 +44,7 @@
 	[U64 frame            Frame         ]
 
 	[U64 frame_view       FrameView     ]
+	[U64 live_controls    LiveControls  ]
 
 	// NOTE(rnp): Panel Movement and Splitting
 	[U64 split_axis       SplitAxis     ]

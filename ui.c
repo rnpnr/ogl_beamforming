@@ -2,9 +2,6 @@
 /* TODO(rnp):
  * [ ]: track active panel
  *    - when beamformer gets command to open tab it goes to this location by default
- * [ ]: track last active live control panel
- *    - when live imaging starts make this panel the focus
- *    - if this exists do not auto open a panel
  * [ ]: word scan for text input
  * [ ]: when dragging only tab from group close old group on release
  *    - only keep layout when closing tabs
@@ -3625,6 +3622,7 @@ ui_build_live_imaging_controls(BeamformerUIPanel *panel)
 	{
 		ui_top_parent()->child_layout_axis = Axis2_Y;
 		ui_top_parent()->semantic_width    = ui_px(4.f * UI_NODE_PAD + 200.f, 1.f);
+		ui_top_parent()->parent->alignment[Axis2_X] = UIAlign_Center;
 
 		if (popcount_u64(lip->acquisition_kind_enabled_flags) > 1)
 		UIPrefWidth(ui_children_sum(1.f))
@@ -4792,8 +4790,10 @@ ui_layout_nodes(UINode *root)
 
 		for (UINode *child = node->first_child; !ui_node_is_nil(child); child = child->next_sibling) {
 			for EachElement(node->alignment, axis) {
-				f32 size_delta = node->computed_size[axis] - child->computed_size[axis];
-				child->computed_position[axis] += ui_alignment_correction(node->alignment[axis], size_delta);
+				UIAlign align      = node->alignment[axis];
+				f32     size_delta = node->computed_size[axis] - child->computed_size[axis];
+				if (size_delta < 0) align = UIAlign_Left;
+				child->computed_position[axis] += ui_alignment_correction(align, size_delta);
 			}
 		}
 
@@ -4973,6 +4973,14 @@ ui_kill_panel(BeamformerUIPanel *node)
 		SLLStackPush(ui->view_freelist, bv, next);
 	}
 
+	if (node->kind == BeamformerPanelKind_LiveImagingControls && (u64)node == beamformer_context->base_registers.v.live_controls) {
+		beamformer_context->base_registers.v.live_controls = 0;
+		// TODO(rnp): find first live control panel and update this with it
+	}
+
+	if (node->kind == BeamformerPanelKind_LiveImagingControls && node == beamformer_context->auto_live_control_panel)
+		beamformer_context->auto_live_control_panel = 0;
+
 	beamformer_ui_panel_unlink(node);
 
 	if (node->kind == BeamformerPanelKind_TabGroup) {
@@ -5031,6 +5039,9 @@ beamformer_ui_push_panel(BeamformerUIPanel *parent, BeamformerPanelKind kind)
 			view_kind = BeamformerFrameViewKind_3DXPlane;
 		result->u.frame_view = beamformer_ui_frame_view_new(view_kind);
 	}
+
+	if (kind == BeamformerPanelKind_LiveImagingControls)
+		beamformer_context->base_registers.v.live_controls = (u64)result;
 
 	return result;
 }

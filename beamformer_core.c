@@ -1905,20 +1905,26 @@ beamformer_frame_step(void *memory, BeamformerInput *input)
 	u32 live_imaging_active = atomic_load_u32(&sm->live_imaging_parameters.active);
 	if (live_imaging_active != ctx->live_imaging_active) {
 		if (ctx->live_imaging_active) {
-			BeamformerUIPanel *parent = ctx->auto_live_control_panel->parent;
-			beamformer_command(beamformer_command_infos[BeamformerCommandKind_CloseTab].string, .tree_node = (u64)ctx->auto_live_control_panel);
-			if (parent->child_count == 1)
-				beamformer_command(beamformer_command_infos[BeamformerCommandKind_CloseTab].string, .tree_node = (u64)parent);
-			ctx->auto_live_control_panel = 0;
+			if (ctx->auto_live_control_panel) {
+				BeamformerUIPanel *parent = ctx->auto_live_control_panel->parent;
+				beamformer_command(beamformer_command_infos[BeamformerCommandKind_CloseTab].string, .tree_node = (u64)ctx->auto_live_control_panel);
+				if (parent->child_count == 1)
+					beamformer_command(beamformer_command_infos[BeamformerCommandKind_CloseTab].string, .tree_node = (u64)parent);
+			}
 		} else {
+			if (beamformer_registers()->live_controls) {
+				beamformer_command(beamformer_command_infos[BeamformerCommandKind_FocusTab].string,
+				                   .tree_node = beamformer_registers()->live_controls);
+			} else {
+				ctx->auto_live_control_panel = beamformer_ui_push_panel(0, BeamformerPanelKind_LiveImagingControls);
+				beamformer_command(beamformer_command_infos[BeamformerCommandKind_SplitTree].string,
+				                   .tree_node        = (u64)ctx->auto_live_control_panel,
+				                   .split_axis       = Axis2_X,
+				                   .split_left_tree  = (u64)ui_context->tree,
+				                   .split_right_tree = 0,
+				                   .drop_target_tree = (u64)ui_context->tree);
+			}
 			ctx->live_imaging_active_frame = ctx->frame_index;
-			ctx->auto_live_control_panel   = beamformer_ui_push_panel(0, BeamformerPanelKind_LiveImagingControls);
-			beamformer_command(beamformer_command_infos[BeamformerCommandKind_SplitTree].string,
-			                   .tree_node        = (u64)ctx->auto_live_control_panel,
-			                   .split_axis       = Axis2_X,
-			                   .split_left_tree  = (u64)ui_context->tree,
-			                   .split_right_tree = 0,
-			                   .drop_target_tree = (u64)ui_context->tree);
 		}
 		ctx->live_imaging_active = live_imaging_active;
 	}
@@ -1959,6 +1965,12 @@ beamformer_frame_step(void *memory, BeamformerInput *input)
 				BeamformerUIPanel *group   = (BeamformerUIPanel *)beamformer_registers()->drop_target_tree;
 				u64 new_child_index = beamformer_registers()->drop_child_index;
 				beamformer_panel_group_insert_at(group, move, new_child_index);
+
+				if (move->kind == BeamformerPanelKind_LiveImagingControls) {
+					beamformer_context->base_registers.v.live_controls = (u64)move;
+					if (move == ctx->auto_live_control_panel)
+						ctx->auto_live_control_panel = 0;
+				}
 			}break;
 
 			case BeamformerCommandKind_OpenTab:{
