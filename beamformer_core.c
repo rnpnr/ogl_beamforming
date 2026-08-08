@@ -1961,8 +1961,9 @@ beamformer_frame_step(void *memory, BeamformerInput *input)
 			}break;
 
 			case BeamformerCommandKind_MoveTab:{
-				BeamformerUIPanel *move    = (BeamformerUIPanel *)beamformer_registers()->tree_node;
-				BeamformerUIPanel *group   = (BeamformerUIPanel *)beamformer_registers()->drop_target_tree;
+				BeamformerUIPanel *move   = (BeamformerUIPanel *)beamformer_registers()->tree_node;
+				BeamformerUIPanel *group  = (BeamformerUIPanel *)beamformer_registers()->drop_target_tree;
+				BeamformerUIPanel *parent = move->parent;
 				u64 new_child_index = beamformer_registers()->drop_child_index;
 				beamformer_panel_group_insert_at(group, move, new_child_index);
 
@@ -1971,6 +1972,9 @@ beamformer_frame_step(void *memory, BeamformerInput *input)
 					if (move == ctx->auto_live_control_panel)
 						ctx->auto_live_control_panel = 0;
 				}
+
+				if (parent->child_count == 0)
+					beamformer_command(beamformer_command_infos[BeamformerCommandKind_CloseTab].string, .tree_node = (u64)parent);
 			}break;
 
 			case BeamformerCommandKind_OpenTab:{
