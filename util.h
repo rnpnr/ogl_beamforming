@@ -75,10 +75,13 @@
 #define IsPowerOfTwo(a)         (((a) & ((a) - 1)) == 0)
 #define AlignUpPowerOfTwo(v, a) (((v) + (a) - 1) & (~((a) - 1)))
 
-#define IsDigit(c)       (Between((c), '0', '9'))
-#define IsUpper(c)       (((c) & 0x20u) == 0)
-#define ToLower(c)       (((c) | 0x20u))
-#define ToUpper(c)       (((c) & ~(0x20u)))
+#define IsDigit(c)        (Between((c), '0', '9'))
+#define IsUpper(c)        (((c) & 0x20u) == 0)
+#define ToLower(c)        (((c) | 0x20u))
+#define ToUpper(c)        (((c) & ~(0x20u)))
+
+#define IsPunctuation(c)  (Between(c, '!', '/') || Between(c, ':', '@') || Between(c, '[', '`') || Between(c, '{', '~'))
+#define IsWordBoundary(c) (((c) == ' ') || IsPunctuation(c))
 
 #define f32_equal(x, y)  (Abs((x) - (y)) <= F32_EPSILON * Max(1.0f, Max(Abs(x), Abs(y))))
 

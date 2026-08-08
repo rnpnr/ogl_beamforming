@@ -813,6 +813,40 @@ str8_cut_head(str8 s, i64 cut)
 	return result;
 }
 
+function i64
+str8_word_boundary_before(str8 s, i64 p)
+{
+	p = Max(p - 1, 0);
+	b32 negate = IsWordBoundary(s.data[p]);
+	while (p >= 0 && (negate ^ !IsWordBoundary(s.data[p])))
+		p -= 1;
+	p++;
+	return p;
+}
+
+function i64
+str8_word_boundary_after(str8 s, i64 p)
+{
+	b32 negate = IsWordBoundary(s.data[p]);
+	while (p != s.length && (negate ^ !IsWordBoundary(s.data[p])))
+		p += 1;
+	return p;
+}
+
+function i64
+str8_word_boundary(str8 s, i64 p, i64 count)
+{
+	i64 sign  = Sign(count);
+	i64 end_p = sign > 0 ? s.length : 0;
+	count = Abs(count);
+	p     = Clamp(p, 0, s.length);
+
+	for (i64 word_count = 0; word_count < count && p != end_p; word_count++)
+		p = sign > 0 ? str8_word_boundary_after(s, p) : str8_word_boundary_before(s, p);
+
+	return p;
+}
+
 function b32
 str8_match(str8 a, str8 b, StringMatchFlags flags)
 {

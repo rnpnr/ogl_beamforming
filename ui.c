@@ -2,9 +2,6 @@
 /* TODO(rnp):
  * [ ]: track active panel
  *    - when beamformer gets command to open tab it goes to this location by default
- * [ ]: word scan for text input
- * [ ]: when dragging only tab from group close old group on release
- *    - only keep layout when closing tabs
  * [ ]: animation state
  * [ ]: tooltips
  * [ ]: extra copy view settings
@@ -1681,7 +1678,9 @@ ui_text_input_update(BeamformerInput *input)
 	if ((flags & Delete) && tis->mark != tis->cursor)
 		delta = 0;
 
-	// TODO(rnp): word selection
+	if (flags & WordScan)
+		delta = str8_word_boundary(ui_text_input_string(), tis->mark, delta) - tis->mark;
+
 	tis->mark += delta;
 	tis->mark  = Clamp(tis->mark, 0, tis->count);
 
