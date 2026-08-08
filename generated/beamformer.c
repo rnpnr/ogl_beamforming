@@ -115,6 +115,15 @@ typedef enum {
 } BeamformerLiveFeedbackFlags;
 
 typedef enum {
+	BeamformerComputeArrayParametersField_FocalVectors                = 0,
+	BeamformerComputeArrayParametersField_SparseElements              = 1,
+	BeamformerComputeArrayParametersField_TransmitReceiveOrientations = 2,
+	BeamformerComputeArrayParametersField_DASHadamard                 = 3,
+	BeamformerComputeArrayParametersField_DecodeHadamard              = 4,
+	BeamformerComputeArrayParametersField_Count,
+} BeamformerComputeArrayParametersField;
+
+typedef enum {
 	BeamformerLiveImagingDirtyFlags_ImagePlaneOffsets = 1 << 0,
 	BeamformerLiveImagingDirtyFlags_TransmitPower     = 1 << 1,
 	BeamformerLiveImagingDirtyFlags_TGCControlPoints  = 1 << 2,
@@ -457,8 +466,9 @@ typedef struct {
 	v2  focal_vectors[BeamformerMaxChannelCount];
 	i16 sparse_elements[BeamformerMaxChannelCount];
 	u16 transmit_receive_orientations[BeamformerMaxChannelCount];
-	f16 hadamard_matrix[BeamformerMaxHadamardElements];
-} BeamformerDASArrayParameters;
+	f16 das_hadamard[BeamformerMaxHadamardElements];
+	f16 decode_hadamard[BeamformerMaxHadamardElements];
+} BeamformerComputeArrayParameters;
 
 typedef union {
 	BeamformerDecodeBakeParameters  Decode;
@@ -466,6 +476,22 @@ typedef union {
 	BeamformerDASBakeParameters     DAS;
 	BeamformerReshapeBakeParameters Reshape;
 } BeamformerShaderBakeParameters;
+
+read_only global u32 beamformer_compute_array_parameter_sizes[] = {
+	sizeof(v2)  * BeamformerMaxChannelCount,
+	sizeof(i16) * BeamformerMaxChannelCount,
+	sizeof(u16) * BeamformerMaxChannelCount,
+	sizeof(f16) * BeamformerMaxHadamardElements,
+	sizeof(f16) * BeamformerMaxHadamardElements,
+};
+
+read_only global u32 beamformer_compute_array_parameter_offsets[] = {
+	offsetof(BeamformerComputeArrayParameters, focal_vectors),
+	offsetof(BeamformerComputeArrayParameters, sparse_elements),
+	offsetof(BeamformerComputeArrayParameters, transmit_receive_orientations),
+	offsetof(BeamformerComputeArrayParameters, das_hadamard),
+	offsetof(BeamformerComputeArrayParameters, decode_hadamard),
+};
 
 read_only global u8 beamformer_data_kind_element_size[] = {
 	2,
@@ -848,17 +874,19 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"#define RCAOrientation_Columns 2\n"
 	"\n"),
 	str8_comp(""
-	"struct DASArrayParameters {\n"
+	"struct ComputeArrayParameters {\n"
 	"  f32vec2   focal_vectors[MaxChannelCount];\n"
 	"  int16_t   sparse_elements[MaxChannelCount];\n"
 	"  uint16_t  transmit_receive_orientations[MaxChannelCount];\n"
-	"  float16_t hadamard_matrix[MaxHadamardElements];\n"
+	"  float16_t das_hadamard[MaxHadamardElements];\n"
+	"  float16_t decode_hadamard[MaxHadamardElements];\n"
 	"};\n"
-	"layout(std430, buffer_reference) buffer DASArrayParametersReference {\n"
+	"layout(std430, buffer_reference) buffer ComputeArrayParametersReference {\n"
 	"  f32vec2   focal_vectors[MaxChannelCount];\n"
 	"  int16_t   sparse_elements[MaxChannelCount];\n"
 	"  uint16_t  transmit_receive_orientations[MaxChannelCount];\n"
-	"  float16_t hadamard_matrix[MaxHadamardElements];\n"
+	"  float16_t das_hadamard[MaxHadamardElements];\n"
+	"  float16_t decode_hadamard[MaxHadamardElements];\n"
 	"};\n"
 	"\n"),
 	str8_comp(""

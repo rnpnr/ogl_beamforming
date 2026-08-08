@@ -124,7 +124,7 @@ make_hadamard_transpose(Arena *arena, i32 dim, b32 row_major)
 		temp_end(scratch);
 	}
 
-	if (row_major) {
+	if (result && row_major) {
 		for (i32 r = 0; r < order; r++)
 			for (i32 c = 0; c < order; c++)
 				swap(result[r * order + c], result[c * order + r]);

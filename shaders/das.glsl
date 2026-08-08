@@ -170,14 +170,14 @@ float cylindrical_wave_transmit_distance(const vec3 point, const float focal_dep
 u16 tx_rx_orientation_for_acquisition(const s16 acquisition)
 {
 	u16 result = u16(TransmitReceiveOrientation);
-	DASArrayParametersReference dp = DASArrayParametersReference(array_parameters);
+	ComputeArrayParametersReference dp = ComputeArrayParametersReference(array_parameters);
 	if (!SingleOrientation) result = dp.transmit_receive_orientations[acquisition];
 	return result;
 }
 
 f32vec2 focal_vector_for_acquisition(const s16 acquisition)
 {
-	DASArrayParametersReference dp = DASArrayParametersReference(array_parameters);
+	ComputeArrayParametersReference dp = ComputeArrayParametersReference(array_parameters);
 	f32vec2 result = SingleFocus ? f32vec2(TransmitAngle, FocusDepth) : dp.focal_vectors[acquisition];
 	return result;
 }
@@ -230,7 +230,7 @@ RESULT_TYPE RCA(const vec3 world_point)
 
 RESULT_TYPE HERCULES(const vec3 world_point)
 {
-	DASArrayParametersReference dp = DASArrayParametersReference(array_parameters);
+	ComputeArrayParametersReference dp = ComputeArrayParametersReference(array_parameters);
 
 	const uint16_t tx_rx_orientation = tx_rx_orientation_for_acquisition(int16_t(0));
 	const bool     rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
@@ -287,7 +287,7 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
-	DASArrayParametersReference dp = DASArrayParametersReference(array_parameters);
+	ComputeArrayParametersReference dp = ComputeArrayParametersReference(array_parameters);
 
 	float z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
 	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;
@@ -322,7 +322,7 @@ RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
-	DASArrayParametersReference dp = DASArrayParametersReference(array_parameters);
+	ComputeArrayParametersReference dp = ComputeArrayParametersReference(array_parameters);
 
 	float z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
 	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;
@@ -347,7 +347,7 @@ RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
 			// sequential elements. The first element in each group is beamformed using the first
 			// acquisition, the second element in each group is beamformed using the second acquisition, etc.
 			for (s32 tx_group = 0; tx_group < s32(ReadiGroupCount); tx_group++) {
-				f32 group_apodization = apodization * dp.hadamard_matrix[hadamard_offset + tx_group];
+				f32 group_apodization = apodization * dp.das_hadamard[hadamard_offset + tx_group];
 				s32 rf_offset = channel_rf_offset;
 
 				for (s32 tx_event = 0; tx_event < AcquisitionCount; tx_event++) {

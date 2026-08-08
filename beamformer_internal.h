@@ -264,26 +264,6 @@ typedef struct {
 	GPUBuffer                  buffer;
 } BeamformerFilter;
 
-// X(kind, format, elements)
-#define BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST \
-	X(DecodeHadamard,              f16, BeamformerMaxChannelCount * BeamformerMaxChannelCount) \
-	X(FocalVectors,                v2,  BeamformerMaxChannelCount) \
-	X(SparseElements,              i16, BeamformerMaxChannelCount) \
-	X(TransmitReceiveOrientations, u16, BeamformerMaxChannelCount) \
-	X(DasHadamard,                 f16, BeamformerMaxChannelCount * BeamformerMaxChannelCount) \
-
-typedef enum {
-	#define X(k, ...) BeamformerComputeArrayParameterKind_##k,
-	BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST
-	#undef X
-	BeamformerComputeArrayParameterKind_Count
-} BeamformerComputeArrayParameterKind;
-
-// NOTE(rnp): only used to calculate offsets, never used directly
-#define X(name, type, elements) alignas(64) type name[elements];
-typedef struct {BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST} BeamformerComputeArrayParameters;
-#undef X
-
 typedef struct {
 	uv3 layout;
 	uv3 dispatch;

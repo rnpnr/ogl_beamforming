@@ -56,18 +56,6 @@ typedef struct {
 	u64                         count;
 } BeamformerComputeGraph;
 
-read_only global u32 beamformer_compute_array_parameter_sizes[] = {
-	#define X(k, type, elements) sizeof(type) * elements,
-	BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST
-	#undef X
-};
-
-read_only global u32 beamformer_compute_array_parameter_offsets[] = {
-	#define X(k, ...) offsetof(BeamformerComputeArrayParameters, k),
-	BEAMFORMER_COMPUTE_ARRAY_PARAMETERS_LIST
-	#undef X
-};
-
 read_only global BeamformerFrame       beamformer_nil_frame;
 read_only global BeamformerComputePlan beamformer_nil_compute_plan;
 
@@ -195,7 +183,6 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 		stream_append_str8(&label, str8("ComputeParameterArray["));
 		stream_append_u64(&label, block);
 		stream_append_str8(&label, str8("]"));
-		stream_append_byte(&label, 0);
 
 		GPUBufferAllocateInfo allocate_info = {
 			.size  = sizeof(BeamformerComputeArrayParameters),
@@ -274,17 +261,15 @@ das_valid_points(iv3 points)
 }
 
 function void
-beamformer_update_hadamard(BeamformerComputePlan *cp, i32 order, b32 row_major, b32 das_matrix, Arena *arena)
+beamformer_update_hadamard(BeamformerComputePlan *cp, BeamformerComputeArrayParametersField output_field,
+                           i32 order, b32 row_major, Arena *arena)
 {
 	f16 *hadamard = make_hadamard_transpose(arena, order, row_major);
 	if (hadamard) {
-		u64 offset = das_matrix ? offsetof(BeamformerComputeArrayParameters, DasHadamard)
-		                        : offsetof(BeamformerComputeArrayParameters, DecodeHadamard);
-		u64 size   = das_matrix ? sizeof(*((BeamformerComputeArrayParameters *)0)->DasHadamard)
-		                        : sizeof(*((BeamformerComputeArrayParameters *)0)->DecodeHadamard);
+		u64 offset = beamformer_compute_array_parameter_offsets[output_field];
+		u64 size   = beamformer_compute_array_parameter_sizes[output_field] / BeamformerMaxHadamardElements;
 		size *= order * order;
 		vk_buffer_range_upload(&cp->array_parameters, hadamard, offset, size, 0);
-		if(!das_matrix) cp->hadamard_order = order;
 	}
 }
 
@@ -1072,9 +1057,12 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			if (pb->parameters.decode_mode != BeamformerDecodeMode_None &&
 			    cp->hadamard_order != (i32)cp->acquisition_count)
 			{
-				beamformer_update_hadamard(cp, (i32)cp->acquisition_count, vk_gpu_info()->cooperative_matrix, 0, scratch);
+				beamformer_update_hadamard(cp, BeamformerComputeArrayParametersField_DecodeHadamard,
+				                           cp->acquisition_count, vk_gpu_info()->cooperative_matrix, scratch);
 				if (pb->parameters.readi_group_count > 1)
-					beamformer_update_hadamard(cp, (i32)pb->parameters.readi_group_count, 0, 1, scratch);
+					beamformer_update_hadamard(cp, BeamformerComputeArrayParametersField_DASHadamard,
+					                           pb->parameters.readi_group_count, 0, scratch);
+				cp->hadamard_order = cp->acquisition_count;
 			}
 		}break;
 
@@ -1083,7 +1071,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 		}break;
 		case BeamformerParameterRegionFlag_TransmitReceiveOrientations:{
 			GPUBuffer *b = &cp->array_parameters;
-			u32 kind   = BeamformerComputeArrayParameterKind_TransmitReceiveOrientations;
+			u32 kind   = BeamformerComputeArrayParametersField_TransmitReceiveOrientations;
 			u64 offset = beamformer_compute_array_parameter_offsets[kind];
 			u64 size   = beamformer_compute_array_parameter_sizes[kind];
 			{
@@ -1097,18 +1085,18 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 		case BeamformerParameterRegionFlag_FocalVectors:
 		case BeamformerParameterRegionFlag_SparseElements:
 		{
-			u32 kind = BeamformerComputeArrayParameterKind_Count;
+			u32 kind = BeamformerComputeArrayParametersField_Count;
 			switch (region) {
 			case BeamformerParameterBlockRegion_FocalVectors:{
-				kind = BeamformerComputeArrayParameterKind_FocalVectors;
+				kind = BeamformerComputeArrayParametersField_FocalVectors;
 			}break;
 			case BeamformerParameterBlockRegion_SparseElements:{
-				kind = BeamformerComputeArrayParameterKind_SparseElements;
+				kind = BeamformerComputeArrayParametersField_SparseElements;
 			}break;
 			InvalidDefaultCase;
 			}
 
-			if (kind != BeamformerComputeArrayParameterKind_Count) {
+			if (kind != BeamformerComputeArrayParametersField_Count) {
 				GPUBuffer *b = &cp->array_parameters;
 				u64 offset = beamformer_compute_array_parameter_offsets[kind];
 				u64 size   = beamformer_compute_array_parameter_sizes[kind];
@@ -1144,7 +1132,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 
 	case BeamformerShaderKind_Decode:{
 		BeamformerDecodePushConstants pc = {
-			.hadamard_buffer = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, DecodeHadamard),
+			.hadamard_buffer = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, decode_hadamard),
 			.rf_buffer       = pp_input_pointer,
 		};
 
@@ -1252,7 +1240,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			.cycle_t           = das_cycle_t++,
 			.channel_offset    = channel_offset,
 			.readi_group       = cp->readi_group,
-			.array_parameters  = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, FocalVectors),
+			.array_parameters  = cp->array_parameters.gpu_pointer,
 		};
 		memory_copy(pc.voxel_transform.E, cp->das_voxel_transform.E, sizeof(pc.voxel_transform));
 		memory_copy(pc.xdc_transform.E,   cp->xdc_transform.E,       sizeof(pc.xdc_transform));

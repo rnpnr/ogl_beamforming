@@ -267,16 +267,28 @@
 @Library @Struct LiveImagingParameters
 @MATLAB  @Struct LiveImagingParameters
 
-@Struct DASArrayParameters
+@Table([name_upper name_lower type elements]) ComputeArrayParametersTable
 {
-	[focal_vectors                 V2  MaxChannelCount]
-	[sparse_elements               S16 MaxChannelCount]
-	[transmit_receive_orientations U16 MaxChannelCount]
-	[hadamard_matrix               F16 MaxHadamardElements]
+	[FocalVectors                focal_vectors                 V2  MaxChannelCount]
+	[SparseElements              sparse_elements               S16 MaxChannelCount]
+	[TransmitReceiveOrientations transmit_receive_orientations U16 MaxChannelCount]
+	[DASHadamard                 das_hadamard                  F16 MaxHadamardElements]
+	[DecodeHadamard              decode_hadamard               F16 MaxHadamardElements]
 }
+
+@Expand(ComputeArrayParametersTable) @Enumeration(`$(name_upper)`) ComputeArrayParametersField
+@Expand(ComputeArrayParametersTable) @Struct([`$(name_lower)` `$(type)` `$(elements)`]) ComputeArrayParameters
 
 @Emit
 {
+	`read_only global u32 beamformer_compute_array_parameter_sizes[] = {`
+	@Expand(ComputeArrayParametersTable) `	sizeof($(%type))$(|)* Beamformer$(elements),`
+	`};`
+	``
+	`read_only global u32 beamformer_compute_array_parameter_offsets[] = {`
+	@Expand(ComputeArrayParametersTable) `	offsetof(BeamformerComputeArrayParameters, $(name_lower)),`
+	`};`
+	``
 	`read_only global u8 beamformer_data_kind_element_size[] = {`
 	@Expand(DataKindTable) `	$(size),`
 	`};`
@@ -416,7 +428,7 @@
 		@Enumeration ShaderBufferSlot
 		@Enumeration ShaderResourceKind
 
-		@Struct      DASArrayParameters
+		@Struct      ComputeArrayParameters
 
 		@Flags
 		{
