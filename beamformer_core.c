@@ -2030,12 +2030,13 @@ beamformer_frame_step(void *memory, BeamformerInput *input)
 					target_child_index = left == drag ? 1 : 0;
 					assert(target->kind == BeamformerPanelKind_TabGroup);
 
-					new_split->kind        = BeamformerPanelKind_TabGroup;
-					new_split->u.tab_focus = target->u.tab_focus;
+					BeamformerUIPanel *focus = target->u.tab_focus;
+					new_split->kind = BeamformerPanelKind_TabGroup;
 					for (BeamformerUIPanel *child = target->last_child, *next; child; child = next) {
 						next = child->previous_sibling;
 						beamformer_panel_group_insert_at(new_split, child, 0);
 					}
+					new_split->u.tab_focus = focus;
 
 					beamformer_panel_group_insert_at(target, new_tab_group, 0);
 				}
