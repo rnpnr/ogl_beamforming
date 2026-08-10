@@ -137,6 +137,7 @@ typedef enum {
 	VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO                                       = 1000244001,
 	VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT                                          = 1000247000,
 	VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_KHR                        = 1000286000,
+	VK_STRUCTURE_TYPE_MEMORY_BARRIER_2                                                 = 1000314000,
 	VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2                                          = 1000314001,
 	VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2                                           = 1000314002,
 	VK_STRUCTURE_TYPE_DEPENDENCY_INFO                                                  = 1000314003,
@@ -1637,6 +1638,7 @@ typedef enum {
 	VK_DEPENDENCY_VIEW_LOCAL_BIT                                         = 0x00000002,
 	VK_DEPENDENCY_FEEDBACK_LOOP_BIT_EXT                                  = 0x00000008,
 	VK_DEPENDENCY_QUEUE_FAMILY_OWNERSHIP_TRANSFER_USE_ALL_STAGES_BIT_KHR = 0x00000020,
+	VK_DEPENDENCY_ASYMMETRIC_EVENT_BIT_KHR                               = 0x00000040,
 	VK_DEPENDENCY_FLAG_BITS_MAX_ENUM                                     = 0x7FFFFFFF
 } VkDependencyFlagBits;
 typedef VkFlags VkDependencyFlags;

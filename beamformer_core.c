@@ -325,7 +325,7 @@ layout_for_output(iv3 points)
 	b32 has_y = points.y > 1;
 	b32 has_z = points.z > 1;
 
-	u32 subgroup_size  = vk_gpu_info()->subgroup_size;
+	u32 subgroup_size  = gpu_info()->subgroup_size;
 	u32 grid_3d_z_size = Max(1, subgroup_size / (4 * 4));
 	u32 grid_2d_y_size = Max(1, subgroup_size / 8);
 
@@ -488,7 +488,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		switch (pb->pipeline.shaders[it]) {
 		case BeamformerShaderKind_Decode:{
 			b32 low_precision   = beamformer_data_kind_element_size[input_data_kind] < 4;
-			b32 use_coop_matrix = vk_gpu_info()->cooperative_matrix &&
+			b32 use_coop_matrix = gpu_info()->cooperative_matrix &&
 			                      low_precision &&
 			                      (acquisition_count   % 16 == 0) &&
 			                      (chunk_channel_count % 16 == 0);
@@ -584,7 +584,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		graph.last->output_data_kind = graph.last->input_data_kind;
 
 	f32 time_offset   = pb->parameters.time_offset;
-	u32 subgroup_size = vk_gpu_info()->subgroup_size;
+	u32 subgroup_size = gpu_info()->subgroup_size;
 
 	cp->first_image_shader_index = 0;
 	cp->pipeline.shader_count = 0;
@@ -616,7 +616,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 				db->ToProcess = 1;
 
-				b32 use_coop_matrix = vk_gpu_info()->cooperative_matrix &&
+				b32 use_coop_matrix = gpu_info()->cooperative_matrix &&
 				                      node->input_data_kind == BeamformerDataKind_Float16 &&
 				                      (db->TransmitCount % 16 == 0) &&
 				                      (chunk_channel_count % 16 == 0);
@@ -978,7 +978,7 @@ beamformer_reload_compute_pipeline(VulkanHandle *pipeline, BeamformerShaderKind 
                                    BeamformerShaderDescriptor *shader_descriptor, Arena *scratch)
 {
 	i32 index  = beamformer_shader_reloadable_index_by_shader[shader];
-	uv3 layout = shader_descriptor ? shader_descriptor->layout : (uv3){{vk_gpu_info()->subgroup_size, 1, 1}};
+	uv3 layout = shader_descriptor ? shader_descriptor->layout : (uv3){{gpu_info()->subgroup_size, 1, 1}};
 	BeamformerShaderReloadInfo info = {
 		.shader            = shader,
 		.shader_kind       = VulkanShaderKind_Compute,
@@ -1058,7 +1058,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			    cp->hadamard_order != (i32)cp->acquisition_count)
 			{
 				beamformer_update_hadamard(cp, BeamformerComputeArrayParametersField_DecodeHadamard,
-				                           cp->acquisition_count, vk_gpu_info()->cooperative_matrix, scratch);
+				                           cp->acquisition_count, gpu_info()->cooperative_matrix, scratch);
 				if (pb->parameters.readi_group_count > 1)
 					beamformer_update_hadamard(cp, BeamformerComputeArrayParametersField_DASHadamard,
 					                           pb->parameters.readi_group_count, 0, scratch);
@@ -1108,8 +1108,8 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 }
 
 function void
-do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *cp, BeamformerFrame *frame,
-                  u32 shader_slot, u32 channel_offset, u64 rf_pointer)
+do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan *cp,
+                  BeamformerFrame *frame, u32 shader_slot, u32 channel_offset, u64 rf_pointer)
 {
 	BeamformerComputeContext *cc = &ctx->compute_context;
 
@@ -1126,7 +1126,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 
 	uv3 dispatch = cp->shader_descriptors[shader_slot].dispatch;
 
-	vk_command_bind_pipeline(cmd, cp->vulkan_pipelines[shader_slot]);
+	gpu_command_bind_pipeline(cmd, cp->vulkan_pipelines[shader_slot]);
 
 	switch (cp->pipeline.shaders[shader_slot]) {
 
@@ -1158,9 +1158,9 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 		if (shader_slot + 1 == das_index)
 			barrier_count++;
 
-		vk_command_buffer_memory_barriers(cmd, memory_barriers, barrier_count);
-		vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
-		vk_command_dispatch_compute(cmd, dispatch);
+		gpu_command_buffer_memory_barriers(cmd, memory_barriers, barrier_count);
+		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
+		gpu_command_dispatch_compute(cmd, dispatch);
 
 		cc->ping_pong_input_index = !cc->ping_pong_input_index;
 	}break;
@@ -1212,10 +1212,10 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			barrier_count--;
 
 		if (barrier_count)
-			vk_command_buffer_memory_barriers(cmd, barriers, barrier_count);
+			gpu_command_buffer_memory_barriers(cmd, barriers, barrier_count);
 
-		vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
-		vk_command_dispatch_compute(cmd, dispatch);
+		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
+		gpu_command_dispatch_compute(cmd, dispatch);
 
 		cc->ping_pong_input_index = !cc->ping_pong_input_index;
 	}break;
@@ -1247,8 +1247,7 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 
 		b32 coherent = (cp->shader_descriptors[shader_slot].compile_flags & BeamformerDASCompileFlags_CoherencyWeighting) != 0;
 
-		GPUMemoryBarrierInfo memory_barriers[] = {
-			// NOTE(rnp): last stage data output barrier
+		GPUMemoryBarrierInfo barrier_infos[] = {
 			{
 				.gpu_buffer = &cc->ping_pong_buffer,
 				.offset     = pp_das_pointer - cc->ping_pong_buffer.gpu_pointer,
@@ -1267,12 +1266,12 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			},
 		};
 
-		u32 barrier_count = countof(memory_barriers);
+		u32 barrier_count = countof(barrier_infos);
 		if (!coherent) barrier_count--;
 
-		vk_command_buffer_memory_barriers(cmd, memory_barriers, barrier_count);
-		vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
-		vk_command_dispatch_compute(cmd, dispatch);
+		gpu_command_buffer_memory_barriers(cmd, barrier_infos, barrier_count);
+		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
+		gpu_command_dispatch_compute(cmd, dispatch);
 	}break;
 
 	case BeamformerShaderKind_CoherencyWeighting:{
@@ -1303,9 +1302,9 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 			},
 		};
 
-		vk_command_buffer_memory_barriers(cmd, memory_barriers, countof(memory_barriers));
-		vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
-		vk_command_dispatch_compute(cmd, dispatch);
+		gpu_command_buffer_memory_barriers(cmd, memory_barriers, countof(memory_barriers));
+		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
+		gpu_command_dispatch_compute(cmd, dispatch);
 	}break;
 
 	case BeamformerShaderKind_Reshape:{
@@ -1340,9 +1339,9 @@ do_compute_shader(BeamformerCtx *ctx, VulkanHandle cmd, BeamformerComputePlan *c
 		if (shader_slot + 1 == das_index)
 			barrier_count++;
 
-		vk_command_buffer_memory_barriers(cmd, memory_barriers, barrier_count);
-		vk_command_push_constants(cmd, 0, sizeof(pc), &pc);
-		vk_command_dispatch_compute(cmd, dispatch);
+		gpu_command_buffer_memory_barriers(cmd, memory_barriers, barrier_count);
+		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
+		gpu_command_dispatch_compute(cmd, dispatch);
 
 		cc->ping_pong_input_index = !cc->ping_pong_input_index;
 	}break;
@@ -1437,7 +1436,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 					// so we either need to count the total size of all requested frames first or
 					// just fill up as much as possible.
 					if (exported_size + frame_size <= ec->size) {
-						vk_host_wait_timeline(VulkanTimeline_Compute, f->timeline_valid_value, -1ULL);
+						gpu_host_wait_timeline(GPUTimeline_Compute, f->timeline_valid_value, -1ULL);
 						vk_buffer_range_download(sm_output + exported_size, bl->buffer, f->buffer_offset, frame_size, 1);
 						exported_size += frame_size;
 					}
@@ -1531,17 +1530,17 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			frame->view_plane_tag   = work->compute_context.view_plane;
 			memory_copy(frame->voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));
 
-			VulkanHandle cmd = vk_command_begin(VulkanTimeline_Compute);
-			vk_command_timestamp(cmd);
+			GPUCommandList cmd = gpu_command_list_begin(GPUTimeline_Compute);
+			gpu_command_timestamp(cmd);
 
 			if (das_index >= 0) {
 				u64        frame_size = beamformer_frame_byte_size(frame->points, frame->data_kind);
 				GPUBuffer *backlog    = cs->backlog.buffer;
 
-				vk_command_clear_buffer(cmd, backlog, frame->buffer_offset, frame_size, 0);
+				gpu_command_clear_buffer(cmd, backlog, frame->buffer_offset, frame_size, 0);
 				if (das_coherent) {
 					u64 coherent_size = frame_size / beamformer_data_kind_element_count[frame->data_kind];
-					vk_command_clear_buffer(cmd, backlog, backlog->size - coherent_size, coherent_size, 0);
+					gpu_command_clear_buffer(cmd, backlog, backlog->size - coherent_size, coherent_size, 0);
 				}
 			}
 
@@ -1557,7 +1556,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				/* NOTE(rnp): if the GPU supports BAR there may be no need to synchronize
 				 * other than the above spin */
 				if (vk_buffer_needs_sync(&rf->buffer))
-					vk_command_wait_timeline(cmd, VulkanTimeline_Transfer, rf->upload_complete_values[slot]);
+					gpu_command_wait_timeline(cmd, GPUTimeline_Transfer, rf->upload_complete_values[slot]);
 			} else {
 				slot = (rf->compute_index - 1) % countof(rf->upload_complete_values);
 			}
@@ -1570,16 +1569,15 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				rf_pointer += cp->raw_channel_byte_stride * channel_offset;
 				for (u32 i = 0; i < cp->first_image_shader_index; i++) {
 					do_compute_shader(ctx, cmd, cp, frame, i, channel_offset, rf_pointer);
-					vk_command_timestamp(cmd);
+					gpu_command_timestamp(cmd);
 				}
 			}
 
 			for (u32 i = cp->first_image_shader_index; i < cp->pipeline.shader_count; i++) {
 				do_compute_shader(ctx, cmd, cp, frame, i, 0, 0);
-				vk_command_timestamp(cmd);
+				gpu_command_timestamp(cmd);
 			}
-
-			u64 end_timeline_value = vk_command_end(cmd, (VulkanHandle){0}, (VulkanHandle){0});
+			u64 end_timeline_value = gpu_command_list_end(cmd, (VulkanHandle){0}, (VulkanHandle){0});
 			if (work->kind == BeamformerWorkKind_ComputeIndirect) {
 				atomic_store_u64(rf->compute_complete_values + slot, end_timeline_value);
 				atomic_add_u64(&rf->compute_index, 1);
@@ -1591,14 +1589,15 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			DeferLoop(scratch = temp_begin(arena), temp_end(scratch))
 			{
 				/* NOTE(rnp): this blocks until work completes */
-				u64 *timestamps  = vk_command_read_timestamps(VulkanTimeline_Compute, arena);
+				u64  count       = 0;
+				u64 *timestamps  = gpu_read_timestamps(GPUTimeline_Compute, &count, arena);
 
 				i32 steps        = ((i32)cp->channel_count / BeamformerChunkChannelCount) - 1;
 				i32 step         = 0;
 				u32 shader_index = 0;
-				u64 last_time    = timestamps[0] > 0 ? timestamps[1] : 0;
+				u64 last_time    = count > 0 ? timestamps[0] : 0;
 
-				for (u64 i = 2; i < timestamps[0] + 1; i++) {
+				for (u64 i = 1; i < count; i++) {
 					push_compute_timing_info(ctx->compute_timing_table, (ComputeTimingInfo){
 						.kind        = ComputeTimingInfoKind_Shader,
 						.shader      = cp->pipeline.shaders[shader_index],
@@ -1650,7 +1649,7 @@ coalesce_timing_table(ComputeTimingTable *t, ComputeShaderStats *stats)
 	u32 stats_index = stats->latest_frame_index;
 
 	b32 has_rf = 0;
-	f32 gpu_clocks_to_nano = 1.0e-9f * vk_gpu_info()->timestamp_period_ns;
+	f32 gpu_clocks_to_nano = 1.0e-9f * gpu_info()->timestamp_period_ns;
 
 	// NOTE(rnp): not equal (the index may wrap)
 	while (t->read_index != target) {
@@ -1741,7 +1740,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 
 		/* NOTE(rnp): don't overwrite slot if the compute thread hasn't processed it */
 		spin_wait(atomic_load_u64(&rf->compute_index) < rf->insertion_index);
-		vk_host_wait_timeline(VulkanTimeline_Compute, rf->compute_complete_values[slot], -1ULL);
+		gpu_host_wait_timeline(GPUTimeline_Compute, rf->compute_complete_values[slot], -1ULL);
 
 		vk_buffer_range_upload(&rf->buffer, beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size),
 		                       slot * rf->active_rf_size, rf->active_rf_size, 1);
@@ -1750,7 +1749,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		beamformer_shared_memory_release_lock(ctx->shared_memory, (i32)scratch_lock);
 		post_sync_barrier(ctx->shared_memory, upload_lock);
 
-		atomic_store_u64(rf->upload_complete_values + slot, vk_host_signal_timeline(VulkanTimeline_Transfer));
+		atomic_store_u64(rf->upload_complete_values + slot, gpu_host_signal_timeline(GPUTimeline_Transfer));
 		atomic_add_u64(&rf->insertion_index, 1);
 
 		os_wake_all_waiters(ctx->compute_worker_sync);

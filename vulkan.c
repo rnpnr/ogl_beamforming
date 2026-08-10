@@ -15,7 +15,7 @@
 
 #define ValidVulkanHandle(h) ((h).value[0] != 0)
 
-#define MaxCommandBuffersInFlight  BeamformerMaxRawDataFramesInFlight
+#define MaxCommandBuffersInFlight  (3)
 #define MaxCommandBufferTimestamps (1024)
 
 typedef enum {
@@ -63,9 +63,8 @@ typedef struct {
 } VulkanSemaphore;
 
 typedef struct {
-	VulkanTimeline timeline;
-	u32            buffer_index;
-
+	GPUTimeline timeline;
+	u32         buffer_index;
 	// NOTE(rnp): since there may not be QueueKind_Count queues, when putting values into this
 	// array you must be careful to map through the queue_indices array in the vulkan_context.
 	u64 in_flight_wait_values[VulkanQueueKind_Count];
@@ -108,16 +107,16 @@ static_assert(alignof(VulkanQueue) == 64, "VulkanQueue must be placed on its own
 
 typedef alignas(64) struct {
 	i32             lock;
-	u32             next_index;
+	u32             next_command_buffer_index;
 
 	VulkanPipeline *bound_pipeline;
+
+	u64             last_submission_values[MaxCommandBuffersInFlight];
+	u64             timestamp_counts[MaxCommandBuffersInFlight];
 
 	VkCommandPool   handle;
 	VkQueryPool     query_pool;
 	VkCommandBuffer buffers[MaxCommandBuffersInFlight];
-
-	u64             submission_values[MaxCommandBuffersInFlight];
-	u32             queries_occupied[MaxCommandBuffersInFlight];
 } VulkanCommandPool;
 
 typedef struct {
@@ -150,8 +149,8 @@ typedef struct {
 		static_assert(VK_MAX_MEMORY_TYPES < U8_MAX, "");
 	} memory_info;
 
-	VulkanCommandPool * command_pools[VulkanTimeline_Count];
-	VulkanQueue *       queues[VulkanQueueKind_Count];
+	VulkanCommandPool *command_pools[GPUTimeline_Count];
+	VulkanQueue       *queues[VulkanQueueKind_Count];
 	// NOTE(rnp): there are a few places in the code where simply going through the queues map
 	// is not sufficient. those places need to know of the unique queues which unique queue
 	// is being referred to. that code uses this map instead.
@@ -160,6 +159,7 @@ typedef struct {
 
 	VkFormat          swap_chain_image_format;
 	VkFormat          depth_stencil_format;
+
 
 	VulkanEntity     *entity_freelist;
 	Arena            *entity_arena;
@@ -451,17 +451,17 @@ vk_entity_release(VulkanEntity *entity)
 }
 
 function void *
-vk_entity_data(VulkanHandle h, VulkanEntityKind kind)
+vk_entity_data(u64 handle, VulkanEntityKind kind)
 {
-	VulkanEntity *e = (VulkanEntity *)h.value[0];
-	assert(ValidVulkanHandle(h) && e->kind == kind);
+	VulkanEntity *e = (VulkanEntity *)handle;
+	assert(handle && e->kind == kind);
 	return &e->as;
 }
 
 function VkCommandBuffer
-vk_command_buffer(VulkanHandle h)
+vk_command_buffer(GPUCommandList h)
 {
-	VulkanCommandBuffer *vcb = vk_entity_data(h, VulkanEntityKind_CommandBuffer);
+	VulkanCommandBuffer *vcb = vk_entity_data(h.value, VulkanEntityKind_CommandBuffer);
 	VulkanCommandPool   *vcp = vulkan_context->command_pools[vcb->timeline];
 	VkCommandBuffer result = vcp->buffers[vcb->buffer_index];
 	return result;
@@ -963,7 +963,7 @@ typedef struct {
 	u64               size;
 	VulkanUsageFlags  flags;
 	u32               queue_family_count;
-	u32               queue_family_indices[VulkanTimeline_Count];
+	u32               queue_family_indices[GPUTimeline_Count];
 	VkIndexType       index_type;
 	OSHandle         *export;
 	str8              label;
@@ -1950,7 +1950,7 @@ vk_load(OSLibrary vulkan_library_handle, Stream *err)
 }
 
 DEBUG_IMPORT GPUInfo *
-vk_gpu_info(void)
+gpu_info(void)
 {
 	return &vulkan_context->gpu_info;
 }
@@ -1975,7 +1975,7 @@ DEBUG_IMPORT void
 vk_buffer_release(GPUBuffer *b)
 {
 	if ValidVulkanHandle(b->handle)
-		vk_vulkan_buffer_release(vk_entity_data(b->handle, VulkanEntityKind_Buffer));
+		vk_vulkan_buffer_release(vk_entity_data(b->handle.value[0], VulkanEntityKind_Buffer));
 	zero_struct(b);
 }
 
@@ -2021,7 +2021,7 @@ vk_buffer_needs_sync(GPUBuffer *b)
 {
 	b32 result = 0;
 	if ValidVulkanHandle(b->handle) {
-		VulkanBuffer *vb = vk_entity_data(b->handle, VulkanEntityKind_Buffer);
+		VulkanBuffer *vb = vk_entity_data(b->handle.value[0], VulkanEntityKind_Buffer);
 
 		// TODO(rnp): not correct check. need to check if we used transfer queue
 		result = vb->memory_kind != VulkanMemoryKind_BAR;
@@ -2114,7 +2114,7 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 DEBUG_IMPORT void
 vk_buffer_range_upload(GPUBuffer *b, void *data, u64 offset, u64 size, b32 non_temporal)
 {
-	VulkanBuffer *db = vk_entity_data(b->handle, VulkanEntityKind_Buffer);
+	VulkanBuffer *db = vk_entity_data(b->handle.value[0], VulkanEntityKind_Buffer);
 	VulkanBuffer  sb = {
 		.host_pointer = data,
 		.memory_kind  = VulkanMemoryKind_Host,
@@ -2125,7 +2125,7 @@ vk_buffer_range_upload(GPUBuffer *b, void *data, u64 offset, u64 size, b32 non_t
 DEBUG_IMPORT void
 vk_buffer_range_download(void *destination, GPUBuffer *source, u64 offset, u64 size, b32 non_temporal)
 {
-	VulkanBuffer *sb = vk_entity_data(source->handle, VulkanEntityKind_Buffer);
+	VulkanBuffer *sb = vk_entity_data(source->handle.value[0], VulkanEntityKind_Buffer);
 	VulkanBuffer  db = {
 		.host_pointer = destination,
 		.memory_kind  = VulkanMemoryKind_Host,
@@ -2137,7 +2137,7 @@ DEBUG_IMPORT void
 vk_render_model_release(GPUBuffer *model)
 {
 	if ValidVulkanHandle(model->handle)
-		vk_vulkan_buffer_release(vk_entity_data(model->handle, VulkanEntityKind_RenderModel));
+		vk_vulkan_buffer_release(vk_entity_data(model->handle.value[0], VulkanEntityKind_RenderModel));
 	zero_struct(model);
 }
 
@@ -2186,7 +2186,7 @@ vk_render_model_allocate(GPUBuffer *model, void *indices, u64 index_count, u64 m
 DEBUG_IMPORT void
 vk_render_model_range_upload(GPUBuffer *model, void *data, u64 offset, u64 size, b32 non_temporal)
 {
-	VulkanBuffer *db = vk_entity_data(model->handle, VulkanEntityKind_RenderModel);
+	VulkanBuffer *db = vk_entity_data(model->handle.value[0], VulkanEntityKind_RenderModel);
 	VulkanBuffer  sb = {
 		.host_pointer = data,
 		.memory_kind  = VulkanMemoryKind_Host,
@@ -2202,7 +2202,7 @@ vk_image_release(GPUImage *image)
 {
 	if ValidVulkanHandle(image->image) {
 		VulkanContext *vk = vulkan_context;
-		VulkanImage   *vi = vk_entity_data(image->image, VulkanEntityKind_Image);
+		VulkanImage   *vi = vk_entity_data(image->image.value[0], VulkanEntityKind_Image);
 
 		vkDestroyImageView(vk->device, vi->view, 0);
 		vkDestroyImage(vk->device, vi->image, 0);
@@ -2336,10 +2336,10 @@ vk_create_semaphore(OSHandle *export)
 }
 
 DEBUG_IMPORT b32
-vk_host_wait_timeline(VulkanTimeline timeline, u64 value, u64 timeout_ns)
+gpu_host_wait_timeline(GPUTimeline timeline, u64 value, u64 timeout_ns)
 {
 	b32 result = 0;
-	if Between(timeline, 0, VulkanTimeline_Count - 1) {
+	if Between(timeline, 0, GPUTimeline_Count - 1) {
 		VulkanContext *vk = vulkan_context;
 		VulkanQueue   *vq = vk->queues[timeline];
 		VkSemaphoreWaitInfo semaphore_wait_info = {
@@ -2354,10 +2354,10 @@ vk_host_wait_timeline(VulkanTimeline timeline, u64 value, u64 timeout_ns)
 }
 
 DEBUG_IMPORT u64
-vk_host_signal_timeline(VulkanTimeline timeline)
+gpu_host_signal_timeline(GPUTimeline timeline)
 {
 	u64 result = -1;
-	if Between(timeline, 0, VulkanTimeline_Count - 1) {
+	if Between(timeline, 0, GPUTimeline_Count - 1) {
 		VulkanContext   *vk = vulkan_context;
 		VulkanQueue     *vq = vk->queues[timeline];
 		VulkanSemaphore *vs = &vq->timeline_semaphore;
@@ -2397,7 +2397,7 @@ vk_pipeline_valid(VulkanHandle h)
 {
 	b32 result = 0;
 	if ValidVulkanHandle(h) {
-		VulkanPipeline *vp = vk_entity_data(h, VulkanEntityKind_Pipeline);
+		VulkanPipeline *vp = vk_entity_data(h.value[0], VulkanEntityKind_Pipeline);
 		if (vp->stage_flags == VK_SHADER_STAGE_COMPUTE_BIT)
 			result = vp->pipeline != vulkan_context->default_compute_pipeline.pipeline;
 		else
@@ -2411,15 +2411,17 @@ vk_pipeline_release(VulkanHandle h)
 {
 	if (vk_pipeline_valid(h)) {
 		VulkanEntity *e = (VulkanEntity *)h.value[0];
-		VulkanTimeline timeline;
-		if (e->as.pipeline.stage_flags == VK_SHADER_STAGE_COMPUTE_BIT) timeline = VulkanTimeline_Compute;
-		else                                                           timeline = VulkanTimeline_Graphics;
+		GPUTimeline timeline;
+		// TODO(rnp): this is not correct, compute shaders can also appear on graphics timeline
+		if (e->as.pipeline.stage_flags == VK_SHADER_STAGE_COMPUTE_BIT) timeline = GPUTimeline_Compute;
+		else                                                           timeline = GPUTimeline_Graphics;
 
 		// NOTE(rnp): block more command buffers from being recorded
 		VulkanCommandPool *vcp = vulkan_context->command_pools[timeline];
-		DeferLoop(take_lock(&vcp->lock, -1), release_lock(&vcp->lock)) {
-			u32 index = (vcp->next_index - 1) % countof(vcp->buffers);
-			vk_host_wait_timeline(timeline, vcp->submission_values[index], -1ULL);
+		DeferLoop(take_lock(&vcp->lock, -1), release_lock(&vcp->lock))
+		{
+			u32 index = (vcp->next_command_buffer_index - 1) % MaxCommandBuffersInFlight;
+			gpu_host_wait_timeline(timeline, vcp->last_submission_values[index], -1ULL);
 			vkDestroyPipeline(vulkan_context->device, e->as.pipeline.pipeline, 0);
 			vkDestroyPipelineLayout(vulkan_context->device, e->as.pipeline.layout, 0);
 
@@ -2440,7 +2442,7 @@ vk_bind_shader_resources(BeamformerShaderResourceInfo *infos, u64 info_count)
 	for EachIndex(info_count, it) {
 		switch (infos[it].kind) {
 		case BeamformerShaderResourceKind_Buffer:{
-			VulkanBuffer *vb = vk_entity_data(infos[it].handle, VulkanEntityKind_Buffer);
+			VulkanBuffer *vb = vk_entity_data(infos[it].handle.value[0], VulkanEntityKind_Buffer);
 			vk->descriptor_buffer_infos[infos[it].slot].buffer = vb->buffer;
 			vk->descriptor_buffer_infos[infos[it].slot].offset = 0;
 			vk->descriptor_buffer_infos[infos[it].slot].range  = vb->memory_size;
@@ -2460,27 +2462,28 @@ vk_bind_shader_resources(BeamformerShaderResourceInfo *infos, u64 info_count)
 	vkUpdateDescriptorSets(vk->device, countof(write_sets), write_sets, 0, 0);
 }
 
-DEBUG_IMPORT VulkanHandle
-vk_command_begin(VulkanTimeline timeline)
+DEBUG_IMPORT GPUCommandList
+gpu_command_list_begin(GPUTimeline timeline)
 {
-	VulkanHandle result = {0};
-	if Between(timeline, 0, VulkanTimeline_Count - 1) {
+	GPUCommandList result = {0};
+	if Between(timeline, 0, GPUTimeline_Count - 1) {
 		VulkanContext     *vk  = vulkan_context;
 		VulkanCommandPool *vcp = vk->command_pools[timeline];
 
 		take_lock(&vcp->lock, -1);
+		VulkanEntity *e = vk_entity_allocate(VulkanEntityKind_CommandBuffer);
+		result.value = (u64)e;
 
-		VulkanEntity        *e   = vk_entity_allocate(VulkanEntityKind_CommandBuffer);
 		VulkanCommandBuffer *vcb = &e->as.command_buffer;
 		vcb->timeline     = timeline;
-		vcb->buffer_index = vcp->next_index++ % countof(vcp->buffers);
+		vcb->buffer_index = (vcp->next_command_buffer_index++) % MaxCommandBuffersInFlight;
 
 		u32 index = vcb->buffer_index;
 		// TODO(rnp): probably not the best to have this here but it will likely not be hit
-		b32 wait_result = vk_host_wait_timeline(timeline, vcp->submission_values[index], -1ULL);
+		b32 wait_result = gpu_host_wait_timeline(timeline, vcp->last_submission_values[index], -1ULL);
 		assert(wait_result);
 
-		vcp->queries_occupied[index] = 0;
+		vcp->timestamp_counts[index] = 0;
 
 		VkCommandBufferBeginInfo buffer_begin_info = {
 			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -2490,159 +2493,163 @@ vk_command_begin(VulkanTimeline timeline)
 		vkBeginCommandBuffer(vcp->buffers[index], &buffer_begin_info);
 		vkCmdResetQueryPool(vcp->buffers[index], vcp->query_pool, index * MaxCommandBufferTimestamps,
 		                    MaxCommandBufferTimestamps);
-
-		result = (VulkanHandle){(u64)e};
 	}
 	return result;
 }
 
 DEBUG_IMPORT void
-vk_command_bind_pipeline(VulkanHandle command, VulkanHandle pipeline)
+gpu_command_bind_pipeline(GPUCommandList command, VulkanHandle pipeline)
 {
-	if ValidVulkanHandle(command) {
+	if (command.value) {
 		VulkanContext       *vk  = vulkan_context;
-		VulkanCommandBuffer *vcb = vk_entity_data(command, VulkanEntityKind_CommandBuffer);
+		VulkanCommandBuffer *vcb = vk_entity_data(command.value, VulkanEntityKind_CommandBuffer);
 		VulkanCommandPool   *vcp = vk->command_pools[vcb->timeline];
 
 		VulkanPipeline *vp = 0;
 		if ValidVulkanHandle(pipeline) {
-			vp = vk_entity_data(pipeline, VulkanEntityKind_Pipeline);
-		} else if (vcb->timeline == VulkanTimeline_Compute) {
+			vp = vk_entity_data(pipeline.value[0], VulkanEntityKind_Pipeline);
+		} else if (vcb->timeline == GPUTimeline_Compute) {
 			vp = &vk->default_compute_pipeline;
-		} else if (vcb->timeline == VulkanTimeline_Graphics) {
+		} else if (vcb->timeline == GPUTimeline_Graphics) {
 			vp = &vk->default_graphics_pipeline;
 		} else {
 			InvalidCodePath;
 		}
 
-		read_only local_persist VkPipelineBindPoint bind_point_lut[VulkanTimeline_Count] = {
-			[VulkanTimeline_Graphics] = VK_PIPELINE_BIND_POINT_GRAPHICS,
-			[VulkanTimeline_Compute]  = VK_PIPELINE_BIND_POINT_COMPUTE,
-			[VulkanTimeline_Transfer] = -1,
+		read_only local_persist VkPipelineBindPoint bind_point_lut[GPUTimeline_Count] = {
+			[GPUTimeline_Graphics] = VK_PIPELINE_BIND_POINT_GRAPHICS,
+			[GPUTimeline_Compute]  = VK_PIPELINE_BIND_POINT_COMPUTE,
+			[GPUTimeline_Transfer] = -1,
 		};
 
 		VkPipelineBindPoint bind_point = bind_point_lut[vcb->timeline];
 		assert(bind_point != (VkPipelineBindPoint)-1);
 
-		vkCmdBindPipeline(vcp->buffers[vcb->buffer_index], bind_point, vp->pipeline);
-		vkCmdBindDescriptorSets(vcp->buffers[vcb->buffer_index], bind_point, vp->layout,
-		                        0, countof(vk->descriptor_sets), vk->descriptor_sets, 0, 0);
+		VkCommandBuffer cmd = vk_command_buffer(command);
+		vkCmdBindPipeline(cmd, bind_point, vp->pipeline);
+		vkCmdBindDescriptorSets(cmd, bind_point, vp->layout, 0, countof(vk->descriptor_sets),
+		                        vk->descriptor_sets, 0, 0);
 		vcp->bound_pipeline = vp;
 	}
 }
 
-DEBUG_IMPORT void
-vk_command_buffer_memory_barriers(VulkanHandle command, GPUMemoryBarrierInfo *barriers, u64 count)
+function VkDependencyInfo
+vk_dependency_info_from_memory_barrier_info(Arena *arena, VulkanQueue *vq, GPUMemoryBarrierInfo *barriers, u64 count)
 {
-	if ValidVulkanHandle(command) {
+	u64 valid_count = 0;
+	VkBufferMemoryBarrier2 *memory_barriers = push_array(arena, VkBufferMemoryBarrier2, count);
+	for (u64 it = 0; it < count; it++) {
+		if ValidVulkanHandle(barriers[it].gpu_buffer->handle) {
+			u32           index = valid_count++;
+			VulkanBuffer *vb    = vk_entity_data(barriers[it].gpu_buffer->handle.value[0], VulkanEntityKind_Buffer);
+			memory_barriers[index].sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
+			memory_barriers[index].srcStageMask        = vq->pipeline_stage_flags;
+			memory_barriers[index].srcAccessMask       = VK_ACCESS_2_MEMORY_WRITE_BIT;
+			memory_barriers[index].dstStageMask        = vq->pipeline_stage_flags;
+			memory_barriers[index].dstAccessMask       = VK_ACCESS_2_MEMORY_READ_BIT;
+			memory_barriers[index].srcQueueFamilyIndex = vq->queue_family;
+			memory_barriers[index].dstQueueFamilyIndex = vq->queue_family;
+			memory_barriers[index].buffer              = vb->buffer;
+			memory_barriers[index].offset              = barriers[it].offset;
+			memory_barriers[index].size                = barriers[it].size;
+		}
+	}
+
+	VkDependencyInfo result = {
+		.sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+		.bufferMemoryBarrierCount = valid_count,
+		.pBufferMemoryBarriers    = memory_barriers,
+	};
+	return result;
+}
+
+DEBUG_IMPORT void
+gpu_command_buffer_memory_barriers(GPUCommandList command, GPUMemoryBarrierInfo *barriers, u64 count)
+{
+	if (command.value) {
 		VulkanContext       *vk  = vulkan_context;
-		VulkanCommandBuffer *vcb = vk_entity_data(command, VulkanEntityKind_CommandBuffer);
-		VulkanCommandPool   *vcp = vk->command_pools[vcb->timeline];
+		VulkanCommandBuffer *vcb = vk_entity_data(command.value, VulkanEntityKind_CommandBuffer);
 		VulkanQueue         *vq  = vk->queues[vcb->timeline];
 
 		Temp scratch;
 		DeferLoop(take_lock(&vk->arena_lock, -1), release_lock(&vk->arena_lock))
 		DeferLoop(scratch = temp_begin(vk->arena), temp_end(scratch))
 		{
-			u32 valid_count = 0;
-			VkBufferMemoryBarrier2 *memory_barriers = push_array(vk->arena, VkBufferMemoryBarrier2, count);
-			for (u64 it = 0; it < count; it++) {
-				if ValidVulkanHandle(barriers[it].gpu_buffer->handle) {
-					u32           index = valid_count++;
-					VulkanBuffer *vb    = vk_entity_data(barriers[it].gpu_buffer->handle, VulkanEntityKind_Buffer);
-					memory_barriers[index].sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
-					memory_barriers[index].srcStageMask        = vq->pipeline_stage_flags;
-					memory_barriers[index].srcAccessMask       = VK_ACCESS_2_MEMORY_WRITE_BIT;
-					memory_barriers[index].dstStageMask        = vq->pipeline_stage_flags;
-					memory_barriers[index].dstAccessMask       = VK_ACCESS_2_MEMORY_READ_BIT;
-					memory_barriers[index].srcQueueFamilyIndex = vq->queue_family;
-					memory_barriers[index].dstQueueFamilyIndex = vq->queue_family;
-					memory_barriers[index].buffer              = vb->buffer;
-					memory_barriers[index].offset              = barriers[it].offset;
-					memory_barriers[index].size                = barriers[it].size;
-				}
-			}
-
-			VkDependencyInfo dependancy_info = {
-				.sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-				.bufferMemoryBarrierCount = valid_count,
-				.pBufferMemoryBarriers    = memory_barriers,
-			};
-
-			vkCmdPipelineBarrier2(vcp->buffers[vcb->buffer_index], &dependancy_info);
+			VkDependencyInfo dependancy_info = vk_dependency_info_from_memory_barrier_info(scratch.arena, vq, barriers, count);
+			vkCmdPipelineBarrier2(vk_command_buffer(command), &dependancy_info);
 		}
 	}
 }
 
 DEBUG_IMPORT void
-vk_command_clear_buffer(VulkanHandle command, GPUBuffer *buffer, u64 offset, u64 size, u32 clear_word)
+gpu_command_clear_buffer(GPUCommandList command, GPUBuffer *buffer, u64 offset, u64 size, u32 clear_word)
 {
 	assert((offset % 4) == 0);
 	assert((size % 4) == 0);
-	if ValidVulkanHandle(command) {
-		VulkanBuffer *vb = vk_entity_data(buffer->handle, VulkanEntityKind_Buffer);
+	if (command.value) {
+		VulkanBuffer *vb = vk_entity_data(buffer->handle.value[0], VulkanEntityKind_Buffer);
 		VkCommandBuffer cmd = vk_command_buffer(command);
 		vkCmdFillBuffer(cmd, vb->buffer, offset, size, clear_word);
 	}
 }
 
 DEBUG_IMPORT void
-vk_command_dispatch_compute(VulkanHandle command, uv3 dispatch)
+gpu_command_dispatch_compute(GPUCommandList command, uv3 dispatch)
 {
 	assert(dispatch.x <= U16_MAX);
 	assert(dispatch.y <= U16_MAX);
 	assert(dispatch.z <= U16_MAX);
-	if ValidVulkanHandle(command) {
+	if (command.value) {
 		VkCommandBuffer cmd = vk_command_buffer(command);
 		vkCmdDispatch(cmd, dispatch.x, dispatch.y, dispatch.z);
 	}
 }
 
 DEBUG_IMPORT void
-vk_command_push_constants(VulkanHandle command, u32 offset, u32 size, void *values)
+gpu_command_push_constants(GPUCommandList command, u32 offset, u32 size, void *values)
 {
-	if ValidVulkanHandle(command) {
-		VulkanCommandBuffer *vcb = vk_entity_data(command, VulkanEntityKind_CommandBuffer);
+	if (command.value) {
+		VulkanCommandBuffer *vcb = vk_entity_data(command.value, VulkanEntityKind_CommandBuffer);
 		VulkanCommandPool   *vcp = vulkan_context->command_pools[vcb->timeline];
 		VulkanPipeline      *vp  = vcp->bound_pipeline;
 
 		assert(vp);
 
-		vkCmdPushConstants(vcp->buffers[vcb->buffer_index], vp->layout, vp->stage_flags, offset, size, values);
+		vkCmdPushConstants(vk_command_buffer(command), vp->layout, vp->stage_flags, offset, size, values);
 	}
 }
 
 DEBUG_IMPORT void
-vk_command_timestamp(VulkanHandle command)
+gpu_command_timestamp(GPUCommandList command)
 {
-	if ValidVulkanHandle(command) {
+	if (command.value) {
 		VulkanContext       *vk  = vulkan_context;
-		VulkanCommandBuffer *vcb = vk_entity_data(command, VulkanEntityKind_CommandBuffer);
+		VulkanCommandBuffer *vcb = vk_entity_data(command.value, VulkanEntityKind_CommandBuffer);
 		VulkanCommandPool   *vcp = vk->command_pools[vcb->timeline];
 
-		read_only local_persist VkPipelineStageFlags2 stage_lut[VulkanTimeline_Count] = {
-			[VulkanTimeline_Graphics] = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
-			[VulkanTimeline_Compute]  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-			[VulkanTimeline_Transfer] = -1,
+		read_only local_persist VkPipelineStageFlags2 stage_lut[GPUTimeline_Count] = {
+			[GPUTimeline_Graphics] = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
+			[GPUTimeline_Compute]  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+			[GPUTimeline_Transfer] = -1,
 		};
 
 		VkPipelineStageFlags2 stage = stage_lut[vcb->timeline];
 		assert(stage != (VkPipelineStageFlags2)-1);
 
-		if (vcp->queries_occupied[vcb->buffer_index] < MaxCommandBufferTimestamps) {
-			u32 query_index = vcp->queries_occupied[vcb->buffer_index]++;
-			vkCmdWriteTimestamp2(vcp->buffers[vcb->buffer_index], stage, vcp->query_pool,
+		if (vcp->timestamp_counts[vcb->buffer_index] < MaxCommandBufferTimestamps) {
+			u64 query_index = vcp->timestamp_counts[vcb->buffer_index]++;
+			vkCmdWriteTimestamp2(vk_command_buffer(command), stage, vcp->query_pool,
 			                     vcb->buffer_index * MaxCommandBufferTimestamps + query_index);
 		}
 	}
 }
 
 DEBUG_IMPORT void
-vk_command_wait_timeline(VulkanHandle command, VulkanTimeline timeline, u64 value)
+gpu_command_wait_timeline(GPUCommandList command, GPUTimeline timeline, u64 value)
 {
-	if (ValidVulkanHandle(command) && Between(timeline, 0, VulkanTimeline_Count - 1)) {
+	if (command.value && Between(timeline, 0, GPUTimeline_Count - 1)) {
 		VulkanContext       *vk  = vulkan_context;
-		VulkanCommandBuffer *vcb = vk_entity_data(command, VulkanEntityKind_CommandBuffer);
+		VulkanCommandBuffer *vcb = vk_entity_data(command.value, VulkanEntityKind_CommandBuffer);
 
 		u32 wait_index = vk->queue_indices[timeline];
 		vcb->in_flight_wait_values[wait_index] = Max(value, vcb->in_flight_wait_values[wait_index]);
@@ -2650,12 +2657,12 @@ vk_command_wait_timeline(VulkanHandle command, VulkanTimeline timeline, u64 valu
 }
 
 DEBUG_IMPORT u64
-vk_command_end(VulkanHandle command, VulkanHandle wait_semaphore, VulkanHandle finished_semaphore)
+gpu_command_list_end(GPUCommandList command, VulkanHandle wait_semaphore, VulkanHandle finished_semaphore)
 {
 	u64 result = -1;
-	if ValidVulkanHandle(command) {
+	if (command.value) {
 		VulkanContext       *vk  = vulkan_context;
-		VulkanCommandBuffer *vcb = vk_entity_data(command, VulkanEntityKind_CommandBuffer);
+		VulkanCommandBuffer *vcb = vk_entity_data(command.value, VulkanEntityKind_CommandBuffer);
 		VulkanCommandPool   *vcp = vk->command_pools[vcb->timeline];
 		VulkanQueue         *vq  = vk->queues[vcb->timeline];
 		VulkanSemaphore     *vs  = &vq->timeline_semaphore;
@@ -2679,7 +2686,7 @@ vk_command_end(VulkanHandle command, VulkanHandle wait_semaphore, VulkanHandle f
 			}};
 
 			if ValidVulkanHandle(finished_semaphore) {
-				VulkanSemaphore *fs = vk_entity_data(finished_semaphore, VulkanEntityKind_Semaphore);
+				VulkanSemaphore *fs = vk_entity_data(finished_semaphore.value[0], VulkanEntityKind_Semaphore);
 				signal_submit_infos[signal_submit_info_count++] = (VkSemaphoreSubmitInfo){
 					.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
 					.semaphore = fs->semaphore,
@@ -2704,7 +2711,7 @@ vk_command_end(VulkanHandle command, VulkanHandle wait_semaphore, VulkanHandle f
 			}
 
 			if ValidVulkanHandle(wait_semaphore) {
-				VulkanSemaphore *ws = vk_entity_data(wait_semaphore, VulkanEntityKind_Semaphore);
+				VulkanSemaphore *ws = vk_entity_data(wait_semaphore.value[0], VulkanEntityKind_Semaphore);
 				wait_submit_infos[wait_submit_info_count++] = (VkSemaphoreSubmitInfo){
 					.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
 					.semaphore = ws->semaphore,
@@ -2725,29 +2732,28 @@ vk_command_end(VulkanHandle command, VulkanHandle wait_semaphore, VulkanHandle f
 			vkQueueSubmit2(vq->queue, 1, &submit_info, 0);
 
 			vcp->bound_pipeline = 0;
-
-			atomic_store_u64(vcp->submission_values + vcb->buffer_index, result);
+			atomic_store_u64(vcp->last_submission_values + vcb->buffer_index, result);
 		}
 
 		release_lock(&vcp->lock);
 
-		vk_entity_release((VulkanEntity *)command.value[0]);
+		vk_entity_release((VulkanEntity *)command.value);
 	}
 	return result;
 }
 
 DEBUG_IMPORT void
-vk_command_begin_rendering(VulkanHandle command, GPUImage *colour, GPUImage *depth, GPUImage *resolve)
+gpu_command_begin_rendering(GPUCommandList command, GPUImage *colour, GPUImage *depth, GPUImage *resolve)
 {
-	if ValidVulkanHandle(command) {
+	if (command.value) {
 		VkCommandBuffer cmd = vk_command_buffer(command);
 
 		assert((colour->width == depth->width) && (colour->height == depth->height));
 
-		VulkanImage *ci = vk_entity_data(colour->image, VulkanEntityKind_Image);
-		VulkanImage *di = vk_entity_data(depth->image,  VulkanEntityKind_Image);
+		VulkanImage *ci = vk_entity_data(colour->image.value[0], VulkanEntityKind_Image);
+		VulkanImage *di = vk_entity_data(depth->image.value[0],  VulkanEntityKind_Image);
 		VulkanImage *ri = 0;
-		if (resolve) ri = vk_entity_data(resolve->image, VulkanEntityKind_Image);
+		if (resolve) ri = vk_entity_data(resolve->image.value[0], VulkanEntityKind_Image);
 
 		// NOTE: Layout Transitions
 		{
@@ -2852,20 +2858,20 @@ vk_command_begin_rendering(VulkanHandle command, GPUImage *colour, GPUImage *dep
 }
 
 DEBUG_IMPORT void
-vk_command_draw(VulkanHandle command, GPUBuffer *model)
+gpu_command_draw(GPUCommandList command, GPUBuffer *model)
 {
-	if (ValidVulkanHandle(command) && ValidVulkanHandle(model->handle)) {
+	if (command.value && ValidVulkanHandle(model->handle)) {
 		VkCommandBuffer cmd = vk_command_buffer(command);
-		VulkanBuffer   *vb  = vk_entity_data(model->handle, VulkanEntityKind_RenderModel);
+		VulkanBuffer   *vb  = vk_entity_data(model->handle.value[0], VulkanEntityKind_RenderModel);
 		vkCmdBindIndexBuffer2(cmd, vb->buffer, 0, vk_index_size(vb->index_type) * model->index_count, vb->index_type);
 		vkCmdDrawIndexed(cmd, model->index_count, 1, 0, 0, 0);
 	}
 }
 
 DEBUG_IMPORT void
-vk_command_scissor(VulkanHandle command, u32 width, u32 height, u32 x_offset, u32 y_offset)
+gpu_command_scissor(GPUCommandList command, u32 width, u32 height, u32 x_offset, u32 y_offset)
 {
-	if ValidVulkanHandle(command) {
+	if (command.value) {
 		VkCommandBuffer cmd = vk_command_buffer(command);
 		VkRect2D scissor = {.offset = {x_offset, y_offset}, .extent = {width, height}};
 		vkCmdSetScissor(cmd, 0, 1, &scissor);
@@ -2873,9 +2879,9 @@ vk_command_scissor(VulkanHandle command, u32 width, u32 height, u32 x_offset, u3
 }
 
 DEBUG_IMPORT void
-vk_command_viewport(VulkanHandle command, f32 width, f32 height, f32 x_offset, f32 y_offset, f32 min_depth, f32 max_depth)
+gpu_command_viewport(GPUCommandList command, f32 width, f32 height, f32 x_offset, f32 y_offset, f32 min_depth, f32 max_depth)
 {
-	if ValidVulkanHandle(command) {
+	if (command.value) {
 		VkCommandBuffer cmd = vk_command_buffer(command);
 		VkViewport viewport = {x_offset, y_offset, width, height, min_depth, max_depth};
 		vkCmdSetViewport(cmd, 0, 1, &viewport);
@@ -2883,19 +2889,19 @@ vk_command_viewport(VulkanHandle command, f32 width, f32 height, f32 x_offset, f
 }
 
 DEBUG_IMPORT void
-vk_command_end_rendering(VulkanHandle command)
+gpu_command_end_rendering(GPUCommandList command)
 {
-	if ValidVulkanHandle(command) vkCmdEndRendering(vk_command_buffer(command));
+	if (command.value) vkCmdEndRendering(vk_command_buffer(command));
 }
 
 DEBUG_IMPORT void
-vk_command_copy_buffer(VulkanHandle command, GPUBuffer *restrict destination,
-                       GPUBuffer *restrict source, u64 source_offset, i64 size)
+gpu_command_copy_buffer(GPUCommandList command, GPUBuffer *restrict destination,
+                        GPUBuffer *restrict source, u64 source_offset, i64 size)
 {
-	if (ValidVulkanHandle(command) && ValidVulkanHandle(destination->handle) && ValidVulkanHandle(source->handle)) {
+	if (command.value && ValidVulkanHandle(destination->handle) && ValidVulkanHandle(source->handle)) {
 		VkCommandBuffer cmd = vk_command_buffer(command);
-		VulkanBuffer *db = vk_entity_data(destination->handle, VulkanEntityKind_Buffer);
-		VulkanBuffer *sb = vk_entity_data(source->handle,      VulkanEntityKind_Buffer);
+		VulkanBuffer *db = vk_entity_data(destination->handle.value[0], VulkanEntityKind_Buffer);
+		VulkanBuffer *sb = vk_entity_data(source->handle.value[0],      VulkanEntityKind_Buffer);
 
 		VkBufferCopy2 buffer_copy = {
 			.sType     = VK_STRUCTURE_TYPE_BUFFER_COPY_2,
@@ -2917,27 +2923,24 @@ vk_command_copy_buffer(VulkanHandle command, GPUBuffer *restrict destination,
 }
 
 DEBUG_IMPORT u64 *
-vk_command_read_timestamps(VulkanTimeline timeline, Arena *arena)
+gpu_read_timestamps(GPUTimeline timeline, u64 *count, Arena *arena)
 {
 	u64 *result = 0;
-	if Between(timeline, 0, VulkanTimeline_Count - 1) {
+	if Between(timeline, 0, GPUTimeline_Count - 1) {
 		VulkanContext     *vk  = vulkan_context;
 		VulkanCommandPool *vcp = vk->command_pools[timeline];
-		DeferLoop(take_lock(&vcp->lock, -1), release_lock(&vcp->lock)) {
-			u32 index = (vcp->next_index - 1) % countof(vcp->buffers);
-			u32 count = vcp->queries_occupied[index];
-			if (count > 0) {
-				result = push_array(arena, u64, count + 1);
-				result[0] = count;
+		DeferLoop(take_lock(&vcp->lock, -1), release_lock(&vcp->lock))
+		{
+			u32 index = (vcp->next_command_buffer_index - 1) % MaxCommandBuffersInFlight;
+			*count = vcp->timestamp_counts[index];
+			if (*count > 0) {
+				result = push_array(arena, u64, *count);
+				gpu_host_wait_timeline(timeline, vcp->last_submission_values[index], -1ULL);
 
-				vk_host_wait_timeline(timeline, vcp->submission_values[index], -1ULL);
-
-				vkGetQueryPoolResults(vk->device, vcp->query_pool, index * MaxCommandBufferTimestamps, count,
-				                      count * sizeof(u64), result + 1, 8, VK_QUERY_RESULT_WAIT_BIT);
+				vkGetQueryPoolResults(vk->device, vcp->query_pool, index * MaxCommandBufferTimestamps, *count,
+				                      *count * sizeof(u64), result, 8, VK_QUERY_RESULT_WAIT_BIT);
 			}
 		}
-	} else {
-		result = push_array(arena, u64, 1);
 	}
 	return result;
 }

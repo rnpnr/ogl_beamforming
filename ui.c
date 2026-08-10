@@ -854,10 +854,10 @@ beamformer_ui_frame_view_copy_frame(BeamformerFrameView *new, BeamformerFrameVie
 	vk_buffer_allocate(&new->copy_buffer, &allocate_info);
 
 	GPUBuffer *backlog = beamformer_context->compute_context.backlog.buffer;
-	VulkanHandle cmd = vk_command_begin(VulkanTimeline_Compute);
-	vk_command_wait_timeline(cmd, VulkanTimeline_Compute, old->frame.timeline_valid_value);
-	vk_command_copy_buffer(cmd, &new->copy_buffer, backlog, old->frame.buffer_offset, frame_size);
-	new->frame.timeline_valid_value = vk_command_end(cmd, (VulkanHandle){0}, (VulkanHandle){0});
+	GPUCommandList cmd = gpu_command_list_begin(GPUTimeline_Compute);
+	gpu_command_wait_timeline(cmd, GPUTimeline_Compute, old->frame.timeline_valid_value);
+	gpu_command_copy_buffer(cmd, &new->copy_buffer, backlog, old->frame.buffer_offset, frame_size);
+	new->frame.timeline_valid_value = gpu_command_list_end(cmd, (VulkanHandle){0}, (VulkanHandle){0});
 }
 
 function BeamformerFrameView *
@@ -1001,7 +1001,7 @@ x_plane_raycast(BeamformerFrameView *view, BeamformerFrame *frame, v2 uv)
 
 function void
 render_single_xplane(BeamformerFrameView *view, BeamformerFrame *frame, v3 translate, f32 rotation_turns,
-                     VulkanHandle command, BeamformerRenderBeamformedPushConstants *pc, m4 vp_m, b32 drag_plane)
+                     GPUCommandList command, BeamformerRenderBeamformedPushConstants *pc, m4 vp_m, b32 drag_plane)
 {
 	GPUBuffer *beamformed_buffer = beamformer_context->compute_context.backlog.buffer;
 	pc->input_data   = frame->timeline_valid_value ? beamformed_buffer->gpu_pointer + frame->buffer_offset : 0;
@@ -1011,9 +1011,9 @@ render_single_xplane(BeamformerFrameView *view, BeamformerFrame *frame, v3 trans
 	pc->data_kind    = frame->data_kind;
 	pc->mvp_matrix   = m4_mul(vp_m, y_aligned_volume_transform(x_plane_display_size(frame), translate, rotation_turns));
 
-	vk_command_wait_timeline(command, VulkanTimeline_Compute, frame->timeline_valid_value);
-	vk_command_push_constants(command, 0, sizeof(*pc), pc);
-	vk_command_draw(command, &ui_context->unit_cube_model.model);
+	gpu_command_wait_timeline(command, GPUTimeline_Compute, frame->timeline_valid_value);
+	gpu_command_push_constants(command, 0, sizeof(*pc), pc);
+	gpu_command_draw(command, &ui_context->unit_cube_model.model);
 
 	v3 xp_delta = v3_sub(view->hit_test_point, view->hit_start_point);
 	if (drag_plane && !f32_equal(v3_magnitude_squared(xp_delta), 0)) {
@@ -1026,13 +1026,13 @@ render_single_xplane(BeamformerFrameView *view, BeamformerFrame *frame, v3 trans
 		pc->bounding_box_fraction = 1.0f;
 		pc->input_data            = 0;
 
-		vk_command_push_constants(command, 0, sizeof(*pc), pc);
-		vk_command_draw(command, &ui_context->unit_cube_model.model);
+		gpu_command_push_constants(command, 0, sizeof(*pc), pc);
+		gpu_command_draw(command, &ui_context->unit_cube_model.model);
 	}
 }
 
 function void
-render_3d_xplane(BeamformerFrameView *view, VulkanHandle command, BeamformerRenderBeamformedPushConstants *pc)
+render_3d_xplane(BeamformerFrameView *view, GPUCommandList command, BeamformerRenderBeamformedPushConstants *pc)
 {
 	if (view->demo) {
 		view->rotation += dt_for_frame * 0.125f;
@@ -1068,7 +1068,7 @@ render_3d_xplane(BeamformerFrameView *view, VulkanHandle command, BeamformerRend
 }
 
 function void
-render_2d_plane(BeamformerFrameView *view, VulkanHandle command, BeamformerRenderBeamformedPushConstants *pc)
+render_2d_plane(BeamformerFrameView *view, GPUCommandList command, BeamformerRenderBeamformedPushConstants *pc)
 {
 	m4 view_m     = m4_identity();
 	m4 model      = m4_scale((v3){{2.0f, 2.0f, 0.0f}});
@@ -1082,9 +1082,9 @@ render_2d_plane(BeamformerFrameView *view, VulkanHandle command, BeamformerRende
 	pc->input_size_z = view->frame.points.z;
 	pc->data_kind    = view->frame.data_kind;
 
-	vk_command_wait_timeline(command, VulkanTimeline_Compute, view->frame.timeline_valid_value);
-	vk_command_push_constants(command, 0, sizeof(*pc), pc);
-	vk_command_draw(command, &ui_context->unit_cube_model.model);
+	gpu_command_wait_timeline(command, GPUTimeline_Compute, view->frame.timeline_valid_value);
+	gpu_command_push_constants(command, 0, sizeof(*pc), pc);
+	gpu_command_draw(command, &ui_context->unit_cube_model.model);
 }
 
 function b32
@@ -1128,18 +1128,18 @@ update_frame_views(BeamformerUI *ui, Rect window)
 
 			glSignalSemaphoreEXT(ui->render_semaphores_gl[0], 0, 0, 1, &view->texture, (GLenum []){GL_NONE});
 
-			VulkanHandle cmd = vk_command_begin(VulkanTimeline_Graphics);
-			vk_command_bind_pipeline(cmd, ui->pipelines[BeamformerShaderKind_RenderBeamformed - BeamformerShaderKind_RenderFirst]);
-			vk_command_begin_rendering(cmd, &ui->render_3d_image, &ui->render_3d_depth_image, &view->colour_image);
-			vk_command_viewport(cmd, view->colour_image.width, view->colour_image.height, 0, 0, 0.0f, 1.0f);
-			vk_command_scissor(cmd, view->colour_image.width, view->colour_image.height, 0, 0);
+			GPUCommandList cmd = gpu_command_list_begin(GPUTimeline_Graphics);
+			gpu_command_bind_pipeline(cmd, ui->pipelines[BeamformerShaderKind_RenderBeamformed - BeamformerShaderKind_RenderFirst]);
+			gpu_command_begin_rendering(cmd, &ui->render_3d_image, &ui->render_3d_depth_image, &view->colour_image);
+			gpu_command_viewport(cmd, view->colour_image.width, view->colour_image.height, 0, 0, 0.0f, 1.0f);
+			gpu_command_scissor(cmd, view->colour_image.width, view->colour_image.height, 0, 0);
 			if (view->kind == BeamformerFrameViewKind_3DXPlane) {
 				render_3d_xplane(view, cmd, &pc);
 			} else {
 				render_2d_plane(view, cmd, &pc);
 			}
-			vk_command_end_rendering(cmd);
-			vk_command_end(cmd, ui->render_semaphores[0], ui->render_semaphores[1]);
+			gpu_command_end_rendering(cmd);
+			gpu_command_list_end(cmd, ui->render_semaphores[0], ui->render_semaphores[1]);
 
 			glWaitSemaphoreEXT(ui->render_semaphores_gl[1], 0, 0, 1, &view->texture, (GLenum[]){GL_LAYOUT_COLOR_ATTACHMENT_EXT});
 
@@ -5124,7 +5124,7 @@ ui_init(BeamformerCtx *ctx, Arena *store)
 			}
 		}
 
-		u32 samples = vk_gpu_info()->max_msaa_samples;
+		u32 samples = gpu_info()->max_msaa_samples;
 		vk_image_allocate(&ui->render_3d_image,       FRAME_VIEW_RENDER_TARGET_SIZE, 1, samples, VulkanImageUsage_Colour,       0, 0, str8("Render Target Colour"));
 		vk_image_allocate(&ui->render_3d_depth_image, FRAME_VIEW_RENDER_TARGET_SIZE, 1, samples, VulkanImageUsage_DepthStencil, 0, 0, str8("Render Target Depth"));
 

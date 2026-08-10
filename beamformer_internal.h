@@ -18,14 +18,17 @@
 
 #define os_path_separator() (str8){.data = &os_system_info()->path_separator_byte, .length = 1}
 
+typedef struct { u64 value; } GPUCommandList;
+typedef struct { u64 value; } GPUSplitBarrier;
+
 typedef struct { u64 value[1]; } VulkanHandle;
 
 typedef enum {
-	VulkanTimeline_Graphics,
-	VulkanTimeline_Compute,
-	VulkanTimeline_Transfer,
-	VulkanTimeline_Count,
-} VulkanTimeline;
+	GPUTimeline_Graphics,
+	GPUTimeline_Compute,
+	GPUTimeline_Transfer,
+	GPUTimeline_Count,
+} GPUTimeline;
 
 typedef enum {
 	VulkanShaderKind_Vertex,
@@ -112,7 +115,7 @@ typedef struct {
 	VulkanUsageFlags  flags;
 
 	// NOTE(rnp): only required if buffer will be used on multiple timelines
-	VulkanTimeline   *timelines_used;
+	GPUTimeline      *timelines_used;
 	u32               timeline_count;
 
 	OSHandle         *export;
@@ -146,7 +149,7 @@ typedef struct {
 // NOTE: vulkan layer API
 DEBUG_IMPORT void vk_load(OSLibrary vulkan, Stream *error);
 
-DEBUG_IMPORT GPUInfo *vk_gpu_info(void);
+DEBUG_IMPORT GPUInfo *gpu_info(void);
 
 DEBUG_IMPORT void vk_buffer_allocate(GPUBuffer *, GPUBufferAllocateInfo *info);
 DEBUG_IMPORT void vk_buffer_release(GPUBuffer *);
@@ -176,31 +179,31 @@ DEBUG_IMPORT b32 vk_buffer_needs_sync(GPUBuffer *);
 
 DEBUG_IMPORT VulkanHandle vk_create_semaphore(OSHandle *export);
 
-DEBUG_IMPORT b32          vk_host_wait_timeline(VulkanTimeline timeline, u64 value, u64 timeout_ns);
-DEBUG_IMPORT u64          vk_host_signal_timeline(VulkanTimeline timeline);
+DEBUG_IMPORT b32             gpu_host_wait_timeline(GPUTimeline timeline, u64 value, u64 timeout_ns);
+DEBUG_IMPORT u64             gpu_host_signal_timeline(GPUTimeline timeline);
 
-DEBUG_IMPORT VulkanHandle vk_command_begin(VulkanTimeline timeline);
-DEBUG_IMPORT void         vk_command_bind_pipeline(VulkanHandle command, VulkanHandle pipeline);
-DEBUG_IMPORT void         vk_command_buffer_memory_barriers(VulkanHandle command, GPUMemoryBarrierInfo *barriers, u64 count);
-DEBUG_IMPORT void         vk_command_clear_buffer(VulkanHandle command, GPUBuffer *buffer, u64 offset, u64 size, u32 clear_word);
-DEBUG_IMPORT void         vk_command_dispatch_compute(VulkanHandle command, uv3 dispatch);
-DEBUG_IMPORT void         vk_command_push_constants(VulkanHandle command, u32 offset, u32 size, void *values);
-DEBUG_IMPORT void         vk_command_timestamp(VulkanHandle command);
-DEBUG_IMPORT void         vk_command_wait_timeline(VulkanHandle command, VulkanTimeline timeline, u64 value);
+DEBUG_IMPORT GPUCommandList  gpu_command_list_begin(GPUTimeline timeline);
 // NOTE: extra semaphores only exist for synchronization with OpenGL and will be removed in the future
-DEBUG_IMPORT u64          vk_command_end(VulkanHandle command, VulkanHandle wait_semaphore, VulkanHandle finished_semaphore);
+DEBUG_IMPORT u64             gpu_command_list_end(GPUCommandList command, VulkanHandle wait_semaphore, VulkanHandle finished_semaphore);
 
-DEBUG_IMPORT void         vk_command_begin_rendering(VulkanHandle command, GPUImage *restrict colour, GPUImage *restrict depth, GPUImage *restrict resolve);
-DEBUG_IMPORT void         vk_command_draw(VulkanHandle command, GPUBuffer *model);
-DEBUG_IMPORT void         vk_command_scissor(VulkanHandle command, u32 width, u32 height, u32 x_offset, u32 y_offset);
-DEBUG_IMPORT void         vk_command_viewport(VulkanHandle command, f32 width, f32 height, f32 x_offset, f32 y_offset, f32 min_depth, f32 max_depth);
-DEBUG_IMPORT void         vk_command_end_rendering(VulkanHandle command);
+DEBUG_IMPORT void            gpu_command_bind_pipeline(GPUCommandList command, VulkanHandle pipeline);
+DEBUG_IMPORT void            gpu_command_buffer_memory_barriers(GPUCommandList command, GPUMemoryBarrierInfo *barriers, u64 count);
+DEBUG_IMPORT void            gpu_command_clear_buffer(GPUCommandList command, GPUBuffer *buffer, u64 offset, u64 size, u32 clear_word);
+DEBUG_IMPORT void            gpu_command_dispatch_compute(GPUCommandList command, uv3 dispatch);
+DEBUG_IMPORT void            gpu_command_push_constants(GPUCommandList command, u32 offset, u32 size, void *values);
+DEBUG_IMPORT void            gpu_command_timestamp(GPUCommandList command);
+DEBUG_IMPORT void            gpu_command_wait_timeline(GPUCommandList command, GPUTimeline timeline, u64 value);
 
-DEBUG_IMPORT void         vk_command_copy_buffer(VulkanHandle command, GPUBuffer *restrict destination, GPUBuffer *restrict source, u64 source_offset, i64 size);
+DEBUG_IMPORT void            gpu_command_begin_rendering(GPUCommandList command, GPUImage *restrict colour, GPUImage *restrict depth, GPUImage *restrict resolve);
+DEBUG_IMPORT void            gpu_command_draw(GPUCommandList command, GPUBuffer *model);
+DEBUG_IMPORT void            gpu_command_scissor(GPUCommandList command, u32 width, u32 height, u32 x_offset, u32 y_offset);
+DEBUG_IMPORT void            gpu_command_viewport(GPUCommandList command, f32 width, f32 height, f32 x_offset, f32 y_offset, f32 min_depth, f32 max_depth);
+DEBUG_IMPORT void            gpu_command_end_rendering(GPUCommandList command);
 
-// NOTE: returns array of valid timestamps + 1, first element is the count.
-//       Calling thread may stall until results available.
-DEBUG_IMPORT u64 *        vk_command_read_timestamps(VulkanTimeline timeline, Arena *arena);
+DEBUG_IMPORT void            gpu_command_copy_buffer(GPUCommandList command, GPUBuffer *restrict destination, GPUBuffer *restrict source, u64 source_offset, i64 size);
+
+// NOTE: returns array of valid timestamps. Calling thread may stall until results available.
+DEBUG_IMPORT u64 *           gpu_read_timestamps(GPUTimeline timeline, u64 *count, Arena *arena);
 
 #if BEAMFORMER_RENDERDOC_HOOKS
 DEBUG_IMPORT void *       vk_renderdoc_instance_handle(void);

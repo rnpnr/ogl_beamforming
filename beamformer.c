@@ -96,7 +96,7 @@ beamformer_load_cuda_library(BeamformerCtx *ctx, OSLibrary cuda, Arena *scratch)
 	/* TODO(rnp): (25.10.30) registering the rf buffer with CUDA is currently
 	 * causing a major performance regression. for now we are disabling its use
 	 * altogether. it will be reenabled once the issue can be fixed */
-	b32 result = 0 && vk_gpu_info()->vendor == GPUVendor_NVIDIA && ValidHandle(cuda);
+	b32 result = 0 && gpu_info()->vendor == GPUVendor_NVIDIA && ValidHandle(cuda);
 	if (result) {
 		Stream err = arena_stream(scratch);
 
@@ -194,7 +194,7 @@ beamformer_init(BeamformerInput *input)
 
 	// NOTE(rnp): allocate beamformed image ring buffer
 	{
-		u64 gpu_heap_size = vk_gpu_info()->gpu_heap_size;
+		u64 gpu_heap_size = gpu_info()->gpu_heap_size;
 		u64 trial_sizes[] = {
 			GB(4),
 			GB(2),
@@ -211,7 +211,7 @@ beamformer_init(BeamformerInput *input)
 
 		for (u32 i = base_index; i < countof(trial_sizes); i++) {
 			// TODO(rnp): it may be better to download data from this using the transfer queue
-			VulkanTimeline timelines[] = {VulkanTimeline_Compute, VulkanTimeline_Graphics};
+			GPUTimeline timelines[] = {GPUTimeline_Compute, GPUTimeline_Graphics};
 			GPUBufferAllocateInfo allocate_info = {
 				.size            = trial_sizes[i],
 				.flags           = VulkanUsageFlag_TransferDestination|VulkanUsageFlag_TransferSource|VulkanUsageFlag_HostReadWrite,
