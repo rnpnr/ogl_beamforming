@@ -472,7 +472,6 @@
 			[output_size_x     U32]
 			[output_size_y     U32]
 			[output_size_z     U32]
-			[cycle_t           U32]
 			[channel_offset    S32]
 			[readi_group       U32]
 		}

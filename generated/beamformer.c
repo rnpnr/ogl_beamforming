@@ -260,7 +260,6 @@ typedef struct {
 	u32 output_size_x;
 	u32 output_size_y;
 	u32 output_size_z;
-	u32 cycle_t;
 	i32 channel_offset;
 	u32 readi_group;
 } BeamformerDASPushConstants;
@@ -904,7 +903,6 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"  uint32_t output_size_x;\n"
 	"  uint32_t output_size_y;\n"
 	"  uint32_t output_size_z;\n"
-	"  uint32_t cycle_t;\n"
 	"  int32_t  channel_offset;\n"
 	"  uint32_t readi_group;\n"
 	"};\n"

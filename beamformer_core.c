@@ -1177,8 +1177,6 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 	}break;
 
 	case BeamformerShaderKind_DAS:{
-		local_persist u32 das_cycle_t = 0;
-
 		GPUBuffer *b = cc->backlog.buffer;
 
 		u64 frame_size   = beamformer_frame_byte_size(frame->points, frame->data_kind);
@@ -1193,7 +1191,6 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 			.output_size_x     = cp->output_points.x,
 			.output_size_y     = cp->output_points.y,
 			.output_size_z     = cp->output_points.z,
-			.cycle_t           = das_cycle_t++,
 			.channel_offset    = channel_offset,
 			.readi_group       = cp->readi_group,
 			.array_parameters  = cp->array_parameters.gpu_pointer,
