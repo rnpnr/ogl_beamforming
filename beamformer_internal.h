@@ -124,12 +124,6 @@ typedef struct {
 } GPUBufferAllocateInfo;
 
 typedef struct {
-	GPUBuffer *gpu_buffer;
-	u64        offset;
-	u64        size;
-} GPUMemoryBarrierInfo;
-
-typedef struct {
 	GPUBuffer model;
 	u32       vertex_count;
 	u32       normals_offset;
@@ -187,7 +181,7 @@ DEBUG_IMPORT GPUCommandList  gpu_command_list_begin(GPUTimeline timeline);
 DEBUG_IMPORT u64             gpu_command_list_end(GPUCommandList command, VulkanHandle wait_semaphore, VulkanHandle finished_semaphore);
 
 DEBUG_IMPORT void            gpu_command_bind_pipeline(GPUCommandList command, VulkanHandle pipeline);
-DEBUG_IMPORT void            gpu_command_buffer_memory_barriers(GPUCommandList command, GPUMemoryBarrierInfo *barriers, u64 count);
+DEBUG_IMPORT void            gpu_command_pipeline_barrier(GPUCommandList command);
 DEBUG_IMPORT void            gpu_command_clear_buffer(GPUCommandList command, GPUBuffer *buffer, u64 offset, u64 size, u32 clear_word);
 DEBUG_IMPORT void            gpu_command_dispatch_compute(GPUCommandList command, uv3 dispatch);
 DEBUG_IMPORT void            gpu_command_push_constants(GPUCommandList command, u32 offset, u32 size, void *values);

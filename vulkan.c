@@ -2533,51 +2533,28 @@ gpu_command_bind_pipeline(GPUCommandList command, VulkanHandle pipeline)
 	}
 }
 
-function VkDependencyInfo
-vk_dependency_info_from_memory_barrier_info(Arena *arena, VulkanQueue *vq, GPUMemoryBarrierInfo *barriers, u64 count)
-{
-	u64 valid_count = 0;
-	VkBufferMemoryBarrier2 *memory_barriers = push_array(arena, VkBufferMemoryBarrier2, count);
-	for (u64 it = 0; it < count; it++) {
-		if ValidVulkanHandle(barriers[it].gpu_buffer->handle) {
-			u32           index = valid_count++;
-			VulkanBuffer *vb    = vk_entity_data(barriers[it].gpu_buffer->handle.value[0], VulkanEntityKind_Buffer);
-			memory_barriers[index].sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
-			memory_barriers[index].srcStageMask        = vq->pipeline_stage_flags;
-			memory_barriers[index].srcAccessMask       = VK_ACCESS_2_MEMORY_WRITE_BIT;
-			memory_barriers[index].dstStageMask        = vq->pipeline_stage_flags;
-			memory_barriers[index].dstAccessMask       = VK_ACCESS_2_MEMORY_READ_BIT;
-			memory_barriers[index].srcQueueFamilyIndex = vq->queue_family;
-			memory_barriers[index].dstQueueFamilyIndex = vq->queue_family;
-			memory_barriers[index].buffer              = vb->buffer;
-			memory_barriers[index].offset              = barriers[it].offset;
-			memory_barriers[index].size                = barriers[it].size;
-		}
-	}
-
-	VkDependencyInfo result = {
-		.sType                    = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-		.bufferMemoryBarrierCount = valid_count,
-		.pBufferMemoryBarriers    = memory_barriers,
-	};
-	return result;
-}
-
 DEBUG_IMPORT void
-gpu_command_buffer_memory_barriers(GPUCommandList command, GPUMemoryBarrierInfo *barriers, u64 count)
+gpu_command_pipeline_barrier(GPUCommandList command)
 {
 	if (command.value) {
 		VulkanContext       *vk  = vulkan_context;
 		VulkanCommandBuffer *vcb = vk_entity_data(command.value, VulkanEntityKind_CommandBuffer);
 		VulkanQueue         *vq  = vk->queues[vcb->timeline];
 
-		Temp scratch;
-		DeferLoop(take_lock(&vk->arena_lock, -1), release_lock(&vk->arena_lock))
-		DeferLoop(scratch = temp_begin(vk->arena), temp_end(scratch))
-		{
-			VkDependencyInfo dependancy_info = vk_dependency_info_from_memory_barrier_info(scratch.arena, vq, barriers, count);
-			vkCmdPipelineBarrier2(vk_command_buffer(command), &dependancy_info);
-		}
+		VkMemoryBarrier2 memory_barrier = {
+			.sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+			.srcStageMask  = vq->pipeline_stage_flags,
+			.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+			.dstStageMask  = vq->pipeline_stage_flags,
+			.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
+		};
+
+		VkDependencyInfo dependency_info = {
+			.sType              = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+			.pMemoryBarriers    = &memory_barrier,
+			.memoryBarrierCount = 1,
+		};
+		vkCmdPipelineBarrier2(vk_command_buffer(command), &dependency_info);
 	}
 }
 

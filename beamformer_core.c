@@ -1139,26 +1139,7 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 		if ((shader_slot + 1) == das_index) pc.output_buffer = pp_das_pointer;
 		else                                pc.output_buffer = pp_output_pointer;
 
-		GPUMemoryBarrierInfo memory_barriers[]= {
-			// NOTE(rnp): first pass or last stage output
-			{
-				.gpu_buffer = &cc->ping_pong_buffer,
-				.offset     = pp_input_pointer - cc->ping_pong_buffer.gpu_pointer,
-				.size       = pp_size,
-			},
-			// NOTE(rnp): output for DAS
-			{
-				.gpu_buffer = &cc->ping_pong_buffer,
-				.offset     = pp_das_pointer - cc->ping_pong_buffer.gpu_pointer,
-				.size       = pp_size,
-			},
-		};
-
-		u32 barrier_count = 1;
-		if (shader_slot + 1 == das_index)
-			barrier_count++;
-
-		gpu_command_buffer_memory_barriers(cmd, memory_barriers, barrier_count);
+		gpu_command_pipeline_barrier(cmd);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
 
@@ -1186,33 +1167,8 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 		if ((shader_slot + 1) == das_index)
 			pc.output_element_offset = das_output_index * pp_size / element_size;
 
-		GPUMemoryBarrierInfo memory_barriers[] = {
-			// NOTE(rnp): last stage output
-			{
-				.gpu_buffer = &cc->ping_pong_buffer,
-				.offset     = pp_input_pointer - cc->ping_pong_buffer.gpu_pointer,
-				.size       = pp_size,
-			},
-			// NOTE(rnp): output for DAS
-			{
-				.gpu_buffer = &cc->ping_pong_buffer,
-				.offset     = pp_das_pointer - cc->ping_pong_buffer.gpu_pointer,
-				.size       = pp_size,
-			},
-		};
-		GPUMemoryBarrierInfo *barriers = memory_barriers;
-
-		u32 barrier_count = 2;
-		if (shader_slot == 0) {
-			barriers++;
-			barrier_count--;
-		}
-
-		if ((shader_slot + 1) != das_index)
-			barrier_count--;
-
-		if (barrier_count)
-			gpu_command_buffer_memory_barriers(cmd, barriers, barrier_count);
+		if (shader_slot != 0 || (shader_slot + 1) == das_index)
+			gpu_command_pipeline_barrier(cmd);
 
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
@@ -1245,31 +1201,7 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 		memory_copy(pc.voxel_transform.E, cp->das_voxel_transform.E, sizeof(pc.voxel_transform));
 		memory_copy(pc.xdc_transform.E,   cp->xdc_transform.E,       sizeof(pc.xdc_transform));
 
-		b32 coherent = (cp->shader_descriptors[shader_slot].compile_flags & BeamformerDASCompileFlags_CoherencyWeighting) != 0;
-
-		GPUMemoryBarrierInfo barrier_infos[] = {
-			{
-				.gpu_buffer = &cc->ping_pong_buffer,
-				.offset     = pp_das_pointer - cc->ping_pong_buffer.gpu_pointer,
-				.size       = pp_size,
-			},
-			// NOTE(rnp): output clearing pipeline barriers or last DAS pipeline write barriers
-			{
-				.gpu_buffer = b,
-				.offset     = frame->buffer_offset,
-				.size       = frame_size,
-			},
-			{
-				.gpu_buffer = b,
-				.offset     = pc.incoherent_frame - b->gpu_pointer,
-				.size       = iframe_size,
-			},
-		};
-
-		u32 barrier_count = countof(barrier_infos);
-		if (!coherent) barrier_count--;
-
-		gpu_command_buffer_memory_barriers(cmd, barrier_infos, barrier_count);
+		gpu_command_pipeline_barrier(cmd);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
 	}break;
@@ -1289,20 +1221,7 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 			.output_size_z     = cp->output_points.z,
 		};
 
-		GPUMemoryBarrierInfo memory_barriers[] = {
-			{
-				.gpu_buffer = b,
-				.offset     = frame->buffer_offset,
-				.size       = frame_size,
-			},
-			{
-				.gpu_buffer = b,
-				.offset     = pc.right_side_buffer - b->gpu_pointer,
-				.size       = iframe_size,
-			},
-		};
-
-		gpu_command_buffer_memory_barriers(cmd, memory_barriers, countof(memory_barriers));
+		gpu_command_pipeline_barrier(cmd);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
 	}break;
@@ -1320,26 +1239,7 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 		if ((shader_slot + 1) == das_index) pc.output_buffer = pp_das_pointer;
 		else                                pc.output_buffer = pp_output_pointer;
 
-		GPUMemoryBarrierInfo memory_barriers[]= {
-			// NOTE(rnp): first pass or last stage output
-			{
-				.gpu_buffer = &cc->ping_pong_buffer,
-				.offset     = pp_input_pointer - cc->ping_pong_buffer.gpu_pointer,
-				.size       = pp_size,
-			},
-			// NOTE(rnp): output for DAS
-			{
-				.gpu_buffer = &cc->ping_pong_buffer,
-				.offset     = pp_das_pointer - cc->ping_pong_buffer.gpu_pointer,
-				.size       = pp_size,
-			},
-		};
-
-		u32 barrier_count = 1;
-		if (shader_slot + 1 == das_index)
-			barrier_count++;
-
-		gpu_command_buffer_memory_barriers(cmd, memory_barriers, barrier_count);
+		gpu_command_pipeline_barrier(cmd);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
 
