@@ -100,11 +100,11 @@ SAMPLE_TYPE sample_rf(const int rf_offset, const float index)
 
 	switch (InterpolationMode) {
 	case InterpolationMode_Nearest:{
-		if (int(index) >= 0 && int(round(index)) < SampleCount)
+		if (index >= 0.f && index < (f32(SampleCount) - 0.5f))
 			result = rotate_iq(rf[rf_offset + int(round(index))], index / SamplingFrequency);
 	}break;
 	case InterpolationMode_Linear:{
-		if (int(index) >= 0 && int(index) < SampleCount - 1) {
+		if (index >= 0.f && index < f32(SampleCount - 1)) {
 			float tk, t = modf(index, tk);
 			int n = rf_offset + int(tk);
 			result = (1 - t) * rf[n] + t * rf[n + 1];
@@ -112,7 +112,7 @@ SAMPLE_TYPE sample_rf(const int rf_offset, const float index)
 		}
 	}break;
 	case InterpolationMode_Cubic:{
-		if (int(index) > 0 && int(index) < SampleCount - 2) {
+		if (index >= 1.f && index < f32(SampleCount - 2)) {
 			float tk, t = modf(index, tk);
 			result = rotate_iq(cubic(rf_offset + int(index), t), index / SamplingFrequency);
 		}
@@ -211,11 +211,11 @@ RESULT_TYPE RCA(const vec3 world_point)
 
 		int rf_offset  = int(rf_element_offset) + acquisition * SampleCount;
 		rf_offset     -= int(InterpolationMode == InterpolationMode_Cubic);
-		for (int chunk_channel = 0; chunk_channel < ChunkChannelCount; chunk_channel++) {
-			int   rx_channel     = channel_offset + chunk_channel;
-			vec3  rx_center      = vec3(rx_channel * xdc_element_pitch, 0);
-			vec2  receive_vector = xdc_world_point - rca_plane_projection(rx_center, rx_rows);
-			float a_arg          = abs(FNumber * receive_vector.x / abs(xdc_world_point.y));
+		for (f32 chunk_channel = 0.f; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.f) {
+			f32  rx_channel     = f32(channel_offset) + chunk_channel;
+			vec3 rx_center      = vec3(rx_channel * xdc_element_pitch, 0);
+			vec2 receive_vector = xdc_world_point - rca_plane_projection(rx_center, rx_rows);
+			f32  a_arg          = abs(FNumber * receive_vector.x / abs(xdc_world_point.y));
 
 			if (a_arg < 0.5f) {
 				float       sidx  = sample_index(transmit_distance + length(receive_vector));
@@ -244,7 +244,7 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 	const float apodization_test = 0.25f / (f_number_over_z * f_number_over_z);
 
 	RESULT_TYPE result = RESULT_TYPE(0);
-	for (f32 chunk_channel = 0; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.0f) {
+	for (f32 chunk_channel = 0.f; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.f) {
 		f32 rx_channel  = f32(channel_offset) + chunk_channel;
 		s32 rf_offset   = s32(rf_element_offset) + s32(chunk_channel) * SampleCount * AcquisitionCount + s32(Sparse) * SampleCount;
 		rf_offset      -= s32(InterpolationMode == InterpolationMode_Cubic);
@@ -257,8 +257,8 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 		if (rx_cols) element_receive_delta_squared.x *= element_receive_delta_squared.x;
 		else         element_receive_delta_squared.y *= element_receive_delta_squared.y;
 
-		for (s32 transmit = s32(Sparse); transmit < AcquisitionCount; transmit++) {
-			s32 tx_channel = Sparse ? dp.sparse_elements[transmit - s32(Sparse)] : transmit;
+		for (f32 transmit = f32(Sparse); transmit < f32(AcquisitionCount); transmit += 1.f) {
+			f32 tx_channel = Sparse ? f32(dp.sparse_elements[s32(transmit) - s32(Sparse)]) : transmit;
 
 			if (rx_cols) element_receive_delta_squared.y  = xy_world_point.y - tx_channel * xdc_element_pitch.y;
 			else         element_receive_delta_squared.x  = xy_world_point.x - tx_channel * xdc_element_pitch.x;
@@ -293,8 +293,8 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;
 	float transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
 
-	for (f32 chunk_channel = 0; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.0f) {
-		float rx_channel      = float(channel_offset) + chunk_channel;
+	for (f32 chunk_channel = 0; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.f) {
+		float rx_channel      = f32(channel_offset) + chunk_channel;
 		float receive_x_delta = xdc_world_point.x - rx_channel * xdc_element_pitch.x;
 		float a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
 
@@ -302,12 +302,12 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 			s32 rf_offset  = s32(rf_element_offset) + s32(chunk_channel) * SampleCount * AcquisitionCount + s32(Sparse) * SampleCount;
 			rf_offset     -= s32(InterpolationMode == InterpolationMode_Cubic);
 
-			float receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
-			float apodization   = apodize(a_arg);
-			for (s32 transmit = s32(Sparse); transmit < AcquisitionCount; transmit++) {
-				s32 tx_channel = Sparse ? dp.sparse_elements[transmit - s32(Sparse)] : transmit;
-				float transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_channel;
-				float transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
+			f32 receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
+			f32 apodization   = apodize(a_arg);
+			for (f32 transmit = f32(Sparse); transmit < f32(AcquisitionCount); transmit += 1.f) {
+				f32 tx_channel = Sparse ? f32(dp.sparse_elements[s32(transmit) - s32(Sparse)]) : transmit;
+				f32 transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_channel;
+				f32 transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
 
 				SAMPLE_TYPE value = apodization * sample_rf(rf_offset, receive_index + transmit_index);
 				result    += RESULT_STORE(value);
@@ -331,8 +331,8 @@ RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
 	// NOTE(tkh): The row we use matches the acquisition group, the column is the element group we are beamforming.
 	s32 hadamard_offset = s32(readi_group) * s32(ReadiGroupCount);
 
-	for (f32 chunk_channel = 0; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.0f) {
-		f32 rx_channel      = float(channel_offset) + chunk_channel;
+	for (f32 chunk_channel = 0; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.f) {
+		f32 rx_channel      = f32(channel_offset) + chunk_channel;
 		f32 receive_x_delta = xdc_world_point.x - rx_channel * xdc_element_pitch.x;
 		f32 a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
 
@@ -350,8 +350,8 @@ RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
 				f32 group_apodization = apodization * dp.das_hadamard[hadamard_offset + tx_group];
 				s32 rf_offset = channel_rf_offset;
 
-				for (s32 tx_event = 0; tx_event < AcquisitionCount; tx_event++) {
-					s32 tx_element = tx_group * AcquisitionCount + tx_event;
+				for (f32 tx_event = 0; tx_event < f32(AcquisitionCount); tx_event += 1.f) {
+					f32 tx_element       = f32(tx_group) * f32(AcquisitionCount) + tx_event;
 					f32 transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_element;
 					f32 transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
 
