@@ -2542,7 +2542,7 @@ gpu_command_pipeline_barrier(GPUCommandList command)
 		VulkanQueue         *vq  = vk->queues[vcb->timeline];
 
 		VkMemoryBarrier2 memory_barrier = {
-			.sType         = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+			.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
 			.srcStageMask  = vq->pipeline_stage_flags,
 			.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
 			.dstStageMask  = vq->pipeline_stage_flags,
