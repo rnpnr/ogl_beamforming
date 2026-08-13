@@ -2537,20 +2537,27 @@ gpu_command_bind_pipeline(GPUCommandList command, VulkanHandle pipeline)
 }
 
 DEBUG_IMPORT void
-gpu_command_pipeline_barrier(GPUCommandList command)
+gpu_command_pipeline_barrier(GPUCommandList command, b32 memory)
 {
 	if (command.value) {
 		VulkanContext       *vk  = vulkan_context;
 		VulkanCommandBuffer *vcb = vk_entity_data(command.value, VulkanEntityKind_CommandBuffer);
 		VulkanQueue         *vq  = vk->queues[vcb->timeline];
 
+		// TODO(rnp): this is not really specific enough
+		b32 needs_memory = memory || (vq->pipeline_stage_flags != VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT);
+
 		VkMemoryBarrier2 memory_barrier = {
-			.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-			.srcStageMask  = vq->pipeline_stage_flags,
-			.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
-			.dstStageMask  = vq->pipeline_stage_flags,
-			.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
+			.sType        = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+			.srcStageMask = vq->pipeline_stage_flags,
+			.dstStageMask = vq->pipeline_stage_flags,
 		};
+
+		// NOTE(rnp): COMPUTE->COMPUTE does not need memory guards. LLC is coherent on modern GPUs.
+		if (needs_memory) {
+			memory_barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+			memory_barrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
+		}
 
 		VkDependencyInfo dependency_info = {
 			.sType              = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
