@@ -6,6 +6,7 @@
  * [ ]: cross compile/override baked compiler
  * [ ]: msvc build doesn't detect out of date files correctly
  * [ ]: seperate dwarf debug info
+ * [ ]: bug: need to account for member alignment in structs (eg. u64 in bake parameters)
  */
 
 #define BEAMFORMER_IMPORT function

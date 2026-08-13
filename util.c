@@ -674,6 +674,12 @@ stream_append_struct_member(Stream *s, MetaStructMember *m, void *struct_base)
 		memory_copy(&value, ((u8 *)struct_base + m->offset), sizeof(value));
 		stream_append_u64(s, value);
 	}break;
+	case MetaKind_U64:{
+		u64 value;
+		memory_copy(&value, ((u8 *)struct_base + m->offset), sizeof(value));
+		stream_append_str8(s, str8("0x"));
+		stream_append_hex_u64(s, value);
+	}break;
 	case MetaKind_S32:{
 		i32 value;
 		memory_copy(&value, ((u8 *)struct_base + m->offset), sizeof(value));

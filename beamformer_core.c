@@ -604,6 +604,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 			case BeamformerShaderKind_Decode:{
 				BeamformerDecodeBakeParameters *db = &sd->bake.Decode;
 
+				db->HadamardBuffer = cp->array_parameters.gpu_pointer
+				                     + offsetof(BeamformerComputeArrayParameters, decode_hadamard);
+
 				u32 decode_sample_count = input_sample_count;
 				db->DecodeMode    = pb->parameters.decode_mode;
 				db->TransmitCount = pb->parameters.acquisition_count;
@@ -636,7 +639,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 					sd->dispatch.y = chunk_channel_count / db->CooperativeMatrixM;
 					sd->dispatch.z = decode_sample_count;
 				} else if (db->TransmitCount > 40) {
-					db->UseSharedMemory = 1;
+					sd->compile_flags |= BeamformerDecodeCompileFlags_UseSharedMemory;
 
 					if (db->TransmitCount == 48)
 						db->ToProcess = db->TransmitCount / 16;
@@ -673,7 +676,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				time_offset += f->time_delay;
 
 				BeamformerFilterBakeParameters *fb = &sd->bake.Filter;
-				fb->FilterLength  = (u32)f->length;
+
+				fb->FilterCoefficients = f->buffer.gpu_pointer;
+				fb->FilterLength       = (u32)f->length;
 
 				fb->SampleCount    = input_sample_count;
 				fb->DecimationRate = demod ? decimation_rate : 1;
@@ -729,6 +734,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->TransmitAngle         = pb->parameters.focal_vector.E[0];
 				db->FocusDepth            = pb->parameters.focal_vector.E[1];
 				db->ReadiGroupCount       = pb->parameters.readi_group_count;
+				db->ArrayParameters       = cp->array_parameters.gpu_pointer;
 				db->TransmitReceiveOrientation = pb->parameters.transmit_receive_orientation;
 
 				cp->readi_group = pb->parameters.readi_group;
@@ -1131,10 +1137,7 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 	switch (cp->pipeline.shaders[shader_slot]) {
 
 	case BeamformerShaderKind_Decode:{
-		BeamformerDecodePushConstants pc = {
-			.hadamard_buffer = cp->array_parameters.gpu_pointer + offsetof(BeamformerComputeArrayParameters, decode_hadamard),
-			.rf_buffer       = pp_input_pointer,
-		};
+		BeamformerDecodePushConstants pc = {.rf_buffer = pp_input_pointer};
 
 		if ((shader_slot + 1) == das_index) pc.output_buffer = pp_das_pointer;
 		else                                pc.output_buffer = pp_output_pointer;
@@ -1157,9 +1160,7 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 		BeamformerDataKind output_data_kind = cp->shader_descriptors[shader_slot].output_data_kind;
 
 		u64 element_size = beamformer_data_kind_byte_size[output_data_kind];
-		u32 filter_slot  = cp->pipeline.parameters[shader_slot].filter_slot;
 		BeamformerFilterPushConstants pc = {
-			.filter_coefficients   = cp->filters[filter_slot].buffer.gpu_pointer,
 			.input_data            = shader_slot == 0 ? rf_pointer : pp_input_pointer,
 			.output_element_offset = output_index * pp_size / element_size,
 		};
@@ -1193,7 +1194,6 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 			.output_size_z     = cp->output_points.z,
 			.channel_offset    = channel_offset,
 			.readi_group       = cp->readi_group,
-			.array_parameters  = cp->array_parameters.gpu_pointer,
 		};
 		memory_copy(pc.voxel_transform.E, cp->das_voxel_transform.E, sizeof(pc.voxel_transform));
 		memory_copy(pc.xdc_transform.E,   cp->xdc_transform.E,       sizeof(pc.xdc_transform));

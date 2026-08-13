@@ -111,11 +111,12 @@ void main()
 	}
 	barrier();
 
+	Filter f = Filter(FilterCoefficients);
 	if (out_sample < SampleCount / DecimationRate) {
 		RESULT_TYPE result = RESULT_TYPE(0);
-		uint offset = DecimationRate * thread_index;
-		for (uint j = 0; j < FilterLength; j++)
-			result += apply_filter(rf[offset + j], Filter(filter_coefficients).values[j]);
+		u32 offset = DecimationRate * thread_index;
+		for (u32 j = 0; j < FilterLength; j++)
+			result += apply_filter(rf[offset + j], f.values[j]);
 
 		u32 out_offset = OutputChannelStride  * channel +
 		                 OutputTransmitStride * transmit +

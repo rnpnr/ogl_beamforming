@@ -170,14 +170,14 @@ float cylindrical_wave_transmit_distance(const vec3 point, const float focal_dep
 u16 tx_rx_orientation_for_acquisition(const s16 acquisition)
 {
 	u16 result = u16(TransmitReceiveOrientation);
-	ComputeArrayParametersReference dp = ComputeArrayParametersReference(array_parameters);
+	ComputeArrayParametersReference dp = ComputeArrayParametersReference(ArrayParameters);
 	if (!SingleOrientation) result = dp.transmit_receive_orientations[acquisition];
 	return result;
 }
 
 f32vec2 focal_vector_for_acquisition(const s16 acquisition)
 {
-	ComputeArrayParametersReference dp = ComputeArrayParametersReference(array_parameters);
+	ComputeArrayParametersReference dp = ComputeArrayParametersReference(ArrayParameters);
 	f32vec2 result = SingleFocus ? f32vec2(TransmitAngle, FocusDepth) : dp.focal_vectors[acquisition];
 	return result;
 }
@@ -230,7 +230,7 @@ RESULT_TYPE RCA(const vec3 world_point)
 
 RESULT_TYPE HERCULES(const vec3 world_point)
 {
-	ComputeArrayParametersReference dp = ComputeArrayParametersReference(array_parameters);
+	ComputeArrayParametersReference dp = ComputeArrayParametersReference(ArrayParameters);
 
 	const uint16_t tx_rx_orientation = tx_rx_orientation_for_acquisition(int16_t(0));
 	const bool     rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
@@ -287,7 +287,7 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
-	ComputeArrayParametersReference dp = ComputeArrayParametersReference(array_parameters);
+	ComputeArrayParametersReference dp = ComputeArrayParametersReference(ArrayParameters);
 
 	float z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
 	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;
@@ -322,7 +322,7 @@ RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
-	ComputeArrayParametersReference dp = ComputeArrayParametersReference(array_parameters);
+	ComputeArrayParametersReference dp = ComputeArrayParametersReference(ArrayParameters);
 
 	float z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
 	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;

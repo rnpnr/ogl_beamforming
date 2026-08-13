@@ -355,11 +355,12 @@
 		@Flags
 		{
 			CooperativeMatrix
+			UseSharedMemory
 		}
 
 		@Bake
 		{
-			[UseSharedMemory      B32]
+			[HadamardBuffer       U64]
 			[DecodeMode           U32]
 			[OutputChannelStride  U32]
 			[OutputSampleStride   U32]
@@ -374,9 +375,8 @@
 
 		@PushConstants
 		{
-			[hadamard_buffer  U64]
-			[rf_buffer        U64]
-			[output_buffer    U64]
+			[rf_buffer     U64]
+			[output_buffer U64]
 		}
 	}
 
@@ -395,10 +395,11 @@
 
 		@Bake
 		{
+			[FilterCoefficients    U64]
+			[FilterLength          U32]
 			[SamplingFrequency     F32]
 			[DemodulationFrequency F32]
 			[DecimationRate        U32]
-			[FilterLength          U32]
 			[SampleCount           U32]
 			[BatchSampleCount      U32]
 			[InputChannelStride    U32]
@@ -412,7 +413,6 @@
 		@PushConstants
 		{
 			[input_data            U64]
-			[filter_coefficients   U64]
 			[output_element_offset U32]
 		}
 	}
@@ -437,6 +437,7 @@
 
 		@Bake
 		{
+			[ArrayParameters            U64]
 			[AcquisitionKind            U32]
 			[Sparse                     B32]
 			[AcquisitionCount           S32]
@@ -465,7 +466,6 @@
 			[xdc_transform      M4]
 			[voxel_transform    M4]
 			[xdc_element_pitch  V2]
-			[array_parameters  U64]
 			[output_frame      U64]
 			[incoherent_frame  U64]
 			[rf_element_offset U32]

@@ -50,10 +50,11 @@ void run_decode_large(void)
 		for (s32 i = 0; i < ToProcess; i++)
 			result[i] = OutputDataType(0);
 
+		Hadamard h = Hadamard(HadamardBuffer);
 		for (s32 j = 0; j < TransmitCount; j++) {
 			OutputDataType s = OutputDataType(rf[gl_LocalInvocationID.y][j]);
 			for (s32 i = 0; i < ToProcess; i++)
-				result[i] += s * Hadamard(hadamard_buffer).x[TransmitCount * j + (i + transmit)];
+				result[i] += s * h.x[TransmitCount * j + (i + transmit)];
 		}
 
 		for (uint i = 0; i < ToProcess; i++)
@@ -93,6 +94,7 @@ void run_decode_coop(void)
 
 	u32 offset = ChunkChannelCount * TransmitCount * time_sample;
 
+	Hadamard h = Hadamard(HadamardBuffer);
 	for (u32 k = 0; k < TransmitCount; k += CooperativeMatrixK) {
 		u32 rf_tile_row = CooperativeMatrixM * tile_index.y;
 		u32 rf_tile_col = k;
@@ -101,9 +103,8 @@ void run_decode_coop(void)
 
 		u32 hadamard_tile_row = k;
 		u32 hadamard_tile_col = CooperativeMatrixN * tile_index.x;
-		coopMatLoad(hadamard_matrix, Hadamard(hadamard_buffer).x,
-		            TransmitCount * hadamard_tile_row + hadamard_tile_col, TransmitCount,
-		            gl_CooperativeMatrixLayoutRowMajor);
+		coopMatLoad(hadamard_matrix, h.x, TransmitCount * hadamard_tile_row + hadamard_tile_col,
+		            TransmitCount, gl_CooperativeMatrixLayoutRowMajor);
 
 		result = coopMatMulAdd(rf_matrix, hadamard_matrix, result);
 	}
@@ -132,10 +133,11 @@ void run_decode_small(void)
 		for (s32 j = 0; j < TransmitCount; j++)
 			result[j] = OutputDataType(0);
 
+		Hadamard h = Hadamard(HadamardBuffer);
 		for (s32 i = 0; i < TransmitCount; i++) {
 			OutputDataType s = OutputDataType(rf[i]);
 			for (s32 j = 0; j < TransmitCount; j++) {
-				result[j] += s * Hadamard(hadamard_buffer).x[TransmitCount * i + j];
+				result[j] += s * h.x[TransmitCount * i + j];
 			}
 		}
 
