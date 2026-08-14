@@ -19,6 +19,46 @@
  * [ ]: refactor: work queue needs a cleanup, we should only have a single one
  *      - that queue isn't really considered hot so a lock is probably fine
  * [ ]: bug: reinit cuda on hot-reload
+ *
+ * [ ]: Tiled Array Handling
+ *    [ ]: add tile count uv2
+ *    [ ]: make xdc_transform an array
+ *    [ ]: modify CPU DAS dispatch code to lookup xdc_transform based on tile index
+ *    [ ]: modify CPU DAS dispatch code to set rf_element_offset based on tile index
+ *       - need to check if this works for HERCULES or if the shader just needs to
+ *         know about the extra tiles
+ *    [ ]: write simple backpropagation code to optimize 2D tile position and 2D tilt
+ *         (4 variables per tile).
+ *       - two tests:
+ *         1. Maximize value of wire target
+ *         2. Maximize value of single cyst contrast
+ *
+ * [ ]: Need somewhere to store display image temporaries
+ *    - Coherency Weighting needs somewhere to put its incoherent sum
+ *    - Image Averaging needs to put its output somewhere
+ *    - Recursive imaging needs to be able to sum/subtract to update on each recursion step
+ *    - Power doppler needs somewhere to store current power map
+ *    - We don't need a backlog of these but it may be useful to have a front and back buffer
+ *      so that the UI always sees consistent state
+ *    - Really what we want is a separate temp (GPU) arena that gets recreated on
+ *      pipeline creation (in plan_compute_pipeline()).
+ *    - NOTE: image offsets/etc needed below don't have a predefined sizes so they would
+ *      also be a candidates for storage in GPU temp arena.
+ *
+ * [ ]: Recursive Imaging Handling
+ *    [ ]: add array of image offsets to Compute Array Parameters
+ *    [ ]: add array of weighting coeffiecents to Compute Array Parameters
+ *    [ ]: Update 2D sum shader to use these
+ *
+ * [ ]: Power Doppler
+ *    [ ]: also needs array of image offsets
+ *    [ ]: make modified filter that grabs each sample from a different image offset
+ *       - NOTE: this can't use existing striding mechanism because one image may
+ *               be at the start of the ring buffer and another at the end of the
+ *               ring buffer and the image size may not cleanly divide the ring buffer size.
+ *       - Probably want this shader to just output the estimated power map directly.
+ *    [ ]: make a modified render shader that takes two images: one structural and one that
+ *         is used to index into a color map. (or second render pass that applies color overlay)
  */
 
 #include "base_platform.h"
