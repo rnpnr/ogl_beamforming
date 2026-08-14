@@ -183,9 +183,8 @@ beamformer_init(BeamformerInput *input)
 	ctx->upload_worker.arena  = arena_create();
 
 	#if BEAMFORMER_RENDERDOC_HOOKS
-	start_frame_capture       = input->renderdoc_start_frame_capture;
-	end_frame_capture         = input->renderdoc_end_frame_capture;
-	set_capture_path_template = input->renderdoc_set_capture_file_path_template;
+	start_frame_capture = input->renderdoc_start_frame_capture;
+	end_frame_capture   = input->renderdoc_end_frame_capture;
 	#endif
 
 	vk_load(input->vulkan_library_handle, &ctx->error_stream);

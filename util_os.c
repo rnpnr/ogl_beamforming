@@ -34,9 +34,8 @@ load_renderdoc_functions(BeamformerInput *input, OSLibrary rdoc)
 		if (get_api) {
 			RenderDocAPI *api = 0;
 			if (get_api(10600, (void **)&api)) {
-				input->renderdoc_start_frame_capture            = RENDERDOC_START_FRAME_CAPTURE(api);
-				input->renderdoc_end_frame_capture              = RENDERDOC_END_FRAME_CAPTURE(api);
-				input->renderdoc_set_capture_file_path_template = RENDERDOC_SET_CAPTURE_PATH_TEMPLATE(api);
+				input->renderdoc_start_frame_capture = RENDERDOC_START_FRAME_CAPTURE(api);
+				input->renderdoc_end_frame_capture   = RENDERDOC_END_FRAME_CAPTURE(api);
 			}
 		}
 	}

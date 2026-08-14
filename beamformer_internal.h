@@ -137,7 +137,6 @@ typedef struct {
 
 #include "threads.c"
 #include "util_os_ui.c"
-#include "util_os.c"
 
 ///////////////////////////
 // NOTE: vulkan layer API
@@ -202,13 +201,23 @@ DEBUG_IMPORT u64 *           gpu_read_timestamps(GPUTimeline timeline, u64 *coun
 #if BEAMFORMER_RENDERDOC_HOOKS
 DEBUG_IMPORT void *       vk_renderdoc_instance_handle(void);
 
-DEBUG_IMPORT renderdoc_start_frame_capture_fn       *start_frame_capture;
-DEBUG_IMPORT renderdoc_set_capture_path_template_fn *set_capture_path_template;
-DEBUG_IMPORT renderdoc_end_frame_capture_fn         *end_frame_capture;
-#define start_renderdoc_capture()  do { \
-	if (set_capture_path_template) set_capture_path_template("captures/ogl.rdc"); \
-	if (start_frame_capture)       start_frame_capture(vk_renderdoc_instance_handle(), 0); \
-} while(0)
+#define RENDERDOC_GET_API_FN(name) b32 name(u32 version, void **out_api)
+typedef RENDERDOC_GET_API_FN(renderdoc_get_api_fn);
+
+#define RENDERDOC_START_FRAME_CAPTURE_FN(name) void name(void *instance_handle, i64 window_handle)
+typedef RENDERDOC_START_FRAME_CAPTURE_FN(renderdoc_start_frame_capture_fn);
+
+#define RENDERDOC_END_FRAME_CAPTURE_FN(name) b32 name(void *instance_handle, i64 window_handle)
+typedef RENDERDOC_END_FRAME_CAPTURE_FN(renderdoc_end_frame_capture_fn);
+
+typedef alignas(16) u8 RenderDocAPI[216];
+#define RENDERDOC_API_FN_ADDR(a, offset) (*(i64 *)((*a) + offset))
+#define RENDERDOC_START_FRAME_CAPTURE(a) (renderdoc_start_frame_capture_fn *)RENDERDOC_API_FN_ADDR(a, 152)
+#define RENDERDOC_END_FRAME_CAPTURE(a)   (renderdoc_end_frame_capture_fn *)  RENDERDOC_API_FN_ADDR(a, 168)
+
+DEBUG_IMPORT renderdoc_start_frame_capture_fn *start_frame_capture;
+DEBUG_IMPORT renderdoc_end_frame_capture_fn   *end_frame_capture;
+#define start_renderdoc_capture() if (start_frame_capture) start_frame_capture(vk_renderdoc_instance_handle(), 0)
 #define end_renderdoc_capture()   if (end_frame_capture)   end_frame_capture(vk_renderdoc_instance_handle(), 0)
 #define renderdoc_attached(...)   (start_frame_capture != 0)
 
@@ -217,6 +226,8 @@ DEBUG_IMPORT renderdoc_end_frame_capture_fn         *end_frame_capture;
 #define end_renderdoc_capture(...)
 #define renderdoc_attached(...) (0)
 #endif
+
+#include "util_os.c"
 
 ///////////////////////////////
 // NOTE: CUDA Library Bindings
