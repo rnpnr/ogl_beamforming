@@ -127,9 +127,9 @@ float sample_index(const float distance)
 	return time * SamplingFrequency;
 }
 
-uint32_t output_index(uint32_t x, uint32_t y, uint32_t z)
+u32 output_index(const u32 x, const u32 y, const u32 z)
 {
-	uint32_t result = output_size_x * output_size_y * z + output_size_x * y + x;
+	u32 result = OutputSizeX * OutputSizeY * z + OutputSizeX * y + x;
 	return result;
 }
 
@@ -368,10 +368,10 @@ RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
 void main()
 {
 	uvec3 out_voxel = gl_GlobalInvocationID;
-	if (!all(lessThan(out_voxel, uvec3(output_size_x, output_size_y, output_size_z))))
+	if (!all(lessThan(out_voxel, uvec3(OutputSizeX, OutputSizeY, OutputSizeZ))))
 		return;
 
-	vec3 image_points = vec3(output_size_x, output_size_y, output_size_z) - 1.0f;
+	vec3 image_points = vec3(OutputSizeX, OutputSizeY, OutputSizeZ) - 1.0f;
 	vec3 point        = vec3(out_voxel) / max(vec3(1.0f), image_points);
 	vec3 world_point  = (voxel_transform * vec4(point, 1)).xyz;
 
@@ -400,7 +400,7 @@ void main()
 	}
 
 	#if CoherencyWeighting
-	IncoherentOutput(incoherent_frame).x[out_index] += RESULT_INCOHERENT_CAST(sum);
+	IncoherentOutput(IncoherentFrame).x[out_index] += RESULT_INCOHERENT_CAST(sum);
 	#endif
 
 	Output(output_frame).x[out_index] += RESULT_COHERENT_CAST(sum);

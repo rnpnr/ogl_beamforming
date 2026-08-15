@@ -16,26 +16,26 @@ layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Flo
 };
 
 #if   InputDataKind == DataKind_Float32
-  #define COHERENT_SAMPLE(index)    Float32(left_side_buffer).values[index]
-  #define INCOHERENT_SAMPLE(index)  Float32(right_side_buffer).values[index]
+  #define COHERENT_SAMPLE(index)    Float32(coherent_sum).values[index]
+  #define INCOHERENT_SAMPLE(index)  Float32(IncoherentSum).values[index]
 #elif InputDataKind == DataKind_Float32Complex
-  #define COHERENT_SAMPLE(index)    Float32Complex(left_side_buffer).values[index]
-  #define INCOHERENT_SAMPLE(index)  Float32(right_side_buffer).values[index]
+  #define COHERENT_SAMPLE(index)    Float32Complex(coherent_sum).values[index]
+  #define INCOHERENT_SAMPLE(index)  Float32(IncoherentSum).values[index]
 #else
   #error DataKind unsupported for CoherencyWeighting
 #endif
 
-uint32_t output_index(uint32_t x, uint32_t y, uint32_t z)
+u32 output_index(const u32 x, const u32 y, const u32 z)
 {
-	uint32_t result = output_size_x * output_size_y * z + output_size_x * y + x;
+	u32 result = OutputSizeX * OutputSizeY * z + OutputSizeX * y + x;
 	return result;
 }
 
 void main()
 {
 	uvec3 out_voxel = gl_GlobalInvocationID;
-	if (!all(lessThan(out_voxel, uvec3(output_size_x, output_size_y, output_size_z))))
+	if (!all(lessThan(out_voxel, uvec3(OutputSizeX, OutputSizeY, OutputSizeZ))))
 		return;
-	uint32_t index = output_index(out_voxel.x, out_voxel.y, out_voxel.z);
-  COHERENT_SAMPLE(index) *= scale * COHERENT_SAMPLE(index) / INCOHERENT_SAMPLE(index);
+	u32 index = output_index(out_voxel.x, out_voxel.y, out_voxel.z);
+	COHERENT_SAMPLE(index) *= Scale * COHERENT_SAMPLE(index) / INCOHERENT_SAMPLE(index);
 }

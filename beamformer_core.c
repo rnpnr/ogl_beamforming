@@ -198,9 +198,9 @@ beamformer_compute_plan_release(BeamformerComputeContext *cc, u32 block)
 	assert(block < countof(cc->compute_plans));
 	BeamformerComputePlan *cp = cc->compute_plans[block];
 	if (cp) {
-		vk_buffer_release(&cp->array_parameters);
+		gpu_buffer_release(&cp->array_parameters);
 		for (u32 i = 0; i < countof(cp->filters); i++)
-			vk_buffer_release(&cp->filters[i].buffer);
+			gpu_buffer_release(&cp->filters[i].buffer);
 		cc->compute_plans[block] = 0;
 		SLLPushFreelist(cp, cc->compute_plan_freelist);
 	}
@@ -229,7 +229,7 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 			.flags = VulkanUsageFlag_HostReadWrite,
 			.label = stream_to_str8(&label),
 		};
-		vk_buffer_allocate(&result->array_parameters, &allocate_info);
+		gpu_buffer_allocate(&result->array_parameters, &allocate_info);
 		assert((result->array_parameters.gpu_pointer & 63) == 0);
 	}
 	return result;
@@ -283,9 +283,9 @@ beamformer_filter_update(BeamformerFilter *f, BeamformerFilterParameters fp, u32
 			.flags = VulkanUsageFlag_HostReadWrite,
 			.label = label,
 		};
-		vk_buffer_allocate(&f->buffer, &allocate_info);
+		gpu_buffer_allocate(&f->buffer, &allocate_info);
 	}
-	vk_buffer_range_upload(&f->buffer, filter, 0, byte_size, 0);
+	gpu_buffer_range_upload(&f->buffer, filter, 0, byte_size, 0);
 
 	temp_end(scratch);
 }
@@ -309,7 +309,7 @@ beamformer_update_hadamard(BeamformerComputePlan *cp, BeamformerComputeArrayPara
 		u64 offset = beamformer_compute_array_parameter_offsets[output_field];
 		u64 size   = beamformer_compute_array_parameter_sizes[output_field] / BeamformerMaxHadamardElements;
 		size *= order * order;
-		vk_buffer_range_upload(&cp->array_parameters, hadamard, offset, size, 0);
+		gpu_buffer_range_upload(&cp->array_parameters, hadamard, offset, size, 0);
 	}
 }
 
@@ -321,8 +321,15 @@ beamformer_frame_byte_size(iv3 points, BeamformerDataKind kind)
 	return result;
 }
 
+function u64
+beamformer_incoherent_frame_byte_size(iv3 points, BeamformerDataKind kind)
+{
+	u64 result = beamformer_frame_byte_size(points, kind) / beamformer_data_kind_element_count[kind];
+	return result;
+}
+
 function BeamformerFrame *
-beamformer_frame_next(BeamformerComputeContext *cc, iv3 output_points, b32 complex, u64 reserved_size)
+beamformer_frame_next(BeamformerComputeContext *cc, iv3 output_points, b32 complex)
 {
 	BeamformerFrameBacklog *bl = &cc->backlog;
 
@@ -330,9 +337,9 @@ beamformer_frame_next(BeamformerComputeContext *cc, iv3 output_points, b32 compl
 	u64 frame_size = beamformer_frame_byte_size(output_points, kind);
 
 	// TODO(rnp): handle this somewhat gracefully (even it produces garbled output)
-	assert(frame_size + reserved_size <= (u64)bl->buffer->size);
+	assert(frame_size <= (u64)bl->buffer->size);
 
-	if (bl->next_offset > (u64)bl->buffer->size - frame_size - reserved_size)
+	if (bl->next_offset > (u64)bl->buffer->size - frame_size)
 		bl->next_offset = 0;
 
 	u64 id = bl->counter++;
@@ -491,7 +498,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	};
 
 	//////////////////////////////////////
-	// NOTE(rnp): First Pass: build initial graph and insert hard layout constraints
+	// NOTE(rnp): First Pass: build initial graph and insert hard layout constraints.
+	// We can also calculate any temporary space we need so we can patch pointers into
+	// bake parameters in the final pass.
+	i64 temporary_buffer_space = 0;
 	BeamformerComputeGraph graph = {0};
 	BeamformerComputeGraphNode *root_node = push_compute_graph_node(&graph, BeamformerShaderKind_Count, scratch);
 	root_node->input_data_kind  = input_data_kind;
@@ -555,12 +565,14 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 			node->output_stride.x  = 1;
 			node->output_stride.y  = cp->output_points.x;
 			node->output_stride.z  = cp->output_points.x * cp->output_points.y;
-			node->output_data_kind = cp->iq_pipeline ? BeamformerDataKind_Float32Complex
-			                                         : BeamformerDataKind_Float32;
+			node->output_data_kind = das_data_kind;
 
 			// NOTE(rnp): insert implicit CoherencyWeighting node
-			if (pb->parameters.coherency_weighting)
+			if (pb->parameters.coherency_weighting) {
+				temporary_buffer_space  = gpu_round_up_to_sync_size(temporary_buffer_space, 64);
+				temporary_buffer_space += beamformer_incoherent_frame_byte_size(cp->output_points, node->output_data_kind);
 				node = push_compute_graph_node(&graph, BeamformerShaderKind_CoherencyWeighting, scratch);
+			}
 		}break;
 
 		default:{}break;
@@ -628,6 +640,24 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 	cp->first_image_shader_index = 0;
 	cp->pipeline.shader_count = 0;
+
+	// NOTE(rnp): realloc temporary buffer if needed. we do want this to shrink
+	// when it can but if we get here and the size didn't change save some time
+	if (temporary_buffer_space != cp->gpu_temp_arena.size) {
+		gpu_buffer_allocate(&cp->gpu_temp_arena, &(GPUBufferAllocateInfo){
+			.size  = temporary_buffer_space,
+			.flags = VulkanUsageFlag_TransferDestination,
+			.label = push_str8_f(scratch, "GPU Temp Arena [%p]", cp),
+		});
+	}
+
+	BumpArena gpu_arena = bump_arena_from_buffer((void *)cp->gpu_temp_arena.gpu_pointer, cp->gpu_temp_arena.size);
+	u64 incoherent_buffer = 0;
+	if (pb->parameters.coherency_weighting) {
+		incoherent_buffer = (u64)gpu_arena_alloc(&gpu_arena,
+		                                         .size  = beamformer_incoherent_frame_byte_size(cp->output_points, das_data_kind),
+		                                         .align = gpu_round_up_to_sync_size(1, 64));
+	}
 
 	for (BeamformerComputeGraphNode *node = root_node->next; node; node = node->next) {
 		assert(node->prev->output_data_kind == node->input_data_kind);
@@ -775,6 +805,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->FocusDepth            = pb->parameters.focal_vector.E[1];
 				db->ReadiGroupCount       = pb->parameters.readi_group_count;
 				db->ArrayParameters       = cp->array_parameters.gpu_pointer;
+				db->IncoherentFrame       = incoherent_buffer;
+				db->OutputSizeX           = cp->output_points.x;
+				db->OutputSizeY           = cp->output_points.y;
+				db->OutputSizeZ           = cp->output_points.z;
 				db->TransmitReceiveOrientation = pb->parameters.transmit_receive_orientation;
 
 				cp->readi_group = pb->parameters.readi_group;
@@ -803,6 +837,13 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 			case BeamformerShaderKind_CoherencyWeighting:{
 				sd->layout   = layout_for_output(cp->output_points);
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
+
+				BeamformerCoherencyWeightingBakeParameters *cw = &sd->bake.CoherencyWeighting;
+				cw->Scale         = 1.0f,
+				cw->OutputSizeX   = cp->output_points.x,
+				cw->OutputSizeY   = cp->output_points.y,
+				cw->OutputSizeZ   = cp->output_points.z,
+				cw->IncoherentSum = incoherent_buffer;
 			}break;
 
 			case BeamformerShaderKind_Reshape:{
@@ -1082,7 +1123,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 					.export = cuda ? &ctx->compute_context.ping_pong_export_handle : 0,
 					.label  = str8("PingPongBuffer"),
 				};
-				vk_buffer_allocate(&ctx->compute_context.ping_pong_buffer, &allocate_info);
+				gpu_buffer_allocate(&ctx->compute_context.ping_pong_buffer, &allocate_info);
 
 				BeamformerShaderResourceInfo shader_resource_infos[] = {
 					{
@@ -1125,7 +1166,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 				for (u32 i = 0; i < countof(pb->transmit_receive_orientations); i++)
 					u16s[i] = pb->transmit_receive_orientations[i];
 
-				vk_buffer_range_upload(b, u16s, offset, size, 0);
+				gpu_buffer_range_upload(b, u16s, offset, size, 0);
 			}
 		}break;
 		case BeamformerParameterRegionFlag_FocalVectors:
@@ -1146,7 +1187,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 				GPUBuffer *b = &cp->array_parameters;
 				u64 offset = beamformer_compute_array_parameter_offsets[kind];
 				u64 size   = beamformer_compute_array_parameter_sizes[kind];
-				vk_buffer_range_upload(b, (u8 *)pb + BeamformerParameterBlockRegionOffsets[region], offset, size, 0);
+				gpu_buffer_range_upload(b, (u8 *)pb + BeamformerParameterBlockRegionOffsets[region], offset, size, 0);
 			}
 		}break;
 		}
@@ -1220,18 +1261,12 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 	case BeamformerShaderKind_DAS:{
 		GPUBuffer *b = cc->backlog.buffer;
 
-		u64 frame_size   = beamformer_frame_byte_size(frame->points, frame->data_kind);
-		u64 iframe_size  = frame_size / beamformer_data_kind_element_count[frame->data_kind];
 		u64 element_size = beamformer_data_kind_byte_size[cp->shader_descriptors[shader_slot].input_data_kind];
 
 		BeamformerDASPushConstants pc = {
 			.xdc_element_pitch = cp->xdc_element_pitch,
 			.rf_element_offset = das_output_index * pp_size / element_size,
 			.output_frame      = b->gpu_pointer + frame->buffer_offset,
-			.incoherent_frame  = b->gpu_pointer + b->size - iframe_size,
-			.output_size_x     = cp->output_points.x,
-			.output_size_y     = cp->output_points.y,
-			.output_size_z     = cp->output_points.z,
 			.channel_offset    = channel_offset,
 			.readi_group       = cp->readi_group,
 		};
@@ -1244,20 +1279,9 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 	}break;
 
 	case BeamformerShaderKind_CoherencyWeighting:{
-		GPUBuffer *b = cc->backlog.buffer;
-
-		u64 frame_size  = beamformer_frame_byte_size(frame->points, frame->data_kind);
-		u64 iframe_size = frame_size / beamformer_data_kind_element_count[frame->data_kind];
-
 		BeamformerCoherencyWeightingPushConstants pc = {
-			.left_side_buffer  = b->gpu_pointer + frame->buffer_offset,
-			.right_side_buffer = b->gpu_pointer + b->size - iframe_size,
-			.scale             = 1.0f,
-			.output_size_x     = cp->output_points.x,
-			.output_size_y     = cp->output_points.y,
-			.output_size_z     = cp->output_points.z,
+			.coherent_sum = cc->backlog.buffer->gpu_pointer + frame->buffer_offset,
 		};
-
 		gpu_command_pipeline_barrier(cmd);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
@@ -1374,7 +1398,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 					// just fill up as much as possible.
 					if (exported_size + frame_size <= ec->size) {
 						gpu_host_wait_timeline(GPUTimeline_Compute, f->timeline_valid_value, -1ULL);
-						vk_buffer_range_download(sm_output + exported_size, bl->buffer, f->buffer_offset, frame_size, 1);
+						gpu_buffer_range_download(sm_output + exported_size, bl->buffer, f->buffer_offset, frame_size, 1);
 						exported_size += frame_size;
 					}
 				}
@@ -1438,28 +1462,16 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			start_renderdoc_capture();
 
 			i32 das_index = -1;
-			b32 has_sum   = 0;
+			i32 coherency_weighting = -1;
 			for (u32 i = 0; i < cp->pipeline.shader_count; i++) {
-				has_sum |= cp->pipeline.shaders[i] == BeamformerShaderKind_Sum;
+				if (cp->pipeline.shaders[i] == BeamformerShaderKind_CoherencyWeighting)
+					coherency_weighting = (i32)i;
+
 				if (cp->pipeline.shaders[i] == BeamformerShaderKind_DAS)
 					das_index = (i32)i;
 			}
 
-			b32 das_coherent = das_index >= 0 &&
-			                   (cp->shader_descriptors[das_index].compile_flags &
-			                    BeamformerDASCompileFlags_CoherencyWeighting) != 0;
-			u64 reserved_frame_size = 0;
-
-			if (has_sum)
-				reserved_frame_size += beamformer_frame_byte_size(cp->output_points, cp->iq_pipeline ?
-				                                                  BeamformerDataKind_Float32Complex :
-				                                                  BeamformerDataKind_Float32);
-
-			// TODO(rnp): incoherent sum for different data kinds
-			if (das_coherent)
-				reserved_frame_size += beamformer_frame_byte_size(cp->output_points, BeamformerDataKind_Float32);
-
-			BeamformerFrame *frame  = beamformer_frame_next(cs, cp->output_points, cp->iq_pipeline, reserved_frame_size);
+			BeamformerFrame *frame  = beamformer_frame_next(cs, cp->output_points, cp->iq_pipeline);
 			frame->acquisition_kind = cp->acquisition_kind;
 			frame->contrast_mode    = cp->contrast_mode;
 			frame->compound_count   = cp->acquisition_count;
@@ -1473,12 +1485,14 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			if (das_index >= 0) {
 				u64        frame_size = beamformer_frame_byte_size(frame->points, frame->data_kind);
 				GPUBuffer *backlog    = cs->backlog.buffer;
-
 				gpu_command_clear_buffer(cmd, backlog, frame->buffer_offset, frame_size, 0);
-				if (das_coherent) {
-					u64 coherent_size = frame_size / beamformer_data_kind_element_count[frame->data_kind];
-					gpu_command_clear_buffer(cmd, backlog, backlog->size - coherent_size, coherent_size, 0);
-				}
+			}
+
+			if (coherency_weighting >= 0) {
+				BeamformerCoherencyWeightingBakeParameters *cw = &cp->shader_descriptors[coherency_weighting].bake.CoherencyWeighting;
+				GPUBuffer *gpu_arena = &cp->gpu_temp_arena;
+				u64 coherent_size = beamformer_incoherent_frame_byte_size(frame->points, frame->data_kind);
+				gpu_command_clear_buffer(cmd, gpu_arena, cw->IncoherentSum - gpu_arena->gpu_pointer, coherent_size, 0);
 			}
 
 			BeamformerRFBuffer *rf = &cs->rf_buffer;
@@ -1553,7 +1567,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 
 			cs->processing_progress = 1;
 
-			if (has_sum) {
+			//if (has_sum) {
+			if (0) {
 				#if 0
 				u32 aframe_index = ((ctx->averaged_frame_index++) % countof(ctx->averaged_frames));
 				ctx->averaged_frames[aframe_index].view_plane_tag  = frame->view_plane_tag;
@@ -1663,14 +1678,14 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 
 		BeamformerRFBuffer *rf = ctx->rf_buffer;
 
-		rf->active_rf_size = vk_round_up_to_sync_size(rf_block_rf_size & 0xFFFFFFFFULL, 64);
+		rf->active_rf_size = gpu_round_up_to_sync_size(rf_block_rf_size & 0xFFFFFFFFULL, 64);
 		if unlikely(rf->buffer.size < countof(rf->upload_complete_values) * rf->active_rf_size) {
 			GPUBufferAllocateInfo allocate_info = {
 				.size  = countof(rf->upload_complete_values) * rf->active_rf_size,
 				.flags = VulkanUsageFlag_HostReadWrite,
 				.label = str8("RawRFBuffer"),
 			};
-			vk_buffer_allocate(&rf->buffer, &allocate_info);
+			gpu_buffer_allocate(&rf->buffer, &allocate_info);
 		}
 
 		u64 slot = rf->insertion_index % countof(rf->upload_complete_values);
@@ -1679,8 +1694,8 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		spin_wait(atomic_load_u64(&rf->compute_index) < rf->insertion_index);
 		gpu_host_wait_timeline(GPUTimeline_Compute, rf->compute_complete_values[slot], -1ULL);
 
-		vk_buffer_range_upload(&rf->buffer, beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size),
-		                       slot * rf->active_rf_size, rf->active_rf_size, 1);
+		gpu_buffer_range_upload(&rf->buffer, beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size),
+		                        slot * rf->active_rf_size, rf->active_rf_size, 1);
 		store_fence();
 
 		beamformer_shared_memory_release_lock(ctx->shared_memory, (i32)scratch_lock);

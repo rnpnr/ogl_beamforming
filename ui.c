@@ -829,7 +829,7 @@ function void
 beamformer_ui_frame_view_release_subresources(BeamformerFrameView *bv, BeamformerFrameViewKind kind)
 {
 	if (kind == BeamformerFrameViewKind_Copy)
-		vk_buffer_release(&bv->copy_buffer);
+		gpu_buffer_release(&bv->copy_buffer);
 }
 
 function void
@@ -851,7 +851,7 @@ beamformer_ui_frame_view_copy_frame(BeamformerFrameView *new, BeamformerFrameVie
 		.flags = VulkanUsageFlag_TransferDestination,
 		.label = stream_to_str8(&sb),
 	};
-	vk_buffer_allocate(&new->copy_buffer, &allocate_info);
+	gpu_buffer_allocate(&new->copy_buffer, &allocate_info);
 
 	GPUBuffer *backlog = beamformer_context->compute_context.backlog.buffer;
 	GPUCommandList cmd = gpu_command_list_begin(GPUTimeline_Compute);

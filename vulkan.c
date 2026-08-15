@@ -1972,19 +1972,19 @@ vk_vulkan_buffer_release(VulkanBuffer *vb)
 }
 
 DEBUG_IMPORT void
-vk_buffer_release(GPUBuffer *b)
+gpu_buffer_release(GPUBuffer *b)
 {
-	if ValidVulkanHandle(b->handle)
-		vk_vulkan_buffer_release(vk_entity_data(b->handle.value[0], VulkanEntityKind_Buffer));
+	if (b->handle.value)
+		vk_vulkan_buffer_release(vk_entity_data(b->handle.value, VulkanEntityKind_Buffer));
 	zero_struct(b);
 }
 
 DEBUG_IMPORT void
-vk_buffer_allocate(GPUBuffer *b, GPUBufferAllocateInfo *info)
+gpu_buffer_allocate(GPUBuffer *b, GPUBufferAllocateInfo *info)
 {
 	VulkanContext *vk = vulkan_context;
 
-	vk_buffer_release(b);
+	gpu_buffer_release(b);
 
 	assert(info->size > 0);
 
@@ -2010,7 +2010,7 @@ vk_buffer_allocate(GPUBuffer *b, GPUBufferAllocateInfo *info)
 	}
 
 	if (vk_buffer_allocate_common(&e->as.buffer, &vulkan_buffer_allocate_info)) {
-		b->handle.value[0] = (u64)e;
+		b->handle.value = (u64)e;
 	} else {
 		vk_entity_release(e);
 	}
@@ -2020,8 +2020,8 @@ DEBUG_IMPORT b32
 vk_buffer_needs_sync(GPUBuffer *b)
 {
 	b32 result = 0;
-	if ValidVulkanHandle(b->handle) {
-		VulkanBuffer *vb = vk_entity_data(b->handle.value[0], VulkanEntityKind_Buffer);
+	if (b->handle.value) {
+		VulkanBuffer *vb = vk_entity_data(b->handle.value, VulkanEntityKind_Buffer);
 
 		// TODO(rnp): not correct check. need to check if we used transfer queue
 		result = vb->memory_kind != VulkanMemoryKind_BAR;
@@ -2031,7 +2031,7 @@ vk_buffer_needs_sync(GPUBuffer *b)
 }
 
 DEBUG_IMPORT u64
-vk_round_up_to_sync_size(u64 size, u64 min)
+gpu_round_up_to_sync_size(u64 size, u64 min)
 {
 	i64 round  = (i64)Max(min, vulkan_context->memory_info.non_coherent_atom_size);
 	u64 result = (u64)round_up_to((i64)size, round);
@@ -2060,7 +2060,7 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 						.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
 						.memory = source->memory,
 						.offset = source_offset - (source_offset % nca_size),
-						.size   = vk_round_up_to_sync_size(size, nca_size),
+						.size   = gpu_round_up_to_sync_size(size, nca_size),
 					}};
 					vkInvalidateMappedMemoryRanges(vk->device, countof(mrs), mrs);
 				}
@@ -2096,7 +2096,7 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 					.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
 					.memory = destination->memory,
 					.offset = destination_offset - (destination_offset % nca_size),
-					.size   = vk_round_up_to_sync_size(size, nca_size),
+					.size   = gpu_round_up_to_sync_size(size, nca_size),
 				}};
 				vkFlushMappedMemoryRanges(vk->device, countof(mrs), mrs);
 			}
@@ -2112,9 +2112,9 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 }
 
 DEBUG_IMPORT void
-vk_buffer_range_upload(GPUBuffer *b, void *data, u64 offset, u64 size, b32 non_temporal)
+gpu_buffer_range_upload(GPUBuffer *b, void *data, u64 offset, u64 size, b32 non_temporal)
 {
-	VulkanBuffer *db = vk_entity_data(b->handle.value[0], VulkanEntityKind_Buffer);
+	VulkanBuffer *db = vk_entity_data(b->handle.value, VulkanEntityKind_Buffer);
 	VulkanBuffer  sb = {
 		.host_pointer = data,
 		.memory_kind  = VulkanMemoryKind_Host,
@@ -2123,9 +2123,9 @@ vk_buffer_range_upload(GPUBuffer *b, void *data, u64 offset, u64 size, b32 non_t
 }
 
 DEBUG_IMPORT void
-vk_buffer_range_download(void *destination, GPUBuffer *source, u64 offset, u64 size, b32 non_temporal)
+gpu_buffer_range_download(void *destination, GPUBuffer *source, u64 offset, u64 size, b32 non_temporal)
 {
-	VulkanBuffer *sb = vk_entity_data(source->handle.value[0], VulkanEntityKind_Buffer);
+	VulkanBuffer *sb = vk_entity_data(source->handle.value, VulkanEntityKind_Buffer);
 	VulkanBuffer  db = {
 		.host_pointer = destination,
 		.memory_kind  = VulkanMemoryKind_Host,
@@ -2136,8 +2136,8 @@ vk_buffer_range_download(void *destination, GPUBuffer *source, u64 offset, u64 s
 DEBUG_IMPORT void
 vk_render_model_release(GPUBuffer *model)
 {
-	if ValidVulkanHandle(model->handle)
-		vk_vulkan_buffer_release(vk_entity_data(model->handle.value[0], VulkanEntityKind_RenderModel));
+	if (model->handle.value)
+		vk_vulkan_buffer_release(vk_entity_data(model->handle.value, VulkanEntityKind_RenderModel));
 	zero_struct(model);
 }
 
@@ -2168,7 +2168,7 @@ vk_render_model_allocate(GPUBuffer *model, void *indices, u64 index_count, u64 m
 		.queue_family_indices[0] = vulkan_context->queues[VulkanQueueKind_Graphics]->queue_family,
 	};
 	if (vk_buffer_allocate_common(&e->as.buffer, &vulkan_buffer_allocate_info)) {
-		model->handle.value[0] = (u64)e;
+		model->handle.value = (u64)e;
 		model->index_count  = index_count;
 		model->gpu_pointer += indices_size;
 
@@ -2186,7 +2186,7 @@ vk_render_model_allocate(GPUBuffer *model, void *indices, u64 index_count, u64 m
 DEBUG_IMPORT void
 vk_render_model_range_upload(GPUBuffer *model, void *data, u64 offset, u64 size, b32 non_temporal)
 {
-	VulkanBuffer *db = vk_entity_data(model->handle.value[0], VulkanEntityKind_RenderModel);
+	VulkanBuffer *db = vk_entity_data(model->handle.value, VulkanEntityKind_RenderModel);
 	VulkanBuffer  sb = {
 		.host_pointer = data,
 		.memory_kind  = VulkanMemoryKind_Host,
@@ -2442,7 +2442,7 @@ vk_bind_shader_resources(BeamformerShaderResourceInfo *infos, u64 info_count)
 	for EachIndex(info_count, it) {
 		switch (infos[it].kind) {
 		case BeamformerShaderResourceKind_Buffer:{
-			VulkanBuffer *vb = vk_entity_data(infos[it].handle.value[0], VulkanEntityKind_Buffer);
+			VulkanBuffer *vb = vk_entity_data(infos[it].handle.value, VulkanEntityKind_Buffer);
 			vk->descriptor_buffer_infos[infos[it].slot].buffer = vb->buffer;
 			vk->descriptor_buffer_infos[infos[it].slot].offset = 0;
 			vk->descriptor_buffer_infos[infos[it].slot].range  = vb->memory_size;
@@ -2564,7 +2564,7 @@ gpu_command_clear_buffer(GPUCommandList command, GPUBuffer *buffer, u64 offset, 
 	assert((offset % 4) == 0);
 	assert((size % 4) == 0);
 	if (command.value) {
-		VulkanBuffer *vb = vk_entity_data(buffer->handle.value[0], VulkanEntityKind_Buffer);
+		VulkanBuffer *vb = vk_entity_data(buffer->handle.value, VulkanEntityKind_Buffer);
 		VkCommandBuffer cmd = vk_command_buffer(command);
 		vkCmdFillBuffer(cmd, vb->buffer, offset, size, clear_word);
 	}
@@ -2837,9 +2837,9 @@ gpu_command_begin_rendering(GPUCommandList command, GPUImage *colour, GPUImage *
 DEBUG_IMPORT void
 gpu_command_draw(GPUCommandList command, GPUBuffer *model)
 {
-	if (command.value && ValidVulkanHandle(model->handle)) {
+	if (command.value && model->handle.value) {
 		VkCommandBuffer cmd = vk_command_buffer(command);
-		VulkanBuffer   *vb  = vk_entity_data(model->handle.value[0], VulkanEntityKind_RenderModel);
+		VulkanBuffer   *vb  = vk_entity_data(model->handle.value, VulkanEntityKind_RenderModel);
 		vkCmdBindIndexBuffer2(cmd, vb->buffer, 0, vk_index_size(vb->index_type) * model->index_count, vb->index_type);
 		vkCmdDrawIndexed(cmd, model->index_count, 1, 0, 0, 0);
 	}
@@ -2875,10 +2875,10 @@ DEBUG_IMPORT void
 gpu_command_copy_buffer(GPUCommandList command, GPUBuffer *restrict destination,
                         GPUBuffer *restrict source, u64 source_offset, i64 size)
 {
-	if (command.value && ValidVulkanHandle(destination->handle) && ValidVulkanHandle(source->handle)) {
+	if (command.value && destination->handle.value && source->handle.value) {
 		VkCommandBuffer cmd = vk_command_buffer(command);
-		VulkanBuffer *db = vk_entity_data(destination->handle.value[0], VulkanEntityKind_Buffer);
-		VulkanBuffer *sb = vk_entity_data(source->handle.value[0],      VulkanEntityKind_Buffer);
+		VulkanBuffer *db = vk_entity_data(destination->handle.value, VulkanEntityKind_Buffer);
+		VulkanBuffer *sb = vk_entity_data(source->handle.value,      VulkanEntityKind_Buffer);
 
 		VkBufferCopy2 buffer_copy = {
 			.sType     = VK_STRUCTURE_TYPE_BUFFER_COPY_2,

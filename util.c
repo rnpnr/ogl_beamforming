@@ -120,13 +120,19 @@ round_up_to(i64 value, i64 multiple)
 	return result;
 }
 
-function u8 *
-arena_commit(Arena *a, i64 size)
+function BumpArena
+bump_arena_from_buffer(void *base, i64 size)
 {
-	Arena *current = a->current;
-	assert(current->committed - current->position >= (u64)size);
-	u8 *result = (u8 *)current + current->position;
-	current->position += size;
+	BumpArena result = {.start = base};
+	result.end = result.start + size;
+	return result;
+}
+
+function void *
+bump_arena_aligned_start(BumpArena a, u64 alignment)
+{
+	u64 padding = -(u64)a.start & (alignment - 1);
+	u8 *result = a.start + padding;
 	return result;
 }
 
@@ -140,6 +146,39 @@ typedef struct {
 	i64 count;
 	ArenaAllocateFlags flags;
 } ArenaAllocateInfo;
+
+#define bump_arena_alloc(a, ...)         bump_arena_alloc_(a, (ArenaAllocateInfo){.align = 8, .count = 1, ##__VA_ARGS__})
+#define gpu_arena_alloc(a, ...)          bump_arena_alloc_(a, (ArenaAllocateInfo){.flags = ArenaAllocateFlags_NoZero, .align = 8, .count = 1, ##__VA_ARGS__})
+#define bump_push_array(a, t, n)         (t *)bump_arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n)
+#define bump_push_array_no_zero(a, t, n) (t *)bump_arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n, .flags = ArenaAllocateFlags_NoZero)
+#define bump_push_struct(a, t)           bump_push_array(a, t, 1)
+#define bump_push_struct_no_zero(a, t)   bump_push_array_no_zero(a, t, 1)
+
+function void *
+bump_arena_alloc_(BumpArena *a, ArenaAllocateInfo info)
+{
+	void *result = 0;
+	if (a->start) {
+		u8 *start = bump_arena_aligned_start(*a, info.align);
+		i64 available = a->end - start;
+		assert((available >= 0 && info.count <= available / info.size));
+		a->start = start + info.count * info.size;
+		result = start;
+		if ((info.flags & ArenaAllocateFlags_NoZero) == 0)
+			result = memory_clear(start, 0, info.count * info.size);
+	}
+	return result;
+}
+
+function u8 *
+arena_commit(Arena *a, i64 size)
+{
+	Arena *current = a->current;
+	assert(current->committed - current->position >= (u64)size);
+	u8 *result = (u8 *)current + current->position;
+	current->position += size;
+	return result;
+}
 
 #define arena_alloc(a, ...)         arena_alloc_(a, (ArenaAllocateInfo){.align = 8, .count = 1, ##__VA_ARGS__})
 #define push_array(a, t, n)         (t *)arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n)
@@ -990,9 +1029,24 @@ push_str8(Arena *a, str8 str)
 function str8
 push_str8_fv(Arena *arena, const char *format, va_list args)
 {
-	Stream sb = arena_stream(arena);
-	stream_appendfv(&sb, format, args);
-	str8 result = arena_stream_commit(arena, &sb);
+	va_list args2;
+	va_copy(args2, args);
+	i64  size    = vsnprintf(0, 0, format, args2);
+	va_end(args2);
+	str8 result  = str8_alloc(arena, size + 1);
+	i64  written = vsnprintf((char *)result.data, result.length, format, args);
+	assert(written == size);
+	result.length -= 1;
+	return result;
+}
+
+function print_format(2, 3) str8
+push_str8_f(Arena *arena, const char *format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	str8 result = push_str8_fv(arena, format, args);
+	va_end(args);
 	return result;
 }
 

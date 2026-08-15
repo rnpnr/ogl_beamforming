@@ -438,6 +438,7 @@
 		@Bake
 		{
 			[ArrayParameters            U64]
+			[IncoherentFrame            U64]
 			[AcquisitionKind            U32]
 			[Sparse                     B32]
 			[AcquisitionCount           S32]
@@ -458,6 +459,10 @@
 			[FocusDepth                 F32]
 			[TransmitAngle              F32]
 
+			[OutputSizeX                U32]
+			[OutputSizeY                U32]
+			[OutputSizeZ                U32]
+
 			[ReadiGroupCount            U32]
 		}
 
@@ -467,11 +472,7 @@
 			[voxel_transform    M4]
 			[xdc_element_pitch  V2]
 			[output_frame      U64]
-			[incoherent_frame  U64]
 			[rf_element_offset U32]
-			[output_size_x     U32]
-			[output_size_y     U32]
-			[output_size_z     U32]
 			[channel_offset    S32]
 			[readi_group       U32]
 		}
@@ -501,12 +502,16 @@
 	{
 		@PushConstants
 		{
-			[left_side_buffer  U64]
-			[right_side_buffer U64]
-			[scale             F32]
-			[output_size_x     U32]
-			[output_size_y     U32]
-			[output_size_z     U32]
+			[coherent_sum  U64]
+		}
+
+		@Bake
+		{
+			[IncoherentSum U64]
+			[Scale         F32]
+			[OutputSizeX   U32]
+			[OutputSizeY   U32]
+			[OutputSizeZ   U32]
 		}
 	}
 

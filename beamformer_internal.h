@@ -18,6 +18,7 @@
 
 #define os_path_separator() (str8){.data = &os_system_info()->path_separator_byte, .length = 1}
 
+typedef struct { u64 value; } GPUHandle;
 typedef struct { u64 value; } GPUCommandList;
 typedef struct { u64 value; } GPUSplitBarrier;
 
@@ -65,12 +66,12 @@ typedef struct {
 } VulkanPipelineCreateInfo;
 
 typedef struct {
-	VulkanHandle handle;
-	u64          gpu_pointer;
-	i64          size;
+	GPUHandle handle;
+	u64       gpu_pointer;
+	i64       size;
 
 	// NOTE: only used for render models
-	u64          index_count;
+	u64       index_count;
 } GPUBuffer;
 
 typedef struct {
@@ -131,7 +132,7 @@ typedef struct {
 
 typedef struct {
 	BeamformerShaderResourceKind kind;
-	VulkanHandle                 handle;
+	GPUHandle                    handle;
 	u32                          slot;
 } BeamformerShaderResourceInfo;
 
@@ -144,11 +145,11 @@ DEBUG_IMPORT void vk_load(OSLibrary vulkan, Stream *error);
 
 DEBUG_IMPORT GPUInfo *gpu_info(void);
 
-DEBUG_IMPORT void vk_buffer_allocate(GPUBuffer *, GPUBufferAllocateInfo *info);
-DEBUG_IMPORT void vk_buffer_release(GPUBuffer *);
-DEBUG_IMPORT void vk_buffer_range_upload(GPUBuffer *, void *data, u64 offset, u64 size, b32 non_temporal);
-DEBUG_IMPORT void vk_buffer_range_download(void *output, GPUBuffer *, u64 source_offset, u64 size, b32 non_temporal);
-DEBUG_IMPORT u64  vk_round_up_to_sync_size(u64, u64 min);
+DEBUG_IMPORT void gpu_buffer_allocate(GPUBuffer *, GPUBufferAllocateInfo *info);
+DEBUG_IMPORT void gpu_buffer_release(GPUBuffer *);
+DEBUG_IMPORT void gpu_buffer_range_upload(GPUBuffer *, void *data, u64 offset, u64 size, b32 non_temporal);
+DEBUG_IMPORT void gpu_buffer_range_download(void *output, GPUBuffer *, u64 source_offset, u64 size, b32 non_temporal);
+DEBUG_IMPORT u64  gpu_round_up_to_sync_size(u64, u64 min);
 
 // NOTE: images are 2D only, any other use case should just use a buffer and index in the shader
 DEBUG_IMPORT void vk_image_allocate(GPUImage *, u32 width, u32 height, u32 mips, u32 samples, VulkanImageUsage usage, VulkanUsageFlags flags, OSHandle *export, str8 label);
@@ -317,6 +318,7 @@ struct BeamformerComputePlan {
 	u32  readi_group;
 
 	GPUBuffer array_parameters;
+	GPUBuffer gpu_temp_arena;
 
 	BeamformerFilter filters[BeamformerFilterSlots];
 

@@ -208,6 +208,7 @@ typedef struct {
 
 typedef struct {
 	u64 ArrayParameters;
+	u64 IncoherentFrame;
 	u32 AcquisitionKind;
 	b32 Sparse;
 	i32 AcquisitionCount;
@@ -225,8 +226,19 @@ typedef struct {
 	b32 SingleFocus;
 	f32 FocusDepth;
 	f32 TransmitAngle;
+	u32 OutputSizeX;
+	u32 OutputSizeY;
+	u32 OutputSizeZ;
 	u32 ReadiGroupCount;
 } BeamformerDASBakeParameters;
+
+typedef struct {
+	u64 IncoherentSum;
+	f32 Scale;
+	u32 OutputSizeX;
+	u32 OutputSizeY;
+	u32 OutputSizeZ;
+} BeamformerCoherencyWeightingBakeParameters;
 
 typedef struct {
 	u32 SizeX;
@@ -255,11 +267,7 @@ typedef struct {
 	m4  voxel_transform;
 	v2  xdc_element_pitch;
 	u64 output_frame;
-	u64 incoherent_frame;
 	u32 rf_element_offset;
-	u32 output_size_x;
-	u32 output_size_y;
-	u32 output_size_z;
 	i32 channel_offset;
 	u32 readi_group;
 } BeamformerDASPushConstants;
@@ -272,12 +280,7 @@ typedef struct {
 } BeamformerSumPushConstants;
 
 typedef struct {
-	u64 left_side_buffer;
-	u64 right_side_buffer;
-	f32 scale;
-	u32 output_size_x;
-	u32 output_size_y;
-	u32 output_size_z;
+	u64 coherent_sum;
 } BeamformerCoherencyWeightingPushConstants;
 
 typedef struct {
@@ -470,10 +473,11 @@ typedef struct {
 } BeamformerComputeArrayParameters;
 
 typedef union {
-	BeamformerDecodeBakeParameters  Decode;
-	BeamformerFilterBakeParameters  Filter;
-	BeamformerDASBakeParameters     DAS;
-	BeamformerReshapeBakeParameters Reshape;
+	BeamformerDecodeBakeParameters             Decode;
+	BeamformerFilterBakeParameters             Filter;
+	BeamformerDASBakeParameters                DAS;
+	BeamformerCoherencyWeightingBakeParameters CoherencyWeighting;
+	BeamformerReshapeBakeParameters            Reshape;
 } BeamformerShaderBakeParameters;
 
 read_only global u32 beamformer_compute_array_parameter_sizes[] = {
@@ -611,10 +615,11 @@ read_only global str8 beamformer_shader_resource_kind_strings[] = {
 };
 
 typedef enum {
-	BeamformerStructKind_DecodeBakeParameters  = 0,
-	BeamformerStructKind_FilterBakeParameters  = 1,
-	BeamformerStructKind_DASBakeParameters     = 2,
-	BeamformerStructKind_ReshapeBakeParameters = 3,
+	BeamformerStructKind_DecodeBakeParameters             = 0,
+	BeamformerStructKind_FilterBakeParameters             = 1,
+	BeamformerStructKind_DASBakeParameters                = 2,
+	BeamformerStructKind_CoherencyWeightingBakeParameters = 3,
+	BeamformerStructKind_ReshapeBakeParameters            = 4,
 	BeamformerStructKind_Count,
 } BeamformerStructKind;
 
@@ -649,24 +654,35 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 	},
 	(MetaStructMember []){
 		{17, 0,  1, 0},
-		{18, 8,  1, 0},
-		{14, 12, 1, 0},
-		{10, 16, 1, 0},
-		{10, 20, 1, 0},
+		{17, 8,  1, 0},
+		{18, 16, 1, 0},
+		{14, 20, 1, 0},
 		{10, 24, 1, 0},
 		{10, 28, 1, 0},
-		{8,  32, 1, 0},
-		{8,  36, 1, 0},
+		{10, 32, 1, 0},
+		{10, 36, 1, 0},
 		{8,  40, 1, 0},
 		{8,  44, 1, 0},
-		{18, 48, 1, 0},
+		{8,  48, 1, 0},
 		{8,  52, 1, 0},
-		{14, 56, 1, 0},
-		{18, 60, 1, 0},
+		{18, 56, 1, 0},
+		{8,  60, 1, 0},
 		{14, 64, 1, 0},
-		{8,  68, 1, 0},
-		{8,  72, 1, 0},
-		{18, 76, 1, 0},
+		{18, 68, 1, 0},
+		{14, 72, 1, 0},
+		{8,  76, 1, 0},
+		{8,  80, 1, 0},
+		{18, 84, 1, 0},
+		{18, 88, 1, 0},
+		{18, 92, 1, 0},
+		{18, 96, 1, 0},
+	},
+	(MetaStructMember []){
+		{17, 0,  1, 0},
+		{8,  8,  1, 0},
+		{18, 12, 1, 0},
+		{18, 16, 1, 0},
+		{18, 20, 1, 0},
 	},
 	(MetaStructMember []){
 		{18, 0,  1, 0},
@@ -712,6 +728,7 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 	},
 	(str8 []){
 		str8_comp("ArrayParameters"),
+		str8_comp("IncoherentFrame"),
 		str8_comp("AcquisitionKind"),
 		str8_comp("Sparse"),
 		str8_comp("AcquisitionCount"),
@@ -729,7 +746,17 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("SingleFocus"),
 		str8_comp("FocusDepth"),
 		str8_comp("TransmitAngle"),
+		str8_comp("OutputSizeX"),
+		str8_comp("OutputSizeY"),
+		str8_comp("OutputSizeZ"),
 		str8_comp("ReadiGroupCount"),
+	},
+	(str8 []){
+		str8_comp("IncoherentSum"),
+		str8_comp("Scale"),
+		str8_comp("OutputSizeX"),
+		str8_comp("OutputSizeY"),
+		str8_comp("OutputSizeZ"),
 	},
 	(str8 []){
 		str8_comp("SizeX"),
@@ -745,10 +772,11 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 };
 
 read_only global MetaStructInfo meta_struct_info_by_id[] = {
-	{str8_comp("DecodeBakeParameters"),  11, 48, 0},
-	{str8_comp("FilterBakeParameters"),  13, 56, 0},
-	{str8_comp("DASBakeParameters"),     19, 80, 0},
-	{str8_comp("ReshapeBakeParameters"), 9,  36, 0},
+	{str8_comp("DecodeBakeParameters"),             11, 48,  0},
+	{str8_comp("FilterBakeParameters"),             13, 56,  0},
+	{str8_comp("DASBakeParameters"),                23, 100, 0},
+	{str8_comp("CoherencyWeightingBakeParameters"), 5,  24,  0},
+	{str8_comp("ReshapeBakeParameters"),            9,  36,  0},
 };
 
 read_only global str8 beamformer_shader_names[] = {
@@ -900,11 +928,7 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"  f32mat4  voxel_transform;\n"
 	"  f32vec2  xdc_element_pitch;\n"
 	"  uint64_t output_frame;\n"
-	"  uint64_t incoherent_frame;\n"
 	"  uint32_t rf_element_offset;\n"
-	"  uint32_t output_size_x;\n"
-	"  uint32_t output_size_y;\n"
-	"  uint32_t output_size_z;\n"
 	"  int32_t  channel_offset;\n"
 	"  uint32_t readi_group;\n"
 	"};\n"
@@ -919,12 +943,7 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
-	"  uint64_t  left_side_buffer;\n"
-	"  uint64_t  right_side_buffer;\n"
-	"  float32_t scale;\n"
-	"  uint32_t  output_size_x;\n"
-	"  uint32_t  output_size_y;\n"
-	"  uint32_t  output_size_z;\n"
+	"  uint64_t coherent_sum;\n"
 	"};\n"
 	"\n"),
 	str8_comp(""
@@ -1040,8 +1059,8 @@ read_only global i32 beamformer_base_shader_to_bake_struct_id[] = {
 	2,
 	-1,
 	-1,
-	-1,
 	3,
+	4,
 	-1,
 };
 
