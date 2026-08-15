@@ -393,7 +393,7 @@ typedef struct {
 } BeamformerUploadThreadContext;
 
 typedef struct {
-	u64 buffer_offset;
+	u64 gpu_pointer;
 	u64 timeline_valid_value;
 
 	/* NOTE: for use when displaying either prebeamformed frames or on the current frame

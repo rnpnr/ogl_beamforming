@@ -20,6 +20,11 @@
  *      - that queue isn't really considered hot so a lock is probably fine
  * [ ]: bug: reinit cuda on hot-reload
  *
+ * [ ]: export for special frames/data
+ *    - Color Map Data
+ *    - Recursive Imaging Result
+ *    - Incoherent sum
+ *
  * [ ]: Tiled Array Handling
  *    [ ]: add tile count uv2
  *    [ ]: make xdc_transform an array
@@ -313,6 +318,21 @@ beamformer_update_hadamard(BeamformerComputePlan *cp, BeamformerComputeArrayPara
 	}
 }
 
+function GPUBuffer *
+beamformer_gpu_buffer_from_frame(BeamformerFrame *frame)
+{
+	GPUBuffer *result = beamformer_context->compute_context.backlog.buffer;
+	if (!Between(frame->gpu_pointer, result->gpu_pointer, result->gpu_pointer + result->size)) {
+		result = 0;
+		BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[frame->parameter_block];
+		if (cp) {
+			result = &cp->gpu_temp_arena;
+			assert(Between(frame->gpu_pointer, result->gpu_pointer, result->gpu_pointer + result->size));
+		}
+	}
+	return result;
+}
+
 function u64
 beamformer_frame_byte_size(iv3 points, BeamformerDataKind kind)
 {
@@ -347,7 +367,7 @@ beamformer_frame_next(BeamformerComputeContext *cc, iv3 output_points, b32 compl
 	BeamformerFrame *result = bl->frames + (id % countof(bl->frames));
 	atomic_store_u64(&result->timeline_valid_value, -1ULL);
 	result->id            = id & U32_MAX;
-	result->buffer_offset = bl->next_offset;
+	result->gpu_pointer   = bl->buffer->gpu_pointer + bl->next_offset;
 	result->points        = output_points;
 	result->data_kind     = kind;
 
@@ -1259,14 +1279,12 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 	}break;
 
 	case BeamformerShaderKind_DAS:{
-		GPUBuffer *b = cc->backlog.buffer;
-
 		u64 element_size = beamformer_data_kind_byte_size[cp->shader_descriptors[shader_slot].input_data_kind];
 
 		BeamformerDASPushConstants pc = {
 			.xdc_element_pitch = cp->xdc_element_pitch,
 			.rf_element_offset = das_output_index * pp_size / element_size,
-			.output_frame      = b->gpu_pointer + frame->buffer_offset,
+			.output_frame      = frame->gpu_pointer,
 			.channel_offset    = channel_offset,
 			.readi_group       = cp->readi_group,
 		};
@@ -1279,9 +1297,7 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 	}break;
 
 	case BeamformerShaderKind_CoherencyWeighting:{
-		BeamformerCoherencyWeightingPushConstants pc = {
-			.coherent_sum = cc->backlog.buffer->gpu_pointer + frame->buffer_offset,
-		};
+		BeamformerCoherencyWeightingPushConstants pc = {.coherent_sum = frame->gpu_pointer};
 		gpu_command_pipeline_barrier(cmd);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
@@ -1397,8 +1413,9 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 					// so we either need to count the total size of all requested frames first or
 					// just fill up as much as possible.
 					if (exported_size + frame_size <= ec->size) {
+						u64 offset = f->gpu_pointer - bl->buffer->gpu_pointer;
 						gpu_host_wait_timeline(GPUTimeline_Compute, f->timeline_valid_value, -1ULL);
-						gpu_buffer_range_download(sm_output + exported_size, bl->buffer, f->buffer_offset, frame_size, 1);
+						gpu_buffer_range_download(sm_output + exported_size, bl->buffer, offset, frame_size, 1);
 						exported_size += frame_size;
 					}
 				}
@@ -1483,9 +1500,10 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			gpu_command_timestamp(cmd);
 
 			if (das_index >= 0) {
-				u64        frame_size = beamformer_frame_byte_size(frame->points, frame->data_kind);
-				GPUBuffer *backlog    = cs->backlog.buffer;
-				gpu_command_clear_buffer(cmd, backlog, frame->buffer_offset, frame_size, 0);
+				GPUBuffer *backlog = cs->backlog.buffer;
+				u64 frame_size = beamformer_frame_byte_size(frame->points, frame->data_kind);
+				u64 offset     = frame->gpu_pointer - backlog->gpu_pointer;
+				gpu_command_clear_buffer(cmd, backlog, offset, frame_size, 0);
 			}
 
 			if (coherency_weighting >= 0) {

@@ -853,10 +853,13 @@ beamformer_ui_frame_view_copy_frame(BeamformerFrameView *new, BeamformerFrameVie
 	};
 	gpu_buffer_allocate(&new->copy_buffer, &allocate_info);
 
-	GPUBuffer *backlog = beamformer_context->compute_context.backlog.buffer;
+	GPUBuffer *buffer = beamformer_gpu_buffer_from_frame(&old->frame);
+	assert(buffer);
+
 	GPUCommandList cmd = gpu_command_list_begin(GPUTimeline_Compute);
 	gpu_command_wait_timeline(cmd, GPUTimeline_Compute, old->frame.timeline_valid_value);
-	gpu_command_copy_buffer(cmd, &new->copy_buffer, backlog, old->frame.buffer_offset, frame_size);
+	u64 offset = old->frame.gpu_pointer - buffer->gpu_pointer;
+	gpu_command_copy_buffer(cmd, &new->copy_buffer, buffer, offset, frame_size);
 	new->frame.timeline_valid_value = gpu_command_list_end(cmd, (VulkanHandle){0}, (VulkanHandle){0});
 }
 
@@ -1003,8 +1006,7 @@ function void
 render_single_xplane(BeamformerFrameView *view, BeamformerFrame *frame, v3 translate, f32 rotation_turns,
                      GPUCommandList command, BeamformerRenderBeamformedPushConstants *pc, m4 vp_m, b32 drag_plane)
 {
-	GPUBuffer *beamformed_buffer = beamformer_context->compute_context.backlog.buffer;
-	pc->input_data   = frame->timeline_valid_value ? beamformed_buffer->gpu_pointer + frame->buffer_offset : 0;
+	pc->input_data   = frame->timeline_valid_value ? frame->gpu_pointer : 0;
 	pc->input_size_x = frame->points.x;
 	pc->input_size_y = frame->points.y;
 	pc->input_size_z = frame->points.z;
@@ -1074,9 +1076,8 @@ render_2d_plane(BeamformerFrameView *view, GPUCommandList command, BeamformerRen
 	m4 model      = m4_scale((v3){{2.0f, 2.0f, 0.0f}});
 	m4 projection = orthographic_projection(0, 1, 1, 1);
 
-	GPUBuffer *beamformed_buffer = beamformer_context->compute_context.backlog.buffer;
 	pc->mvp_matrix   = m4_mul(m4_mul(model, view_m), projection);
-	pc->input_data   = beamformed_buffer->gpu_pointer + view->frame.buffer_offset;
+	pc->input_data   = view->frame.gpu_pointer;
 	pc->input_size_x = view->frame.points.x;
 	pc->input_size_y = view->frame.points.y;
 	pc->input_size_z = view->frame.points.z;
