@@ -478,19 +478,6 @@
 		}
 	}
 
-	@Shader(sum.glsl) Sum
-	{
-		@PushConstants
-		{
-			[output_data    U64]
-			[input_data     U64]
-			[image_elements U32]
-			[scale          F32]
-		}
-	}
-
-	@Shader(min_max.glsl) MinMax
-
 	@Shader Hilbert
 }
 
@@ -541,6 +528,19 @@
 			[output_buffer      U64]
 			[left_input_buffer  U64]
 			[right_input_buffer U64]
+		}
+	}
+
+	@Shader(min_max.glsl) MinMax
+
+	@Shader(sum.glsl) Sum
+	{
+		@PushConstants
+		{
+			[output_data    U64]
+			[input_data     U64]
+			[image_elements U32]
+			[scale          F32]
 		}
 	}
 }

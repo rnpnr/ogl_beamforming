@@ -157,20 +157,20 @@ typedef enum {
 	BeamformerShaderKind_Filter             = 1,
 	BeamformerShaderKind_Demodulate         = 2,
 	BeamformerShaderKind_DAS                = 3,
-	BeamformerShaderKind_Sum                = 4,
-	BeamformerShaderKind_MinMax             = 5,
-	BeamformerShaderKind_Hilbert            = 6,
-	BeamformerShaderKind_CoherencyWeighting = 7,
-	BeamformerShaderKind_Reshape            = 8,
+	BeamformerShaderKind_Hilbert            = 4,
+	BeamformerShaderKind_CoherencyWeighting = 5,
+	BeamformerShaderKind_Reshape            = 6,
+	BeamformerShaderKind_MinMax             = 7,
+	BeamformerShaderKind_Sum                = 8,
 	BeamformerShaderKind_RenderBeamformed   = 9,
 	BeamformerShaderKind_Count,
 
 	BeamformerShaderKind_ComputeFirst        = BeamformerShaderKind_Decode,
 	BeamformerShaderKind_ComputeLast         = BeamformerShaderKind_Hilbert,
-	BeamformerShaderKind_ComputeCount        = 7,
+	BeamformerShaderKind_ComputeCount        = 5,
 	BeamformerShaderKind_ComputeHelpersFirst = BeamformerShaderKind_CoherencyWeighting,
-	BeamformerShaderKind_ComputeHelpersLast  = BeamformerShaderKind_Reshape,
-	BeamformerShaderKind_ComputeHelpersCount = 2,
+	BeamformerShaderKind_ComputeHelpersLast  = BeamformerShaderKind_Sum,
+	BeamformerShaderKind_ComputeHelpersCount = 4,
 	BeamformerShaderKind_RenderFirst         = BeamformerShaderKind_RenderBeamformed,
 	BeamformerShaderKind_RenderLast          = BeamformerShaderKind_RenderBeamformed,
 	BeamformerShaderKind_RenderCount         = 1,
@@ -273,13 +273,6 @@ typedef struct {
 } BeamformerDASPushConstants;
 
 typedef struct {
-	u64 output_data;
-	u64 input_data;
-	u32 image_elements;
-	f32 scale;
-} BeamformerSumPushConstants;
-
-typedef struct {
 	u64 coherent_sum;
 } BeamformerCoherencyWeightingPushConstants;
 
@@ -288,6 +281,13 @@ typedef struct {
 	u64 left_input_buffer;
 	u64 right_input_buffer;
 } BeamformerReshapePushConstants;
+
+typedef struct {
+	u64 output_data;
+	u64 input_data;
+	u32 image_elements;
+	f32 scale;
+} BeamformerSumPushConstants;
 
 typedef struct {
 	m4  mvp_matrix;
@@ -784,11 +784,11 @@ read_only global str8 beamformer_shader_names[] = {
 	str8_comp("Filter"),
 	str8_comp("Demodulate"),
 	str8_comp("DAS"),
-	str8_comp("Sum"),
-	str8_comp("MinMax"),
 	str8_comp("Hilbert"),
 	str8_comp("CoherencyWeighting"),
 	str8_comp("Reshape"),
+	str8_comp("MinMax"),
+	str8_comp("Sum"),
 	str8_comp("RenderBeamformed"),
 };
 
@@ -796,10 +796,10 @@ read_only global BeamformerShaderKind beamformer_reloadable_shader_kinds[] = {
 	BeamformerShaderKind_Decode,
 	BeamformerShaderKind_Filter,
 	BeamformerShaderKind_DAS,
-	BeamformerShaderKind_Sum,
-	BeamformerShaderKind_MinMax,
 	BeamformerShaderKind_CoherencyWeighting,
 	BeamformerShaderKind_Reshape,
+	BeamformerShaderKind_MinMax,
+	BeamformerShaderKind_Sum,
 	BeamformerShaderKind_RenderBeamformed,
 };
 
@@ -807,10 +807,10 @@ read_only global str8 *beamformer_reloadable_shader_files[] = {
 	(str8 []){str8_comp("decode.glsl")},
 	(str8 []){str8_comp("filter.glsl")},
 	(str8 []){str8_comp("das.glsl")},
-	(str8 []){str8_comp("sum.glsl")},
-	(str8 []){str8_comp("min_max.glsl")},
 	(str8 []){str8_comp("coherency_weighting.glsl")},
 	(str8 []){str8_comp("reshape.glsl")},
+	(str8 []){str8_comp("min_max.glsl")},
+	(str8 []){str8_comp("sum.glsl")},
 	(str8 []){str8_comp("render_3d.vert.glsl"), str8_comp("render_3d.frag.glsl")},
 };
 
@@ -819,9 +819,9 @@ read_only global i32 beamformer_shader_reloadable_index_by_shader[] = {
 	1,
 	1,
 	2,
+	-1,
 	3,
 	4,
-	-1,
 	5,
 	6,
 	7,
@@ -831,11 +831,11 @@ read_only global i32 beamformer_reloadable_compute_shader_info_indices[] = {
 	0,
 	1,
 	2,
-	3,
-	4,
 };
 
 read_only global i32 beamformer_reloadable_compute_helpers_shader_info_indices[] = {
+	3,
+	4,
 	5,
 	6,
 };
@@ -935,14 +935,6 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
-	"  uint64_t  output_data;\n"
-	"  uint64_t  input_data;\n"
-	"  uint32_t  image_elements;\n"
-	"  float32_t scale;\n"
-	"};\n"
-	"\n"),
-	str8_comp(""
-	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  uint64_t coherent_sum;\n"
 	"};\n"
 	"\n"),
@@ -955,6 +947,14 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"  uint64_t output_buffer;\n"
 	"  uint64_t left_input_buffer;\n"
 	"  uint64_t right_input_buffer;\n"
+	"};\n"
+	"\n"),
+	str8_comp(""
+	"layout(push_constant, std430) uniform PushConstants {\n"
+	"  uint64_t  output_data;\n"
+	"  uint64_t  input_data;\n"
+	"  uint32_t  image_elements;\n"
+	"  float32_t scale;\n"
 	"};\n"
 	"\n"),
 	str8_comp(""
@@ -1003,9 +1003,9 @@ read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){3, 4, 5, 6},
 	(i32 []){7, 8, 9, 10, 11, 3, 4, 12, 13, 14},
 	(i32 []){15},
+	(i32 []){16, 17},
 	0,
-	(i32 []){16},
-	(i32 []){17, 18},
+	(i32 []){18},
 	(i32 []){19},
 };
 
@@ -1014,9 +1014,9 @@ read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	4,
 	10,
 	1,
+	2,
 	0,
 	1,
-	2,
 	1,
 };
 
@@ -1033,12 +1033,12 @@ read_only global str8 *beamformer_shader_compile_flag_names[] = {
 		str8_comp("CoherencyWeighting"),
 	},
 	0,
-	0,
-	0,
 	(str8 []){
 		str8_comp("Deinterleave"),
 		str8_comp("Interleave"),
 	},
+	0,
+	0,
 	0,
 };
 
@@ -1047,9 +1047,9 @@ read_only global u8 beamformer_shader_compile_flag_counts[] = {
 	2,
 	1,
 	0,
-	0,
-	0,
 	2,
+	0,
+	0,
 	0,
 };
 
@@ -1057,10 +1057,10 @@ read_only global i32 beamformer_base_shader_to_bake_struct_id[] = {
 	0,
 	1,
 	2,
-	-1,
-	-1,
 	3,
 	4,
+	-1,
+	-1,
 	-1,
 };
 
@@ -1068,10 +1068,10 @@ read_only global u8 beamformer_shader_push_constant_sizes[] = {
 	sizeof(BeamformerDecodePushConstants),
 	sizeof(BeamformerFilterPushConstants),
 	sizeof(BeamformerDASPushConstants),
-	sizeof(BeamformerSumPushConstants),
-	0,
 	sizeof(BeamformerCoherencyWeightingPushConstants),
 	sizeof(BeamformerReshapePushConstants),
+	0,
+	sizeof(BeamformerSumPushConstants),
 	sizeof(BeamformerRenderBeamformedPushConstants),
 };
 
