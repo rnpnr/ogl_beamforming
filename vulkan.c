@@ -1352,16 +1352,16 @@ vk_load_physical_device(Arena *arena, Stream *err)
 			// variations if needed.
 			for EachIndex(property_count, it) {
 				b32 match = 1;
-				supported &= mat[it].scope == VK_SCOPE_SUBGROUP_KHR;
+				match &= mat[it].scope == VK_SCOPE_SUBGROUP_KHR;
 
-				supported &= mat[it].MSize == 16;
-				supported &= mat[it].NSize == 16;
-				supported &= mat[it].KSize == 16;
+				match &= mat[it].MSize == 16;
+				match &= mat[it].NSize == 16;
+				match &= mat[it].KSize == 16;
 
-				supported &= mat[it].AType == VK_COMPONENT_TYPE_FLOAT16_KHR;
-				supported &= mat[it].BType == VK_COMPONENT_TYPE_FLOAT16_KHR;
-				supported &= mat[it].CType == VK_COMPONENT_TYPE_FLOAT32_KHR;
-				supported &= mat[it].ResultType == VK_COMPONENT_TYPE_FLOAT32_KHR;
+				match &= mat[it].AType == VK_COMPONENT_TYPE_FLOAT16_KHR;
+				match &= mat[it].BType == VK_COMPONENT_TYPE_FLOAT16_KHR;
+				match &= mat[it].CType == VK_COMPONENT_TYPE_FLOAT32_KHR;
+				match &= mat[it].ResultType == VK_COMPONENT_TYPE_FLOAT32_KHR;
 
 				supported |= match;
 			}
