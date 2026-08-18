@@ -855,7 +855,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 			}break;
 
 			case BeamformerShaderKind_CoherencyWeighting:{
-				sd->layout   = layout_for_output(cp->output_points);
+				// NOTE(rnp): beamformed data is stored in linear order; making the layout 2D or 3D
+				// here is just slower
+				sd->layout   = (uv3){{subgroup_size, 1, 1}};
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
 
 				BeamformerCoherencyWeightingBakeParameters *cw = &sd->bake.CoherencyWeighting;
