@@ -25,17 +25,13 @@ layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Flo
   #error DataKind unsupported for CoherencyWeighting
 #endif
 
-u32 output_index(const u32 x, const u32 y, const u32 z)
-{
-	u32 result = OutputSizeX * OutputSizeY * z + OutputSizeX * y + x;
-	return result;
-}
-
 void main()
 {
-	uvec3 out_voxel = gl_GlobalInvocationID;
-	if (!all(lessThan(out_voxel, uvec3(OutputSizeX, OutputSizeY, OutputSizeZ))))
-		return;
-	u32 index = output_index(out_voxel.x, out_voxel.y, out_voxel.z);
-	COHERENT_SAMPLE(index) *= Scale * COHERENT_SAMPLE(index) / INCOHERENT_SAMPLE(index);
+	const uvec3 total_threads = gl_WorkGroupSize * gl_NumWorkGroups;
+	u32 index = gl_GlobalInvocationID.z * total_threads.x * total_threads.y +
+	            gl_GlobalInvocationID.y * total_threads.x +
+	            gl_GlobalInvocationID.x;
+
+	if (index < OutputVoxels)
+		COHERENT_SAMPLE(index) *= Scale * COHERENT_SAMPLE(index) / INCOHERENT_SAMPLE(index);
 }

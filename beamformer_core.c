@@ -861,10 +861,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
 
 				BeamformerCoherencyWeightingBakeParameters *cw = &sd->bake.CoherencyWeighting;
-				cw->Scale         = 1.0f,
-				cw->OutputSizeX   = cp->output_points.x,
-				cw->OutputSizeY   = cp->output_points.y,
-				cw->OutputSizeZ   = cp->output_points.z,
+				cw->Scale         = 1.f;
+				cw->OutputVoxels  = cp->output_points.x * cp->output_points.y * cp->output_points.z;
 				cw->IncoherentSum = incoherent_buffer;
 			}break;
 

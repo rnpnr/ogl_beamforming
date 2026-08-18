@@ -235,9 +235,7 @@ typedef struct {
 typedef struct {
 	u64 IncoherentSum;
 	f32 Scale;
-	u32 OutputSizeX;
-	u32 OutputSizeY;
-	u32 OutputSizeZ;
+	u32 OutputVoxels;
 } BeamformerCoherencyWeightingBakeParameters;
 
 typedef struct {
@@ -681,8 +679,6 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{17, 0,  1, 0},
 		{8,  8,  1, 0},
 		{18, 12, 1, 0},
-		{18, 16, 1, 0},
-		{18, 20, 1, 0},
 	},
 	(MetaStructMember []){
 		{18, 0,  1, 0},
@@ -754,9 +750,7 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 	(str8 []){
 		str8_comp("IncoherentSum"),
 		str8_comp("Scale"),
-		str8_comp("OutputSizeX"),
-		str8_comp("OutputSizeY"),
-		str8_comp("OutputSizeZ"),
+		str8_comp("OutputVoxels"),
 	},
 	(str8 []){
 		str8_comp("SizeX"),
@@ -775,7 +769,7 @@ read_only global MetaStructInfo meta_struct_info_by_id[] = {
 	{str8_comp("DecodeBakeParameters"),             11, 48,  0},
 	{str8_comp("FilterBakeParameters"),             13, 56,  0},
 	{str8_comp("DASBakeParameters"),                23, 100, 0},
-	{str8_comp("CoherencyWeightingBakeParameters"), 5,  24,  0},
+	{str8_comp("CoherencyWeightingBakeParameters"), 3,  16,  0},
 	{str8_comp("ReshapeBakeParameters"),            9,  36,  0},
 };
 

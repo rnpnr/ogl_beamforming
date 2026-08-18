@@ -496,9 +496,7 @@
 		{
 			[IncoherentSum U64]
 			[Scale         F32]
-			[OutputSizeX   U32]
-			[OutputSizeY   U32]
-			[OutputSizeZ   U32]
+			[OutputVoxels  U32]
 		}
 	}
 
