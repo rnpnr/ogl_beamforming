@@ -26,6 +26,12 @@
 	4X
 }
 
+@Enumeration DopplerMode
+{
+	Power
+	Colour
+}
+
 @Table([name size elements complex glsl]) DataKindTable
 {
 	[Int16          2 1 0 int16_t  ]
@@ -184,7 +190,10 @@
 	[speed_of_sound         F32]
 	[f_number               F32]
 	[interpolation_mode     InterpolationMode]
-	[coherency_weighting    B32]
+	[coherency_weighting    B16]
+	[doppler                B16]
+	[doppler_order          U16]
+	[doppler_ensemble       U16]
 	[decimation_rate        U32]
 }
 
@@ -460,6 +469,38 @@
 		}
 	}
 
+	@Shader(doppler.glsl) Doppler
+	{
+		@Flags
+		{
+			CooperativeMatrix
+		}
+
+		@Bake
+		{
+			[ImageBuffer    U64]
+			[ImageOffsets   U64]
+			[OutputBuffer   U64]
+			[FeedbackBuffer U64]
+			[FilterMatrix   U64]
+			[Order          U32]
+			[OutputVoxels   U32]
+		}
+	}
+
+	@Shader(median.glsl) Median
+	{
+		@Bake
+		{
+			[InputBuffer  U64]
+			[OutputBuffer U64]
+			[Order        U32]
+			[OutputSizeX  U32]
+			[OutputSizeY  U32]
+			[OutputSizeZ  U32]
+		}
+	}
+
 	@Shader(reshape.glsl) Reshape
 	{
 		@Flags
@@ -522,10 +563,12 @@
 			[threshold             F32]
 			[gamma                 F32]
 			[input_data            U64]
+			[doppler_data          U64]
 			[input_size_x          U32]
 			[input_size_y          U32]
 			[input_size_z          U32]
 			[data_kind             U32]
+			[doppler               B32]
 		}
 	}
 }

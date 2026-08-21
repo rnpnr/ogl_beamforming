@@ -133,6 +133,79 @@ make_hadamard_transpose(Arena *arena, i32 dim, b32 row_major)
 	return result;
 }
 
+/*
+ * NOTE(rnp): Compute a row major order N x (K + 1) matrix of orthonomal
+ * discrete legendre evaluations. The polynomials are evaluated
+ * on a centered range of [-(N - 1) / 2, (N - 1) / 2].
+ */
+function f32 *
+orthonomal_centered_discrete_legendre_points(Arena *arena, u32 N, u32 K)
+{
+	assert(K <= N);
+
+	f32 *result = push_array_no_zero(arena, f32, N * (K + 1));
+
+	for EachIndex(N, it) result[it] = 1.f;
+
+	if (K >= 1) {
+		for EachIndex(N, it) {
+			f32 x = (f32)it - ((f32)N - 1.f) / 2.f;
+			result[N + it] = -2.f * x / ((f32)N - 1.f);
+		}
+	}
+
+	// NOTE(rnp): generate using recurrence relation
+	for (u32 k = 1; k < K; k++) {
+		f32 denom = (k + 1.f) * (N - k - 1.f);
+		f32 a = -2.f * (2 * k + 1) / denom;
+		f32 b = (f32)k * (N + k)   / denom;
+
+		for EachIndex(N, it) {
+			f32 x = (f32)it - ((f32)N - 1.f) / 2.f;
+			result[(k + 1) * N + it] = a * x + result[k * N + it]
+			                           - b * result[(k - 1) * N + it];
+		}
+	}
+
+	// NOTE(rnp): normalize
+	for EachIndex(K + 1, k) {
+		f32 squared_magnitude = 0.f;
+		for EachIndex(N, it) {
+			f32 value = result[k * N + it];
+			squared_magnitude += value * value;
+		}
+		f32 norm = sqrt_f32(squared_magnitude);
+
+		for EachIndex(N, it) result[k * N + it] /= norm;
+	}
+
+	return result;
+}
+
+function f32 *
+polynomial_regression_filter(Arena *arena, u32 N, u32 K)
+{
+	f32 *result = push_array(arena, f32, N * N);
+	for EachIndex(N, it) result[N * it + it] = 1.f;
+
+	Temp scratch;
+	DeferLoop(scratch = temp_begin(arena), temp_end(scratch))
+	{
+		f32 *Q = orthonomal_centered_discrete_legendre_points(arena, N, K);
+		for EachIndex(N, j) {
+			for EachIndex(N, i) {
+				f32 value = 0.f;
+				for EachIndex(K + 1, k)
+					value += Q[(K + 1) * j + k] * Q[N * k + i];
+
+				result[N * j + i] -= value;
+			}
+		}
+	}
+
+	return result;
+}
+
 function b32
 u128_equal(u128 a, u128 b)
 {
