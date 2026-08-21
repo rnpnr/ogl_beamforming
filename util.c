@@ -147,12 +147,12 @@ typedef struct {
 	ArenaAllocateFlags flags;
 } ArenaAllocateInfo;
 
-#define bump_arena_alloc(a, ...)         bump_arena_alloc_(a, (ArenaAllocateInfo){.align = 8, .count = 1, ##__VA_ARGS__})
-#define gpu_arena_alloc(a, ...)          bump_arena_alloc_(a, (ArenaAllocateInfo){.flags = ArenaAllocateFlags_NoZero, .align = 8, .count = 1, ##__VA_ARGS__})
-#define bump_push_array(a, t, n)         (t *)bump_arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n)
-#define bump_push_array_no_zero(a, t, n) (t *)bump_arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n, .flags = ArenaAllocateFlags_NoZero)
-#define bump_push_struct(a, t)           bump_push_array(a, t, 1)
-#define bump_push_struct_no_zero(a, t)   bump_push_array_no_zero(a, t, 1)
+#define bump_arena_alloc(a, ...)              bump_arena_alloc_(a, (ArenaAllocateInfo){.align = 8, .count = 1, __VA_ARGS__})
+#define gpu_arena_alloc(a, ...)               bump_arena_alloc_(a, (ArenaAllocateInfo){.flags = ArenaAllocateFlags_NoZero, .align = 8, .count = 1, __VA_ARGS__})
+#define bump_push_array(a, t, n, ...)         (t *)bump_arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n, __VA_ARGS__)
+#define bump_push_array_no_zero(a, t, n, ...) (t *)bump_arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n, .flags = ArenaAllocateFlags_NoZero, __VA_ARGS__)
+#define bump_push_struct(a, t, ...)           bump_push_array(a, t, 1, __VA_ARGS__)
+#define bump_push_struct_no_zero(a, t, ...)   bump_push_array_no_zero(a, t, 1, __VA_ARGS__)
 
 function void *
 bump_arena_alloc_(BumpArena *a, ArenaAllocateInfo info)
@@ -179,12 +179,6 @@ arena_commit(Arena *a, i64 size)
 	current->position += size;
 	return result;
 }
-
-#define arena_alloc(a, ...)         arena_alloc_(a, (ArenaAllocateInfo){.align = 8, .count = 1, ##__VA_ARGS__})
-#define push_array(a, t, n)         (t *)arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n)
-#define push_array_no_zero(a, t, n) (t *)arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n, .flags = ArenaAllocateFlags_NoZero)
-#define push_struct(a, t)           push_array(a, t, 1)
-#define push_struct_no_zero(a, t)   push_array_no_zero(a, t, 1)
 
 #define arena_create(...) arena_create_((ArenaParameters){\
 	.reserve_size = MB(64),\
@@ -248,11 +242,11 @@ arena_seal(Arena *arena)
 	os_memory_seal(arena, arena->reserved);
 }
 
-#define arena_alloc(a, ...)         arena_alloc_(a, (ArenaAllocateInfo){.align = 8, .count = 1, ##__VA_ARGS__})
-#define push_array(a, t, n)         (t *)arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n)
-#define push_array_no_zero(a, t, n) (t *)arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n, .flags = ArenaAllocateFlags_NoZero)
-#define push_struct(a, t)           push_array(a, t, 1)
-#define push_struct_no_zero(a, t)   push_array_no_zero(a, t, 1)
+#define arena_alloc(a, ...)              arena_alloc_(a, (ArenaAllocateInfo){.align = 8, .count = 1, __VA_ARGS__})
+#define push_array(a, t, n, ...)         (t *)arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n, __VA_ARGS__)
+#define push_array_no_zero(a, t, n, ...) (t *)arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n, .flags = ArenaAllocateFlags_NoZero, __VA_ARGS__)
+#define push_struct(a, t, ...)           push_array(a, t, 1, __VA_ARGS__)
+#define push_struct_no_zero(a, t, ...)   push_array_no_zero(a, t, 1, __VA_ARGS__)
 
 function void *
 arena_alloc_(Arena *arena, ArenaAllocateInfo info)
