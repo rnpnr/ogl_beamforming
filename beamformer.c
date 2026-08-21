@@ -218,7 +218,7 @@ beamformer_init(BeamformerInput *input)
 				.timelines_used  = timelines,
 				.label           = str8("BeamformedData"),
 			};
-			gpu_buffer_allocate(cs->backlog.buffer, &allocate_info);
+			gpu_buffer_allocate(cs->backlog.buffer, allocate_info);
 			if (cs->backlog.buffer->size > 0)
 				break;
 		}

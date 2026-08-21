@@ -101,6 +101,36 @@ typedef struct {
 	u64                         count;
 } BeamformerComputeGraph;
 
+#define GPU_RESOURCE_HASH_TABLE_COUNT 256
+typedef struct U64ReferenceNode U64ReferenceNode;
+struct U64ReferenceNode {u64 *v; U64ReferenceNode *next;};
+
+typedef struct GPUResource GPUResource;
+struct GPUResource {
+	str8 name;
+	u64  size;
+	u64  offset;
+	u64  alignment;
+
+	void *data;
+
+	u64  hash;
+
+	U64ReferenceNode *pointer_store_list;
+
+	GPUResource *next;
+	GPUResource *hash_next, *hash_prev;
+};
+typedef struct {GPUResource *first, *last;} GPUResourceHashBucket;
+
+typedef struct {
+	Arena *arena;
+	u64    position;
+
+	GPUResource *resource_list;
+	GPUResourceHashBucket hash_table[GPU_RESOURCE_HASH_TABLE_COUNT];
+} GPUResourceBuilder;
+
 read_only global BeamformerFrame       beamformer_nil_frame;
 read_only global BeamformerComputePlan beamformer_nil_compute_plan;
 
@@ -204,11 +234,105 @@ beamformer_compute_plan_release(BeamformerComputeContext *cc, u32 block)
 	BeamformerComputePlan *cp = cc->compute_plans[block];
 	if (cp) {
 		gpu_buffer_release(&cp->array_parameters);
+		gpu_buffer_release(&cp->gpu_temp_arena);
 		for (u32 i = 0; i < countof(cp->filters); i++)
 			gpu_buffer_release(&cp->filters[i].buffer);
 		cc->compute_plans[block] = 0;
 		SLLPushFreelist(cp, cc->compute_plan_freelist);
 	}
+}
+
+function GPUResource *
+gpu_resource_from_hash(GPUResourceBuilder *rb, u64 hash)
+{
+	GPUResource *result = 0;
+
+	GPUResourceHashBucket *hb = rb->hash_table + (hash % GPU_RESOURCE_HASH_TABLE_COUNT);
+	for (GPUResource *r = hb->first; r; r = r->hash_next) {
+		if (hash == r->hash) {
+			result = r;
+			break;
+		}
+	}
+
+	return result;
+}
+
+typedef struct {
+	str8  name;
+	u64   align;
+	u64   size;
+	u64  *store;
+	void *data;
+} GPUResourcePushInfo;
+#define gpu_resource_push(rb, t, count, ...) gpu_resource_push_(rb, (GPUResourcePushInfo){\
+	.align = Max(alignof(t), 16), \
+	.size  = sizeof(t) * count, \
+	__VA_ARGS__})
+
+function void
+gpu_resource_push_(GPUResourceBuilder *rb, GPUResourcePushInfo info)
+{
+	assert(info.store && info.size > 0 && info.name.length > 0 && IsPowerOfTwo(info.align));
+
+	u64 hash = u64_hash_from_str8(info.name);
+	GPUResource *r = gpu_resource_from_hash(rb, hash);
+	if (!r) {
+		r = push_struct(rb->arena, GPUResource);
+		GPUResourceHashBucket *hb = rb->hash_table + (hash % GPU_RESOURCE_HASH_TABLE_COUNT);
+		DLLInsert(0, hb->first, hb->last, r, hash_next, hash_prev);
+		SLLStackPush(rb->resource_list, r, next);
+	}
+
+	r->hash      = hash;
+	r->name      = info.name;
+	r->alignment = Max(16, info.align);
+	r->offset    = AlignUpPowerOfTwo(rb->position, r->alignment);
+	r->size      = info.size;
+
+	// NOTE(rnp): if this is a new resource and no data is provided it is likely
+	// a temporary GPU side buffer. if this is not a new resource and no data
+	// is provided then maybe it is shared and someone else already provided it
+	if (info.data) r->data = info.data;
+
+	U64ReferenceNode *output = push_struct(rb->arena, U64ReferenceNode);
+	output->v = info.store;
+	SLLStackPush(r->pointer_store_list, output, next);
+
+	rb->position = r->offset + r->size;
+}
+
+function GPUResourceBuilder *
+gpu_resource_build_begin(Arena *arena)
+{
+	GPUResourceBuilder *result = push_struct(arena, GPUResourceBuilder);
+	result->arena = arena;
+	return result;
+}
+
+function void
+gpu_resource_build_end(GPUResourceBuilder *rb, GPUBuffer *buffer)
+{
+	u64 size = gpu_round_up_to_sync_size(rb->position, 64);
+	if (size != (u64)buffer->size) {
+		gpu_buffer_allocate(buffer, (GPUBufferAllocateInfo){
+			.size  = size,
+			.flags = VulkanUsageFlag_HostReadWrite|VulkanUsageFlag_TransferDestination,
+			.label = push_str8_f(rb->arena, "GPU Temp Arena [%p]", buffer),
+		});
+	}
+
+	//////////////////////////////////////
+	// NOTE(rnp): fill in pointer outputs
+	for (GPUResource *r = rb->resource_list; r; r = r->next)
+		for (U64ReferenceNode *op = r->pointer_store_list; op; op = op->next)
+			*op->v = buffer->gpu_pointer + r->offset;
+
+	//////////////////////////////////////
+	// NOTE(rnp): upload data
+	for (GPUResource *r = rb->resource_list; r; r = r->next)
+		if (r->data)
+			gpu_buffer_range_upload(buffer, r->data, r->offset, r->size, 0);
 }
 
 function BeamformerComputePlan *
@@ -234,7 +358,7 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 			.flags = VulkanUsageFlag_HostReadWrite,
 			.label = stream_to_str8(&label),
 		};
-		gpu_buffer_allocate(&result->array_parameters, &allocate_info);
+		gpu_buffer_allocate(&result->array_parameters, allocate_info);
 		assert((result->array_parameters.gpu_pointer & 63) == 0);
 	}
 	return result;
@@ -288,7 +412,7 @@ beamformer_filter_update(BeamformerFilter *f, BeamformerFilterParameters fp, u32
 			.flags = VulkanUsageFlag_HostReadWrite,
 			.label = label,
 		};
-		gpu_buffer_allocate(&f->buffer, &allocate_info);
+		gpu_buffer_allocate(&f->buffer, allocate_info);
 	}
 	gpu_buffer_range_upload(&f->buffer, filter, 0, byte_size, 0);
 
@@ -303,19 +427,6 @@ das_valid_points(iv3 points)
 	result.y = Max(points.y, 1);
 	result.z = Max(points.z, 1);
 	return result;
-}
-
-function void
-beamformer_update_hadamard(BeamformerComputePlan *cp, BeamformerComputeArrayParametersField output_field,
-                           i32 order, b32 row_major, Arena *arena)
-{
-	f16 *hadamard = make_hadamard_transpose(arena, order, row_major);
-	if (hadamard) {
-		u64 offset = beamformer_compute_array_parameter_offsets[output_field];
-		u64 size   = beamformer_compute_array_parameter_sizes[output_field] / BeamformerMaxHadamardElements;
-		size *= order * order;
-		gpu_buffer_range_upload(&cp->array_parameters, hadamard, offset, size, 0);
-	}
 }
 
 function GPUBuffer *
@@ -518,10 +629,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	};
 
 	//////////////////////////////////////
-	// NOTE(rnp): First Pass: build initial graph and insert hard layout constraints.
-	// We can also calculate any temporary space we need so we can patch pointers into
-	// bake parameters in the final pass.
-	i64 temporary_buffer_space = 0;
+	// NOTE(rnp): First Pass: build initial graph and insert hard layout constraints
 	BeamformerComputeGraph graph = {0};
 	BeamformerComputeGraphNode *root_node = push_compute_graph_node(&graph, BeamformerShaderKind_Count, scratch);
 	root_node->input_data_kind  = input_data_kind;
@@ -588,11 +696,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 			node->output_data_kind = das_data_kind;
 
 			// NOTE(rnp): insert implicit CoherencyWeighting node
-			if (pb->parameters.coherency_weighting) {
-				temporary_buffer_space  = gpu_round_up_to_sync_size(temporary_buffer_space, 64);
-				temporary_buffer_space += beamformer_incoherent_frame_byte_size(cp->output_points, node->output_data_kind);
+			if (pb->parameters.coherency_weighting)
 				node = push_compute_graph_node(&graph, BeamformerShaderKind_CoherencyWeighting, scratch);
-			}
 		}break;
 
 		default:{}break;
@@ -661,24 +766,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	cp->first_image_shader_index = 0;
 	cp->pipeline.shader_count = 0;
 
-	// NOTE(rnp): realloc temporary buffer if needed. we do want this to shrink
-	// when it can but if we get here and the size didn't change save some time
-	if (temporary_buffer_space != cp->gpu_temp_arena.size) {
-		gpu_buffer_allocate(&cp->gpu_temp_arena, &(GPUBufferAllocateInfo){
-			.size  = temporary_buffer_space,
-			.flags = VulkanUsageFlag_TransferDestination,
-			.label = push_str8_f(scratch, "GPU Temp Arena [%p]", cp),
-		});
-	}
-
-	BumpArena gpu_arena = bump_arena_from_buffer((void *)cp->gpu_temp_arena.gpu_pointer, cp->gpu_temp_arena.size);
-	u64 incoherent_buffer = 0;
-	if (pb->parameters.coherency_weighting) {
-		incoherent_buffer = (u64)gpu_arena_alloc(&gpu_arena,
-		                                         .size  = beamformer_incoherent_frame_byte_size(cp->output_points, das_data_kind),
-		                                         .align = gpu_round_up_to_sync_size(1, 64));
-	}
-
+	GPUResourceBuilder *resource_builder = gpu_resource_build_begin(scratch);
 	for (BeamformerComputeGraphNode *node = root_node->next; node; node = node->next) {
 		assert(node->prev->output_data_kind == node->input_data_kind);
 		assert(bv3_all(iv3_equal(node->prev->output_stride, node->input_stride)));
@@ -693,9 +781,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 			switch (node->kind) {
 			case BeamformerShaderKind_Decode:{
 				BeamformerDecodeBakeParameters *db = &sd->bake.Decode;
-
-				db->HadamardBuffer = cp->array_parameters.gpu_pointer
-				                     + offsetof(BeamformerComputeArrayParameters, decode_hadamard);
 
 				u32 decode_sample_count = input_sample_count;
 				db->DecodeMode    = pb->parameters.decode_mode;
@@ -752,6 +837,12 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 					sd->dispatch.y = (u32)ceil_f32((f32)chunk_channel_count / (f32)sd->layout.y);
 					sd->dispatch.z = 1;
 				}
+
+				u32 order = pb->parameters.acquisition_count;
+				gpu_resource_push(resource_builder, f16, order * order,
+				                  .data  = make_hadamard_transpose(scratch, order, use_coop_matrix),
+				                  .name  = str8("hadamard"),
+				                  .store = &db->Hadamard);
 			}break;
 
 			case BeamformerShaderKind_Demodulate:
@@ -825,13 +916,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->FocusDepth            = pb->parameters.focal_vector.E[1];
 				db->ReadiGroupCount       = pb->parameters.readi_group_count;
 				db->ArrayParameters       = cp->array_parameters.gpu_pointer;
-				db->IncoherentFrame       = incoherent_buffer;
 				db->OutputSizeX           = cp->output_points.x;
 				db->OutputSizeY           = cp->output_points.y;
 				db->OutputSizeZ           = cp->output_points.z;
 				db->TransmitReceiveOrientation = pb->parameters.transmit_receive_orientation;
-
-				cp->readi_group = pb->parameters.readi_group;
 
 				// NOTE(rnp): old gcc will miscompile an assignment
 				memory_copy(cp->xdc_transform.E, pb->parameters.xdc_transform.E, sizeof(cp->xdc_transform));
@@ -852,6 +940,22 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				sd->compile_flags |= BeamformerDASCompileFlags_CoherencyWeighting * pb->parameters.coherency_weighting;
 				sd->layout   = layout_for_output(cp->output_points);
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
+
+				if (pb->parameters.coherency_weighting) {
+					gpu_resource_push(resource_builder, u32, 0,
+					                  .store = &db->IncoherentFrame,
+					                  .size  = beamformer_incoherent_frame_byte_size(cp->output_points, das_data_kind),
+					                  .name  = str8("incoherent_buffer"));
+				}
+
+				cp->readi_group = pb->parameters.readi_group;
+				if (db->ReadiGroupCount > 1) {
+					u32 order = db->ReadiGroupCount;
+					gpu_resource_push(resource_builder, f16, order * order,
+					                  .store = &db->Hadamard,
+					                  .data  = make_hadamard_transpose(scratch, order, 0),
+					                  .name  = str8("readi_hadamard"));
+				}
 			}break;
 
 			case BeamformerShaderKind_CoherencyWeighting:{
@@ -861,9 +965,12 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
 
 				BeamformerCoherencyWeightingBakeParameters *cw = &sd->bake.CoherencyWeighting;
-				cw->Scale         = 1.f;
-				cw->OutputVoxels  = cp->output_points.x * cp->output_points.y * cp->output_points.z;
-				cw->IncoherentSum = incoherent_buffer;
+				cw->Scale        = 1.f;
+				cw->OutputVoxels = cp->output_points.x * cp->output_points.y * cp->output_points.z;
+				gpu_resource_push(resource_builder, u32, 0,
+				                  .store = &cw->IncoherentSum,
+				                  .size  = beamformer_incoherent_frame_byte_size(cp->output_points, das_data_kind),
+				                  .name  = str8("incoherent_buffer"));
 			}break;
 
 			case BeamformerShaderKind_Reshape:{
@@ -920,6 +1027,8 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 	if (cp->first_image_shader_index == 0)
 		cp->first_image_shader_index = cp->pipeline.shader_count;
+
+	gpu_resource_build_end(resource_builder, &cp->gpu_temp_arena);
 }
 
 function void
@@ -1143,7 +1252,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 					.export = cuda ? &ctx->compute_context.ping_pong_export_handle : 0,
 					.label  = str8("PingPongBuffer"),
 				};
-				gpu_buffer_allocate(&ctx->compute_context.ping_pong_buffer, &allocate_info);
+				gpu_buffer_allocate(&ctx->compute_context.ping_pong_buffer, allocate_info);
 
 				BeamformerShaderResourceInfo shader_resource_infos[] = {
 					{
@@ -1159,17 +1268,6 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 				// see usage of glImportMemoryFdEXT and surrounding code in ui.c for examples
 				if (cuda) {
 				}
-			}
-
-			if (pb->parameters.decode_mode != BeamformerDecodeMode_None &&
-			    cp->hadamard_order != (i32)cp->acquisition_count)
-			{
-				beamformer_update_hadamard(cp, BeamformerComputeArrayParametersField_DecodeHadamard,
-				                           cp->acquisition_count, gpu_info()->cooperative_matrix, scratch);
-				if (pb->parameters.readi_group_count > 1)
-					beamformer_update_hadamard(cp, BeamformerComputeArrayParametersField_DASHadamard,
-					                           pb->parameters.readi_group_count, 0, scratch);
-				cp->hadamard_order = cp->acquisition_count;
 			}
 		}break;
 
@@ -1703,7 +1801,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 				.flags = VulkanUsageFlag_HostReadWrite,
 				.label = str8("RawRFBuffer"),
 			};
-			gpu_buffer_allocate(&rf->buffer, &allocate_info);
+			gpu_buffer_allocate(&rf->buffer, allocate_info);
 		}
 
 		u64 slot = rf->insertion_index % countof(rf->upload_complete_values);

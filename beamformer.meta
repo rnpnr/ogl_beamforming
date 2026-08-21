@@ -6,7 +6,6 @@
 @Constant(16)     MaxComputeShaderStages
 @Constant(16)     MaxParameterBlocks
 @Constant(3)      MaxRawDataFramesInFlight
-@Constant(65536)  MaxHadamardElements
 
 @Enumeration ShaderResourceKind
 {
@@ -272,8 +271,6 @@
 	[FocalVectors                focal_vectors                 V2  MaxChannelCount]
 	[SparseElements              sparse_elements               S16 MaxChannelCount]
 	[TransmitReceiveOrientations transmit_receive_orientations U16 MaxChannelCount]
-	[DASHadamard                 das_hadamard                  F16 MaxHadamardElements]
-	[DecodeHadamard              decode_hadamard               F16 MaxHadamardElements]
 }
 
 @Expand(ComputeArrayParametersTable) @Enumeration(`$(name_upper)`) ComputeArrayParametersField
@@ -360,7 +357,7 @@
 
 		@Bake
 		{
-			[HadamardBuffer       U64]
+			[Hadamard             U64]
 			[DecodeMode           U32]
 			[OutputChannelStride  U32]
 			[OutputSampleStride   U32]
@@ -420,7 +417,6 @@
 	@Shader(das.glsl) DAS
 	{
 		@Constant    MaxChannelCount
-		@Constant    MaxHadamardElements
 
 		@Enumeration AcquisitionKind
 		@Enumeration InterpolationMode
@@ -439,6 +435,7 @@
 		{
 			[ArrayParameters            U64]
 			[IncoherentFrame            U64]
+			[Hadamard                   U64]
 			[AcquisitionKind            U32]
 			[Sparse                     B32]
 			[AcquisitionCount           S32]

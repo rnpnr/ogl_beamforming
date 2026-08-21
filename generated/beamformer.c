@@ -11,7 +11,6 @@
 #define BeamformerMaxComputeShaderStages   (16)
 #define BeamformerMaxParameterBlocks       (16)
 #define BeamformerMaxRawDataFramesInFlight (3)
-#define BeamformerMaxHadamardElements      (65536)
 
 typedef enum {
 	BeamformerShaderResourceKind_Buffer = 0,
@@ -118,8 +117,6 @@ typedef enum {
 	BeamformerComputeArrayParametersField_FocalVectors                = 0,
 	BeamformerComputeArrayParametersField_SparseElements              = 1,
 	BeamformerComputeArrayParametersField_TransmitReceiveOrientations = 2,
-	BeamformerComputeArrayParametersField_DASHadamard                 = 3,
-	BeamformerComputeArrayParametersField_DecodeHadamard              = 4,
 	BeamformerComputeArrayParametersField_Count,
 } BeamformerComputeArrayParametersField;
 
@@ -177,7 +174,7 @@ typedef enum {
 } BeamformerShaderKind;
 
 typedef struct {
-	u64 HadamardBuffer;
+	u64 Hadamard;
 	u32 DecodeMode;
 	u32 OutputChannelStride;
 	u32 OutputSampleStride;
@@ -209,6 +206,7 @@ typedef struct {
 typedef struct {
 	u64 ArrayParameters;
 	u64 IncoherentFrame;
+	u64 Hadamard;
 	u32 AcquisitionKind;
 	b32 Sparse;
 	i32 AcquisitionCount;
@@ -466,8 +464,6 @@ typedef struct {
 	v2  focal_vectors[BeamformerMaxChannelCount];
 	i16 sparse_elements[BeamformerMaxChannelCount];
 	u16 transmit_receive_orientations[BeamformerMaxChannelCount];
-	f16 das_hadamard[BeamformerMaxHadamardElements];
-	f16 decode_hadamard[BeamformerMaxHadamardElements];
 } BeamformerComputeArrayParameters;
 
 typedef union {
@@ -482,16 +478,12 @@ read_only global u32 beamformer_compute_array_parameter_sizes[] = {
 	sizeof(v2)  * BeamformerMaxChannelCount,
 	sizeof(i16) * BeamformerMaxChannelCount,
 	sizeof(u16) * BeamformerMaxChannelCount,
-	sizeof(f16) * BeamformerMaxHadamardElements,
-	sizeof(f16) * BeamformerMaxHadamardElements,
 };
 
 read_only global u32 beamformer_compute_array_parameter_offsets[] = {
 	offsetof(BeamformerComputeArrayParameters, focal_vectors),
 	offsetof(BeamformerComputeArrayParameters, sparse_elements),
 	offsetof(BeamformerComputeArrayParameters, transmit_receive_orientations),
-	offsetof(BeamformerComputeArrayParameters, das_hadamard),
-	offsetof(BeamformerComputeArrayParameters, decode_hadamard),
 };
 
 read_only global u8 beamformer_data_kind_element_size[] = {
@@ -651,29 +643,30 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{18, 52, 1, 0},
 	},
 	(MetaStructMember []){
-		{17, 0,  1, 0},
-		{17, 8,  1, 0},
-		{18, 16, 1, 0},
-		{14, 20, 1, 0},
-		{10, 24, 1, 0},
-		{10, 28, 1, 0},
-		{10, 32, 1, 0},
-		{10, 36, 1, 0},
-		{8,  40, 1, 0},
-		{8,  44, 1, 0},
-		{8,  48, 1, 0},
-		{8,  52, 1, 0},
-		{18, 56, 1, 0},
-		{8,  60, 1, 0},
-		{14, 64, 1, 0},
-		{18, 68, 1, 0},
-		{14, 72, 1, 0},
-		{8,  76, 1, 0},
-		{8,  80, 1, 0},
-		{18, 84, 1, 0},
-		{18, 88, 1, 0},
-		{18, 92, 1, 0},
-		{18, 96, 1, 0},
+		{17, 0,   1, 0},
+		{17, 8,   1, 0},
+		{17, 16,  1, 0},
+		{18, 24,  1, 0},
+		{14, 28,  1, 0},
+		{10, 32,  1, 0},
+		{10, 36,  1, 0},
+		{10, 40,  1, 0},
+		{10, 44,  1, 0},
+		{8,  48,  1, 0},
+		{8,  52,  1, 0},
+		{8,  56,  1, 0},
+		{8,  60,  1, 0},
+		{18, 64,  1, 0},
+		{8,  68,  1, 0},
+		{14, 72,  1, 0},
+		{18, 76,  1, 0},
+		{14, 80,  1, 0},
+		{8,  84,  1, 0},
+		{8,  88,  1, 0},
+		{18, 92,  1, 0},
+		{18, 96,  1, 0},
+		{18, 100, 1, 0},
+		{18, 104, 1, 0},
 	},
 	(MetaStructMember []){
 		{17, 0,  1, 0},
@@ -695,7 +688,7 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 
 read_only global str8 *meta_struct_member_names_by_id[] = {
 	(str8 []){
-		str8_comp("HadamardBuffer"),
+		str8_comp("Hadamard"),
 		str8_comp("DecodeMode"),
 		str8_comp("OutputChannelStride"),
 		str8_comp("OutputSampleStride"),
@@ -725,6 +718,7 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 	(str8 []){
 		str8_comp("ArrayParameters"),
 		str8_comp("IncoherentFrame"),
+		str8_comp("Hadamard"),
 		str8_comp("AcquisitionKind"),
 		str8_comp("Sparse"),
 		str8_comp("AcquisitionCount"),
@@ -768,7 +762,7 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 read_only global MetaStructInfo meta_struct_info_by_id[] = {
 	{str8_comp("DecodeBakeParameters"),             11, 48,  0},
 	{str8_comp("FilterBakeParameters"),             13, 56,  0},
-	{str8_comp("DASBakeParameters"),                23, 100, 0},
+	{str8_comp("DASBakeParameters"),                24, 108, 0},
 	{str8_comp("CoherencyWeightingBakeParameters"), 3,  16,  0},
 	{str8_comp("ReshapeBakeParameters"),            9,  36,  0},
 };
@@ -871,7 +865,6 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"};\n"
 	"\n"),
 	str8_comp("#define MaxChannelCount (256)\n\n"),
-	str8_comp("#define MaxHadamardElements (65536)\n\n"),
 	str8_comp(""
 	"#define AcquisitionKind_FORCES         0\n"
 	"#define AcquisitionKind_UFORCES        1\n"
@@ -899,18 +892,14 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 	str8_comp(""
 	"struct ComputeArrayParameters {\n"
-	"  f32vec2   focal_vectors[MaxChannelCount];\n"
-	"  int16_t   sparse_elements[MaxChannelCount];\n"
-	"  uint16_t  transmit_receive_orientations[MaxChannelCount];\n"
-	"  float16_t das_hadamard[MaxHadamardElements];\n"
-	"  float16_t decode_hadamard[MaxHadamardElements];\n"
+	"  f32vec2  focal_vectors[MaxChannelCount];\n"
+	"  int16_t  sparse_elements[MaxChannelCount];\n"
+	"  uint16_t transmit_receive_orientations[MaxChannelCount];\n"
 	"};\n"
 	"layout(std430, buffer_reference) buffer ComputeArrayParametersReference {\n"
-	"  f32vec2   focal_vectors[MaxChannelCount];\n"
-	"  int16_t   sparse_elements[MaxChannelCount];\n"
-	"  uint16_t  transmit_receive_orientations[MaxChannelCount];\n"
-	"  float16_t das_hadamard[MaxHadamardElements];\n"
-	"  float16_t decode_hadamard[MaxHadamardElements];\n"
+	"  f32vec2  focal_vectors[MaxChannelCount];\n"
+	"  int16_t  sparse_elements[MaxChannelCount];\n"
+	"  uint16_t transmit_receive_orientations[MaxChannelCount];\n"
 	"};\n"
 	"\n"),
 	str8_comp(""
@@ -995,18 +984,18 @@ read_only global b8 beamformer_shader_primitive_is_vertex[] = {
 read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){0, 1, 2},
 	(i32 []){3, 4, 5, 6},
-	(i32 []){7, 8, 9, 10, 11, 3, 4, 12, 13, 14},
-	(i32 []){15},
-	(i32 []){16, 17},
+	(i32 []){7, 8, 9, 10, 3, 4, 11, 12, 13},
+	(i32 []){14},
+	(i32 []){15, 16},
 	0,
+	(i32 []){17},
 	(i32 []){18},
-	(i32 []){19},
 };
 
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	3,
 	4,
-	10,
+	9,
 	1,
 	2,
 	0,

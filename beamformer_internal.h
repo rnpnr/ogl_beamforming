@@ -116,8 +116,8 @@ typedef struct {
 	VulkanUsageFlags  flags;
 
 	// NOTE(rnp): only required if buffer will be used on multiple timelines
-	GPUTimeline      *timelines_used;
 	u32               timeline_count;
+	GPUTimeline      *timelines_used;
 
 	OSHandle         *export;
 
@@ -145,7 +145,7 @@ DEBUG_IMPORT void vk_load(OSLibrary vulkan, Stream *error);
 
 DEBUG_IMPORT GPUInfo *gpu_info(void);
 
-DEBUG_IMPORT void gpu_buffer_allocate(GPUBuffer *, GPUBufferAllocateInfo *info);
+DEBUG_IMPORT void gpu_buffer_allocate(GPUBuffer *, GPUBufferAllocateInfo info);
 DEBUG_IMPORT void gpu_buffer_release(GPUBuffer *);
 DEBUG_IMPORT void gpu_buffer_range_upload(GPUBuffer *, void *data, u64 offset, u64 size, b32 non_temporal);
 DEBUG_IMPORT void gpu_buffer_range_download(void *output, GPUBuffer *, u64 source_offset, u64 size, b32 non_temporal);
@@ -299,7 +299,6 @@ struct BeamformerComputePlan {
 	BeamformerContrastMode    contrast_mode;
 
 	u32 rf_size;
-	i32 hadamard_order;
 	b32 iq_pipeline;
 
 	m4  ui_voxel_transform;

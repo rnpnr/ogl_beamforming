@@ -43,6 +43,8 @@ layout(std430, buffer_reference) buffer IncoherentOutput {
 	f32 x[];
 };
 
+layout(std430, buffer_reference) buffer F16 { f16 x[]; };
+
 #define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
 #define TX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 4, 4)
 
@@ -322,8 +324,6 @@ RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
-	ComputeArrayParametersReference dp = ComputeArrayParametersReference(ArrayParameters);
-
 	float z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
 	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;
 	float transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
@@ -347,7 +347,7 @@ RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
 			// sequential elements. The first element in each group is beamformed using the first
 			// acquisition, the second element in each group is beamformed using the second acquisition, etc.
 			for (s32 tx_group = 0; tx_group < s32(ReadiGroupCount); tx_group++) {
-				f32 group_apodization = apodization * dp.das_hadamard[hadamard_offset + tx_group];
+				f32 group_apodization = apodization * F16(Hadamard).x[hadamard_offset + tx_group];
 				s32 rf_offset = channel_rf_offset;
 
 				for (f32 tx_event = 0; tx_event < f32(AcquisitionCount); tx_event += 1.f) {

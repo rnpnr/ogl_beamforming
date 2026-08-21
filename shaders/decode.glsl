@@ -13,9 +13,7 @@ layout(std430, buffer_reference, buffer_reference_align = 64) restrict writeonly
 	OutputDataType x[];
 };
 
-layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer Hadamard {
-	f16 x[];
-};
+layout(std430, buffer_reference) buffer F16 { f16 x[]; };
 
 OutputDataType sample_rf_data(u32 index)
 {
@@ -50,7 +48,7 @@ void run_decode_large(void)
 		for (s32 i = 0; i < ToProcess; i++)
 			result[i] = OutputDataType(0);
 
-		Hadamard h = Hadamard(HadamardBuffer);
+		F16 h = F16(Hadamard);
 		for (s32 j = 0; j < TransmitCount; j++) {
 			OutputDataType s = OutputDataType(rf[gl_LocalInvocationID.y][j]);
 			for (s32 i = 0; i < ToProcess; i++)
@@ -94,7 +92,7 @@ void run_decode_coop(void)
 
 	u32 offset = ChunkChannelCount * TransmitCount * time_sample;
 
-	Hadamard h = Hadamard(HadamardBuffer);
+	F16 h = F16(Hadamard);
 	for (u32 k = 0; k < TransmitCount; k += CooperativeMatrixK) {
 		u32 rf_tile_row = CooperativeMatrixM * tile_index.y;
 		u32 rf_tile_col = k;
@@ -133,7 +131,7 @@ void run_decode_small(void)
 		for (s32 j = 0; j < TransmitCount; j++)
 			result[j] = OutputDataType(0);
 
-		Hadamard h = Hadamard(HadamardBuffer);
+		F16 h = F16(Hadamard);
 		for (s32 i = 0; i < TransmitCount; i++) {
 			OutputDataType s = OutputDataType(rf[i]);
 			for (s32 j = 0; j < TransmitCount; j++) {

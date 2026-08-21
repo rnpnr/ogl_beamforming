@@ -1980,28 +1980,28 @@ gpu_buffer_release(GPUBuffer *b)
 }
 
 DEBUG_IMPORT void
-gpu_buffer_allocate(GPUBuffer *b, GPUBufferAllocateInfo *info)
+gpu_buffer_allocate(GPUBuffer *b, GPUBufferAllocateInfo info)
 {
 	VulkanContext *vk = vulkan_context;
 
 	gpu_buffer_release(b);
 
-	assert(info->size >= 0);
+	assert(info.size >= 0);
 
-	if (info->size > 0) {
+	if (info.size > 0) {
 		VulkanEntity *e = vk_entity_allocate(VulkanEntityKind_Buffer);
 		VulkanBufferAllocateInfo vulkan_buffer_allocate_info = {
 			.gpu_buffer = b,
-			.size       = (u64)info->size,
-			.flags      = info->flags,
+			.size       = (u64)info.size,
+			.flags      = info.flags,
 			.index_type = VK_INDEX_TYPE_NONE_KHR,
-			.label      = info->label,
-			.export     = info->export,
+			.label      = info.label,
+			.export     = info.export,
 		};
 
 		u32 queue_index_hit_count[VulkanQueueKind_Count] = {0};
-		for (u32 it = 0; it < info->timeline_count; it++)
-			queue_index_hit_count[vk->queue_indices[info->timelines_used[it]]]++;
+		for (u32 it = 0; it < info.timeline_count; it++)
+			queue_index_hit_count[vk->queue_indices[info.timelines_used[it]]]++;
 
 		for EachElement(queue_index_hit_count, it) {
 			if (queue_index_hit_count[it] > 0) {

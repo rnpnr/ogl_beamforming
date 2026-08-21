@@ -851,7 +851,7 @@ beamformer_ui_frame_view_copy_frame(BeamformerFrameView *new, BeamformerFrameVie
 		.flags = VulkanUsageFlag_TransferDestination,
 		.label = stream_to_str8(&sb),
 	};
-	gpu_buffer_allocate(&new->copy_buffer, &allocate_info);
+	gpu_buffer_allocate(&new->copy_buffer, allocate_info);
 
 	GPUBuffer *buffer = beamformer_gpu_buffer_from_frame(&old->frame);
 	assert(buffer);

@@ -119,8 +119,6 @@ typedef union {
 	f32 E[16];
 } m4;
 
-typedef struct {u8 *start, *end;} BumpArena;
-
 typedef enum {
 	ArenaFlag_NoChain = 1 << 0,
 

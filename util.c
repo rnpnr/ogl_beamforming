@@ -120,22 +120,6 @@ round_up_to(i64 value, i64 multiple)
 	return result;
 }
 
-function BumpArena
-bump_arena_from_buffer(void *base, i64 size)
-{
-	BumpArena result = {.start = base};
-	result.end = result.start + size;
-	return result;
-}
-
-function void *
-bump_arena_aligned_start(BumpArena a, u64 alignment)
-{
-	u64 padding = -(u64)a.start & (alignment - 1);
-	u8 *result = a.start + padding;
-	return result;
-}
-
 typedef enum {
 	ArenaAllocateFlags_NoZero = 1 << 0,
 } ArenaAllocateFlags;
@@ -146,29 +130,6 @@ typedef struct {
 	i64 count;
 	ArenaAllocateFlags flags;
 } ArenaAllocateInfo;
-
-#define bump_arena_alloc(a, ...)              bump_arena_alloc_(a, (ArenaAllocateInfo){.align = 8, .count = 1, __VA_ARGS__})
-#define gpu_arena_alloc(a, ...)               bump_arena_alloc_(a, (ArenaAllocateInfo){.flags = ArenaAllocateFlags_NoZero, .align = 8, .count = 1, __VA_ARGS__})
-#define bump_push_array(a, t, n, ...)         (t *)bump_arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n, __VA_ARGS__)
-#define bump_push_array_no_zero(a, t, n, ...) (t *)bump_arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n, .flags = ArenaAllocateFlags_NoZero, __VA_ARGS__)
-#define bump_push_struct(a, t, ...)           bump_push_array(a, t, 1, __VA_ARGS__)
-#define bump_push_struct_no_zero(a, t, ...)   bump_push_array_no_zero(a, t, 1, __VA_ARGS__)
-
-function void *
-bump_arena_alloc_(BumpArena *a, ArenaAllocateInfo info)
-{
-	void *result = 0;
-	if (a->start) {
-		u8 *start = bump_arena_aligned_start(*a, info.align);
-		i64 available = a->end - start;
-		assert((available >= 0 && info.count <= available / info.size));
-		a->start = start + info.count * info.size;
-		result = start;
-		if ((info.flags & ArenaAllocateFlags_NoZero) == 0)
-			result = memory_clear(start, 0, info.count * info.size);
-	}
-	return result;
-}
 
 function u8 *
 arena_commit(Arena *a, i64 size)
