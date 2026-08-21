@@ -1,6 +1,16 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
  * [ ]: backtrace dumping on SIGSEGV
+ * [ ]: bug(~): disable persistence in Doppler on first frame of gpu arena existance
+ * [ ]: refactor: place array parameters in GPU temp arena; less allocations more better :)
+ * [ ]: refactor: internal shader chain should not have 16 shader length limit.
+ * [ ]: refactor: ui doppler parameters should not do a full recompute
+ *      - also it is so cheap to compute we might want to just move that calculation onto
+ *        the Graphics GPU queue
+ * [ ]: refactor: add scopes to profiling data
+ *      - for GPU processing I want Beamforming{} and Image Processing{} to be
+ *        grouped and so that they can be collapsed individually in the UI
+ *        - This can also apply to the bar graph, draw by shader or by group
  * [ ]: cooperative shared memory loading in decode shader
  * [ ]: refactor: save filter parameters with rest of parameters, whole slot thing is dumb
  * [ ]: upload previously exported data for display. maybe this is a UI thing but doing it
@@ -437,6 +447,13 @@ beamformer_incoherent_frame_byte_size(iv3 points, BeamformerDataKind kind)
 	return result;
 }
 
+function u64
+beamformer_doppler_frame_byte_size(iv3 points, BeamformerDataKind kind)
+{
+	u64 result = 3 * beamformer_frame_byte_size(points, kind) / beamformer_data_kind_element_count[kind];
+	return result;
+}
+
 function BeamformerFrame *
 beamformer_frame_next(BeamformerComputeContext *cc, iv3 output_points, b32 complex)
 {
@@ -551,7 +568,8 @@ push_compute_graph_node(BeamformerComputeGraph *graph, BeamformerShaderKind kind
 }
 
 function void
-plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, Arena *scratch)
+plan_compute_pipeline(BeamformerComputeContext *cc, BeamformerComputePlan *cp,
+                      BeamformerParameterBlock *pb, Arena *scratch)
 {
 	b32 run_hilbert = 0;
 	b32 demodulate  = 0;
@@ -673,9 +691,13 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 			node->output_stride.z  = cp->output_points.x * cp->output_points.y;
 			node->output_data_kind = das_data_kind;
 
-			// NOTE(rnp): insert implicit CoherencyWeighting node
 			if (pb->parameters.coherency_weighting)
 				node = push_compute_graph_node(&graph, BeamformerShaderKind_CoherencyWeighting, scratch);
+
+			if (pb->parameters.doppler) {
+				node = push_compute_graph_node(&graph, BeamformerShaderKind_Doppler, scratch);
+				node = push_compute_graph_node(&graph, BeamformerShaderKind_Median,  scratch);
+			}
 		}break;
 
 		default:{}break;
@@ -937,6 +959,74 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 					                  .data  = make_hadamard_transpose(scratch, order, 0),
 					                  .name  = str8("readi_hadamard"));
 				}
+			}break;
+
+			case BeamformerShaderKind_Doppler:{
+				// NOTE(rnp): beamformed data is stored in linear order; making the layout 2D or 3D
+				// here is just slower, we also need this layout for Cooperative Matrix
+				sd->layout   = (uv3){{subgroup_size, 1, 1}};
+				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
+
+				BeamformerDopplerBakeParameters *db = &sd->bake.Doppler;
+				gpu_resource_push(resource_builder, u32, pb->parameters.doppler_ensemble,
+				                  .store = &db->ImageOffsets,
+				                  .name  = str8("doppler_image_offsets"));
+
+				u64 doppler_frame_size = beamformer_doppler_frame_byte_size(cp->output_points, das_data_kind);
+				gpu_resource_push(resource_builder, u32, 0,
+				                  .store = &db->OutputBuffer,
+				                  .size  = doppler_frame_size,
+				                  .name  = str8("doppler_first_stage_output"));
+				gpu_resource_push(resource_builder, u32, 0,
+				                  .store = &db->FeedbackBuffer,
+				                  .size  = doppler_frame_size,
+				                  .name  = str8("doppler_map"));
+				gpu_resource_push(resource_builder, u32, 0,
+				                  .store = &cp->doppler_data_pointer,
+				                  .size  = doppler_frame_size,
+				                  .name  = str8("doppler_map"));
+
+				db->Order        = pb->parameters.doppler_ensemble;
+				db->OutputVoxels = cp->output_points.x * cp->output_points.y * cp->output_points.z;
+				db->ImageBuffer  = cc->backlog.buffer->gpu_pointer;
+
+				//b32 use_coop_matrix = gpu_info()->cooperative_matrix && (db->Order % 16) == 0;
+				//if (use_coop_matrix)
+				//	sd->compile_flags |= BeamformerDopplerCompileFlags_CooperativeMatrix;
+
+				// TODO(rnp): this needs to be converted to bfloat16 if we are going to use coop matrix
+				// (DAS output has high dynamic range)
+				f32 *filter_f32 = polynomial_regression_filter(scratch, pb->parameters.doppler_ensemble, pb->parameters.doppler_order);
+				f16 *filter_f16 = push_array_no_zero(scratch, f16, pb->parameters.doppler_ensemble * pb->parameters.doppler_ensemble);
+				for EachIndex(pb->parameters.doppler_ensemble * pb->parameters.doppler_ensemble, it)
+					filter_f16[it] = (f16)filter_f32[it];
+
+				gpu_resource_push(resource_builder, f16, pb->parameters.doppler_ensemble * pb->parameters.doppler_ensemble,
+				                  .store = &db->FilterMatrix,
+				                  .data  = filter_f16,
+				                  .name  = str8("doppler_filter"));
+			}break;
+
+			case BeamformerShaderKind_Median:{
+				// NOTE(rnp): median filtering applies in 2D square/3D cubes, choose
+				// a layout which allows data sharing
+				sd->layout   = layout_for_output(cp->output_points);
+				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
+
+				u64 doppler_frame_size = beamformer_doppler_frame_byte_size(cp->output_points, das_data_kind);
+				BeamformerMedianBakeParameters *mb = &sd->bake.Median;
+				//mb->Order =
+				mb->OutputSizeX  = cp->output_points.x;
+				mb->OutputSizeY  = cp->output_points.y;
+				mb->OutputSizeZ  = cp->output_points.z;
+				gpu_resource_push(resource_builder, u32, 0,
+				                  .store = &mb->InputBuffer,
+				                  .size  = doppler_frame_size,
+				                  .name  = str8("doppler_first_stage_output"));
+				gpu_resource_push(resource_builder, u32, 0,
+				                  .store = &mb->OutputBuffer,
+				                  .size  = doppler_frame_size,
+				                  .name  = str8("doppler_map"));
 			}break;
 
 			case BeamformerShaderKind_CoherencyWeighting:{
@@ -1208,7 +1298,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			cp->output_points  = das_valid_points(pb->parameters.output_points.xyz);
 			cp->average_frames = pb->parameters.output_points.E[3];
 
-			plan_compute_pipeline(cp, pb, scratch);
+			plan_compute_pipeline(&ctx->compute_context, cp, pb, scratch);
 
 			/* NOTE(rnp): these are both handled by plan_compute_pipeline() */
 			u32 mask = 1 << BeamformerParameterBlockRegion_ComputePipeline |
@@ -1287,11 +1377,10 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 }
 
 function void
-do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan *cp,
-                  BeamformerFrame *frame, u32 shader_slot, u32 channel_offset, u64 rf_pointer)
+do_compute_shader(BeamformerComputeContext *cc, GPUCommandList cmd, BeamformerComputePlan *cp,
+                  BeamformerFrame *frame, u32 shader_slot, u32 channel_offset,
+                  u64 rf_pointer, Arena *scratch)
 {
-	BeamformerComputeContext *cc = &ctx->compute_context;
-
 	u32 output_index     = !cc->ping_pong_input_index;
 	u32 input_index      =  cc->ping_pong_input_index;
 	u32 das_output_index =  PING_PONG_BUFFER_SLOTS - 1;
@@ -1365,6 +1454,38 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 
 		gpu_command_pipeline_barrier(cmd, 0);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
+		gpu_command_dispatch_compute(cmd, dispatch);
+	}break;
+
+	case BeamformerShaderKind_Doppler:{
+		Temp temp;
+		DeferLoop(temp = temp_begin(scratch), temp_end(temp))
+		{
+			BeamformerFrameBacklog *bl = &cc->backlog;
+
+			u32 frame_count   = cp->shader_descriptors[shader_slot].bake.Doppler.Order;
+			u64 image_offsets = cp->shader_descriptors[shader_slot].bake.Doppler.ImageOffsets;
+
+			u32  current_frame = frame->id % countof(bl->frames);
+			u32 *offsets       = push_array_no_zero(scratch, u32, frame_count);
+			for EachIndex(frame_count, it) {
+				u32 frame_index = (current_frame - it) % countof(bl->frames);
+				u32 offset      = 0;
+				if (bl->frames[frame_index].gpu_pointer)
+					offset = bl->frames[frame_index].gpu_pointer - bl->buffer->gpu_pointer;
+				offsets[frame_count - it - 1] = offset;
+			}
+
+			gpu_buffer_range_upload(&cp->gpu_temp_arena, offsets, image_offsets - cp->gpu_temp_arena.gpu_pointer,
+			                        frame_count * sizeof(*offsets), 0);
+		}
+
+		gpu_command_pipeline_barrier(cmd, 0);
+		gpu_command_dispatch_compute(cmd, dispatch);
+	}break;
+
+	case BeamformerShaderKind_Median:{
+		gpu_command_pipeline_barrier(cmd, 0);
 		gpu_command_dispatch_compute(cmd, dispatch);
 	}break;
 
@@ -1608,13 +1729,13 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				u64 rf_pointer = rf->buffer.gpu_pointer + slot * rf->active_rf_size;
 				rf_pointer += cp->raw_channel_byte_stride * channel_offset;
 				for (u32 i = 0; i < cp->first_image_shader_index; i++) {
-					do_compute_shader(ctx, cmd, cp, frame, i, channel_offset, rf_pointer);
+					do_compute_shader(cs, cmd, cp, frame, i, channel_offset, rf_pointer, arena);
 					gpu_command_timestamp(cmd);
 				}
 			}
 
 			for (u32 i = cp->first_image_shader_index; i < cp->pipeline.shader_count; i++) {
-				do_compute_shader(ctx, cmd, cp, frame, i, 0, 0);
+				do_compute_shader(cs, cmd, cp, frame, i, 0, 0, arena);
 				gpu_command_timestamp(cmd);
 			}
 			u64 end_timeline_value = gpu_command_list_end(cmd, (VulkanHandle){0}, (VulkanHandle){0});

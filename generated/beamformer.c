@@ -43,6 +43,12 @@ typedef enum {
 } BeamformerSamplingMode;
 
 typedef enum {
+	BeamformerDopplerMode_Power  = 0,
+	BeamformerDopplerMode_Colour = 1,
+	BeamformerDopplerMode_Count,
+} BeamformerDopplerMode;
+
+typedef enum {
 	BeamformerDataKind_Int16          = 0,
 	BeamformerDataKind_Int16Complex   = 1,
 	BeamformerDataKind_Float32        = 2,
@@ -145,6 +151,10 @@ typedef enum {
 } BeamformerDASCompileFlags;
 
 typedef enum {
+	BeamformerDopplerCompileFlags_CooperativeMatrix = 1 << 0,
+} BeamformerDopplerCompileFlags;
+
+typedef enum {
 	BeamformerReshapeCompileFlags_Deinterleave = 1 << 0,
 	BeamformerReshapeCompileFlags_Interleave   = 1 << 1,
 } BeamformerReshapeCompileFlags;
@@ -156,10 +166,12 @@ typedef enum {
 	BeamformerShaderKind_DAS                = 3,
 	BeamformerShaderKind_Hilbert            = 4,
 	BeamformerShaderKind_CoherencyWeighting = 5,
-	BeamformerShaderKind_Reshape            = 6,
-	BeamformerShaderKind_MinMax             = 7,
-	BeamformerShaderKind_Sum                = 8,
-	BeamformerShaderKind_RenderBeamformed   = 9,
+	BeamformerShaderKind_Doppler            = 6,
+	BeamformerShaderKind_Median             = 7,
+	BeamformerShaderKind_Reshape            = 8,
+	BeamformerShaderKind_MinMax             = 9,
+	BeamformerShaderKind_Sum                = 10,
+	BeamformerShaderKind_RenderBeamformed   = 11,
 	BeamformerShaderKind_Count,
 
 	BeamformerShaderKind_ComputeFirst        = BeamformerShaderKind_Decode,
@@ -167,7 +179,7 @@ typedef enum {
 	BeamformerShaderKind_ComputeCount        = 5,
 	BeamformerShaderKind_ComputeHelpersFirst = BeamformerShaderKind_CoherencyWeighting,
 	BeamformerShaderKind_ComputeHelpersLast  = BeamformerShaderKind_Sum,
-	BeamformerShaderKind_ComputeHelpersCount = 4,
+	BeamformerShaderKind_ComputeHelpersCount = 6,
 	BeamformerShaderKind_RenderFirst         = BeamformerShaderKind_RenderBeamformed,
 	BeamformerShaderKind_RenderLast          = BeamformerShaderKind_RenderBeamformed,
 	BeamformerShaderKind_RenderCount         = 1,
@@ -237,6 +249,25 @@ typedef struct {
 } BeamformerCoherencyWeightingBakeParameters;
 
 typedef struct {
+	u64 OutputBuffer;
+	u64 FeedbackBuffer;
+	u64 ImageBuffer;
+	u64 ImageOffsets;
+	u64 FilterMatrix;
+	u32 Order;
+	u32 OutputVoxels;
+} BeamformerDopplerBakeParameters;
+
+typedef struct {
+	u64 InputBuffer;
+	u64 OutputBuffer;
+	u32 Order;
+	u32 OutputSizeX;
+	u32 OutputSizeY;
+	u32 OutputSizeZ;
+} BeamformerMedianBakeParameters;
+
+typedef struct {
 	u32 SizeX;
 	u32 SizeY;
 	u32 SizeZ;
@@ -295,10 +326,12 @@ typedef struct {
 	f32 threshold;
 	f32 gamma;
 	u64 input_data;
+	u64 doppler_data;
 	u32 input_size_x;
 	u32 input_size_y;
 	u32 input_size_z;
 	u32 data_kind;
+	b32 doppler;
 } BeamformerRenderBeamformedPushConstants;
 
 typedef struct {
@@ -367,7 +400,10 @@ typedef struct {
 	f32                         speed_of_sound;
 	f32                         f_number;
 	BeamformerInterpolationMode interpolation_mode;
-	b32                         coherency_weighting;
+	b16                         coherency_weighting;
+	b16                         doppler;
+	u16                         doppler_order;
+	u16                         doppler_ensemble;
 	u32                         decimation_rate;
 } BeamformerUIParameters;
 
@@ -400,7 +436,10 @@ typedef struct {
 	f32                          speed_of_sound;
 	f32                          f_number;
 	BeamformerInterpolationMode  interpolation_mode;
-	b32                          coherency_weighting;
+	b16                          coherency_weighting;
+	b16                          doppler;
+	u16                          doppler_order;
+	u16                          doppler_ensemble;
 	u32                          decimation_rate;
 	BeamformerContrastMode       contrast_mode;
 	BeamformerEmissionParameters emission_parameters;
@@ -430,7 +469,10 @@ typedef struct {
 	f32                          speed_of_sound;
 	f32                          f_number;
 	BeamformerInterpolationMode  interpolation_mode;
-	b32                          coherency_weighting;
+	b16                          coherency_weighting;
+	b16                          doppler;
+	u16                          doppler_order;
+	u16                          doppler_ensemble;
 	u32                          decimation_rate;
 	BeamformerContrastMode       contrast_mode;
 	BeamformerEmissionParameters emission_parameters;
@@ -471,6 +513,8 @@ typedef union {
 	BeamformerFilterBakeParameters             Filter;
 	BeamformerDASBakeParameters                DAS;
 	BeamformerCoherencyWeightingBakeParameters CoherencyWeighting;
+	BeamformerDopplerBakeParameters            Doppler;
+	BeamformerMedianBakeParameters             Median;
 	BeamformerReshapeBakeParameters            Reshape;
 } BeamformerShaderBakeParameters;
 
@@ -609,7 +653,9 @@ typedef enum {
 	BeamformerStructKind_FilterBakeParameters             = 1,
 	BeamformerStructKind_DASBakeParameters                = 2,
 	BeamformerStructKind_CoherencyWeightingBakeParameters = 3,
-	BeamformerStructKind_ReshapeBakeParameters            = 4,
+	BeamformerStructKind_DopplerBakeParameters            = 4,
+	BeamformerStructKind_MedianBakeParameters             = 5,
+	BeamformerStructKind_ReshapeBakeParameters            = 6,
 	BeamformerStructKind_Count,
 } BeamformerStructKind;
 
@@ -672,6 +718,23 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{17, 0,  1, 0},
 		{8,  8,  1, 0},
 		{18, 12, 1, 0},
+	},
+	(MetaStructMember []){
+		{17, 0,  1, 0},
+		{17, 8,  1, 0},
+		{17, 16, 1, 0},
+		{17, 24, 1, 0},
+		{17, 32, 1, 0},
+		{18, 40, 1, 0},
+		{18, 44, 1, 0},
+	},
+	(MetaStructMember []){
+		{17, 0,  1, 0},
+		{17, 8,  1, 0},
+		{18, 16, 1, 0},
+		{18, 20, 1, 0},
+		{18, 24, 1, 0},
+		{18, 28, 1, 0},
 	},
 	(MetaStructMember []){
 		{18, 0,  1, 0},
@@ -747,6 +810,23 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("OutputVoxels"),
 	},
 	(str8 []){
+		str8_comp("OutputBuffer"),
+		str8_comp("FeedbackBuffer"),
+		str8_comp("ImageBuffer"),
+		str8_comp("ImageOffsets"),
+		str8_comp("FilterMatrix"),
+		str8_comp("Order"),
+		str8_comp("OutputVoxels"),
+	},
+	(str8 []){
+		str8_comp("InputBuffer"),
+		str8_comp("OutputBuffer"),
+		str8_comp("Order"),
+		str8_comp("OutputSizeX"),
+		str8_comp("OutputSizeY"),
+		str8_comp("OutputSizeZ"),
+	},
+	(str8 []){
 		str8_comp("SizeX"),
 		str8_comp("SizeY"),
 		str8_comp("SizeZ"),
@@ -764,6 +844,8 @@ read_only global MetaStructInfo meta_struct_info_by_id[] = {
 	{str8_comp("FilterBakeParameters"),             13, 56,  0},
 	{str8_comp("DASBakeParameters"),                24, 108, 0},
 	{str8_comp("CoherencyWeightingBakeParameters"), 3,  16,  0},
+	{str8_comp("DopplerBakeParameters"),            7,  48,  0},
+	{str8_comp("MedianBakeParameters"),             6,  32,  0},
 	{str8_comp("ReshapeBakeParameters"),            9,  36,  0},
 };
 
@@ -774,6 +856,8 @@ read_only global str8 beamformer_shader_names[] = {
 	str8_comp("DAS"),
 	str8_comp("Hilbert"),
 	str8_comp("CoherencyWeighting"),
+	str8_comp("Doppler"),
+	str8_comp("Median"),
 	str8_comp("Reshape"),
 	str8_comp("MinMax"),
 	str8_comp("Sum"),
@@ -785,6 +869,8 @@ read_only global BeamformerShaderKind beamformer_reloadable_shader_kinds[] = {
 	BeamformerShaderKind_Filter,
 	BeamformerShaderKind_DAS,
 	BeamformerShaderKind_CoherencyWeighting,
+	BeamformerShaderKind_Doppler,
+	BeamformerShaderKind_Median,
 	BeamformerShaderKind_Reshape,
 	BeamformerShaderKind_MinMax,
 	BeamformerShaderKind_Sum,
@@ -796,6 +882,8 @@ read_only global str8 *beamformer_reloadable_shader_files[] = {
 	(str8 []){str8_comp("filter.glsl")},
 	(str8 []){str8_comp("das.glsl")},
 	(str8 []){str8_comp("coherency_weighting.glsl")},
+	(str8 []){str8_comp("doppler.glsl")},
+	(str8 []){str8_comp("median.glsl")},
 	(str8 []){str8_comp("reshape.glsl")},
 	(str8 []){str8_comp("min_max.glsl")},
 	(str8 []){str8_comp("sum.glsl")},
@@ -813,6 +901,8 @@ read_only global i32 beamformer_shader_reloadable_index_by_shader[] = {
 	5,
 	6,
 	7,
+	8,
+	9,
 };
 
 read_only global i32 beamformer_reloadable_compute_shader_info_indices[] = {
@@ -826,10 +916,12 @@ read_only global i32 beamformer_reloadable_compute_helpers_shader_info_indices[]
 	4,
 	5,
 	6,
+	7,
+	8,
 };
 
 read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
-	7,
+	9,
 };
 
 read_only global str8 beamformer_shader_global_header_strings[] = {
@@ -922,6 +1014,9 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"};\n"
 	"\n"),
 	str8_comp(""
+	"#define CooperativeMatrix ((CompileFlags & (1 << 0)) != 0)\n"
+	"\n"),
+	str8_comp(""
 	"#define Deinterleave ((CompileFlags & (1 << 0)) != 0)\n"
 	"#define Interleave   ((CompileFlags & (1 << 1)) != 0)\n"
 	"\n"),
@@ -951,15 +1046,19 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"  float32_t threshold;\n"
 	"  float32_t gamma;\n"
 	"  uint64_t  input_data;\n"
+	"  uint64_t  doppler_data;\n"
 	"  uint32_t  input_size_x;\n"
 	"  uint32_t  input_size_y;\n"
 	"  uint32_t  input_size_z;\n"
 	"  uint32_t  data_kind;\n"
+	"  bool      doppler;\n"
 	"};\n"
 	"\n"),
 };
 
 read_only global b8 beamformer_shader_has_primitive[] = {
+	0,
+	0,
 	0,
 	0,
 	0,
@@ -978,6 +1077,8 @@ read_only global b8 beamformer_shader_primitive_is_vertex[] = {
 	0,
 	0,
 	0,
+	0,
+	0,
 	1,
 };
 
@@ -986,10 +1087,12 @@ read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){3, 4, 5, 6},
 	(i32 []){7, 8, 9, 10, 3, 4, 11, 12, 13},
 	(i32 []){14},
-	(i32 []){15, 16},
+	(i32 []){15},
 	0,
-	(i32 []){17},
+	(i32 []){16, 17},
+	0,
 	(i32 []){18},
+	(i32 []){19},
 };
 
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
@@ -997,6 +1100,8 @@ read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	4,
 	9,
 	1,
+	1,
+	0,
 	2,
 	0,
 	1,
@@ -1017,6 +1122,10 @@ read_only global str8 *beamformer_shader_compile_flag_names[] = {
 	},
 	0,
 	(str8 []){
+		str8_comp("CooperativeMatrix"),
+	},
+	0,
+	(str8 []){
 		str8_comp("Deinterleave"),
 		str8_comp("Interleave"),
 	},
@@ -1028,6 +1137,8 @@ read_only global str8 *beamformer_shader_compile_flag_names[] = {
 read_only global u8 beamformer_shader_compile_flag_counts[] = {
 	2,
 	2,
+	1,
+	0,
 	1,
 	0,
 	2,
@@ -1042,6 +1153,8 @@ read_only global i32 beamformer_base_shader_to_bake_struct_id[] = {
 	2,
 	3,
 	4,
+	5,
+	6,
 	-1,
 	-1,
 	-1,
@@ -1052,6 +1165,8 @@ read_only global u8 beamformer_shader_push_constant_sizes[] = {
 	sizeof(BeamformerFilterPushConstants),
 	sizeof(BeamformerDASPushConstants),
 	sizeof(BeamformerCoherencyWeightingPushConstants),
+	0,
+	0,
 	sizeof(BeamformerReshapePushConstants),
 	0,
 	sizeof(BeamformerSumPushConstants),

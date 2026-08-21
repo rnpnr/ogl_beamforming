@@ -310,6 +310,8 @@ struct BeamformerComputePlan {
 	iv3 output_points;
 	i32 average_frames;
 
+	u64 doppler_data_pointer;
+
 	// TODO(rnp): specialization constants
 	v2  xdc_element_pitch;
 	m4  xdc_transform;
