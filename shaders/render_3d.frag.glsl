@@ -3,12 +3,12 @@ layout(location = 0) in  vec3 normal;
 layout(location = 1) in  vec3 texture_coordinate;
 layout(location = 0) out vec4 out_colour;
 
-layout(std430, buffer_reference, buffer_reference_align = 64) readonly buffer InputVec2 {
-	vec2 values[];
+layout(std430, buffer_reference) readonly buffer F32V2 {
+	vec2 x[];
 };
 
-layout(std430, buffer_reference, buffer_reference_align = 64) readonly buffer InputFloat {
-	float values[];
+layout(std430, buffer_reference) readonly buffer F32 {
+	f32 x[];
 };
 
 /* input:  h [0,360] | s,v [0, 1] *
@@ -37,12 +37,12 @@ uint32_t texture_dimension(uvec3 points)
 	return points.x + points.y + points.z;
 }
 
-uint32_t input_index(vec3 uv)
+u32 input_index(vec3 uv)
 {
 	uv *= vec3(input_size_x - 1, input_size_y - 1, input_size_z - 1);
-	uint32_t result = input_size_y * input_size_x * uint32_t(uv.z) +
-	                                 input_size_x * uint32_t(uv.y) +
-	                                                uint32_t(uv.x);
+	u32 result = input_size_y * input_size_x * u32(uv.z) +
+	                            input_size_x * u32(uv.y) +
+	                                           u32(uv.x);
 	result = min(result, input_size_z * input_size_y * input_size_x - 1);
 	return result;
 }
@@ -51,10 +51,10 @@ float sample_value(vec3 p)
 {
 	float result;
 	if (input_data != 0) {
-		uint32_t index = input_index(texture_coordinate);
+		u32 index = input_index(texture_coordinate);
 		switch (data_kind) {
-		case DataKind_Float32:{        result = length(InputFloat(input_data).values[index]); }break;
-		case DataKind_Float32Complex:{ result = length(InputVec2(input_data).values[index]);  }break;
+		case DataKind_Float32:{       result = length(F32(input_data).x[index]);  }break;
+		case DataKind_Float32Complex:{result = length(F32V2(input_data).x[index]);}break;
 		}
 	}
 
@@ -82,7 +82,7 @@ float grad(float x)
 
 void main(void)
 {
-	uint32_t dimension = texture_dimension(uvec3(input_size_x, input_size_y, input_size_z));
+	u32 dimension = texture_dimension(uvec3(input_size_x, input_size_y, input_size_z));
 
 	if (dimension == 3) {
 		// TODO(rnp): add slice offset passed in as a uniform
@@ -115,6 +115,31 @@ void main(void)
 		float t = clamp(sdf_wire_box_outside(p, vec3(1.0f), bounding_box_fraction) /  bounding_box_fraction, 0, 1);
 
 		out_colour = vec4(t * vec3(data) + (1 - t) * bounding_box_colour.xyz, 1);
+
+		vec4 colour = vec4(vec3(data), 1.f);
+		if (doppler) {
+			u32 index = input_index(texture_coordinate);
+			f32 r0  = F32(doppler_data).x[3 * index + 0];
+			f32 r1i = F32(doppler_data).x[3 * index + 1];
+			f32 r1q = F32(doppler_data).x[3 * index + 2];
+			// NOTE(rnp): power
+			f32 upper_bound = 1600000.f;
+			f32 lower_bound = 0.1f * upper_bound;
+			if (lower_bound < r0 && r0 < upper_bound) {
+				f32 r0t = 0.05f + smoothstep(lower_bound, upper_bound, r0) * (0.15f - 0.05f);
+				colour.xyz = mix(colour.xyz, hsv2rgb(vec3(360.f * r0t, 0.8f, 0.9f)), 0.65f);
+			}
+			// NOTE(rnp): color
+			vec2 r1 = vec2(r1i, r1q);
+
+			// NOTE(rnp): turbulence
+			//f32 var = 1.f - length(r1) / r0;
+			//f32 gt  = 0.15f + var * (0.3f - 0.15f);
+			//if (var > 0.7f && var < 1.f)
+			//	colour.xyz = hsv2rgb(vec3(360.f * var, 0.8f, 0.8f));
+		}
+
+		out_colour = t * colour + (1 - t) * vec4(bounding_box_colour.xyz, 1);
 		//if (u_solid_bb) out_colour = u_bb_colour;
 	}break;
 	}
