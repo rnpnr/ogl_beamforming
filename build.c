@@ -958,6 +958,7 @@ build_tests(Arena *arena)
 	cmd_append(arena, &cc, EXTRA_FLAGS);
 
 	#define TEST_PROGRAMS \
+		X("multi_frame_loop", LINK_LIB("m"), LINK_LIB("zstd"), W32_DECL(LINK_LIB("Synchronization"))) \
 		X("throughput", LINK_LIB("m"), LINK_LIB("zstd"), W32_DECL(LINK_LIB("Synchronization"))) \
 		X("decode", LINK_LIB("m"), W32_DECL(LINK_LIB("Synchronization"))) \
 

@@ -1076,12 +1076,19 @@ render_2d_plane(BeamformerFrameView *view, GPUCommandList command, BeamformerRen
 	m4 model      = m4_scale((v3){{2.0f, 2.0f, 0.0f}});
 	m4 projection = orthographic_projection(0, 1, 1, 1);
 
+	// TODO(rnp): this should be tied to the view in some way
+	BeamformerUIParameters *bp = &ui_context->parameters;
+	BeamformerComputePlan  *cp = beamformer_context->compute_context.compute_plans[view->frame.parameter_block];
+
 	pc->mvp_matrix   = m4_mul(m4_mul(model, view_m), projection);
 	pc->input_data   = view->frame.gpu_pointer;
 	pc->input_size_x = view->frame.points.x;
 	pc->input_size_y = view->frame.points.y;
 	pc->input_size_z = view->frame.points.z;
 	pc->data_kind    = view->frame.data_kind;
+	pc->doppler      = bp->doppler;
+	if (pc->doppler)
+		pc->doppler_data = cp->doppler_data_pointer;
 
 	gpu_command_wait_timeline(command, GPUTimeline_Compute, view->frame.timeline_valid_value);
 	gpu_command_push_constants(command, 0, sizeof(*pc), pc);
@@ -1112,8 +1119,9 @@ view_update(BeamformerUI *ui, BeamformerFrameView *view)
 }
 
 function void
-update_frame_views(BeamformerUI *ui, Rect window)
+update_frame_views(Rect window)
 {
+	BeamformerUI *ui = ui_context;
 	for (BeamformerFrameView *view = ui->view_first; view; view = view->next) {
 		if (view_update(ui, view)) {
 			BeamformerRenderBeamformedPushConstants pc = {
@@ -1445,12 +1453,25 @@ ui_font_for_node(UINode *node)
 }
 
 function b32
+ui_number_conversion_u64(str8 s, u64 *out_value)
+{
+	NumberConversion number = number_from_str8(s);
+	b32 result = number.result == NumberConversionResult_Success;
+	if (result) {
+		if (number.kind == NumberConversionKind_Float)
+			*out_value = (u64)Max(0, number.F64);
+		else
+			*out_value = (u64)Max(0, number.S64);
+	}
+	return result;
+}
+
+function b32
 ui_number_conversion_f64(str8 s, f64 *out_value)
 {
-	b32 result = 0;
 	NumberConversion number = number_from_str8(s);
-	if (number.result == NumberConversionResult_Success) {
-		result     = 1;
+	b32 result = number.result == NumberConversionResult_Success;
+	if (result) {
 		if (number.kind == NumberConversionKind_Float)
 			*out_value = number.F64;
 		else
@@ -2236,6 +2257,26 @@ ui_tweak_f32_compute_variable(UISignal signal, f32 *value, f32 text_scale, f32 s
 
 		result = !f32_equal(*value, (f32)new_value);
 		*value = (f32)new_value;
+	}
+	return result;
+}
+
+function b32
+ui_tweak_u32_compute_variable(UISignal signal, u32 *value, uv2 limits)
+{
+	b32 result = 0;
+	if (signal.flags) {
+		u64 new_value = *value;
+		if (signal.flags & UISignalFlag_TextCommit)
+			ui_number_conversion_u64(signal.string, &new_value);
+
+		if (signal.flags & UISignalFlag_ScrolledY)
+			new_value += signal.scroll.y;
+
+		new_value = Clamp(new_value, limits.x, limits.y);
+
+		result = *value != new_value;
+		*value = (u32)new_value;
 	}
 	return result;
 }
@@ -3304,11 +3345,11 @@ ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t, Beamforme
 							UIParent(right) ui_labelf("{%u, %u, %u}###layout", sd->layout.x, sd->layout.y, sd->layout.z);
 							UIParent(left)  ui_label(str8("Dispatch"));
 							UIParent(right) ui_labelf("{%u, %u, %u}###dispatch", sd->dispatch.x, sd->dispatch.y, sd->dispatch.z);
-							UIParent(left)  ui_label(str8("Input"));
+							UIParent(left)  ui_label(str8("Input##input_kind"));
 							UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
 							                                              beamformer_data_kind_str8[sd->input_data_kind],
 							                                              str8("##input_kind")));
-							UIParent(left)  ui_label(str8("Output"));
+							UIParent(left)  ui_label(str8("Output##output_kind"));
 							UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
 							                                              beamformer_data_kind_str8[sd->output_data_kind],
 							                                              str8("##output_kind")));
@@ -3540,6 +3581,8 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 				}
 			}
 
+			f32 row_height = 0.f;
+
 			if (dimension == 2) {
 				UIParent(label_column) ui_label(str8("Off Axis Position"));
 				UIParent(unit_column)  ui_label(str8("[mm]##off_axis"));
@@ -3551,8 +3594,8 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 					                                                   1e-3f, 0.1e-3f, V2_INFINITY);
 				}
 
-				UIParent(label_column) ui_label(str8("Beamform Plane"));
-				UIParent(unit_column)  UIPrefHeight(ui_em(1.f, 1.f)) ui_spacer(0);
+				UIParent(label_column) row_height = ui_label(str8("Beamform Plane")).node->computed_size[Axis2_Y];
+				UIParent(unit_column)  ui_padh(row_height);
 				UIParent(value_column)
 				UIFlags(UINodeFlag_Scroll|UINodeFlag_TextInputNumeric)
 				{
@@ -3562,8 +3605,8 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 				}
 			}
 
-			UIParent(label_column) ui_label(str8("F#"));
-			UIParent(unit_column)  UIPrefHeight(ui_em(1.f, 1.f)) ui_spacer(0);
+			UIParent(label_column) row_height = ui_label(str8("F#")).node->computed_size[Axis2_Y];
+			UIParent(unit_column)  ui_padh(row_height);
 			UIParent(value_column)
 			UIFlags(UINodeFlag_Scroll|UINodeFlag_TextInputNumeric)
 			{
@@ -3572,8 +3615,8 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 					ui->flush_parameters = 1;
 			}
 
-			UIParent(label_column) ui_label(str8("Interpolation"));
-			UIParent(unit_column)  ui_build_node_from_key(0, ui_node_key_zero());
+			UIParent(label_column) row_height = ui_label(str8("Interpolation")).node->computed_size[Axis2_Y];
+			UIParent(unit_column)  ui_padh(row_height);
 			UIParent(value_column)
 			UIFlags(UINodeFlag_Scroll)
 			{
@@ -3587,8 +3630,8 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 				}
 			}
 
-			UIParent(label_column) ui_label(str8("Coherency Weighting"));
-			UIParent(unit_column)  UIPrefHeight(ui_em(1.0f, 1.0f)) ui_spacer(0);
+			UIParent(label_column) row_height = ui_label(str8("Coherency Weighting")).node->computed_size[Axis2_Y];
+			UIParent(unit_column)  ui_padh(row_height);
 			UIParent(value_column)
 			UIFlags(UINodeFlag_Scroll)
 			{
@@ -3598,6 +3641,42 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 				if (signal.flags & (UISignalFlag_Pressed|UISignalFlag_Scrolled)) {
 					bp->coherency_weighting = !bp->coherency_weighting;
 					ui->flush_parameters = 1;
+				}
+			}
+
+			UIParent(label_column) row_height = ui_label(str8("Doppler")).node->computed_size[Axis2_Y];
+			UIParent(unit_column)  ui_padh(row_height);
+			UIParent(value_column)
+			UIFlags(UINodeFlag_Scroll)
+			{
+				UISignal signal = ui_label_button(bp->doppler ? str8("Enabled###doppler") : str8("Disabled###doppler"));
+				if (signal.flags & (UISignalFlag_Pressed|UISignalFlag_Scrolled)) {
+					bp->doppler = !bp->doppler;
+					ui->flush_parameters = 1;
+				}
+			}
+
+			if (bp->doppler) {
+				UIParent(label_column) row_height = ui_label(str8("  Ensemble Length")).node->computed_size[Axis2_Y];
+				UIParent(unit_column)  ui_padh(row_height);
+				UIParent(value_column)
+				UIFlags(UINodeFlag_Scroll)
+				{
+					u32 value = Max(4, bp->doppler_ensemble);
+					UISignal signal = ui_text_boxf("%u###doppler_ensemble", value);
+					ui->flush_parameters |= ui_tweak_u32_compute_variable(signal, &value, (uv2){{4, 32}});
+					bp->doppler_ensemble = value;
+				}
+
+				UIParent(label_column) row_height = ui_label(str8("  Filter Order")).node->computed_size[Axis2_Y];
+				UIParent(unit_column)  ui_padh(row_height);
+				UIParent(value_column)
+				UIFlags(UINodeFlag_Scroll)
+				{
+					u32 value = Max(1, bp->doppler_order);
+					UISignal signal = ui_text_boxf("%u###doppler_order", value);
+					ui->flush_parameters |= ui_tweak_u32_compute_variable(signal, &value, (uv2){{1, bp->doppler_ensemble}});
+					bp->doppler_order = value;
 				}
 			}
 
@@ -5327,7 +5406,7 @@ beamformer_ui_frame(void)
 	}
 
 	/* NOTE(rnp): can't render to a different framebuffer in the middle of BeginDrawing()... */
-	update_frame_views(ui, window_rect);
+	update_frame_views(window_rect);
 
 	////////////////////////////
 	// NOTE(rnp): Text Input
