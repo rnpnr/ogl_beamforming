@@ -270,7 +270,7 @@
 {
 	[FocalVectors                focal_vectors                 V2  MaxChannelCount]
 	[SparseElements              sparse_elements               S16 MaxChannelCount]
-	[TransmitReceiveOrientations transmit_receive_orientations U16 MaxChannelCount]
+	[TransmitReceiveOrientations transmit_receive_orientations U8  MaxChannelCount]
 }
 
 @Expand(ComputeArrayParametersTable) @Enumeration(`$(name_upper)`) ComputeArrayParametersField

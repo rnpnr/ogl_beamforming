@@ -183,6 +183,7 @@ read_only global const char *vk_required_instance_extensions[] = {
 
 #define VK_REQUIRED_DEVICE_EXTENSIONS_LIST \
 	X("VK_KHR_16bit_storage") \
+	X("VK_KHR_8bit_storage") \
 	X("VK_KHR_external_memory") \
 	X("VK_KHR_external_semaphore") \
 	X("VK_KHR_robustness2") \

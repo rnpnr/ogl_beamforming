@@ -169,22 +169,22 @@ float cylindrical_wave_transmit_distance(const vec3 point, const float focal_dep
 	return distance(rca_plane_projection(point, tx_rows), f);
 }
 
-u16 tx_rx_orientation_for_acquisition(const s16 acquisition)
+u8 tx_rx_orientation_for_acquisition(const s32 acquisition)
 {
-	u16 result = u16(TransmitReceiveOrientation);
+	u8 result = u8(TransmitReceiveOrientation);
 	ComputeArrayParametersReference dp = ComputeArrayParametersReference(ArrayParameters);
 	if (!SingleOrientation) result = dp.transmit_receive_orientations[acquisition];
 	return result;
 }
 
-f32vec2 focal_vector_for_acquisition(const s16 acquisition)
+f32vec2 focal_vector_for_acquisition(const s32 acquisition)
 {
 	ComputeArrayParametersReference dp = ComputeArrayParametersReference(ArrayParameters);
 	f32vec2 result = SingleFocus ? f32vec2(TransmitAngle, FocusDepth) : dp.focal_vectors[acquisition];
 	return result;
 }
 
-float rca_transmit_distance(const vec3 world_point, const vec2 focal_vector, const uint16_t transmit_receive_orientation)
+f32 rca_transmit_distance(const vec3 world_point, const vec2 focal_vector, const u8 transmit_receive_orientation)
 {
 	float result = 0;
 	if (TX_ORIENTATION(transmit_receive_orientation) != RCAOrientation_None) {
@@ -204,10 +204,10 @@ float rca_transmit_distance(const vec3 world_point, const vec2 focal_vector, con
 RESULT_TYPE RCA(const vec3 world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
-	for (int16_t acquisition = int16_t(0); acquisition < int16_t(AcquisitionCount); acquisition++) {
-		const uint16_t tx_rx_orientation = tx_rx_orientation_for_acquisition(acquisition);
-		const bool     rx_rows           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows;
-		const vec2     focal_vector      = focal_vector_for_acquisition(acquisition);
+	for (s32 acquisition = 0; acquisition < s32(AcquisitionCount); acquisition++) {
+		const u8   tx_rx_orientation = tx_rx_orientation_for_acquisition(acquisition);
+		const bool rx_rows           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows;
+		const vec2 focal_vector      = focal_vector_for_acquisition(acquisition);
 		vec2  xdc_world_point   = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
 		float transmit_distance = rca_transmit_distance(world_point, focal_vector, tx_rx_orientation);
 
@@ -234,10 +234,10 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 {
 	ComputeArrayParametersReference dp = ComputeArrayParametersReference(ArrayParameters);
 
-	const uint16_t tx_rx_orientation = tx_rx_orientation_for_acquisition(int16_t(0));
-	const bool     rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
-	const vec2     focal_vector      = focal_vector_for_acquisition(int16_t(0));
-	const vec3     xdc_world_point   = (xdc_transform * vec4(world_point, 1)).xyz;
+	const u8   tx_rx_orientation = tx_rx_orientation_for_acquisition(0);
+	const bool rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
+	const vec2 focal_vector      = focal_vector_for_acquisition(0);
+	const vec3 xdc_world_point   = (xdc_transform * vec4(world_point, 1)).xyz;
 
 	const float transmit_index   = sample_index(rca_transmit_distance(world_point, focal_vector, tx_rx_orientation));
 	const float z_delta_squared  = xdc_world_point.z * xdc_world_point.z;

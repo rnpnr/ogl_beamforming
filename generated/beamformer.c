@@ -463,7 +463,7 @@ typedef struct {
 typedef struct {
 	v2  focal_vectors[BeamformerMaxChannelCount];
 	i16 sparse_elements[BeamformerMaxChannelCount];
-	u16 transmit_receive_orientations[BeamformerMaxChannelCount];
+	u8  transmit_receive_orientations[BeamformerMaxChannelCount];
 } BeamformerComputeArrayParameters;
 
 typedef union {
@@ -477,7 +477,7 @@ typedef union {
 read_only global u32 beamformer_compute_array_parameter_sizes[] = {
 	sizeof(v2)  * BeamformerMaxChannelCount,
 	sizeof(i16) * BeamformerMaxChannelCount,
-	sizeof(u16) * BeamformerMaxChannelCount,
+	sizeof(u8)  * BeamformerMaxChannelCount,
 };
 
 read_only global u32 beamformer_compute_array_parameter_offsets[] = {
@@ -892,14 +892,14 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 	str8_comp(""
 	"struct ComputeArrayParameters {\n"
-	"  f32vec2  focal_vectors[MaxChannelCount];\n"
-	"  int16_t  sparse_elements[MaxChannelCount];\n"
-	"  uint16_t transmit_receive_orientations[MaxChannelCount];\n"
+	"  f32vec2 focal_vectors[MaxChannelCount];\n"
+	"  int16_t sparse_elements[MaxChannelCount];\n"
+	"  uint8_t transmit_receive_orientations[MaxChannelCount];\n"
 	"};\n"
 	"layout(std430, buffer_reference) buffer ComputeArrayParametersReference {\n"
-	"  f32vec2  focal_vectors[MaxChannelCount];\n"
-	"  int16_t  sparse_elements[MaxChannelCount];\n"
-	"  uint16_t transmit_receive_orientations[MaxChannelCount];\n"
+	"  f32vec2 focal_vectors[MaxChannelCount];\n"
+	"  int16_t sparse_elements[MaxChannelCount];\n"
+	"  uint8_t transmit_receive_orientations[MaxChannelCount];\n"
 	"};\n"
 	"\n"),
 	str8_comp(""

@@ -1045,6 +1045,7 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDes
 	"#define u32     uint32_t\n"
 	"#define s16     int16_t\n"
 	"#define u16     uint16_t\n"
+	"#define u8      uint8_t\n"
 	"#define s32vec2 i32vec2\n"
 	"#define s16vec2 i16vec2\n"
 	"\n"));
@@ -1274,24 +1275,16 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 		case BeamformerParameterBlockRegion_ChannelMapping:{
 			cuda_set_channel_mapping(pb->channel_mapping);
 		}break;
-		case BeamformerParameterRegionFlag_TransmitReceiveOrientations:{
-			GPUBuffer *b = &cp->array_parameters;
-			u32 kind   = BeamformerComputeArrayParametersField_TransmitReceiveOrientations;
-			u64 offset = beamformer_compute_array_parameter_offsets[kind];
-			u64 size   = beamformer_compute_array_parameter_sizes[kind];
-			{
-				u16 *u16s = push_array(scratch, u16, countof(pb->transmit_receive_orientations));
-				for (u32 i = 0; i < countof(pb->transmit_receive_orientations); i++)
-					u16s[i] = pb->transmit_receive_orientations[i];
 
-				gpu_buffer_range_upload(b, u16s, offset, size, 0);
-			}
-		}break;
 		case BeamformerParameterRegionFlag_FocalVectors:
 		case BeamformerParameterRegionFlag_SparseElements:
+		case BeamformerParameterRegionFlag_TransmitReceiveOrientations:
 		{
 			u32 kind = BeamformerComputeArrayParametersField_Count;
 			switch (region) {
+			case BeamformerParameterRegionFlag_TransmitReceiveOrientations:{
+				kind = BeamformerComputeArrayParametersField_TransmitReceiveOrientations;
+			}break;
 			case BeamformerParameterBlockRegion_FocalVectors:{
 				kind = BeamformerComputeArrayParametersField_FocalVectors;
 			}break;
