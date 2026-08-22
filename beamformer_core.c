@@ -2,6 +2,7 @@
 /* TODO(rnp):
  * [ ]: backtrace dumping on SIGSEGV
  * [ ]: cooperative shared memory loading in decode shader
+ * [ ]: refactor: save filter parameters with rest of parameters, whole slot thing is dumb
  * [ ]: upload previously exported data for display. maybe this is a UI thing but doing it
  *      programatically would be nice.
  * [ ]: Add interface for multi frame upload. RF upload already uses an offset into SM so
@@ -235,8 +236,6 @@ beamformer_compute_plan_release(BeamformerComputeContext *cc, u32 block)
 	if (cp) {
 		gpu_buffer_release(&cp->array_parameters);
 		gpu_buffer_release(&cp->gpu_temp_arena);
-		for (u32 i = 0; i < countof(cp->filters); i++)
-			gpu_buffer_release(&cp->filters[i].buffer);
 		cc->compute_plans[block] = 0;
 		SLLPushFreelist(cp, cc->compute_plan_freelist);
 	}
@@ -364,59 +363,38 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 	return result;
 }
 
-function void
-beamformer_filter_update(BeamformerFilter *f, BeamformerFilterParameters fp, u32 block, u32 slot, Arena *arena)
+function BeamformerFilter *
+beamformer_filter_create(Arena *arena, BeamformerFilterParameters fp)
 {
-	Temp scratch = temp_begin(arena);
-	Stream sb = arena_stream(arena);
-	stream_append_str8s(&sb,
-	                    beamformer_filter_kind_strings[fp.kind % countof(beamformer_filter_kind_strings)],
-	                    str8("Filter["));
-	stream_append_u64(&sb, block);
-	stream_append_str8(&sb, str8("]["));
-	stream_append_u64(&sb, slot);
-	stream_append_byte(&sb, ']');
-	str8 label = arena_stream_commit(arena, &sb);
-
-	void *filter = 0;
+	BeamformerFilter *result = push_struct(arena, BeamformerFilter);
 	switch (fp.kind) {
 	case BeamformerFilterKind_Kaiser:{
 		/* TODO(rnp): this should also support complex */
 		/* TODO(rnp): implement this as an IFIR filter instead to reduce computation */
-		filter = kaiser_low_pass_filter(arena, fp.kaiser.cutoff_frequency, fp.sampling_frequency,
-		                                fp.kaiser.beta, (i32)fp.kaiser.length);
-		f->length     = (i32)fp.kaiser.length;
-		f->time_delay = (f32)f->length / 2.0f / fp.sampling_frequency;
+		result->data = kaiser_low_pass_filter(arena, fp.kaiser.cutoff_frequency, fp.sampling_frequency,
+		                                      fp.kaiser.beta, (i32)fp.kaiser.length);
+		result->length     = (i32)fp.kaiser.length;
+		result->time_delay = (f32)result->length / 2.0f / fp.sampling_frequency;
 	}break;
+
 	case BeamformerFilterKind_MatchedChirp:{
 		typeof(fp.matched_chirp) *mc = &fp.matched_chirp;
-		f32 fs    = fp.sampling_frequency;
-		f->length = (i32)(mc->duration * fs);
+		f32 fs = fp.sampling_frequency;
+		result->length = (i32)(mc->duration * fs);
 		if (fp.complex) {
-			filter = baseband_chirp(arena, mc->min_frequency, mc->max_frequency, fs, f->length, 1, 0.5f);
-			f->time_delay = complex_filter_first_moment(filter, f->length, fs);
+			result->data = baseband_chirp(arena, mc->min_frequency, mc->max_frequency, fs, result->length, 1, 0.5f);
+			result->time_delay = complex_filter_first_moment(result->data, result->length, fs);
 		} else {
-			filter = rf_chirp(arena, mc->min_frequency, mc->max_frequency, fs, f->length, 1);
-			f->time_delay = real_filter_first_moment(filter, f->length, fs);
+			result->data = rf_chirp(arena, mc->min_frequency, mc->max_frequency, fs, result->length, 1);
+			result->time_delay = real_filter_first_moment(result->data, result->length, fs);
 		}
 	}break;
+
 	InvalidDefaultCase;
 	}
 
-	f->parameters = fp;
-
-	u32 byte_size = f->length * (i32)sizeof(f32) * (fp.complex? 2 : 1);
-	if (f->buffer.size < byte_size) {
-		GPUBufferAllocateInfo allocate_info = {
-			.size  = byte_size,
-			.flags = VulkanUsageFlag_HostReadWrite,
-			.label = label,
-		};
-		gpu_buffer_allocate(&f->buffer, allocate_info);
-	}
-	gpu_buffer_range_upload(&f->buffer, filter, 0, byte_size, 0);
-
-	temp_end(scratch);
+	result->parameters = fp;
+	return result;
 }
 
 function iv3
@@ -849,7 +827,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 			case BeamformerShaderKind_Filter:
 			{
 				b32 demod = node->kind == BeamformerShaderKind_Demodulate;
-				BeamformerFilter *f = cp->filters + sp->filter_slot;
+				BeamformerFilter *f = beamformer_filter_create(scratch, cp->filter_parameters[sp->filter_slot]);
 
 				sd->compile_flags |= BeamformerFilterCompileFlags_Demodulate * demod;
 				sd->compile_flags |= BeamformerFilterCompileFlags_ComplexFilter * f->parameters.complex;
@@ -858,8 +836,11 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 				BeamformerFilterBakeParameters *fb = &sd->bake.Filter;
 
-				fb->FilterCoefficients = f->buffer.gpu_pointer;
-				fb->FilterLength       = (u32)f->length;
+				fb->FilterLength = (u32)f->length;
+				gpu_resource_push(resource_builder, f32, f->length * (f->parameters.complex ? 2 : 1),
+				                  .data  = f->data,
+				                  .name  = push_str8_f(scratch, "filter_%u", sp->filter_slot),
+				                  .store = &fb->FilterCoefficients);
 
 				fb->SampleCount    = input_sample_count;
 				fb->DecimationRate = demod ? decimation_rate : 1;
@@ -1528,12 +1509,11 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 		}break;
 
 		case BeamformerWorkKind_CreateFilter:{
-			/* TODO(rnp): this should probably get deleted and moved to lazy loading */
 			BeamformerCreateFilterContext *fctx = &work->create_filter_context;
 			u32 block = fctx->parameter_block;
 			u32 slot  = fctx->filter_slot;
 			BeamformerComputePlan *cp = beamformer_compute_plan_for_block(cs, block, arena);
-			beamformer_filter_update(cp->filters + slot, fctx->parameters, block, slot, arena);
+			cp->filter_parameters[slot] = fctx->parameters;
 		}break;
 
 		case BeamformerWorkKind_ComputeIndirect:

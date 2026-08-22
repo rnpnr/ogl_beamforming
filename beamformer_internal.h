@@ -270,7 +270,7 @@ typedef struct {
 	BeamformerFilterParameters parameters;
 	f32                        time_delay;
 	i32                        length;
-	GPUBuffer                  buffer;
+	void                      *data;
 } BeamformerFilter;
 
 typedef struct {
@@ -319,7 +319,7 @@ struct BeamformerComputePlan {
 	GPUBuffer array_parameters;
 	GPUBuffer gpu_temp_arena;
 
-	BeamformerFilter filters[BeamformerFilterSlots];
+	BeamformerFilterParameters filter_parameters[BeamformerFilterSlots];
 
 	u128 shader_hashes[BeamformerMaxComputeShaderStages];
 	BeamformerShaderDescriptor shader_descriptors[BeamformerMaxComputeShaderStages];
