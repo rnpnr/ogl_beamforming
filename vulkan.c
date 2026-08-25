@@ -2,7 +2,6 @@
 // TODO(rnp)
 // [ ]: what is needed for HDR? I think it makes sense to just default to it nowadays
 // [ ]: once opengl is removed switch images to SRGB and/or 16 bit Float
-// [ ]: VK_KHR_robustness2 probably shouldn't be required but it also might not matter
 
 #include "beamformer_internal.h"
 #include "vulkan.h"
@@ -127,12 +126,6 @@ typedef struct {
 	VkDevice          device;
 	VkPhysicalDevice  physical_device;
 
-	VkDescriptorPool       descriptor_pool;
-	VkDescriptorSetLayout  descriptor_set_layouts[BeamformerShaderResourceKind_Count];
-	VkDescriptorSet        descriptor_sets[BeamformerShaderResourceKind_Count];
-	// NOTE(rnp): must store these if we want to allow partial updates easily
-	VkDescriptorBufferInfo descriptor_buffer_infos[BeamformerShaderBufferSlot_Count];
-
 	// NOTE(rnp): fallback for when a shader fails to compile
 	VulkanPipeline    default_compute_pipeline;
 	VulkanPipeline    default_graphics_pipeline;
@@ -186,7 +179,6 @@ read_only global const char *vk_required_instance_extensions[] = {
 	X("VK_KHR_8bit_storage") \
 	X("VK_KHR_external_memory") \
 	X("VK_KHR_external_semaphore") \
-	X("VK_KHR_robustness2") \
 	X("VK_KHR_storage_buffer_storage_class") \
 	X("VK_KHR_timeline_semaphore") \
 	VK_OS_REQUIRED_DEVICE_EXTENSIONS_LIST
@@ -212,6 +204,8 @@ read_only global str8 vk_optional_device_extensions[] = {VK_OPTIONAL_DEVICE_EXTE
 #define VK_REQUIRED_PHYSICAL_12_FEATURES \
 	X(bufferDeviceAddress) \
 	X(shaderFloat16) \
+	X(shaderInt8) \
+	X(storageBuffer8BitAccess) \
 	X(timelineSemaphore) \
 	X(vulkanMemoryModel) \
 
@@ -621,8 +615,6 @@ vk_compute_pipeline_from_info(Arena *arena, VulkanPipelineCreateInfo *info, u32 
 
 		VkPipelineLayoutCreateInfo pipeline_layout_create_info = {
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-			.setLayoutCount         = countof(vulkan_context->descriptor_set_layouts),
-			.pSetLayouts            = vulkan_context->descriptor_set_layouts,
 			.pushConstantRangeCount = push_constants_size ? 1 : 0,
 			.pPushConstantRanges    = push_constants_size ? &push_constant_range : 0,
 		};
@@ -687,8 +679,6 @@ vk_graphics_pipeline_from_infos(Arena *arena, VulkanPipelineCreateInfo *infos, u
 
 		VkPipelineLayoutCreateInfo pipeline_layout_info = {
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-			.setLayoutCount         = countof(vulkan_context->descriptor_set_layouts),
-			.pSetLayouts            = vulkan_context->descriptor_set_layouts,
 			.pushConstantRangeCount = push_constants_size ? 1    : 0,
 			.pPushConstantRanges    = push_constants_size ? &pcr : 0,
 		};
@@ -1682,13 +1672,6 @@ vk_load_queues(Arena *arena, Stream *err)
 		device_create_info.pNext = &coop_mat_features;
 	}
 
-	VkPhysicalDeviceRobustness2FeaturesKHR robust2 = {
-		.sType          = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_KHR,
-		.pNext          = (void *)device_create_info.pNext,
-		.nullDescriptor = 1,
-	};
-	device_create_info.pNext = &robust2;
-
 	VkPhysicalDeviceVulkan13Features v13f = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
 		.pNext = (void *)device_create_info.pNext,
@@ -1804,85 +1787,6 @@ vk_load_graphics(void)
 	}
 }
 
-function void
-vk_load_descriptor_block(void)
-{
-	// NOTE(rnp):
-	// * One Descriptor Pool
-	// * One Descriptor Set Per Resource Kind
-	// * Shaders know the ResourceKind enumeration
-	// * Shaders know the per set binding points
-
-	VulkanContext *vk = vulkan_context;
-
-	// NOTE(rnp): Pool
-	VkDescriptorPoolSize pool_sizes[] = {
-		{
-			.type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-			.descriptorCount = BeamformerShaderBufferSlot_Count,
-		},
-	};
-	static_assert(countof(pool_sizes) == BeamformerShaderResourceKind_Count, "");
-
-	VkDescriptorPoolCreateInfo pool_create_info = {
-		.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-		.maxSets       = BeamformerShaderResourceKind_Count,
-		.poolSizeCount = countof(pool_sizes),
-		.pPoolSizes    = pool_sizes,
-	};
-
-	vkCreateDescriptorPool(vk->device, &pool_create_info, 0, &vk->descriptor_pool);
-
-	// NOTE(rnp): Set Layouts
-	VkDescriptorSetLayoutCreateInfo layout_create_info = {
-		.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-	};
-
-	{
-		VkDescriptorSetLayoutBinding layout_bindings[BeamformerShaderBufferSlot_Count];
-		for EachEnumValue(BeamformerShaderBufferSlot, it) {
-			layout_bindings[it] = (VkDescriptorSetLayoutBinding){
-				.binding         = it,
-				.descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-				.descriptorCount = 1,
-				.stageFlags      = VK_SHADER_STAGE_ALL,
-			};
-		}
-		layout_create_info.bindingCount = countof(layout_bindings),
-		layout_create_info.pBindings    = layout_bindings,
-		vkCreateDescriptorSetLayout(vk->device, &layout_create_info, 0,
-		                            vk->descriptor_set_layouts + BeamformerShaderResourceKind_Buffer);
-	}
-
-	// NOTE(rnp): Sets
-	VkDescriptorSetAllocateInfo set_allocate_info = {
-		.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-		.descriptorPool     = vk->descriptor_pool,
-		.descriptorSetCount = countof(vk->descriptor_sets),
-		.pSetLayouts        = vk->descriptor_set_layouts,
-	};
-	static_assert(countof(vk->descriptor_set_layouts) == countof(vk->descriptor_sets), "");
-	vkAllocateDescriptorSets(vk->device, &set_allocate_info, vk->descriptor_sets);
-
-	vk_label_object(DESCRIPTOR_POOL, vk->descriptor_pool, str8("Beamformer Resources"), str8("Pool"));
-
-	Temp scratch;
-	DeferLoop(take_lock(&vk->arena_lock, -1), release_lock(&vk->arena_lock))
-	DeferLoop(scratch = temp_begin(vk->arena), temp_end(scratch))
-	{
-		for EachElement(vk->descriptor_sets, it) {
-			Stream sb = arena_stream(vk->arena);
-			stream_append_str8s(&sb, str8("Beamformer "), beamformer_shader_resource_kind_strings[it], str8("s"));
-			vk_label_object(DESCRIPTOR_SET,        vk->descriptor_sets[it],        stream_to_str8(&sb), str8("Set"));
-			vk_label_object(DESCRIPTOR_SET_LAYOUT, vk->descriptor_set_layouts[it], stream_to_str8(&sb), str8("Set Layout"));
-		}
-	}
-
-	// NOTE(rnp): junk API requirement that doesn't allow 0 initialization
-	for EachElement(vk->descriptor_buffer_infos, it)
-		vk->descriptor_buffer_infos[it].range = VK_WHOLE_SIZE;
-}
-
 ///////////////////////
 // NOTE(rnp): User API
 
@@ -1906,7 +1810,6 @@ vk_load(OSLibrary vulkan_library_handle, Stream *err)
 	vk_load_physical_device(vk->arena, err);
 	vk_load_queues(vk->arena, err);
 	vk_load_graphics();
-	vk_load_descriptor_block();
 
 	read_only local_persist str8 default_compute_shader = str8(""
 		"#version 430 core\n"
@@ -2435,36 +2338,6 @@ vk_pipeline_release(VulkanHandle h)
 	}
 }
 
-DEBUG_IMPORT void
-vk_bind_shader_resources(BeamformerShaderResourceInfo *infos, u64 info_count)
-{
-	VulkanContext *vk = vulkan_context;
-
-	VkWriteDescriptorSet   write_sets[BeamformerShaderResourceKind_Count] = {0};
-
-	for EachIndex(info_count, it) {
-		switch (infos[it].kind) {
-		case BeamformerShaderResourceKind_Buffer:{
-			VulkanBuffer *vb = vk_entity_data(infos[it].handle.value, VulkanEntityKind_Buffer);
-			vk->descriptor_buffer_infos[infos[it].slot].buffer = vb->buffer;
-			vk->descriptor_buffer_infos[infos[it].slot].offset = 0;
-			vk->descriptor_buffer_infos[infos[it].slot].range  = vb->memory_size;
-		}break;
-
-		InvalidDefaultCase;
-		}
-	}
-
-	write_sets[BeamformerShaderResourceKind_Buffer].sType            = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-	write_sets[BeamformerShaderResourceKind_Buffer].dstSet           = vk->descriptor_sets[BeamformerShaderResourceKind_Buffer];
-	write_sets[BeamformerShaderResourceKind_Buffer].dstBinding       = 0;
-	write_sets[BeamformerShaderResourceKind_Buffer].descriptorCount  = countof(vk->descriptor_buffer_infos);
-	write_sets[BeamformerShaderResourceKind_Buffer].descriptorType   = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-	write_sets[BeamformerShaderResourceKind_Buffer].pBufferInfo      = vk->descriptor_buffer_infos;
-
-	vkUpdateDescriptorSets(vk->device, countof(write_sets), write_sets, 0, 0);
-}
-
 DEBUG_IMPORT GPUCommandList
 gpu_command_list_begin(GPUTimeline timeline)
 {
@@ -2530,8 +2403,6 @@ gpu_command_bind_pipeline(GPUCommandList command, VulkanHandle pipeline)
 
 		VkCommandBuffer cmd = vk_command_buffer(command);
 		vkCmdBindPipeline(cmd, bind_point, vp->pipeline);
-		vkCmdBindDescriptorSets(cmd, bind_point, vp->layout, 0, countof(vk->descriptor_sets),
-		                        vk->descriptor_sets, 0, 0);
 		vcp->bound_pipeline = vp;
 	}
 }

@@ -35,13 +35,8 @@
   #define apply_filter(iq, h) ((iq) * (h))
 #endif
 
-layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer Input {
-	InputDataType x[];
-};
-
-layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_PingPong) buffer Output {
-	OutputDataType output_data[];
-};
+layout(std430, buffer_reference) restrict readonly  buffer Input  { InputDataType x[];  };
+layout(std430, buffer_reference) restrict writeonly buffer Output { OutputDataType x[]; };
 
 layout(std430, buffer_reference, buffer_reference_align = 64) restrict readonly buffer Filter {
 	FILTER_TYPE values[FilterLength];
@@ -87,7 +82,7 @@ void main()
 			in_offset /= 2;
 
 		// NOTE(rnp): broken out to avoid overflow from the subtraction
-		u64 input_address = input_data + in_offset;
+		u64 input_address = input_buffer + in_offset;
 		input_address += InputDataKindByteSize * (DecimationRate * gl_WorkGroupID.x * gl_WorkGroupSize.x);
 		input_address -= InputDataKindByteSize * (FilterLength - 1);
 
@@ -120,16 +115,15 @@ void main()
 
 		u32 out_offset = OutputChannelStride  * channel +
 		                 OutputTransmitStride * transmit +
-		                 OutputSampleStride   * out_sample +
-		                 output_element_offset;
+		                 OutputSampleStride   * out_sample;
 
 		if (BatchSampleCount != 0) {
 			// NOTE(rnp): deinterleave
-			output_data[out_offset] = OutputDataType(result.x);
+			Output(output_buffer).x[out_offset] = OutputDataType(result.x);
 			out_offset += BatchSampleCount;
-			output_data[out_offset] = OutputDataType(result.y);
+			Output(output_buffer).x[out_offset] = OutputDataType(result.y);
 		} else {
-			output_data[out_offset] = OutputDataType(result);
+			Output(output_buffer).x[out_offset] = OutputDataType(result);
 		}
 	}
 }

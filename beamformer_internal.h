@@ -130,12 +130,6 @@ typedef struct {
 	u32       normals_offset;
 } RenderModel;
 
-typedef struct {
-	BeamformerShaderResourceKind kind;
-	GPUHandle                    handle;
-	u32                          slot;
-} BeamformerShaderResourceInfo;
-
 #include "threads.c"
 #include "util_os_ui.c"
 
@@ -158,8 +152,6 @@ DEBUG_IMPORT void vk_image_release(GPUImage *);
 DEBUG_IMPORT void vk_render_model_allocate(GPUBuffer *, void *indices, u64 index_count, u64 model_size, str8 label);
 DEBUG_IMPORT void vk_render_model_range_upload(GPUBuffer *, void *data, u64 offset, u64 size, b32 non_temporal);
 DEBUG_IMPORT void vk_render_model_release(GPUBuffer *);
-
-DEBUG_IMPORT void vk_bind_shader_resources(BeamformerShaderResourceInfo *infos, u64 info_count);
 
 /* NOTE: Pipelines do not have bindings. Data should be passed using push constants.
  * In particular the push constants should contain pointers to gpu memory using the

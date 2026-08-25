@@ -31,13 +31,8 @@
   #define RESULT_STORE(a) (a)
 #endif
 
-layout(set = ShaderResourceKind_Buffer, binding = ShaderBufferSlot_PingPong) readonly buffer RF {
-	InputDataType rf[];
-};
-
-layout(std430, buffer_reference) buffer Output {
-	OutputDataType x[];
-};
+layout(std430, buffer_reference) buffer Input  { InputDataType x[]; };
+layout(std430, buffer_reference) buffer Output { OutputDataType x[]; };
 
 layout(std430, buffer_reference) buffer IncoherentOutput {
 	f32 x[];
@@ -48,6 +43,7 @@ layout(std430, buffer_reference) buffer F32 { f32  x[]; };
 layout(std430, buffer_reference) buffer S16 { s16  x[]; };
 layout(std430, buffer_reference) buffer U8  { u8   x[]; };
 layout(std430, buffer_reference) buffer V2  { vec2 x[]; };
+layout(std430, buffer_reference) buffer V4  { vec4 x[]; };
 
 #define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
 #define TX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 4, 4)
@@ -68,7 +64,7 @@ vec2 rotate_iq(const vec2 iq, const float time)
 #endif
 
 /* NOTE: See: https://cubic.org/docs/hermite.htm */
-SAMPLE_TYPE cubic(const int offset, const float t)
+SAMPLE_TYPE cubic(const u64 rf_pointer, const f32 t)
 {
 	const mat4 h = mat4(
 		 2, -3,  0, 1,
@@ -77,12 +73,17 @@ SAMPLE_TYPE cubic(const int offset, const float t)
 		 1, -1,  0, 0
 	);
 
-	SAMPLE_TYPE samples[4] = {
-		rf[offset + 0],
-		rf[offset + 1],
-		rf[offset + 2],
-		rf[offset + 3],
-	};
+	#if InputDataKind == DataKind_Float32
+	vec4 samples = V4(rf_pointer).x[0];
+	#else
+	SAMPLE_TYPE samples[4];
+	vec4 load1 = V4(rf_pointer).x[0];
+	vec4 load2 = V4(rf_pointer).x[1];
+	samples[0] = load1.xy;
+	samples[1] = load1.zw;
+	samples[2] = load2.xy;
+	samples[3] = load2.zw;
+	#endif
 
 	vec4        S  = vec4(t * t * t, t * t, t, 1);
 	SAMPLE_TYPE P1 = samples[1];
@@ -100,26 +101,31 @@ SAMPLE_TYPE cubic(const int offset, const float t)
 	return result;
 }
 
-SAMPLE_TYPE sample_rf(const int rf_offset, const float index)
+SAMPLE_TYPE sample_rf(const u64 rf_pointer, const f32 index)
 {
 	SAMPLE_TYPE result = SAMPLE_TYPE(0);
 
 	switch (InterpolationMode) {
 	case InterpolationMode_Nearest:{
 		if (index >= 0.f && index < (f32(SampleCount) - 0.5f))
-			result = rotate_iq(rf[rf_offset + int(round(index))], index / SamplingFrequency);
+			result = rotate_iq(Input(rf_pointer + InputDataKindByteSize * u32(round(index))).x[0], index / SamplingFrequency);
 	}break;
 	case InterpolationMode_Linear:{
 		if (index >= 0.f && index < f32(SampleCount - 1)) {
-			s32 n = rf_offset + int(index);
-			f32 t = fract(index);
-			result = (1 - t) * rf[n] + t * rf[n + 1];
+			#if InputDataKind == DataKind_Float32
+			vec2 rf = V2(rf_pointer + InputDataKindByteSize * u32(index)).x[0];
+			#else
+			vec4 load  = V4(rf_pointer + InputDataKindByteSize * u32(index)).x[0];
+			vec2 rf[2] = {load.xy, load.zw};
+			#endif
+			f32 t  = fract(index);
+			result = (1 - t) * rf[0] + t * rf[1];
 			result = rotate_iq(result, index / SamplingFrequency);
 		}
 	}break;
 	case InterpolationMode_Cubic:{
 		if (index >= 1.f && index < f32(SampleCount - 2))
-			result = rotate_iq(cubic(rf_offset + int(index), fract(index)), index / SamplingFrequency);
+			result = rotate_iq(cubic(rf_pointer + InputDataKindByteSize * u32(index), fract(index)), index / SamplingFrequency);
 	}break;
 	}
 	return result;
@@ -211,8 +217,9 @@ RESULT_TYPE RCA(const vec3 world_point)
 		vec2  xdc_world_point   = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
 		float transmit_distance = rca_transmit_distance(world_point, focal_vector, tx_rx_orientation);
 
-		int rf_offset  = int(rf_element_offset) + acquisition * SampleCount;
-		rf_offset     -= int(InterpolationMode == InterpolationMode_Cubic);
+		u64 rf_pointer  = RFData + InputDataKindByteSize * acquisition * SampleCount;
+		rf_pointer     -= InputDataKindByteSize * u32(InterpolationMode == InterpolationMode_Cubic);
+
 		for (f32 chunk_channel = 0.f; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.f) {
 			f32  rx_channel     = f32(channel_offset) + chunk_channel;
 			vec3 rx_center      = vec3(rx_channel * xdc_element_pitch, 0);
@@ -220,11 +227,11 @@ RESULT_TYPE RCA(const vec3 world_point)
 			f32  a_arg          = abs(FNumber * receive_vector.x / abs(xdc_world_point.y));
 
 			if (a_arg < 0.5f) {
-				float       sidx  = sample_index(transmit_distance + length(receive_vector));
-				SAMPLE_TYPE value = apodize(a_arg) * sample_rf(rf_offset, sidx);
+				f32         index = sample_index(transmit_distance + length(receive_vector));
+				SAMPLE_TYPE value = apodize(a_arg) * sample_rf(rf_pointer, index);
 				result += RESULT_STORE(value);
 			}
-			rf_offset += SampleCount * AcquisitionCount;
+			rf_pointer += InputDataKindByteSize * SampleCount * AcquisitionCount;
 		}
 	}
 	return result;
@@ -246,8 +253,8 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 	RESULT_TYPE result = RESULT_TYPE(0);
 	for (f32 chunk_channel = 0.f; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.f) {
 		f32 rx_channel  = f32(channel_offset) + chunk_channel;
-		s32 rf_offset   = s32(rf_element_offset) + s32(chunk_channel) * SampleCount * AcquisitionCount + s32(Sparse) * SampleCount;
-		rf_offset      -= s32(InterpolationMode == InterpolationMode_Cubic);
+		u64 rf_pointer  = RFData + InputDataKindByteSize * (u32(chunk_channel) * SampleCount * AcquisitionCount + u32(Sparse) * SampleCount);
+		rf_pointer     -= InputDataKindByteSize * u32(InterpolationMode == InterpolationMode_Cubic);
 
 		// NOTE(rnp): this wouldn't be so messy if we just forced an orientation like with FORCES
 		vec2 element_receive_delta_squared = xy_world_point;
@@ -273,11 +280,11 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 				apodization *= apodize(f_number_over_z * sqrt(element_delta_squared));
 
 				float index = transmit_index + sqrt(z_delta_squared + element_delta_squared) * SamplingFrequency / SpeedOfSound;
-				SAMPLE_TYPE value = apodization * sample_rf(rf_offset, index);
+				SAMPLE_TYPE value = apodization * sample_rf(rf_pointer, index);
 				result += RESULT_STORE(value);
 			}
 
-			rf_offset += SampleCount;
+			rf_pointer += InputDataKindByteSize * SampleCount;
 		}
 	}
 	return result;
@@ -297,8 +304,8 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 		float a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
 
 		if (a_arg < 0.5f) {
-			s32 rf_offset  = s32(rf_element_offset) + s32(chunk_channel) * SampleCount * AcquisitionCount + s32(Sparse) * SampleCount;
-			rf_offset     -= s32(InterpolationMode == InterpolationMode_Cubic);
+			u64 rf_pointer  = RFData + InputDataKindByteSize * (u32(chunk_channel) * SampleCount * AcquisitionCount + u32(Sparse) * SampleCount);
+			rf_pointer     -= InputDataKindByteSize * u32(InterpolationMode == InterpolationMode_Cubic);
 
 			f32 receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
 			f32 apodization   = apodize(a_arg);
@@ -307,9 +314,9 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 				f32 transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_channel;
 				f32 transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
 
-				SAMPLE_TYPE value = apodization * sample_rf(rf_offset, receive_index + transmit_index);
-				result    += RESULT_STORE(value);
-				rf_offset += SampleCount;
+				SAMPLE_TYPE value = apodization * sample_rf(rf_pointer, receive_index + transmit_index);
+				result     += RESULT_STORE(value);
+				rf_pointer += InputDataKindByteSize * SampleCount;
 			}
 		}
 	}
@@ -333,8 +340,8 @@ RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
 		f32 a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
 
 		if (a_arg < 0.5f) {
-			s32 channel_rf_offset  = s32(rf_element_offset) + s32(chunk_channel) * SampleCount * AcquisitionCount;
-			channel_rf_offset     -= s32(InterpolationMode == InterpolationMode_Cubic);
+			u64 channel_rf_pointer  = RFData + InputDataKindByteSize * u32(chunk_channel) * SampleCount * AcquisitionCount;
+			channel_rf_pointer     -= InputDataKindByteSize * u32(InterpolationMode == InterpolationMode_Cubic);
 
 			f32 receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
 			f32 apodization   = apodize(a_arg);
@@ -344,16 +351,16 @@ RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
 			// acquisition, the second element in each group is beamformed using the second acquisition, etc.
 			for (s32 tx_group = 0; tx_group < s32(ReadiGroupCount); tx_group++) {
 				f32 group_apodization = apodization * F16(Hadamard).x[hadamard_offset + tx_group];
-				s32 rf_offset = channel_rf_offset;
+				u64 rf_pointer = channel_rf_pointer;
 
 				for (f32 tx_event = 0; tx_event < f32(AcquisitionCount); tx_event += 1.f) {
 					f32 tx_element       = f32(tx_group) * f32(AcquisitionCount) + tx_event;
 					f32 transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_element;
 					f32 transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
 
-					SAMPLE_TYPE value = group_apodization * sample_rf(rf_offset, receive_index + transmit_index);
-					result    += RESULT_STORE(value);
-					rf_offset += SampleCount;
+					SAMPLE_TYPE value = group_apodization * sample_rf(rf_pointer, receive_index + transmit_index);
+					result     += RESULT_STORE(value);
+					rf_pointer += InputDataKindByteSize * SampleCount;
 				}
 			}
 		}

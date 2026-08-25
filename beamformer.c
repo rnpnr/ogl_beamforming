@@ -226,15 +226,6 @@ beamformer_init(BeamformerInput *input)
 			// NOTE(rnp): if this becomes an issue we may be able to get by in some other way
 			fatal(str8("Failed to allocate space for beamformed data\n"));
 		}
-
-		BeamformerShaderResourceInfo shader_resource_infos[] = {
-			{
-				.kind   = BeamformerShaderResourceKind_Buffer,
-				.handle = cs->backlog.buffer->handle,
-				.slot   = BeamformerShaderBufferSlot_BeamformedData,
-			},
-		};
-		vk_bind_shader_resources(shader_resource_infos, countof(shader_resource_infos));
 	}
 
 	Arena *scratch = arena_create();

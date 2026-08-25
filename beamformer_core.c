@@ -583,6 +583,23 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	cp->rf_size = input_sample_count * pb->parameters.acquisition_count * chunk_channel_count
 	              * beamformer_data_kind_byte_size[das_data_kind];
 
+	i64 buffer_size = PING_PONG_BUFFER_SLOTS * round_up_to(cp->rf_size, 64);
+	if (beamformer_context->compute_context.ping_pong_buffer.size < buffer_size) {
+		b32 cuda = cuda_supported();
+		GPUBufferAllocateInfo allocate_info = {
+			.size   = buffer_size,
+			.export = cuda ? &beamformer_context->compute_context.ping_pong_export_handle : 0,
+			.label  = str8("PingPongBuffer"),
+		};
+		gpu_buffer_allocate(&beamformer_context->compute_context.ping_pong_buffer, allocate_info);
+
+		// TODO(rnp): figure out how to share with CUDA
+		// IMPORTANT: on linux the handle is returned to os and should be cleared after import
+		// see usage of glImportMemoryFdEXT and surrounding code in ui.c for examples
+		if (cuda) {
+		}
+	}
+
 	read_only local_persist BeamformerDataKind data_kind_to_element_kind[] = {
 		[BeamformerDataKind_Int16]          = BeamformerDataKind_Float16,
 		[BeamformerDataKind_Float16]        = BeamformerDataKind_Float16,
@@ -886,6 +903,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->OutputSizeY           = cp->output_points.y;
 				db->OutputSizeZ           = cp->output_points.z;
 				db->TransmitReceiveOrientation = pb->parameters.transmit_receive_orientation;
+
+				u64 pp_size = beamformer_context->compute_context.ping_pong_buffer.size / PING_PONG_BUFFER_SLOTS;
+				db->RFData  = beamformer_context->compute_context.ping_pong_buffer.gpu_pointer + (PING_PONG_BUFFER_SLOTS - 1) * pp_size;
 
 				// NOTE(rnp): old gcc will miscompile an assignment
 				memory_copy(cp->xdc_transform.E, pb->parameters.xdc_transform.E, sizeof(cp->xdc_transform));
@@ -1224,32 +1244,6 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 			cp->acquisition_count = pb->parameters.acquisition_count;
 			cp->acquisition_kind  = pb->parameters.acquisition_kind;
 			cp->contrast_mode     = pb->parameters.contrast_mode;
-
-			i64 buffer_size = PING_PONG_BUFFER_SLOTS * round_up_to(cp->rf_size, 64);
-			if (ctx->compute_context.ping_pong_buffer.size < buffer_size) {
-				b32 cuda = cuda_supported();
-				GPUBufferAllocateInfo allocate_info = {
-					.size   = buffer_size,
-					.export = cuda ? &ctx->compute_context.ping_pong_export_handle : 0,
-					.label  = str8("PingPongBuffer"),
-				};
-				gpu_buffer_allocate(&ctx->compute_context.ping_pong_buffer, allocate_info);
-
-				BeamformerShaderResourceInfo shader_resource_infos[] = {
-					{
-						.kind   = BeamformerShaderResourceKind_Buffer,
-						.handle = ctx->compute_context.ping_pong_buffer.handle,
-						.slot   = BeamformerShaderBufferSlot_PingPong,
-					},
-				};
-				vk_bind_shader_resources(shader_resource_infos, countof(shader_resource_infos));
-
-				// TODO(rnp): figure out how to share with CUDA
-				// IMPORTANT: on linux the handle is returned to os and should be cleared after import
-				// see usage of glImportMemoryFdEXT and surrounding code in ui.c for examples
-				if (cuda) {
-				}
-			}
 		}break;
 		}
 	}
@@ -1299,16 +1293,12 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 	case BeamformerShaderKind_Filter:
 	case BeamformerShaderKind_Demodulate:
 	{
-		BeamformerDataKind output_data_kind = cp->shader_descriptors[shader_slot].output_data_kind;
-
-		u64 element_size = beamformer_data_kind_byte_size[output_data_kind];
 		BeamformerFilterPushConstants pc = {
-			.input_data            = shader_slot == 0 ? rf_pointer : pp_input_pointer,
-			.output_element_offset = output_index * pp_size / element_size,
+			.input_buffer = shader_slot == 0 ? rf_pointer : pp_input_pointer,
 		};
 
-		if ((shader_slot + 1) == das_index)
-			pc.output_element_offset = das_output_index * pp_size / element_size;
+		if ((shader_slot + 1) == das_index) pc.output_buffer = pp_das_pointer;
+		else                                pc.output_buffer = pp_output_pointer;
 
 		if (shader_slot != 0 || (shader_slot + 1) == das_index)
 			gpu_command_pipeline_barrier(cmd);
@@ -1320,11 +1310,8 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 	}break;
 
 	case BeamformerShaderKind_DAS:{
-		u64 element_size = beamformer_data_kind_byte_size[cp->shader_descriptors[shader_slot].input_data_kind];
-
 		BeamformerDASPushConstants pc = {
 			.xdc_element_pitch = cp->xdc_element_pitch,
-			.rf_element_offset = das_output_index * pp_size / element_size,
 			.output_frame      = frame->gpu_pointer,
 			.channel_offset    = channel_offset,
 			.readi_group       = cp->readi_group,

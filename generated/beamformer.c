@@ -13,17 +13,6 @@
 #define BeamformerMaxRawDataFramesInFlight (3)
 
 typedef enum {
-	BeamformerShaderResourceKind_Buffer = 0,
-	BeamformerShaderResourceKind_Count,
-} BeamformerShaderResourceKind;
-
-typedef enum {
-	BeamformerShaderBufferSlot_BeamformedData = 0,
-	BeamformerShaderBufferSlot_PingPong       = 1,
-	BeamformerShaderBufferSlot_Count,
-} BeamformerShaderBufferSlot;
-
-typedef enum {
 	BeamformerDecodeMode_None     = 0,
 	BeamformerDecodeMode_Hadamard = 1,
 	BeamformerDecodeMode_Count,
@@ -197,6 +186,7 @@ typedef struct {
 } BeamformerFilterBakeParameters;
 
 typedef struct {
+	u64 RFData;
 	u64 FocalVectors;
 	u64 Hadamard;
 	u64 IncoherentFrame;
@@ -249,8 +239,8 @@ typedef struct {
 } BeamformerDecodePushConstants;
 
 typedef struct {
-	u64 input_data;
-	u32 output_element_offset;
+	u64 input_buffer;
+	u64 output_buffer;
 } BeamformerFilterPushConstants;
 
 typedef struct {
@@ -258,7 +248,6 @@ typedef struct {
 	m4  voxel_transform;
 	v2  xdc_element_pitch;
 	u64 output_frame;
-	u32 rf_element_offset;
 	i32 channel_offset;
 	u32 readi_group;
 } BeamformerDASPushConstants;
@@ -577,10 +566,6 @@ read_only global str8 beamformer_interpolation_mode_strings[] = {
 	str8_comp("Cubic"),
 };
 
-read_only global str8 beamformer_shader_resource_kind_strings[] = {
-	str8_comp("Buffer"),
-};
-
 typedef enum {
 	BeamformerStructKind_DecodeBakeParameters             = 0,
 	BeamformerStructKind_FilterBakeParameters             = 1,
@@ -625,27 +610,28 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{17, 16,  1, 0},
 		{17, 24,  1, 0},
 		{17, 32,  1, 0},
-		{18, 40,  1, 0},
-		{14, 44,  1, 0},
-		{10, 48,  1, 0},
-		{10, 52,  1, 0},
+		{17, 40,  1, 0},
+		{18, 48,  1, 0},
+		{14, 52,  1, 0},
 		{10, 56,  1, 0},
 		{10, 60,  1, 0},
-		{8,  64,  1, 0},
-		{8,  68,  1, 0},
+		{10, 64,  1, 0},
+		{10, 68,  1, 0},
 		{8,  72,  1, 0},
 		{8,  76,  1, 0},
-		{18, 80,  1, 0},
+		{8,  80,  1, 0},
 		{8,  84,  1, 0},
-		{14, 88,  1, 0},
-		{18, 92,  1, 0},
+		{18, 88,  1, 0},
+		{8,  92,  1, 0},
 		{14, 96,  1, 0},
-		{8,  100, 1, 0},
-		{8,  104, 1, 0},
-		{18, 108, 1, 0},
-		{18, 112, 1, 0},
+		{18, 100, 1, 0},
+		{14, 104, 1, 0},
+		{8,  108, 1, 0},
+		{8,  112, 1, 0},
 		{18, 116, 1, 0},
 		{18, 120, 1, 0},
+		{18, 124, 1, 0},
+		{18, 128, 1, 0},
 	},
 	(MetaStructMember []){
 		{17, 0,  1, 0},
@@ -695,6 +681,7 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("OutputTransmitStride"),
 	},
 	(str8 []){
+		str8_comp("RFData"),
 		str8_comp("FocalVectors"),
 		str8_comp("Hadamard"),
 		str8_comp("IncoherentFrame"),
@@ -743,7 +730,7 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 read_only global MetaStructInfo meta_struct_info_by_id[] = {
 	{str8_comp("DecodeBakeParameters"),             11, 48,  0},
 	{str8_comp("FilterBakeParameters"),             13, 56,  0},
-	{str8_comp("DASBakeParameters"),                26, 124, 0},
+	{str8_comp("DASBakeParameters"),                27, 132, 0},
 	{str8_comp("CoherencyWeightingBakeParameters"), 3,  16,  0},
 	{str8_comp("ReshapeBakeParameters"),            9,  36,  0},
 };
@@ -829,20 +816,13 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"};\n"
 	"\n"),
 	str8_comp(""
-	"#define ShaderBufferSlot_BeamformedData 0\n"
-	"#define ShaderBufferSlot_PingPong       1\n"
-	"\n"),
-	str8_comp(""
-	"#define ShaderResourceKind_Buffer 0\n"
-	"\n"),
-	str8_comp(""
 	"#define ComplexFilter ((CompileFlags & (1 << 0)) != 0)\n"
 	"#define Demodulate    ((CompileFlags & (1 << 1)) != 0)\n"
 	"\n"),
 	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
-	"  uint64_t input_data;\n"
-	"  uint32_t output_element_offset;\n"
+	"  uint64_t input_buffer;\n"
+	"  uint64_t output_buffer;\n"
 	"};\n"
 	"\n"),
 	str8_comp("#define MaxChannelCount (256)\n\n"),
@@ -880,7 +860,6 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"  f32mat4  voxel_transform;\n"
 	"  f32vec2  xdc_element_pitch;\n"
 	"  uint64_t output_frame;\n"
-	"  uint32_t rf_element_offset;\n"
 	"  int32_t  channel_offset;\n"
 	"  uint32_t readi_group;\n"
 	"};\n"
@@ -952,19 +931,19 @@ read_only global b8 beamformer_shader_primitive_is_vertex[] = {
 
 read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){0, 1, 2},
-	(i32 []){3, 4, 5, 6},
-	(i32 []){7, 8, 9, 10, 3, 4, 11, 12},
-	(i32 []){13},
-	(i32 []){14, 15},
+	(i32 []){3, 4},
+	(i32 []){5, 6, 7, 8, 9, 10},
+	(i32 []){11},
+	(i32 []){12, 13},
 	0,
-	(i32 []){16},
-	(i32 []){17},
+	(i32 []){14},
+	(i32 []){15},
 };
 
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	3,
-	4,
-	8,
+	2,
+	6,
 	1,
 	2,
 	0,

@@ -7,17 +7,6 @@
 @Constant(16)     MaxParameterBlocks
 @Constant(3)      MaxRawDataFramesInFlight
 
-@Enumeration ShaderResourceKind
-{
-	Buffer
-}
-
-@Enumeration ShaderBufferSlot
-{
-	BeamformedData
-	PingPong
-}
-
 @Enumeration DecodeMode
 {
 	None
@@ -319,10 +308,6 @@
 	`read_only global str8 beamformer_interpolation_mode_strings[] = {`
 	@Expand(InterpolationMode) `	str8_comp("$(name)"),`
 	`};`
-	``
-	`read_only global str8 beamformer_shader_resource_kind_strings[] = {`
-	@Expand(ShaderResourceKind) `	str8_comp("$(name)"),`
-	`};`
 }
 
 @ShaderGroup Compute
@@ -361,9 +346,6 @@
 
 	@Shader(filter.glsl) Filter
 	{
-		@Enumeration ShaderBufferSlot
-		@Enumeration ShaderResourceKind
-
 		@ShaderAlias Demodulate
 
 		@Flags
@@ -391,8 +373,8 @@
 
 		@PushConstants
 		{
-			[input_data            U64]
-			[output_element_offset U32]
+			[input_buffer  U64]
+			[output_buffer U64]
 		}
 	}
 
@@ -403,8 +385,6 @@
 		@Enumeration AcquisitionKind
 		@Enumeration InterpolationMode
 		@Enumeration RCAOrientation
-		@Enumeration ShaderBufferSlot
-		@Enumeration ShaderResourceKind
 
 		@Flags
 		{
@@ -413,6 +393,7 @@
 
 		@Bake
 		{
+			[RFData                      U64]
 			[FocalVectors                U64]
 			[Hadamard                    U64]
 			[IncoherentFrame             U64]
@@ -452,7 +433,6 @@
 			[voxel_transform    M4]
 			[xdc_element_pitch  V2]
 			[output_frame      U64]
-			[rf_element_offset U32]
 			[channel_offset    S32]
 			[readi_group       U32]
 		}
