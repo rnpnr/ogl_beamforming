@@ -111,17 +111,15 @@ SAMPLE_TYPE sample_rf(const int rf_offset, const float index)
 	}break;
 	case InterpolationMode_Linear:{
 		if (index >= 0.f && index < f32(SampleCount - 1)) {
-			float tk, t = modf(index, tk);
-			int n = rf_offset + int(tk);
+			s32 n = rf_offset + int(index);
+			f32 t = fract(index);
 			result = (1 - t) * rf[n] + t * rf[n + 1];
 			result = rotate_iq(result, index / SamplingFrequency);
 		}
 	}break;
 	case InterpolationMode_Cubic:{
-		if (index >= 1.f && index < f32(SampleCount - 2)) {
-			float tk, t = modf(index, tk);
-			result = rotate_iq(cubic(rf_offset + int(index), t), index / SamplingFrequency);
-		}
+		if (index >= 1.f && index < f32(SampleCount - 2))
+			result = rotate_iq(cubic(rf_offset + int(index), fract(index)), index / SamplingFrequency);
 	}break;
 	}
 	return result;
