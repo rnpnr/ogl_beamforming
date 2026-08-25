@@ -2310,8 +2310,8 @@ ui_rebuild_das_transform(u32 parameter_block, i32 dimension, v3 min, v3 max)
 	}
 
 	if (result) {
-		mark_parameter_block_region_dirty(beamformer_context->shared_memory, parameter_block,
-		                                  BeamformerParameterBlockRegion_Parameters);
+		beamformed_shared_memory_dirty_flag(beamformer_context->shared_memory, parameter_block,
+		                                    BeamformerParameterDirtyFlag_Parameters);
 	}
 
 	return result;
@@ -5290,8 +5290,8 @@ beamformer_ui_frame(void)
 			memory_copy(cp->ui_voxel_transform.E, identity.E, sizeof(identity));
 
 			if (recompute) {
-				mark_parameter_block_region_dirty(beamformer_context->shared_memory, selected_block,
-				                                  BeamformerParameterBlockRegion_Parameters);
+				beamformed_shared_memory_dirty_flag(beamformer_context->shared_memory, selected_block,
+				                                    BeamformerParameterDirtyFlag_Parameters);
 				beamformer_queue_compute(beamformer_context,
 				                         beamformer_frame_from_index(beamformer_registers()->frame),
 				                         selected_block);
@@ -5317,8 +5317,8 @@ beamformer_ui_frame(void)
 		if (pb) {
 			ui->flush_parameters = 0;
 			memory_copy(&pb->parameters_ui, &ui->parameters, sizeof(ui->parameters));
-			mark_parameter_block_region_dirty(beamformer_context->shared_memory, selected_block,
-			                                  BeamformerParameterBlockRegion_Parameters);
+			beamformed_shared_memory_dirty_flag(beamformer_context->shared_memory, selected_block,
+			                                    BeamformerParameterDirtyFlag_Parameters);
 			beamformer_parameter_block_unlock(beamformer_context->shared_memory, selected_block);
 			beamformer_queue_compute(beamformer_context,
 			                         beamformer_frame_from_index(beamformer_registers()->frame),

@@ -347,15 +347,14 @@ beamformer_maximum_frames_for_simple_parameters(BeamformerSimpleParameters *bp)
 }
 
 function b32
-parameter_block_region_upload(void *data, u32 size, u32 block, BeamformerParameterBlockRegions region_id,
-                              u32 block_offset, i32 timeout_ms)
+parameter_block_region_upload(void *data, u32 size, u32 block, u32 block_offset, i32 timeout_ms)
 {
 	i32 lock   = BeamformerSharedMemoryLockKind_Count + (i32)block;
 	b32 result = valid_parameter_block(block) && lib_try_lock(lock, timeout_ms);
 	if (result) {
 		memory_copy((u8 *)beamformer_parameter_block(g_beamformer_library_context.bp, block) + block_offset,
 		            data, size);
-		mark_parameter_block_region_dirty(g_beamformer_library_context.bp, block, region_id);
+		beamformed_shared_memory_dirty_flag(g_beamformer_library_context.bp, block, BeamformerParameterDirtyFlag_Parameters);
 		lib_release_lock(lock);
 	}
 	return result;
@@ -368,8 +367,7 @@ beamformer_set_pipeline_stage_parameters_at(u32 stage_index, i32 parameter, u32 
 	offset     += offsetof(BeamformerComputePipeline, parameters);
 	offset     += (stage_index % BeamformerMaxComputeShaderStages) * sizeof(BeamformerShaderParameters);
 	b32 result  = parameter_block_region_upload(&parameter, sizeof(BeamformerShaderParameters), block,
-	                                            BeamformerParameterBlockRegion_ComputePipeline, offset,
-	                                            g_beamformer_library_context.timeout_ms);
+	                                            offset, g_beamformer_library_context.timeout_ms);
 	return result;
 }
 
@@ -389,8 +387,7 @@ beamformer_push_pipeline_at(i32 *shaders, u32 shader_count, BeamformerDataKind d
 		if (valid_parameter_block(block) && lib_try_lock(lock, g_beamformer_library_context.timeout_ms)) {
 			BeamformerParameterBlock *b = beamformer_parameter_block(g_beamformer_library_context.bp, block);
 			memory_copy(&b->pipeline.shaders, shaders, shader_count * sizeof(*shaders));
-			mark_parameter_block_region_dirty(g_beamformer_library_context.bp, block,
-			                                  BeamformerParameterBlockRegion_ComputePipeline);
+			beamformed_shared_memory_dirty_flag(g_beamformer_library_context.bp, block, BeamformerParameterDirtyFlag_Parameters);
 			b->pipeline.shader_count = shader_count;
 			b->pipeline.data_kind    = data_kind;
 			lib_release_lock(lock);
@@ -446,7 +443,6 @@ b32 beamformer_push_##name ##_at(dtype *data, u32 count, u32 block) { \
 	b32 result = 0; \
 	if (lib_error_check(count <= countof(((BeamformerParameterBlock *)0)->name), BufferOverflow)) { \
 		result = parameter_block_region_upload(data, count * elements * sizeof(dtype), block, \
-		                                       BeamformerParameterBlockRegion_##region_name,  \
 		                                       offsetof(BeamformerParameterBlock, name),      \
 		                                       g_beamformer_library_context.timeout_ms);      \
 	} \
@@ -599,12 +595,11 @@ beamformer_push_parameters_at(BeamformerParameters *bp, u32 block)
 	b32 result = check_shared_memory() && validate_parameters(bp);
 	if (result) {
 		result = parameter_block_region_upload(bp, sizeof(*bp), block,
-		                                       BeamformerParameterBlockRegion_Parameters,
 		                                       offsetof(BeamformerParameterBlock, parameters),
 		                                       g_beamformer_library_context.timeout_ms);
 		if (result) {
-			BeamformerParameterBlock *pb = beamformer_parameter_block(g_beamformer_library_context.bp, block);
-			atomic_or_u32(&pb->region_update_flags, 1u << BeamformerParameterRegionFlag_NotifyUI);
+			beamformed_shared_memory_dirty_flag(g_beamformer_library_context.bp, block,
+			                                    BeamformerParameterDirtyFlag_NotifyUI);
 		}
 	}
 	return result;

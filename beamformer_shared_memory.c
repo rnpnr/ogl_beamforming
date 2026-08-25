@@ -1,5 +1,5 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (33UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (34UL)
 
 typedef enum {
 	BeamformerWorkKind_Compute,
@@ -70,10 +70,6 @@ typedef struct {
 	X(SparseElements,              sparse_elements) \
 	X(TransmitReceiveOrientations, transmit_receive_orientations) \
 
-#define BEAMFORMER_PARAMETER_BLOCK_REGION_FLAG_LIST \
-	BEAMFORMER_PARAMETER_BLOCK_REGION_LIST \
-	X(NotifyUI) \
-
 typedef enum {
 	#define X(k, ...) BeamformerParameterBlockRegion_##k,
 	BEAMFORMER_PARAMETER_BLOCK_REGION_LIST
@@ -82,11 +78,10 @@ typedef enum {
 } BeamformerParameterBlockRegions;
 
 typedef enum {
-	#define X(k, ...) BeamformerParameterRegionFlag_##k,
-	BEAMFORMER_PARAMETER_BLOCK_REGION_FLAG_LIST
-	#undef X
-	BeamformerParameterRegionFlag_Count,
-} BeamformerParameterRegionFlags;
+	BeamformerParameterDirtyFlag_Parameters,
+	BeamformerParameterDirtyFlag_NotifyUI,
+	BeamformerParameterDirtyFlag_Count,
+} BeamformerParameterDirtyFlags;
 
 typedef union {
 	u8 filter_slot;
@@ -111,7 +106,7 @@ typedef struct {
 
 	/* NOTE(rnp): signals to the beamformer that a subregion of a block has been updated */
 	u32 region_update_flags;
-	static_assert(BeamformerParameterRegionFlag_Count <= 32, "");
+	static_assert(BeamformerParameterDirtyFlag_Count <= 32, "");
 
 	BeamformerComputePipeline pipeline;
 
@@ -297,10 +292,10 @@ beamformer_shared_memory_data_pointer(BeamformerSharedMemory *sm, i64 shared_mem
 }
 
 function void
-mark_parameter_block_region_dirty(BeamformerSharedMemory *sm, u32 block, BeamformerParameterBlockRegions region)
+beamformed_shared_memory_dirty_flag(BeamformerSharedMemory *sm, u32 block, BeamformerParameterDirtyFlags flag)
 {
 	BeamformerParameterBlock *pb = beamformer_parameter_block(sm, block);
-	atomic_or_u32(&pb->region_update_flags, 1u << region);
+	atomic_or_u32(&pb->region_update_flags, 1u << flag);
 }
 
 function void

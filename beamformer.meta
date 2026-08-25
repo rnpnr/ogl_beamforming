@@ -266,26 +266,8 @@
 @Library @Struct LiveImagingParameters
 @MATLAB  @Struct LiveImagingParameters
 
-@Table([name_upper name_lower type elements]) ComputeArrayParametersTable
-{
-	[FocalVectors                focal_vectors                 V2  MaxChannelCount]
-	[SparseElements              sparse_elements               S16 MaxChannelCount]
-	[TransmitReceiveOrientations transmit_receive_orientations U8  MaxChannelCount]
-}
-
-@Expand(ComputeArrayParametersTable) @Enumeration(`$(name_upper)`) ComputeArrayParametersField
-@Expand(ComputeArrayParametersTable) @Struct([`$(name_lower)` `$(type)` `$(elements)`]) ComputeArrayParameters
-
 @Emit
 {
-	`read_only global u32 beamformer_compute_array_parameter_sizes[] = {`
-	@Expand(ComputeArrayParametersTable) `	sizeof($(%type))$(|)* Beamformer$(elements),`
-	`};`
-	``
-	`read_only global u32 beamformer_compute_array_parameter_offsets[] = {`
-	@Expand(ComputeArrayParametersTable) `	offsetof(BeamformerComputeArrayParameters, $(name_lower)),`
-	`};`
-	``
 	`read_only global u8 beamformer_data_kind_element_size[] = {`
 	@Expand(DataKindTable) `	$(size),`
 	`};`
@@ -424,8 +406,6 @@
 		@Enumeration ShaderBufferSlot
 		@Enumeration ShaderResourceKind
 
-		@Struct      ComputeArrayParameters
-
 		@Flags
 		{
 			CoherencyWeighting
@@ -433,34 +413,37 @@
 
 		@Bake
 		{
-			[ArrayParameters            U64]
-			[IncoherentFrame            U64]
-			[Hadamard                   U64]
-			[AcquisitionKind            U32]
-			[Sparse                     B32]
-			[AcquisitionCount           S32]
-			[ChannelCount               S32]
-			[ChunkChannelCount          S32]
-			[SampleCount                S32]
+			[FocalVectors                U64]
+			[Hadamard                    U64]
+			[IncoherentFrame             U64]
+			[SparseElements              U64]
+			[TransmitReceiveOrientations U64]
 
-			[SamplingFrequency          F32]
-			[DemodulationFrequency      F32]
-			[SpeedOfSound               F32]
-			[TimeOffset                 F32]
-			[InterpolationMode          U32]
-			[FNumber                    F32]
+			[AcquisitionKind             U32]
+			[Sparse                      B32]
+			[AcquisitionCount            S32]
+			[ChannelCount                S32]
+			[ChunkChannelCount           S32]
+			[SampleCount                 S32]
 
-			[SingleOrientation          B32]
-			[TransmitReceiveOrientation U32]
-			[SingleFocus                B32]
-			[FocusDepth                 F32]
-			[TransmitAngle              F32]
+			[SamplingFrequency           F32]
+			[DemodulationFrequency       F32]
+			[SpeedOfSound                F32]
+			[TimeOffset                  F32]
+			[InterpolationMode           U32]
+			[FNumber                     F32]
 
-			[OutputSizeX                U32]
-			[OutputSizeY                U32]
-			[OutputSizeZ                U32]
+			[SingleOrientation           B32]
+			[TransmitReceiveOrientation  U32]
+			[SingleFocus                 B32]
+			[FocusDepth                  F32]
+			[TransmitAngle               F32]
 
-			[ReadiGroupCount            U32]
+			[OutputSizeX                 U32]
+			[OutputSizeY                 U32]
+			[OutputSizeZ                 U32]
+
+			[ReadiGroupCount             U32]
 		}
 
 		@PushConstants

@@ -234,7 +234,6 @@ beamformer_compute_plan_release(BeamformerComputeContext *cc, u32 block)
 	assert(block < countof(cc->compute_plans));
 	BeamformerComputePlan *cp = cc->compute_plans[block];
 	if (cp) {
-		gpu_buffer_release(&cp->array_parameters);
 		gpu_buffer_release(&cp->gpu_temp_arena);
 		cc->compute_plans[block] = 0;
 		SLLPushFreelist(cp, cc->compute_plan_freelist);
@@ -346,19 +345,6 @@ beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena
 		cc->compute_plans[block] = result;
 
 		result->ui_voxel_transform = m4_identity();
-
-		Stream label = arena_stream(arena);
-		stream_append_str8(&label, str8("ComputeParameterArray["));
-		stream_append_u64(&label, block);
-		stream_append_str8(&label, str8("]"));
-
-		GPUBufferAllocateInfo allocate_info = {
-			.size  = sizeof(BeamformerComputeArrayParameters),
-			.flags = VulkanUsageFlag_HostReadWrite,
-			.label = stream_to_str8(&label),
-		};
-		gpu_buffer_allocate(&result->array_parameters, allocate_info);
-		assert((result->array_parameters.gpu_pointer & 63) == 0);
 	}
 	return result;
 }
@@ -896,7 +882,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->TransmitAngle         = pb->parameters.focal_vector.E[0];
 				db->FocusDepth            = pb->parameters.focal_vector.E[1];
 				db->ReadiGroupCount       = pb->parameters.readi_group_count;
-				db->ArrayParameters       = cp->array_parameters.gpu_pointer;
 				db->OutputSizeX           = cp->output_points.x;
 				db->OutputSizeY           = cp->output_points.y;
 				db->OutputSizeZ           = cp->output_points.z;
@@ -921,6 +906,27 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				sd->compile_flags |= BeamformerDASCompileFlags_CoherencyWeighting * pb->parameters.coherency_weighting;
 				sd->layout   = layout_for_output(cp->output_points);
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
+
+				if (id != BeamformerAcquisitionKind_UFORCES && id != BeamformerAcquisitionKind_FORCES && !db->SingleFocus) {
+					gpu_resource_push(resource_builder, v2, db->AcquisitionCount,
+					                  .store = &db->FocalVectors,
+					                  .data  = pb->focal_vectors,
+					                  .name  = str8("focal_vectors"));
+				}
+
+				if (id != BeamformerAcquisitionKind_UFORCES && id != BeamformerAcquisitionKind_FORCES && !db->SingleOrientation) {
+					gpu_resource_push(resource_builder, u8, db->AcquisitionCount,
+					                  .store = &db->TransmitReceiveOrientations,
+					                  .data  = pb->transmit_receive_orientations,
+					                  .name  = str8("transmit_receive_orientations"));
+				}
+
+				if (db->Sparse) {
+					gpu_resource_push(resource_builder, i16, db->AcquisitionCount,
+					                  .store = &db->SparseElements,
+					                  .data  = pb->sparse_elements,
+					                  .name  = str8("sparse_elements"));
+				}
 
 				if (pb->parameters.coherency_weighting) {
 					gpu_resource_push(resource_builder, u32, 0,
@@ -1198,22 +1204,15 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 	{
 		pb->region_update_flags &= ~(1ul << region);
 		switch (region) {
-		case BeamformerParameterRegionFlag_NotifyUI:{
+		case BeamformerParameterDirtyFlag_NotifyUI:{
 			atomic_store_u32(&ctx->ui_dirty_parameter_blocks, 1u << block);
 		}break;
 
-		case BeamformerParameterRegionFlag_ComputePipeline:
-		case BeamformerParameterRegionFlag_Parameters:
-		{
+		case BeamformerParameterDirtyFlag_Parameters:{
 			cp->output_points  = das_valid_points(pb->parameters.output_points.xyz);
 			cp->average_frames = pb->parameters.output_points.E[3];
 
 			plan_compute_pipeline(cp, pb, scratch);
-
-			/* NOTE(rnp): these are both handled by plan_compute_pipeline() */
-			u32 mask = 1 << BeamformerParameterBlockRegion_ComputePipeline |
-			           1 << BeamformerParameterBlockRegion_Parameters;
-			pb->region_update_flags &= ~mask;
 
 			for (u32 shader_slot = 0; shader_slot < cp->pipeline.shader_count; shader_slot++) {
 				u128 hash = u128_hash_from_data(cp->shader_descriptors + shader_slot, sizeof(BeamformerShaderDescriptor));
@@ -1250,36 +1249,6 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 				// see usage of glImportMemoryFdEXT and surrounding code in ui.c for examples
 				if (cuda) {
 				}
-			}
-		}break;
-
-		case BeamformerParameterBlockRegion_ChannelMapping:{
-			cuda_set_channel_mapping(pb->channel_mapping);
-		}break;
-
-		case BeamformerParameterRegionFlag_FocalVectors:
-		case BeamformerParameterRegionFlag_SparseElements:
-		case BeamformerParameterRegionFlag_TransmitReceiveOrientations:
-		{
-			u32 kind = BeamformerComputeArrayParametersField_Count;
-			switch (region) {
-			case BeamformerParameterRegionFlag_TransmitReceiveOrientations:{
-				kind = BeamformerComputeArrayParametersField_TransmitReceiveOrientations;
-			}break;
-			case BeamformerParameterBlockRegion_FocalVectors:{
-				kind = BeamformerComputeArrayParametersField_FocalVectors;
-			}break;
-			case BeamformerParameterBlockRegion_SparseElements:{
-				kind = BeamformerComputeArrayParametersField_SparseElements;
-			}break;
-			InvalidDefaultCase;
-			}
-
-			if (kind != BeamformerComputeArrayParametersField_Count) {
-				GPUBuffer *b = &cp->array_parameters;
-				u64 offset = beamformer_compute_array_parameter_offsets[kind];
-				u64 size   = beamformer_compute_array_parameter_sizes[kind];
-				gpu_buffer_range_upload(b, (u8 *)pb + BeamformerParameterBlockRegionOffsets[region], offset, size, 0);
 			}
 		}break;
 		}

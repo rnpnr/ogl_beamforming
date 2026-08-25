@@ -316,7 +316,6 @@ struct BeamformerComputePlan {
 
 	u32  readi_group;
 
-	GPUBuffer array_parameters;
 	GPUBuffer gpu_temp_arena;
 
 	BeamformerFilterParameters filter_parameters[BeamformerFilterSlots];

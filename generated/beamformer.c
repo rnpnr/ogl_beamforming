@@ -114,13 +114,6 @@ typedef enum {
 } BeamformerLiveFeedbackFlags;
 
 typedef enum {
-	BeamformerComputeArrayParametersField_FocalVectors                = 0,
-	BeamformerComputeArrayParametersField_SparseElements              = 1,
-	BeamformerComputeArrayParametersField_TransmitReceiveOrientations = 2,
-	BeamformerComputeArrayParametersField_Count,
-} BeamformerComputeArrayParametersField;
-
-typedef enum {
 	BeamformerLiveImagingDirtyFlags_ImagePlaneOffsets = 1 << 0,
 	BeamformerLiveImagingDirtyFlags_TransmitPower     = 1 << 1,
 	BeamformerLiveImagingDirtyFlags_TGCControlPoints  = 1 << 2,
@@ -204,9 +197,11 @@ typedef struct {
 } BeamformerFilterBakeParameters;
 
 typedef struct {
-	u64 ArrayParameters;
-	u64 IncoherentFrame;
+	u64 FocalVectors;
 	u64 Hadamard;
+	u64 IncoherentFrame;
+	u64 SparseElements;
+	u64 TransmitReceiveOrientations;
 	u32 AcquisitionKind;
 	b32 Sparse;
 	i32 AcquisitionCount;
@@ -460,12 +455,6 @@ typedef struct {
 	u8  save_name_tag[128];
 } BeamformerLiveImagingParameters;
 
-typedef struct {
-	v2  focal_vectors[BeamformerMaxChannelCount];
-	i16 sparse_elements[BeamformerMaxChannelCount];
-	u8  transmit_receive_orientations[BeamformerMaxChannelCount];
-} BeamformerComputeArrayParameters;
-
 typedef union {
 	BeamformerDecodeBakeParameters             Decode;
 	BeamformerFilterBakeParameters             Filter;
@@ -473,18 +462,6 @@ typedef union {
 	BeamformerCoherencyWeightingBakeParameters CoherencyWeighting;
 	BeamformerReshapeBakeParameters            Reshape;
 } BeamformerShaderBakeParameters;
-
-read_only global u32 beamformer_compute_array_parameter_sizes[] = {
-	sizeof(v2)  * BeamformerMaxChannelCount,
-	sizeof(i16) * BeamformerMaxChannelCount,
-	sizeof(u8)  * BeamformerMaxChannelCount,
-};
-
-read_only global u32 beamformer_compute_array_parameter_offsets[] = {
-	offsetof(BeamformerComputeArrayParameters, focal_vectors),
-	offsetof(BeamformerComputeArrayParameters, sparse_elements),
-	offsetof(BeamformerComputeArrayParameters, transmit_receive_orientations),
-};
 
 read_only global u8 beamformer_data_kind_element_size[] = {
 	2,
@@ -646,27 +623,29 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{17, 0,   1, 0},
 		{17, 8,   1, 0},
 		{17, 16,  1, 0},
-		{18, 24,  1, 0},
-		{14, 28,  1, 0},
-		{10, 32,  1, 0},
-		{10, 36,  1, 0},
-		{10, 40,  1, 0},
-		{10, 44,  1, 0},
-		{8,  48,  1, 0},
-		{8,  52,  1, 0},
-		{8,  56,  1, 0},
-		{8,  60,  1, 0},
-		{18, 64,  1, 0},
+		{17, 24,  1, 0},
+		{17, 32,  1, 0},
+		{18, 40,  1, 0},
+		{14, 44,  1, 0},
+		{10, 48,  1, 0},
+		{10, 52,  1, 0},
+		{10, 56,  1, 0},
+		{10, 60,  1, 0},
+		{8,  64,  1, 0},
 		{8,  68,  1, 0},
-		{14, 72,  1, 0},
-		{18, 76,  1, 0},
-		{14, 80,  1, 0},
+		{8,  72,  1, 0},
+		{8,  76,  1, 0},
+		{18, 80,  1, 0},
 		{8,  84,  1, 0},
-		{8,  88,  1, 0},
+		{14, 88,  1, 0},
 		{18, 92,  1, 0},
-		{18, 96,  1, 0},
-		{18, 100, 1, 0},
-		{18, 104, 1, 0},
+		{14, 96,  1, 0},
+		{8,  100, 1, 0},
+		{8,  104, 1, 0},
+		{18, 108, 1, 0},
+		{18, 112, 1, 0},
+		{18, 116, 1, 0},
+		{18, 120, 1, 0},
 	},
 	(MetaStructMember []){
 		{17, 0,  1, 0},
@@ -716,9 +695,11 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("OutputTransmitStride"),
 	},
 	(str8 []){
-		str8_comp("ArrayParameters"),
-		str8_comp("IncoherentFrame"),
+		str8_comp("FocalVectors"),
 		str8_comp("Hadamard"),
+		str8_comp("IncoherentFrame"),
+		str8_comp("SparseElements"),
+		str8_comp("TransmitReceiveOrientations"),
 		str8_comp("AcquisitionKind"),
 		str8_comp("Sparse"),
 		str8_comp("AcquisitionCount"),
@@ -762,7 +743,7 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 read_only global MetaStructInfo meta_struct_info_by_id[] = {
 	{str8_comp("DecodeBakeParameters"),             11, 48,  0},
 	{str8_comp("FilterBakeParameters"),             13, 56,  0},
-	{str8_comp("DASBakeParameters"),                24, 108, 0},
+	{str8_comp("DASBakeParameters"),                26, 124, 0},
 	{str8_comp("CoherencyWeightingBakeParameters"), 3,  16,  0},
 	{str8_comp("ReshapeBakeParameters"),            9,  36,  0},
 };
@@ -891,18 +872,6 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"#define RCAOrientation_Columns 2\n"
 	"\n"),
 	str8_comp(""
-	"struct ComputeArrayParameters {\n"
-	"  f32vec2 focal_vectors[MaxChannelCount];\n"
-	"  int16_t sparse_elements[MaxChannelCount];\n"
-	"  uint8_t transmit_receive_orientations[MaxChannelCount];\n"
-	"};\n"
-	"layout(std430, buffer_reference) buffer ComputeArrayParametersReference {\n"
-	"  f32vec2 focal_vectors[MaxChannelCount];\n"
-	"  int16_t sparse_elements[MaxChannelCount];\n"
-	"  uint8_t transmit_receive_orientations[MaxChannelCount];\n"
-	"};\n"
-	"\n"),
-	str8_comp(""
 	"#define CoherencyWeighting ((CompileFlags & (1 << 0)) != 0)\n"
 	"\n"),
 	str8_comp(""
@@ -984,18 +953,18 @@ read_only global b8 beamformer_shader_primitive_is_vertex[] = {
 read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){0, 1, 2},
 	(i32 []){3, 4, 5, 6},
-	(i32 []){7, 8, 9, 10, 3, 4, 11, 12, 13},
-	(i32 []){14},
-	(i32 []){15, 16},
+	(i32 []){7, 8, 9, 10, 3, 4, 11, 12},
+	(i32 []){13},
+	(i32 []){14, 15},
 	0,
+	(i32 []){16},
 	(i32 []){17},
-	(i32 []){18},
 };
 
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	3,
 	4,
-	9,
+	8,
 	1,
 	2,
 	0,

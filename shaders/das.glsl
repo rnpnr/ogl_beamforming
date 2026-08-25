@@ -43,7 +43,11 @@ layout(std430, buffer_reference) buffer IncoherentOutput {
 	f32 x[];
 };
 
-layout(std430, buffer_reference) buffer F16 { f16 x[]; };
+layout(std430, buffer_reference) buffer F16 { f16  x[]; };
+layout(std430, buffer_reference) buffer F32 { f32  x[]; };
+layout(std430, buffer_reference) buffer S16 { s16  x[]; };
+layout(std430, buffer_reference) buffer U8  { u8   x[]; };
+layout(std430, buffer_reference) buffer V2  { vec2 x[]; };
 
 #define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
 #define TX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 4, 4)
@@ -172,15 +176,13 @@ float cylindrical_wave_transmit_distance(const vec3 point, const float focal_dep
 u8 tx_rx_orientation_for_acquisition(const s32 acquisition)
 {
 	u8 result = u8(TransmitReceiveOrientation);
-	ComputeArrayParametersReference dp = ComputeArrayParametersReference(ArrayParameters);
-	if (!SingleOrientation) result = dp.transmit_receive_orientations[acquisition];
+	if (!SingleOrientation) result = U8(TransmitReceiveOrientations).x[acquisition];
 	return result;
 }
 
 f32vec2 focal_vector_for_acquisition(const s32 acquisition)
 {
-	ComputeArrayParametersReference dp = ComputeArrayParametersReference(ArrayParameters);
-	f32vec2 result = SingleFocus ? f32vec2(TransmitAngle, FocusDepth) : dp.focal_vectors[acquisition];
+	f32vec2 result = SingleFocus ? f32vec2(TransmitAngle, FocusDepth) : V2(FocalVectors).x[acquisition];
 	return result;
 }
 
@@ -232,8 +234,6 @@ RESULT_TYPE RCA(const vec3 world_point)
 
 RESULT_TYPE HERCULES(const vec3 world_point)
 {
-	ComputeArrayParametersReference dp = ComputeArrayParametersReference(ArrayParameters);
-
 	const u8   tx_rx_orientation = tx_rx_orientation_for_acquisition(0);
 	const bool rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
 	const vec2 focal_vector      = focal_vector_for_acquisition(0);
@@ -260,7 +260,7 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 		else         element_receive_delta_squared.y *= element_receive_delta_squared.y;
 
 		for (f32 transmit = f32(Sparse); transmit < f32(AcquisitionCount); transmit += 1.f) {
-			f32 tx_channel = Sparse ? f32(dp.sparse_elements[s32(transmit) - s32(Sparse)]) : transmit;
+			f32 tx_channel = Sparse ? f32(S16(SparseElements).x[s32(transmit) - s32(Sparse)]) : transmit;
 
 			if (rx_cols) element_receive_delta_squared.y  = xy_world_point.y - tx_channel * xdc_element_pitch.y;
 			else         element_receive_delta_squared.x  = xy_world_point.x - tx_channel * xdc_element_pitch.x;
@@ -289,8 +289,6 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
-	ComputeArrayParametersReference dp = ComputeArrayParametersReference(ArrayParameters);
-
 	float z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
 	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;
 	float transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
@@ -307,7 +305,7 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 			f32 receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
 			f32 apodization   = apodize(a_arg);
 			for (f32 transmit = f32(Sparse); transmit < f32(AcquisitionCount); transmit += 1.f) {
-				f32 tx_channel = Sparse ? f32(dp.sparse_elements[s32(transmit) - s32(Sparse)]) : transmit;
+				f32 tx_channel = Sparse ? f32(S16(SparseElements).x[s32(transmit) - s32(Sparse)]) : transmit;
 				f32 transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_channel;
 				f32 transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
 
