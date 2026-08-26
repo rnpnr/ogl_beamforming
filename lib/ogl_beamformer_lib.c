@@ -541,15 +541,13 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 							#undef X
 						};
 
-						// TODO(rnp): HACK: for some unknown reason loading contrast data after loading
-						// non-contrast data causes the dataset to not be stored correctly (it looks
-						// like mix of the old and new dataset). Putting this here fixes the issue.
-						// Counter-intuitively this improves throughput on my zen4 test computer,
-						// however it obviously should not be needed.
-						memory_clear(memory, 0, out_channel_stride);
-
-						u32 sample_count = bp->sample_count * beamformer_data_kind_element_count[data_kind];
-						reduce_a1s2_fn_table[reduce_a1s2_index_map[data_kind]](memory, (u8 *)data + in_off, sample_count);
+						u32 sample_count       = bp->sample_count * beamformer_data_kind_element_count[data_kind];
+						u32 acquisition_stride = sample_count * beamformer_data_kind_element_size[data_kind];
+						for (u32 acquisition = 0; acquisition < bp->acquisition_count; acquisition++) {
+							void *out = memory + acquisition * acquisition_stride;
+							void *in  = (u8 *)data + in_off + 3 * acquisition * acquisition_stride;
+							reduce_a1s2_fn_table[reduce_a1s2_index_map[data_kind]](out, in, sample_count);
+						}
 					}break;
 					}
 				}
