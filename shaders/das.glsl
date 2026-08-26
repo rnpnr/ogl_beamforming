@@ -244,36 +244,33 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 	const vec2 focal_vector      = focal_vector_for_acquisition(0);
 	const vec3 xdc_world_point   = (xdc_transform * vec4(world_point, 1)).xyz;
 
-	const float transmit_index   = sample_index(rca_transmit_distance(world_point, focal_vector, tx_rx_orientation));
-	const float z_delta_squared  = xdc_world_point.z * xdc_world_point.z;
-	const float f_number_over_z  = abs(FNumber / xdc_world_point.z);
-	const vec2  xy_world_point   = xdc_world_point.xy;
-	const float apodization_test = 0.25f / (f_number_over_z * f_number_over_z);
+	const f32 transmit_index   = sample_index(rca_transmit_distance(world_point, focal_vector, tx_rx_orientation));
+	const f32 z_delta_squared  = xdc_world_point.z * xdc_world_point.z;
+	const f32 f_number_over_z  = abs(FNumber / xdc_world_point.z);
+	const f32 apodization_test = 0.25f / (f_number_over_z * f_number_over_z);
+
+	const f32 rx_world_point   = xdc_world_point[s32(!rx_cols)];
+	const f32 tx_world_point   = xdc_world_point[s32(rx_cols)];
+	const f32 rx_pitch         = xdc_element_pitch[s32(!rx_cols)];
+	const f32 tx_pitch         = xdc_element_pitch[s32(rx_cols)];
 
 	RESULT_TYPE result = RESULT_TYPE(0);
 	for (f32 chunk_channel = 0.f; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.f) {
 		f32 rx_channel  = f32(channel_offset) + chunk_channel;
+
+		f32 element_receive_delta_squared = rx_world_point - rx_channel * rx_pitch;
+		element_receive_delta_squared *= element_receive_delta_squared;
+
 		u64 rf_pointer  = RFData + InputDataKindByteSize * (u32(chunk_channel) * SampleCount * AcquisitionCount + u32(Sparse) * SampleCount);
 		rf_pointer     -= InputDataKindByteSize * u32(InterpolationMode == InterpolationMode_Cubic);
-
-		// NOTE(rnp): this wouldn't be so messy if we just forced an orientation like with FORCES
-		vec2 element_receive_delta_squared = xy_world_point;
-		if (rx_cols) element_receive_delta_squared.x -= rx_channel * xdc_element_pitch.x;
-		else         element_receive_delta_squared.y -= rx_channel * xdc_element_pitch.y;
-
-		if (rx_cols) element_receive_delta_squared.x *= element_receive_delta_squared.x;
-		else         element_receive_delta_squared.y *= element_receive_delta_squared.y;
 
 		for (f32 transmit = f32(Sparse); transmit < f32(AcquisitionCount); transmit += 1.f) {
 			f32 tx_channel = Sparse ? f32(S16(SparseElements).x[s32(transmit) - s32(Sparse)]) : transmit;
 
-			if (rx_cols) element_receive_delta_squared.y  = xy_world_point.y - tx_channel * xdc_element_pitch.y;
-			else         element_receive_delta_squared.x  = xy_world_point.x - tx_channel * xdc_element_pitch.x;
+			f32 element_transmit_delta_squared = tx_world_point - tx_channel * tx_pitch;
+			element_transmit_delta_squared *= element_transmit_delta_squared;
 
-			if (rx_cols) element_receive_delta_squared.y *= element_receive_delta_squared.y;
-			else         element_receive_delta_squared.x *= element_receive_delta_squared.x;
-
-			float element_delta_squared = element_receive_delta_squared.x + element_receive_delta_squared.y;
+			f32 element_delta_squared = element_transmit_delta_squared + element_receive_delta_squared;
 			if (element_delta_squared < apodization_test) {
 				/* NOTE: tribal knowledge */
 				float apodization = transmit == 0 ? inversesqrt(float(AcquisitionCount)) : 1.0f;
