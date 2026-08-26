@@ -2918,7 +2918,7 @@ gpu_read_timestamps(GPUTimeline timeline, u64 *count, Arena *arena)
 				gpu_host_wait_timeline(timeline, vcp->last_submission_values[index], -1ULL);
 
 				vkGetQueryPoolResults(vk->device, vcp->query_pool, index * MaxCommandBufferTimestamps, *count,
-				                      *count * sizeof(u64), result, 8, VK_QUERY_RESULT_WAIT_BIT);
+				                      *count * sizeof(u64), result, 8, VK_QUERY_RESULT_64_BIT|VK_QUERY_RESULT_WAIT_BIT);
 			}
 		}
 	}
