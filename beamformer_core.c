@@ -1278,7 +1278,7 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 		if ((shader_slot + 1) == das_index) pc.output_buffer = pp_das_pointer;
 		else                                pc.output_buffer = pp_output_pointer;
 
-		gpu_command_pipeline_barrier(cmd);
+		gpu_command_pipeline_barrier(cmd, 0);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
 
@@ -1301,7 +1301,7 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 		else                                pc.output_buffer = pp_output_pointer;
 
 		if (shader_slot != 0 || (shader_slot + 1) == das_index)
-			gpu_command_pipeline_barrier(cmd);
+			gpu_command_pipeline_barrier(cmd, 0);
 
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
@@ -1319,14 +1319,14 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 		memory_copy(pc.voxel_transform.E, cp->das_voxel_transform.E, sizeof(pc.voxel_transform));
 		memory_copy(pc.xdc_transform.E,   cp->xdc_transform.E,       sizeof(pc.xdc_transform));
 
-		gpu_command_pipeline_barrier(cmd);
+		gpu_command_pipeline_barrier(cmd, 0);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
 	}break;
 
 	case BeamformerShaderKind_CoherencyWeighting:{
 		BeamformerCoherencyWeightingPushConstants pc = {.coherent_sum = frame->gpu_pointer};
-		gpu_command_pipeline_barrier(cmd);
+		gpu_command_pipeline_barrier(cmd, 0);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
 	}break;
@@ -1344,7 +1344,7 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 		if ((shader_slot + 1) == das_index) pc.output_buffer = pp_das_pointer;
 		else                                pc.output_buffer = pp_output_pointer;
 
-		gpu_command_pipeline_barrier(cmd);
+		gpu_command_pipeline_barrier(cmd, 0);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
 

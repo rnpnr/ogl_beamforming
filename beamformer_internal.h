@@ -173,7 +173,7 @@ DEBUG_IMPORT GPUCommandList  gpu_command_list_begin(GPUTimeline timeline);
 DEBUG_IMPORT u64             gpu_command_list_end(GPUCommandList command, VulkanHandle wait_semaphore, VulkanHandle finished_semaphore);
 
 DEBUG_IMPORT void            gpu_command_bind_pipeline(GPUCommandList command, VulkanHandle pipeline);
-DEBUG_IMPORT void            gpu_command_pipeline_barrier(GPUCommandList command);
+DEBUG_IMPORT void            gpu_command_pipeline_barrier(GPUCommandList command, b32 memory);
 DEBUG_IMPORT void            gpu_command_clear_buffer(GPUCommandList command, GPUBuffer *buffer, u64 offset, u64 size, u32 clear_word);
 DEBUG_IMPORT void            gpu_command_dispatch_compute(GPUCommandList command, uv3 dispatch);
 DEBUG_IMPORT void            gpu_command_push_constants(GPUCommandList command, u32 offset, u32 size, void *values);
