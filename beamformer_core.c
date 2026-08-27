@@ -916,9 +916,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				memory_copy(cp->das_voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));
 
 				u32 id = pb->parameters.acquisition_kind;
-				if (id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_FORCES)
-					cp->das_voxel_transform = m4_mul(cp->xdc_transform, cp->das_voxel_transform);
-
 				db->Sparse = id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES;
 				db->SingleFocus        = pb->parameters.single_focus;
 				db->SingleOrientation  = pb->parameters.single_orientation;

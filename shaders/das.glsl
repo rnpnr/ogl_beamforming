@@ -287,18 +287,22 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 	return result;
 }
 
-RESULT_TYPE FORCES(const vec3 xdc_world_point)
+RESULT_TYPE FORCES(const vec3 world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
-	float z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
-	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;
-	float transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
+	const vec3 xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
+
+	// TODO(rnp): the sign of the origin offset might be flipped
+	f32 origin_offset       = FocusDepth * tan(radians(TransmitAngle));
+	f32 transmit_y_delta    = world_point.y + origin_offset;
+	f32 z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
+	f32 transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
 
 	for (f32 chunk_channel = 0; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.f) {
-		float rx_channel      = f32(channel_offset) + chunk_channel;
-		float receive_x_delta = xdc_world_point.x - rx_channel * xdc_element_pitch.x;
-		float a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
+		f32 rx_channel      = f32(channel_offset) + chunk_channel;
+		f32 receive_x_delta = xdc_world_point.x - rx_channel * xdc_element_pitch.x;
+		f32 a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
 
 		if (a_arg < 0.5f) {
 			u64 rf_pointer  = RFData + InputDataKindByteSize * (u32(chunk_channel) * SampleCount * AcquisitionCount + u32(Sparse) * SampleCount);
@@ -320,13 +324,17 @@ RESULT_TYPE FORCES(const vec3 xdc_world_point)
 	return result;
 }
 
-RESULT_TYPE READI_FORCES(const vec3 xdc_world_point)
+RESULT_TYPE READI_FORCES(const vec3 world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
-	float z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
-	float transmit_y_delta    = xdc_world_point.y - xdc_element_pitch.y * ChannelCount / 2;
-	float transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
+	const vec3 xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
+
+	// TODO(rnp): the sign of the origin offset might be flipped
+	f32 origin_offset       = FocusDepth * tan(radians(TransmitAngle));
+	f32 transmit_y_delta    = world_point.y + origin_offset;
+	f32 z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
+	f32 transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
 
 	// NOTE(tkh): The row we use matches the acquisition group, the column is the element group we are beamforming.
 	s32 hadamard_offset = s32(readi_group) * s32(ReadiGroupCount);
