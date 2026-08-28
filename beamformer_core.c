@@ -1,5 +1,9 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: lib: perform conversion from S16->F16 while copying
+ * [ ]: bug: out of bounds reads and extra computation when ChunkChannelCount is not a multiple
+ *      of (receive) ChannelCount.
+ *      - probably won't show up with any of our arrays anytime soon but should be fixed
  * [ ]: backtrace dumping on SIGSEGV
  * [ ]: cooperative shared memory loading in decode shader
  * [ ]: refactor: save filter parameters with rest of parameters, whole slot thing is dumb
@@ -39,18 +43,6 @@
  *         1. Maximize value of wire target
  *         2. Maximize value of single cyst contrast
  *
- * [ ]: Need somewhere to store display image temporaries
- *    - Coherency Weighting needs somewhere to put its incoherent sum
- *    - Image Averaging needs to put its output somewhere
- *    - Recursive imaging needs to be able to sum/subtract to update on each recursion step
- *    - Power doppler needs somewhere to store current power map
- *    - We don't need a backlog of these but it may be useful to have a front and back buffer
- *      so that the UI always sees consistent state
- *    - Really what we want is a separate temp (GPU) arena that gets recreated on
- *      pipeline creation (in plan_compute_pipeline()).
- *    - NOTE: image offsets/etc needed below don't have a predefined sizes so they would
- *      also be a candidates for storage in GPU temp arena.
- *
  * [ ]: Recursive Imaging Handling
  *    [ ]: add array of image offsets to Compute Array Parameters
  *    [ ]: add array of weighting coeffiecents to Compute Array Parameters
@@ -74,33 +66,6 @@
 #endif
 
 #include "beamformer_internal.h"
-
-typedef struct BeamformerComputeGraphNode BeamformerComputeGraphNode;
-struct BeamformerComputeGraphNode {
-	// NOTE(rnp): will be BeamformerShaderKind_Count for root node
-	BeamformerShaderKind kind;
-
-	// NOTE(rnp): when any of input or output stride is assigned it is assumed that
-	// the shader requires a fixed layout for input, output, or both. When two adjacent
-	// nodes require incompatible layouts the second pass over the graph will insert
-	// Reshape shaders in between.
-	BeamformerDataKind input_data_kind;
-	iv3                input_stride;
-
-	BeamformerDataKind output_data_kind;
-	iv3                output_stride;
-
-	i32                user_pipeline_index;
-
-	BeamformerComputeGraphNode *prev;
-	BeamformerComputeGraphNode *next;
-};
-
-typedef struct {
-	BeamformerComputeGraphNode *first;
-	BeamformerComputeGraphNode *last;
-	u64                         count;
-} BeamformerComputeGraph;
 
 #define GPU_RESOURCE_HASH_TABLE_COUNT 256
 typedef struct U64ReferenceNode U64ReferenceNode;
@@ -502,6 +467,35 @@ dispatch_for_output(uv3 layout, iv3 points)
 	return result;
 }
 
+typedef struct BeamformerComputeGraphNode BeamformerComputeGraphNode;
+struct BeamformerComputeGraphNode {
+	// NOTE(rnp): will be BeamformerShaderKind_Count for root node
+	BeamformerShaderKind kind;
+
+	// NOTE(rnp): when any of input or output stride is assigned it is assumed that
+	// the shader requires a fixed layout for input, output, or both. When two adjacent
+	// nodes require incompatible layouts the second pass over the graph will insert
+	// Reshape shaders in between.
+	BeamformerDataKind input_data_kind;
+	iv3                input_stride;
+
+	BeamformerDataKind output_data_kind;
+	iv3                output_stride;
+
+	b32                requires_fp_input;
+
+	i32                user_pipeline_index;
+
+	BeamformerComputeGraphNode *prev;
+	BeamformerComputeGraphNode *next;
+};
+
+typedef struct {
+	BeamformerComputeGraphNode *first;
+	BeamformerComputeGraphNode *last;
+	u64                         count;
+} BeamformerComputeGraph;
+
 function b32
 compute_plan_push_shader(BeamformerComputePlan *p, BeamformerComputeGraphNode *node, BeamformerShaderParameters *sp)
 {
@@ -609,6 +603,15 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		[BeamformerDataKind_Float32Complex] = BeamformerDataKind_Float32,
 	};
 
+	read_only local_persist BeamformerDataKind data_kind_to_fp_kind[] = {
+		[BeamformerDataKind_Int16]          = BeamformerDataKind_Float16,
+		[BeamformerDataKind_Float16]        = BeamformerDataKind_Float16,
+		[BeamformerDataKind_Float32]        = BeamformerDataKind_Float32,
+		[BeamformerDataKind_Int16Complex]   = BeamformerDataKind_Float16Complex,
+		[BeamformerDataKind_Float16Complex] = BeamformerDataKind_Float16Complex,
+		[BeamformerDataKind_Float32Complex] = BeamformerDataKind_Float32Complex,
+	};
+
 	//////////////////////////////////////
 	// NOTE(rnp): First Pass: build initial graph and insert hard layout constraints
 	BeamformerComputeGraph graph = {0};
@@ -652,9 +655,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 			                      (acquisition_count   % 16 == 0) &&
 			                      (chunk_channel_count % 16 == 0);
 
+			node->requires_fp_input = 1;
+
 			// NOTE(rnp): fixed input layout required for reasonable performance
-			if (low_precision && beamformer_data_kind_complex[input_data_kind])
-				node->input_data_kind = BeamformerDataKind_Float16Complex;
 			node->input_stride.x = chunk_channel_count * acquisition_count;
 			node->input_stride.y = acquisition_count;
 			node->input_stride.z = 1;
@@ -667,7 +670,12 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		}break;
 
 		case BeamformerShaderKind_DAS:{
-			node->input_data_kind  = das_data_kind;
+			// NOTE(rnp): if we aren't decoding we can let the previous stage's
+			// data kind pass through as long as it is floating point
+			node->requires_fp_input = 1;
+			if (pb->parameters.decode_mode != BeamformerDecodeMode_None)
+				node->input_data_kind = das_data_kind;
+
 			node->input_stride.x   = 1;                                      // Sample Stride
 			node->input_stride.y   = input_sample_count * acquisition_count; // Channel Stride
 			node->input_stride.z   = input_sample_count;                     // Receive Event Stride
@@ -720,6 +728,12 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 			if (prev_output_dont_care && input_dont_care)
 				node->input_data_kind = node->prev->output_data_kind = node->prev->input_data_kind;
+
+			if (node->requires_fp_input) {
+				node->input_data_kind = data_kind_to_fp_kind[node->input_data_kind];
+				if (prev_output_dont_care)
+					node->prev->output_data_kind = node->input_data_kind;
+			}
 
 			needs_reshape |= node->input_data_kind != node->prev->output_data_kind;
 		}

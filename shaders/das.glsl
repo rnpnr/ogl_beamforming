@@ -1,12 +1,12 @@
 /* See LICENSE for license details. */
-#if   InputDataKind == DataKind_Float32
+#if   InputDataKind == DataKind_Float32 || InputDataKind == DataKind_Float16
   #if CoherencyWeighting
     #define RESULT_TYPE               vec2
     #define RESULT_COHERENT_CAST(a)   (a).x
     #define RESULT_INCOHERENT_CAST(a) (a).y
   #endif
   #define SAMPLE_TYPE f32
-#elif InputDataKind == DataKind_Float32Complex
+#elif InputDataKind == DataKind_Float32Complex || InputDataKind == DataKind_Float16Complex
   #if CoherencyWeighting
     #define RESULT_TYPE               vec3
     #define RESULT_COHERENT_CAST(a)   (a).xy
@@ -38,19 +38,22 @@ layout(std430, buffer_reference) buffer IncoherentOutput {
 	f32 x[];
 };
 
-layout(std430, buffer_reference) buffer F16 { f16  x[]; };
-layout(std430, buffer_reference) buffer F32 { f32  x[]; };
-layout(std430, buffer_reference) buffer S16 { s16  x[]; };
-layout(std430, buffer_reference) buffer U8  { u8   x[]; };
-layout(std430, buffer_reference) buffer V2  { vec2 x[]; };
-layout(std430, buffer_reference) buffer V4  { vec4 x[]; };
+layout(std430, buffer_reference) buffer F16   { f16     x[]; };
+layout(std430, buffer_reference) buffer F32   { f32     x[]; };
+layout(std430, buffer_reference) buffer S16   { s16     x[]; };
+layout(std430, buffer_reference) buffer U8    { u8      x[]; };
+layout(std430, buffer_reference) buffer U32V4 { u32vec4 x[]; };
+layout(std430, buffer_reference) buffer F32V2 { f32vec2 x[]; };
+layout(std430, buffer_reference) buffer F32V4 { f32vec4 x[]; };
+layout(std430, buffer_reference) buffer F16V2 { f16vec2 x[]; };
+layout(std430, buffer_reference) buffer F16V4 { f16vec4 x[]; };
 
 #define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
 #define TX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 4, 4)
 
 #define C_SPLINE 0.5
 
-#if InputDataKind == DataKind_Float32Complex
+#if InputDataKind == DataKind_Float32Complex || InputDataKind == DataKind_Float16Complex
 vec2 rotate_iq(const vec2 iq, const float time)
 {
 	float arg    = radians(360) * DemodulationFrequency * time;
@@ -74,29 +77,37 @@ SAMPLE_TYPE cubic(const u64 rf_pointer, const f32 t)
 	);
 
 	#if InputDataKind == DataKind_Float32
-	vec4 samples = V4(rf_pointer).x[0];
+		f32vec4 samples = F32V4(rf_pointer).x[0];
+	#elif InputDataKind == DataKind_Float16
+		f16vec4 samples = F16V4(rf_pointer).x[0];
+	#elif InputDataKind == DataKind_Float16Complex
+		f32vec2 samples[4];
+		uvec4 load = U32V4(rf_pointer).x[0];
+		samples[0] = unpackHalf2x16(load[0]);
+		samples[1] = unpackHalf2x16(load[1]);
+		samples[2] = unpackHalf2x16(load[2]);
+		samples[3] = unpackHalf2x16(load[3]);
 	#else
-	SAMPLE_TYPE samples[4];
-	vec4 load1 = V4(rf_pointer).x[0];
-	vec4 load2 = V4(rf_pointer).x[1];
-	samples[0] = load1.xy;
-	samples[1] = load1.zw;
-	samples[2] = load2.xy;
-	samples[3] = load2.zw;
+		f32vec2 samples[4];
+		vec4 load1 = F32V4(rf_pointer).x[0];
+		vec4 load2 = F32V4(rf_pointer).x[1];
+		samples[0] = load1.xy;
+		samples[1] = load1.zw;
+		samples[2] = load2.xy;
+		samples[3] = load2.zw;
 	#endif
 
-	vec4        S  = vec4(t * t * t, t * t, t, 1);
+	vec4        Sh = vec4(t * t * t, t * t, t, 1) * h;
 	SAMPLE_TYPE P1 = samples[1];
 	SAMPLE_TYPE P2 = samples[2];
 	SAMPLE_TYPE T1 = C_SPLINE * (P2 - samples[0]);
 	SAMPLE_TYPE T2 = C_SPLINE * (samples[3] - P1);
 
-	#if   InputDataKind == DataKind_Float32
-	vec4 C = vec4(P1.x, P2.x, T1.x, T2.x);
-	SAMPLE_TYPE result = dot(S, h * C);
-	#elif InputDataKind == DataKind_Float32Complex
-	mat2x4 C = mat2x4(vec4(P1.x, P2.x, T1.x, T2.x), vec4(P1.y, P2.y, T1.y, T2.y));
-	SAMPLE_TYPE result = S * h * C;
+	#if   InputDataKind == DataKind_Float32 || InputDataKind == DataKind_Float16
+		SAMPLE_TYPE result = dot(Sh, vec4(P1, P2, T1, T2));
+	#else
+		mat2x4 C = mat2x4(vec4(P1.x, P2.x, T1.x, T2.x), vec4(P1.y, P2.y, T1.y, T2.y));
+		SAMPLE_TYPE result = Sh * C;
 	#endif
 	return result;
 }
@@ -113,11 +124,17 @@ SAMPLE_TYPE sample_rf(const u64 rf_pointer, const f32 index)
 	case InterpolationMode_Linear:{
 		if (index >= 0.f && index < f32(SampleCount - 1)) {
 			#if InputDataKind == DataKind_Float32
-			vec2 rf = V2(rf_pointer + InputDataKindByteSize * u32(index)).x[0];
+				f32vec2 rf = F32V2(rf_pointer + InputDataKindByteSize * u32(index)).x[0];
+			#elif InputDataKind == DataKind_Float16
+				f16vec2 rf = F16V2(rf_pointer + InputDataKindByteSize * u32(index)).x[0];
+			#elif InputDataKind == DataKind_Float16Complex
+				f16vec4 load  = F16V4(rf_pointer + InputDataKindByteSize * u32(index)).x[0];
+				f16vec2 rf[2] = {load.xy, load.zw};
 			#else
-			vec4 load  = V4(rf_pointer + InputDataKindByteSize * u32(index)).x[0];
-			vec2 rf[2] = {load.xy, load.zw};
+				f32vec4 load  = F32V4(rf_pointer + InputDataKindByteSize * u32(index)).x[0];
+				f32vec2 rf[2] = {load.xy, load.zw};
 			#endif
+
 			f32 t  = fract(index);
 			result = (1 - t) * rf[0] + t * rf[1];
 			result = rotate_iq(result, index / SamplingFrequency);
@@ -186,7 +203,7 @@ u8 tx_rx_orientation_for_acquisition(const s32 acquisition)
 
 f32vec2 focal_vector_for_acquisition(const s32 acquisition)
 {
-	f32vec2 result = SingleFocus ? f32vec2(TransmitAngle, FocusDepth) : V2(FocalVectors).x[acquisition];
+	f32vec2 result = SingleFocus ? f32vec2(TransmitAngle, FocusDepth) : F32V2(FocalVectors).x[acquisition];
 	return result;
 }
 
