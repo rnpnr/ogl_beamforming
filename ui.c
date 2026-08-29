@@ -859,7 +859,7 @@ beamformer_ui_frame_view_copy_frame(BeamformerFrameView *new, BeamformerFrameVie
 	GPUCommandList cmd = gpu_command_list_begin(GPUTimeline_Compute);
 	gpu_command_wait_timeline(cmd, GPUTimeline_Compute, old->frame.timeline_valid_value);
 	u64 offset = old->frame.gpu_pointer - buffer->gpu_pointer;
-	gpu_command_copy_buffer(cmd, &new->copy_buffer, buffer, offset, frame_size);
+	gpu_command_copy_buffer(cmd, &new->copy_buffer, 0, buffer, offset, frame_size);
 	new->frame.timeline_valid_value = gpu_command_list_end(cmd, (VulkanHandle){0}, (VulkanHandle){0});
 }
 

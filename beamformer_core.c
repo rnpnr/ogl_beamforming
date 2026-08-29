@@ -1,9 +1,5 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
- * [ ]: lib: perform conversion from S16->F16 while copying
- * [ ]: bug: out of bounds reads and extra computation when ChunkChannelCount is not a multiple
- *      of (receive) ChannelCount.
- *      - probably won't show up with any of our arrays anytime soon but should be fixed
  * [ ]: backtrace dumping on SIGSEGV
  * [ ]: cooperative shared memory loading in decode shader
  * [ ]: refactor: save filter parameters with rest of parameters, whole slot thing is dumb
@@ -582,6 +578,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		b32 cuda = cuda_supported();
 		GPUBufferAllocateInfo allocate_info = {
 			.size   = buffer_size,
+			.flags  = VulkanUsageFlag_TransferDestination,
 			.export = cuda ? &beamformer_context->compute_context.ping_pong_export_handle : 0,
 			.label  = str8("PingPongBuffer"),
 		};
@@ -906,7 +903,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->FNumber               = pb->parameters.f_number;
 				db->AcquisitionKind       = pb->parameters.acquisition_kind;
 				db->SampleCount           = input_sample_count;
-				db->ChannelCount          = pb->parameters.channel_count;
+				db->ReceiveChannelCount   = pb->parameters.channel_count;
 				db->AcquisitionCount      = pb->parameters.acquisition_count;
 				db->ChunkChannelCount     = chunk_channel_count;
 				db->InterpolationMode     = pb->parameters.interpolation_mode;
@@ -1261,21 +1258,10 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 }
 
 function void
-do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan *cp,
-                  BeamformerFrame *frame, u32 shader_slot, u32 channel_offset, u64 rf_pointer)
+do_compute_shader(GPUCommandList cmd, BeamformerComputePlan *cp, BeamformerFrame *frame,
+                  u64 input_pointer, u64 output_pointer, u32 shader_slot, u32 channel_offset)
 {
-	BeamformerComputeContext *cc = &ctx->compute_context;
-
-	u32 output_index     = !cc->ping_pong_input_index;
-	u32 input_index      =  cc->ping_pong_input_index;
-	u32 das_output_index =  PING_PONG_BUFFER_SLOTS - 1;
-
-	u64 pp_size           = cc->ping_pong_buffer.size / PING_PONG_BUFFER_SLOTS;
-	u64 pp_input_pointer  = cc->ping_pong_buffer.gpu_pointer + input_index      * pp_size;
-	u64 pp_output_pointer = cc->ping_pong_buffer.gpu_pointer + output_index     * pp_size;
-	u64 pp_das_pointer    = cc->ping_pong_buffer.gpu_pointer + das_output_index * pp_size;
-
-	u32 das_index = cp->first_image_shader_index - 1;
+	BeamformerComputeContext *cc = &beamformer_context->compute_context;
 
 	uv3 dispatch = cp->shader_descriptors[shader_slot].dispatch;
 
@@ -1284,12 +1270,11 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 	switch (cp->pipeline.shaders[shader_slot]) {
 
 	case BeamformerShaderKind_Decode:{
-		BeamformerDecodePushConstants pc = {.rf_buffer = pp_input_pointer};
+		BeamformerDecodePushConstants pc = {
+			.rf_buffer     = input_pointer,
+			.output_buffer = output_pointer,
+		};
 
-		if ((shader_slot + 1) == das_index) pc.output_buffer = pp_das_pointer;
-		else                                pc.output_buffer = pp_output_pointer;
-
-		gpu_command_pipeline_barrier(cmd, 0);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
 
@@ -1297,22 +1282,17 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 	}break;
 
 	case BeamformerShaderKind_Hilbert:{
-		cuda_hilbert(input_index, output_index);
-		cc->ping_pong_input_index = !cc->ping_pong_input_index;
+		//cuda_hilbert(input_index, output_index);
+		//cc->ping_pong_input_index = !cc->ping_pong_input_index;
 	}break;
 
 	case BeamformerShaderKind_Filter:
 	case BeamformerShaderKind_Demodulate:
 	{
 		BeamformerFilterPushConstants pc = {
-			.input_buffer = shader_slot == 0 ? rf_pointer : pp_input_pointer,
+			.input_buffer  = input_pointer,
+			.output_buffer = output_pointer,
 		};
-
-		if ((shader_slot + 1) == das_index) pc.output_buffer = pp_das_pointer;
-		else                                pc.output_buffer = pp_output_pointer;
-
-		if (shader_slot != 0 || (shader_slot + 1) == das_index)
-			gpu_command_pipeline_barrier(cmd, 0);
 
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
@@ -1330,14 +1310,12 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 		memory_copy(pc.voxel_transform.E, cp->das_voxel_transform.E, sizeof(pc.voxel_transform));
 		memory_copy(pc.xdc_transform.E,   cp->xdc_transform.E,       sizeof(pc.xdc_transform));
 
-		gpu_command_pipeline_barrier(cmd, 0);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
 	}break;
 
 	case BeamformerShaderKind_CoherencyWeighting:{
 		BeamformerCoherencyWeightingPushConstants pc = {.coherent_sum = frame->gpu_pointer};
-		gpu_command_pipeline_barrier(cmd, 0);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
 	}break;
@@ -1345,17 +1323,13 @@ do_compute_shader(BeamformerCtx *ctx, GPUCommandList cmd, BeamformerComputePlan 
 	case BeamformerShaderKind_Reshape:{
 		BeamformerDataKind input_data_kind = cp->shader_descriptors[shader_slot].input_data_kind;
 		BeamformerReshapeBakeParameters *rb = &cp->shader_descriptors[shader_slot].bake.Reshape;
-		u64 input_pointer = shader_slot == 0 ? rf_pointer : pp_input_pointer;
 		BeamformerReshapePushConstants pc = {
 			.left_input_buffer  = input_pointer,
 			.right_input_buffer = input_pointer + rb->SizeX * rb->SizeY * rb->SizeZ
 			                                      * beamformer_data_kind_byte_size[input_data_kind],
+			.output_buffer      = output_pointer,
 		};
 
-		if ((shader_slot + 1) == das_index) pc.output_buffer = pp_das_pointer;
-		else                                pc.output_buffer = pp_output_pointer;
-
-		gpu_command_pipeline_barrier(cmd, 0);
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
 
@@ -1574,14 +1548,47 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			{
 				u64 rf_pointer = rf->buffer.gpu_pointer + slot * rf->active_rf_size;
 				rf_pointer += cp->raw_channel_byte_stride * channel_offset;
+
+				// NOTE(rnp): handle the case where the channel count is not a multiple of
+				// BeamformerChunkChannelCount. We do not want to have to modify every shader
+				// that might run to care about this so here we run a copy/clear to pad the
+				// data for the last iteration.
+				b32 special_handling = (cp->channel_count - channel_offset) < BeamformerChunkChannelCount;
+				if unlikely(special_handling) {
+					u32 channel_pad_count = BeamformerChunkChannelCount - (cp->channel_count - channel_offset);
+					u32 input_index = cs->ping_pong_input_index;
+					u64 pp_size     = cs->ping_pong_buffer.size / PING_PONG_BUFFER_SLOTS;
+					u64 copy_size   = cp->raw_channel_byte_stride * (cp->channel_count - channel_offset);
+					u64 copy_offset = rf_pointer - rf->buffer.gpu_pointer;
+					u64 clear_size  = cp->raw_channel_byte_stride * channel_pad_count;
+
+					gpu_command_copy_buffer(cmd, &cs->ping_pong_buffer, input_index * pp_size, &rf->buffer, copy_offset, copy_size);
+					gpu_command_clear_buffer(cmd, &cs->ping_pong_buffer, input_index * pp_size + copy_size, clear_size, 0);
+					gpu_command_pipeline_barrier(cmd, 1);
+				}
+
 				for (u32 i = 0; i < cp->first_image_shader_index; i++) {
-					do_compute_shader(ctx, cmd, cp, frame, i, channel_offset, rf_pointer);
+					u32 output_index      = !cs->ping_pong_input_index;
+					u32 input_index       =  cs->ping_pong_input_index;
+					u32 das_output_index  =  PING_PONG_BUFFER_SLOTS - 1;
+
+					u64 pp_size           = cs->ping_pong_buffer.size / PING_PONG_BUFFER_SLOTS;
+					u64 pp_input_pointer  = cs->ping_pong_buffer.gpu_pointer + input_index      * pp_size;
+					u64 pp_output_pointer = cs->ping_pong_buffer.gpu_pointer + output_index     * pp_size;
+					u64 pp_das_pointer    = cs->ping_pong_buffer.gpu_pointer + das_output_index * pp_size;
+
+					u64 output_pointer = ((i + 1) == (u32)das_index) ? pp_das_pointer : pp_output_pointer;
+					u64 input_pointer  = (i == 0 && !special_handling) ? rf_pointer : pp_input_pointer;
+
+					if (i != 0) gpu_command_pipeline_barrier(cmd, 0);
+					do_compute_shader(cmd, cp, frame, input_pointer, output_pointer, i, channel_offset);
 					gpu_command_timestamp(cmd);
 				}
 			}
 
 			for (u32 i = cp->first_image_shader_index; i < cp->pipeline.shader_count; i++) {
-				do_compute_shader(ctx, cmd, cp, frame, i, 0, 0);
+				gpu_command_pipeline_barrier(cmd, 0);
+				do_compute_shader(cmd, cp, frame, 0, 0, i, 0);
 				gpu_command_timestamp(cmd);
 			}
 			u64 end_timeline_value = gpu_command_list_end(cmd, (VulkanHandle){0}, (VulkanHandle){0});
@@ -1738,7 +1745,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		if unlikely(rf->buffer.size < countof(rf->upload_complete_values) * rf->active_rf_size) {
 			GPUBufferAllocateInfo allocate_info = {
 				.size  = countof(rf->upload_complete_values) * rf->active_rf_size,
-				.flags = VulkanUsageFlag_HostReadWrite,
+				.flags = VulkanUsageFlag_HostReadWrite|VulkanUsageFlag_TransferSource,
 				.label = str8("RawRFBuffer"),
 			};
 			gpu_buffer_allocate(&rf->buffer, allocate_info);
@@ -1750,6 +1757,8 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		spin_wait(atomic_load_u64(&rf->compute_index) < rf->insertion_index);
 		gpu_host_wait_timeline(GPUTimeline_Compute, rf->compute_complete_values[slot], -1ULL);
 
+		assert((ctx->shared_memory_size % os_system_info()->page_size) == 0 &&
+		       (os_system_info()->page_size % gpu_round_up_to_sync_size(1, 64)) == 0);
 		gpu_buffer_range_upload(&rf->buffer, beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size),
 		                        slot * rf->active_rf_size, rf->active_rf_size, 1);
 		store_fence();

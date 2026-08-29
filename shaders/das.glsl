@@ -66,6 +66,15 @@ vec2 rotate_iq(const vec2 iq, const float time)
   #define rotate_iq(a, b) (a)
 #endif
 
+// NOTE(rnp): while the input RF buffer is padded such that we could continue reading
+// DAS is very expensive so we want to avoid any extra work possible.
+u32 batch_channel_count()
+{
+	const bool safe   = (ReceiveChannelCount % ChunkChannelCount) == 0;
+	const u32  result = safe ? ChunkChannelCount : min(ReceiveChannelCount - channel_offset, ChunkChannelCount);
+	return result;
+}
+
 /* NOTE: See: https://cubic.org/docs/hermite.htm */
 SAMPLE_TYPE cubic(const u64 rf_pointer, const f32 t)
 {
@@ -237,7 +246,7 @@ RESULT_TYPE RCA(const vec3 world_point)
 		u64 rf_pointer  = RFData + InputDataKindByteSize * acquisition * SampleCount;
 		rf_pointer     -= InputDataKindByteSize * u32(InterpolationMode == InterpolationMode_Cubic);
 
-		for (f32 chunk_channel = 0.f; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.f) {
+		for (f32 chunk_channel = 0.f; chunk_channel < f32(batch_channel_count()); chunk_channel += 1.f) {
 			f32  rx_channel     = f32(channel_offset) + chunk_channel;
 			vec3 rx_center      = vec3(rx_channel * xdc_element_pitch, 0);
 			vec2 receive_vector = xdc_world_point - rca_plane_projection(rx_center, rx_rows);
@@ -272,7 +281,7 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 	const f32 tx_pitch         = xdc_element_pitch[s32(rx_cols)];
 
 	RESULT_TYPE result = RESULT_TYPE(0);
-	for (f32 chunk_channel = 0.f; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.f) {
+	for (f32 chunk_channel = 0.f; chunk_channel < f32(batch_channel_count()); chunk_channel += 1.f) {
 		f32 rx_channel  = f32(channel_offset) + chunk_channel;
 
 		f32 element_receive_delta_squared = rx_world_point - rx_channel * rx_pitch;
@@ -316,7 +325,7 @@ RESULT_TYPE FORCES(const vec3 world_point)
 	f32 z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
 	f32 transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
 
-	for (f32 chunk_channel = 0; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.f) {
+	for (f32 chunk_channel = 0; chunk_channel < f32(batch_channel_count()); chunk_channel += 1.f) {
 		f32 rx_channel      = f32(channel_offset) + chunk_channel;
 		f32 receive_x_delta = xdc_world_point.x - rx_channel * xdc_element_pitch.x;
 		f32 a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
@@ -356,7 +365,7 @@ RESULT_TYPE READI_FORCES(const vec3 world_point)
 	// NOTE(tkh): The row we use matches the acquisition group, the column is the element group we are beamforming.
 	s32 hadamard_offset = s32(readi_group) * s32(ReadiGroupCount);
 
-	for (f32 chunk_channel = 0; chunk_channel < f32(ChunkChannelCount); chunk_channel += 1.f) {
+	for (f32 chunk_channel = 0; chunk_channel < f32(batch_channel_count()); chunk_channel += 1.f) {
 		f32 rx_channel      = f32(channel_offset) + chunk_channel;
 		f32 receive_x_delta = xdc_world_point.x - rx_channel * xdc_element_pitch.x;
 		f32 a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);

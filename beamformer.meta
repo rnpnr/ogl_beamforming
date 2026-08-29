@@ -403,7 +403,7 @@
 			[AcquisitionKind             U32]
 			[Sparse                      B32]
 			[AcquisitionCount            S32]
-			[ChannelCount                S32]
+			[ReceiveChannelCount         S32]
 			[ChunkChannelCount           S32]
 			[SampleCount                 S32]
 

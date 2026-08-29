@@ -2753,8 +2753,10 @@ gpu_command_end_rendering(GPUCommandList command)
 }
 
 DEBUG_IMPORT void
-gpu_command_copy_buffer(GPUCommandList command, GPUBuffer *restrict destination,
-                        GPUBuffer *restrict source, u64 source_offset, i64 size)
+gpu_command_copy_buffer(GPUCommandList command,
+                        GPUBuffer *restrict destination, u64 destination_offset,
+                        GPUBuffer *restrict source,      u64 source_offset,
+                        u64 size)
 {
 	if (command.value && destination->handle.value && source->handle.value) {
 		VkCommandBuffer cmd = vk_command_buffer(command);
@@ -2764,7 +2766,7 @@ gpu_command_copy_buffer(GPUCommandList command, GPUBuffer *restrict destination,
 		VkBufferCopy2 buffer_copy = {
 			.sType     = VK_STRUCTURE_TYPE_BUFFER_COPY_2,
 			.srcOffset = source_offset,
-			.dstOffset = 0,
+			.dstOffset = destination_offset,
 			.size      = size,
 		};
 

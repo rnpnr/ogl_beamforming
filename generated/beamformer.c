@@ -195,7 +195,7 @@ typedef struct {
 	u32 AcquisitionKind;
 	b32 Sparse;
 	i32 AcquisitionCount;
-	i32 ChannelCount;
+	i32 ReceiveChannelCount;
 	i32 ChunkChannelCount;
 	i32 SampleCount;
 	f32 SamplingFrequency;
@@ -690,7 +690,7 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("AcquisitionKind"),
 		str8_comp("Sparse"),
 		str8_comp("AcquisitionCount"),
-		str8_comp("ChannelCount"),
+		str8_comp("ReceiveChannelCount"),
 		str8_comp("ChunkChannelCount"),
 		str8_comp("SampleCount"),
 		str8_comp("SamplingFrequency"),

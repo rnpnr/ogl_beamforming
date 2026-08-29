@@ -186,7 +186,10 @@ DEBUG_IMPORT void            gpu_command_scissor(GPUCommandList command, u32 wid
 DEBUG_IMPORT void            gpu_command_viewport(GPUCommandList command, f32 width, f32 height, f32 x_offset, f32 y_offset, f32 min_depth, f32 max_depth);
 DEBUG_IMPORT void            gpu_command_end_rendering(GPUCommandList command);
 
-DEBUG_IMPORT void            gpu_command_copy_buffer(GPUCommandList command, GPUBuffer *restrict destination, GPUBuffer *restrict source, u64 source_offset, i64 size);
+DEBUG_IMPORT void            gpu_command_copy_buffer(GPUCommandList command,
+                                                     GPUBuffer *restrict destination, u64 destination_offset,
+                                                     GPUBuffer *restrict source,      u64 source_offset,
+                                                     u64 size);
 
 // NOTE: returns array of valid timestamps. Calling thread may stall until results available.
 DEBUG_IMPORT u64 *           gpu_read_timestamps(GPUTimeline timeline, u64 *count, Arena *arena);
