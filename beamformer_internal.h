@@ -272,6 +272,7 @@ typedef struct {
 	uv3 layout;
 	uv3 dispatch;
 	u32 compile_flags;
+	b32 uses_heap;
 	BeamformerDataKind input_data_kind;
 	BeamformerDataKind output_data_kind;
 	BeamformerShaderBakeParameters bake;
@@ -311,6 +312,7 @@ struct BeamformerComputePlan {
 
 	u32  readi_group;
 
+	u64 last_gpu_heap_pointer;
 	GPUBuffer gpu_temp_arena;
 
 	BeamformerFilterParameters filter_parameters[BeamformerFilterSlots];
@@ -635,7 +637,6 @@ typedef struct {
 } BeamformerCtx;
 
 typedef enum {
-	BeamformerFileReloadKind_ComputeInternalShader,
 	BeamformerFileReloadKind_ComputeShader,
 	BeamformerFileReloadKind_RenderShader,
 } BeamformerFileReloadKind;
@@ -654,6 +655,7 @@ typedef struct {
 
 	BeamformerShaderDescriptor *shader_descriptor;
 
+	u64 gpu_heap_pointer;
 	uv3 layout;
 } BeamformerShaderReloadInfo;
 

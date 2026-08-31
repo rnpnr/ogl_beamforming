@@ -324,7 +324,7 @@
 
 		@Bake
 		{
-			[Hadamard             U64]
+			[Hadamard             U32]
 			[DecodeMode           U32]
 			[OutputChannelStride  U32]
 			[OutputSampleStride   U32]
@@ -356,7 +356,7 @@
 
 		@Bake
 		{
-			[FilterCoefficients    U64]
+			[FilterCoefficients    U32]
 			[FilterLength          U32]
 			[SamplingFrequency     F32]
 			[DemodulationFrequency F32]
@@ -395,11 +395,11 @@
 		@Bake
 		{
 			[RFData                      U64]
-			[FocalVectors                U64]
-			[Hadamard                    U64]
-			[IncoherentFrame             U64]
-			[SparseElements              U64]
-			[TransmitReceiveOrientations U64]
+			[FocalVectors                U32]
+			[Hadamard                    U32]
+			[IncoherentFrame             U32]
+			[SparseElements              U32]
+			[TransmitReceiveOrientations U32]
 
 			[AcquisitionKind             U32]
 			[AcquisitionCount            S32]
@@ -452,7 +452,7 @@
 
 		@Bake
 		{
-			[IncoherentSum U64]
+			[IncoherentSum U32]
 			[Scale         F32]
 			[OutputVoxels  U32]
 		}

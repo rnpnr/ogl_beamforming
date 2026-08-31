@@ -31,6 +31,12 @@
   #define RESULT_STORE(a) (a)
 #endif
 
+// NOTE(rnp): we don't want das to get recompiled when it isn't actually using the Heap
+// but we also don't want to check everywhere in here for the existence of the Heap
+#ifndef HeapBase
+  #define HeapBase u64(0)
+#endif
+
 layout(std430, buffer_reference) buffer Input  { InputDataType x[]; };
 layout(std430, buffer_reference) buffer Output { OutputDataType x[]; };
 
@@ -206,13 +212,13 @@ float cylindrical_wave_transmit_distance(const vec3 point, const float focal_dep
 u8 tx_rx_orientation_for_acquisition(const s32 acquisition)
 {
 	u8 result = u8(TransmitReceiveOrientation);
-	if (!SingleOrientation) result = U8(TransmitReceiveOrientations).x[acquisition];
+	if (!SingleOrientation) result = U8(HeapBase + TransmitReceiveOrientations).x[acquisition];
 	return result;
 }
 
 f32vec2 focal_vector_for_acquisition(const s32 acquisition)
 {
-	f32vec2 result = SingleFocus ? f32vec2(TransmitAngle, FocusDepth) : F32V2(FocalVectors).x[acquisition];
+	f32vec2 result = SingleFocus ? f32vec2(TransmitAngle, FocusDepth) : F32V2(HeapBase + FocalVectors).x[acquisition];
 	return result;
 }
 
@@ -291,7 +297,7 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 		rf_pointer     -= InputDataKindByteSize * u32(InterpolationMode == InterpolationMode_Cubic);
 
 		for (f32 transmit = f32(Sparse); transmit < f32(AcquisitionCount); transmit += 1.f) {
-			f32 tx_channel = Sparse ? f32(S16(SparseElements).x[s32(transmit) - s32(Sparse)]) : transmit;
+			f32 tx_channel = Sparse ? f32(S16(HeapBase + SparseElements).x[s32(transmit) - s32(Sparse)]) : transmit;
 
 			f32 element_transmit_delta_squared = tx_world_point - tx_channel * tx_pitch;
 			element_transmit_delta_squared *= element_transmit_delta_squared;
@@ -337,7 +343,7 @@ RESULT_TYPE FORCES(const vec3 world_point)
 			f32 receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
 			f32 apodization   = apodize(a_arg);
 			for (f32 transmit = f32(Sparse); transmit < f32(AcquisitionCount); transmit += 1.f) {
-				f32 tx_channel = Sparse ? f32(S16(SparseElements).x[s32(transmit) - s32(Sparse)]) : transmit;
+				f32 tx_channel = Sparse ? f32(S16(HeapBase + SparseElements).x[s32(transmit) - s32(Sparse)]) : transmit;
 				f32 transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_channel;
 				f32 transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
 
@@ -381,7 +387,7 @@ RESULT_TYPE READI_FORCES(const vec3 world_point)
 			// sequential elements. The first element in each group is beamformed using the first
 			// acquisition, the second element in each group is beamformed using the second acquisition, etc.
 			for (s32 tx_group = 0; tx_group < s32(ReadiGroupCount); tx_group++) {
-				f32 group_apodization = apodization * F16(Hadamard).x[hadamard_offset + tx_group];
+				f32 group_apodization = apodization * F16(HeapBase + Hadamard).x[hadamard_offset + tx_group];
 				u64 rf_pointer = channel_rf_pointer;
 
 				for (f32 tx_event = 0; tx_event < f32(AcquisitionCount); tx_event += 1.f) {
@@ -434,7 +440,7 @@ void main()
 	}
 
 	#if CoherencyWeighting
-	IncoherentOutput(IncoherentFrame).x[out_index] += RESULT_INCOHERENT_CAST(sum);
+	IncoherentOutput(HeapBase + IncoherentFrame).x[out_index] += RESULT_INCOHERENT_CAST(sum);
 	#endif
 
 	Output(output_frame).x[out_index] += RESULT_COHERENT_CAST(sum);

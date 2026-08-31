@@ -64,8 +64,6 @@
 #include "beamformer_internal.h"
 
 #define GPU_RESOURCE_HASH_TABLE_COUNT 256
-typedef struct U64ReferenceNode U64ReferenceNode;
-struct U64ReferenceNode {u64 *v; U64ReferenceNode *next;};
 
 typedef struct GPUResource GPUResource;
 struct GPUResource {
@@ -77,8 +75,6 @@ struct GPUResource {
 	void *data;
 
 	u64  hash;
-
-	U64ReferenceNode *pointer_store_list;
 
 	GPUResource *next;
 	GPUResource *hash_next, *hash_prev;
@@ -221,7 +217,6 @@ typedef struct {
 	str8  name;
 	u64   align;
 	u64   size;
-	u64  *store;
 	void *data;
 } GPUResourcePushInfo;
 #define gpu_resource_push(rb, t, count, ...) gpu_resource_push_(rb, (GPUResourcePushInfo){\
@@ -229,10 +224,10 @@ typedef struct {
 	.size  = sizeof(t) * count, \
 	__VA_ARGS__})
 
-function void
+function u32
 gpu_resource_push_(GPUResourceBuilder *rb, GPUResourcePushInfo info)
 {
-	assert(info.store && info.size > 0 && info.name.length > 0 && IsPowerOfTwo(info.align));
+	assert(info.size > 0 && info.name.length > 0 && IsPowerOfTwo(info.align));
 
 	u64 hash = u64_hash_from_str8(info.name);
 	GPUResource *r = gpu_resource_from_hash(rb, hash);
@@ -241,24 +236,23 @@ gpu_resource_push_(GPUResourceBuilder *rb, GPUResourcePushInfo info)
 		GPUResourceHashBucket *hb = rb->hash_table + (hash % GPU_RESOURCE_HASH_TABLE_COUNT);
 		DLLInsert(0, hb->first, hb->last, r, hash_next, hash_prev);
 		SLLStackPush(rb->resource_list, r, next);
+
+		r->hash      = hash;
+		r->name      = info.name;
+		r->alignment = Max(16, info.align);
+		r->offset    = AlignUpPowerOfTwo(rb->position, r->alignment);
+		r->size      = info.size;
+		rb->position = r->offset + r->size;
 	}
 
-	r->hash      = hash;
-	r->name      = info.name;
-	r->alignment = Max(16, info.align);
-	r->offset    = AlignUpPowerOfTwo(rb->position, r->alignment);
-	r->size      = info.size;
+	u32 result = r->offset;
 
 	// NOTE(rnp): if this is a new resource and no data is provided it is likely
 	// a temporary GPU side buffer. if this is not a new resource and no data
-	// is provided then maybe it is shared and someone else already provided it
+	// is provided then maybe it is shared and someone else will provide it
 	if (info.data) r->data = info.data;
 
-	U64ReferenceNode *output = push_struct(rb->arena, U64ReferenceNode);
-	output->v = info.store;
-	SLLStackPush(r->pointer_store_list, output, next);
-
-	rb->position = r->offset + r->size;
+	return result;
 }
 
 function GPUResourceBuilder *
@@ -280,12 +274,6 @@ gpu_resource_build_end(GPUResourceBuilder *rb, GPUBuffer *buffer)
 			.label = push_str8_f(rb->arena, "GPU Temp Arena [%p]", buffer),
 		});
 	}
-
-	//////////////////////////////////////
-	// NOTE(rnp): fill in pointer outputs
-	for (GPUResource *r = rb->resource_list; r; r = r->next)
-		for (U64ReferenceNode *op = r->pointer_store_list; op; op = op->next)
-			*op->v = buffer->gpu_pointer + r->offset;
 
 	//////////////////////////////////////
 	// NOTE(rnp): upload data
@@ -830,11 +818,11 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 					sd->dispatch.z = 1;
 				}
 
+				sd->uses_heap = 1;
 				u32 order = pb->parameters.acquisition_count;
-				gpu_resource_push(resource_builder, f16, order * order,
-				                  .data  = make_hadamard_transpose(scratch, order, use_coop_matrix),
-				                  .name  = str8("hadamard"),
-				                  .store = &db->Hadamard);
+				db->Hadamard = gpu_resource_push(resource_builder, f16, order * order,
+				                                 .data = make_hadamard_transpose(scratch, order, use_coop_matrix),
+				                                 .name = str8("hadamard"));
 			}break;
 
 			case BeamformerShaderKind_Demodulate:
@@ -850,11 +838,11 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 				BeamformerFilterBakeParameters *fb = &sd->bake.Filter;
 
+				sd->uses_heap = 1;
 				fb->FilterLength = (u32)f->length;
-				gpu_resource_push(resource_builder, f32, f->length * (f->parameters.complex ? 2 : 1),
-				                  .data  = f->data,
-				                  .name  = push_str8_f(scratch, "filter_%u", sp->filter_slot),
-				                  .store = &fb->FilterCoefficients);
+				fb->FilterCoefficients = gpu_resource_push(resource_builder, f32, f->length * (f->parameters.complex ? 2 : 1),
+				                                           .data = f->data,
+				                                           .name = push_str8_f(scratch, "filter_%u", sp->filter_slot));
 
 				fb->SampleCount    = input_sample_count;
 				fb->DecimationRate = demod ? decimation_rate : 1;
@@ -940,40 +928,40 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
 
 				if (id != BeamformerAcquisitionKind_UFORCES && id != BeamformerAcquisitionKind_FORCES && !single_focus) {
-					gpu_resource_push(resource_builder, v2, db->AcquisitionCount,
-					                  .store = &db->FocalVectors,
-					                  .data  = pb->focal_vectors,
-					                  .name  = str8("focal_vectors"));
+					db->FocalVectors = gpu_resource_push(resource_builder, v2, db->AcquisitionCount,
+					                                     .data = pb->focal_vectors,
+					                                     .name = str8("focal_vectors"));
+					sd->uses_heap = 1;
 				}
 
 				if (id != BeamformerAcquisitionKind_UFORCES && id != BeamformerAcquisitionKind_FORCES && !single_orientation) {
-					gpu_resource_push(resource_builder, u8, db->AcquisitionCount,
-					                  .store = &db->TransmitReceiveOrientations,
-					                  .data  = pb->transmit_receive_orientations,
-					                  .name  = str8("transmit_receive_orientations"));
+					db->TransmitReceiveOrientations = gpu_resource_push(resource_builder, u8, db->AcquisitionCount,
+					                                                    .data = pb->transmit_receive_orientations,
+					                                                    .name = str8("transmit_receive_orientations"));
+					sd->uses_heap = 1;
 				}
 
 				if (sparse) {
-					gpu_resource_push(resource_builder, i16, db->AcquisitionCount,
-					                  .store = &db->SparseElements,
-					                  .data  = pb->sparse_elements,
-					                  .name  = str8("sparse_elements"));
+					db->SparseElements = gpu_resource_push(resource_builder, i16, db->AcquisitionCount,
+					                                       .data = pb->sparse_elements,
+					                                       .name = str8("sparse_elements"));
+					sd->uses_heap = 1;
 				}
 
 				if (pb->parameters.coherency_weighting) {
-					gpu_resource_push(resource_builder, u32, 0,
-					                  .store = &db->IncoherentFrame,
-					                  .size  = beamformer_incoherent_frame_byte_size(cp->output_points, das_data_kind),
-					                  .name  = str8("incoherent_buffer"));
+					db->IncoherentFrame = gpu_resource_push(resource_builder, u32, 0,
+					                                        .size = beamformer_incoherent_frame_byte_size(cp->output_points, das_data_kind),
+					                                        .name = str8("incoherent_buffer"));
+					sd->uses_heap = 1;
 				}
 
 				cp->readi_group = pb->parameters.readi_group;
 				if (db->ReadiGroupCount > 1) {
 					u32 order = db->ReadiGroupCount;
-					gpu_resource_push(resource_builder, f16, order * order,
-					                  .store = &db->Hadamard,
-					                  .data  = make_hadamard_transpose(scratch, order, 0),
-					                  .name  = str8("readi_hadamard"));
+					db->Hadamard = gpu_resource_push(resource_builder, f16, order * order,
+					                                 .data = make_hadamard_transpose(scratch, order, 0),
+					                                 .name = str8("readi_hadamard"));
+					sd->uses_heap = 1;
 				}
 			}break;
 
@@ -984,12 +972,12 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
 
 				BeamformerCoherencyWeightingBakeParameters *cw = &sd->bake.CoherencyWeighting;
-				cw->Scale        = 1.f;
-				cw->OutputVoxels = cp->output_points.x * cp->output_points.y * cp->output_points.z;
-				gpu_resource_push(resource_builder, u32, 0,
-				                  .store = &cw->IncoherentSum,
-				                  .size  = beamformer_incoherent_frame_byte_size(cp->output_points, das_data_kind),
-				                  .name  = str8("incoherent_buffer"));
+				cw->Scale         = 1.f;
+				cw->OutputVoxels  = cp->output_points.x * cp->output_points.y * cp->output_points.z;
+				cw->IncoherentSum = gpu_resource_push(resource_builder, u32, 0,
+				                                      .size = beamformer_incoherent_frame_byte_size(cp->output_points, das_data_kind),
+				                                      .name = str8("incoherent_buffer"));
+				sd->uses_heap = 1;
 			}break;
 
 			case BeamformerShaderKind_Reshape:{
@@ -1051,7 +1039,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 }
 
 function void
-stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDescriptor *sd, uv3 layout)
+stream_append_shader_header(Stream *s, i32 reloadable_index, u64 gpu_heap_pointer, BeamformerShaderDescriptor *sd, uv3 layout)
 {
 	stream_append_str8(s, str8("#version 460 core\n\n"
 	"#extension GL_EXT_buffer_reference : require\n"
@@ -1096,6 +1084,12 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, BeamformerShaderDes
 			stream_append_byte(s, '\n');
 		}
 		stream_append_byte(s, '\n');
+	}
+
+	if (gpu_heap_pointer) {
+		stream_append_str8(s, str8("#define HeapBase u64(0x"));
+		stream_append_hex_u64(s, gpu_heap_pointer);
+		stream_append_str8(s, str8("ul)\n"));
 	}
 
 	if (sd) {
@@ -1155,7 +1149,8 @@ beamformer_reload_pipeline(VulkanHandle *pipeline, BeamformerShaderReloadInfo *s
 		if (i == 0) push_constants_size = beamformer_shader_push_constant_sizes[reloadable_index];
 		else        assert(push_constants_size == beamformer_shader_push_constant_sizes[reloadable_index]);
 
-		stream_append_shader_header(&shader_stream, reloadable_index, sris[i].shader_descriptor, sris[i].layout);
+		stream_append_shader_header(&shader_stream, reloadable_index, sris[i].gpu_heap_pointer,
+		                            sris[i].shader_descriptor, sris[i].layout);
 
 		str8 shader_text;
 		if (BakeShaders) {
@@ -1210,23 +1205,6 @@ beamformer_reload_render_pipeline(VulkanHandle *pipeline, BeamformerShaderKind s
 }
 
 function void
-beamformer_reload_compute_pipeline(VulkanHandle *pipeline, BeamformerShaderKind shader,
-                                   BeamformerShaderDescriptor *shader_descriptor, Arena *scratch)
-{
-	i32 index  = beamformer_shader_reloadable_index_by_shader[shader];
-	uv3 layout = shader_descriptor ? shader_descriptor->layout : (uv3){{gpu_info()->subgroup_size, 1, 1}};
-	BeamformerShaderReloadInfo info = {
-		.shader            = shader,
-		.shader_kind       = VulkanShaderKind_Compute,
-		.shader_descriptor = shader_descriptor,
-		.filename_or_data  = BakeShaders ? beamformer_shader_data[index][0]
-		                                 : beamformer_reloadable_shader_files[index][0],
-		.layout            = layout,
-	};
-	beamformer_reload_pipeline(pipeline, &info, 1, scratch);
-}
-
-function void
 beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 block, Arena *scratch)
 {
 	BeamformerParameterBlock *pb;
@@ -1246,10 +1224,16 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 
 			plan_compute_pipeline(cp, pb, scratch);
 
+			b32 heap_pointer_updated = cp->last_gpu_heap_pointer != cp->gpu_temp_arena.gpu_pointer;
+			cp->last_gpu_heap_pointer = cp->gpu_temp_arena.gpu_pointer;
+
 			for (u32 shader_slot = 0; shader_slot < cp->pipeline.shader_count; shader_slot++) {
 				u128 hash = u128_hash_from_data(cp->shader_descriptors + shader_slot, sizeof(BeamformerShaderDescriptor));
-				if (!u128_equal(hash, cp->shader_hashes[shader_slot]))
+				if (!u128_equal(hash, cp->shader_hashes[shader_slot]) ||
+				    (cp->shader_descriptors[shader_slot].uses_heap && heap_pointer_updated))
+				{
 					cp->dirty_programs |= 1 << shader_slot;
+				}
 				cp->shader_hashes[shader_slot] = hash;
 			}
 
@@ -1482,11 +1466,22 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			if unlikely(dirty_programs) {
 				for EachBit(dirty_programs, slot) {
 					assert(slot < BeamformerMaxComputeShaderStages);
-					Temp scratch = temp_begin(arena);
-					beamformer_reload_compute_pipeline(cp->vulkan_pipelines + slot,
-					                                   cp->pipeline.shaders[slot],
-					                                   cp->shader_descriptors + slot, arena);
-					temp_end(scratch);
+					Temp scratch;
+					DeferLoop(scratch = temp_begin(arena), temp_end(scratch))
+					{
+						u64 gpu_heap_pointer = cp->gpu_temp_arena.gpu_pointer;
+						i32 index = beamformer_shader_reloadable_index_by_shader[cp->pipeline.shaders[slot]];
+						BeamformerShaderReloadInfo info = {
+							.shader      = cp->pipeline.shaders[slot],
+							.shader_kind = VulkanShaderKind_Compute,
+							.shader_descriptor = cp->shader_descriptors + slot,
+							.gpu_heap_pointer  = cp->shader_descriptors[slot].uses_heap ? gpu_heap_pointer : 0,
+							.filename_or_data  = BakeShaders ? beamformer_shader_data[index][0]
+							                                 : beamformer_reloadable_shader_files[index][0],
+							.layout            = cp->shader_descriptors[slot].layout,
+						};
+						beamformer_reload_pipeline(cp->vulkan_pipelines + slot, &info, 1, arena);
+					}
 				}
 			}
 
@@ -1526,7 +1521,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				BeamformerCoherencyWeightingBakeParameters *cw = &cp->shader_descriptors[coherency_weighting].bake.CoherencyWeighting;
 				GPUBuffer *gpu_arena = &cp->gpu_temp_arena;
 				u64 coherent_size = beamformer_incoherent_frame_byte_size(frame->points, frame->data_kind);
-				gpu_command_clear_buffer(cmd, gpu_arena, cw->IncoherentSum - gpu_arena->gpu_pointer, coherent_size, 0);
+				gpu_command_clear_buffer(cmd, gpu_arena, cw->IncoherentSum, coherent_size, 0);
 			}
 
 			BeamformerRFBuffer *rf = &cs->rf_buffer;
@@ -1826,11 +1821,6 @@ beamformer_process_input_events(BeamformerCtx *ctx, BeamformerInput *input,
 		case BeamformerInputEventKind_FileEvent:{
 			BeamformerFileReloadContext *frc = event->file_watch_user_context;
 			switch (frc->kind) {
-			case BeamformerFileReloadKind_ComputeInternalShader:{
-				// TODO(rnp): this could stall, better to push it onto compute once queue is better
-				beamformer_reload_compute_pipeline(frc->shader_reload.pipeline, frc->shader_reload.shader, 0, ctx->arena);
-			}break;
-
 			case BeamformerFileReloadKind_ComputeShader:{
 				for EachElement(ctx->compute_context.compute_plans, block) {
 					BeamformerComputePlan *cp = ctx->compute_context.compute_plans[block];

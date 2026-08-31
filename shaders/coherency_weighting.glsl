@@ -17,10 +17,10 @@ layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Flo
 
 #if   InputDataKind == DataKind_Float32
   #define COHERENT_SAMPLE(index)    Float32(coherent_sum).values[index]
-  #define INCOHERENT_SAMPLE(index)  Float32(IncoherentSum).values[index]
+  #define INCOHERENT_SAMPLE(index)  Float32(HeapBase + IncoherentSum).values[index]
 #elif InputDataKind == DataKind_Float32Complex
   #define COHERENT_SAMPLE(index)    Float32Complex(coherent_sum).values[index]
-  #define INCOHERENT_SAMPLE(index)  Float32(IncoherentSum).values[index]
+  #define INCOHERENT_SAMPLE(index)  Float32(HeapBase + IncoherentSum).values[index]
 #else
   #error DataKind unsupported for CoherencyWeighting
 #endif

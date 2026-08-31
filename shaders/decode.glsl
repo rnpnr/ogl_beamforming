@@ -48,7 +48,7 @@ void run_decode_large(void)
 		for (s32 i = 0; i < ToProcess; i++)
 			result[i] = OutputDataType(0);
 
-		F16 h = F16(Hadamard);
+		F16 h = F16(HeapBase + Hadamard);
 		for (s32 j = 0; j < TransmitCount; j++) {
 			OutputDataType s = OutputDataType(rf[gl_LocalInvocationID.y][j]);
 			for (s32 i = 0; i < ToProcess; i++)
@@ -92,7 +92,7 @@ void run_decode_coop(void)
 
 	u32 offset = ChunkChannelCount * TransmitCount * time_sample;
 
-	F16 h = F16(Hadamard);
+	F16 h = F16(HeapBase + Hadamard);
 	for (u32 k = 0; k < TransmitCount; k += CooperativeMatrixK) {
 		u32 rf_tile_row = CooperativeMatrixM * tile_index.y;
 		u32 rf_tile_col = k;
@@ -131,7 +131,7 @@ void run_decode_small(void)
 		for (s32 j = 0; j < TransmitCount; j++)
 			result[j] = OutputDataType(0);
 
-		F16 h = F16(Hadamard);
+		F16 h = F16(HeapBase + Hadamard);
 		for (s32 i = 0; i < TransmitCount; i++) {
 			OutputDataType s = OutputDataType(rf[i]);
 			for (s32 j = 0; j < TransmitCount; j++) {

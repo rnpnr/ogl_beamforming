@@ -106,7 +106,7 @@ void main()
 	}
 	barrier();
 
-	Filter f = Filter(FilterCoefficients);
+	Filter f = Filter(HeapBase + FilterCoefficients);
 	if (out_sample < SampleCount / DecimationRate) {
 		RESULT_TYPE result = RESULT_TYPE(0);
 		u32 offset = DecimationRate * thread_index;

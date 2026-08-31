@@ -159,7 +159,7 @@ typedef enum {
 } BeamformerShaderKind;
 
 typedef struct {
-	u64 Hadamard;
+	u32 Hadamard;
 	u32 DecodeMode;
 	u32 OutputChannelStride;
 	u32 OutputSampleStride;
@@ -173,7 +173,7 @@ typedef struct {
 } BeamformerDecodeBakeParameters;
 
 typedef struct {
-	u64 FilterCoefficients;
+	u32 FilterCoefficients;
 	u32 FilterLength;
 	f32 SamplingFrequency;
 	f32 DemodulationFrequency;
@@ -190,11 +190,11 @@ typedef struct {
 
 typedef struct {
 	u64 RFData;
-	u64 FocalVectors;
-	u64 Hadamard;
-	u64 IncoherentFrame;
-	u64 SparseElements;
-	u64 TransmitReceiveOrientations;
+	u32 FocalVectors;
+	u32 Hadamard;
+	u32 IncoherentFrame;
+	u32 SparseElements;
+	u32 TransmitReceiveOrientations;
 	u32 AcquisitionKind;
 	i32 AcquisitionCount;
 	i32 ReceiveChannelCount;
@@ -216,7 +216,7 @@ typedef struct {
 } BeamformerDASBakeParameters;
 
 typedef struct {
-	u64 IncoherentSum;
+	u32 IncoherentSum;
 	f32 Scale;
 	u32 OutputVoxels;
 } BeamformerCoherencyWeightingBakeParameters;
@@ -577,7 +577,8 @@ typedef enum {
 
 read_only global MetaStructMember *meta_struct_members_by_id[] = {
 	(MetaStructMember []){
-		{17, 0,  1, 0},
+		{18, 0,  1, 0},
+		{18, 4,  1, 0},
 		{18, 8,  1, 0},
 		{18, 12, 1, 0},
 		{18, 16, 1, 0},
@@ -587,13 +588,13 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{18, 32, 1, 0},
 		{18, 36, 1, 0},
 		{18, 40, 1, 0},
-		{18, 44, 1, 0},
 	},
 	(MetaStructMember []){
-		{17, 0,  1, 0},
-		{18, 8,  1, 0},
+		{18, 0,  1, 0},
+		{18, 4,  1, 0},
+		{8,  8,  1, 0},
 		{8,  12, 1, 0},
-		{8,  16, 1, 0},
+		{18, 16, 1, 0},
 		{18, 20, 1, 0},
 		{18, 24, 1, 0},
 		{18, 28, 1, 0},
@@ -602,38 +603,37 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{18, 40, 1, 0},
 		{18, 44, 1, 0},
 		{18, 48, 1, 0},
-		{18, 52, 1, 0},
-	},
-	(MetaStructMember []){
-		{17, 0,   1, 0},
-		{17, 8,   1, 0},
-		{17, 16,  1, 0},
-		{17, 24,  1, 0},
-		{17, 32,  1, 0},
-		{17, 40,  1, 0},
-		{18, 48,  1, 0},
-		{10, 52,  1, 0},
-		{10, 56,  1, 0},
-		{10, 60,  1, 0},
-		{10, 64,  1, 0},
-		{8,  68,  1, 0},
-		{8,  72,  1, 0},
-		{8,  76,  1, 0},
-		{8,  80,  1, 0},
-		{18, 84,  1, 0},
-		{8,  88,  1, 0},
-		{18, 92,  1, 0},
-		{8,  96,  1, 0},
-		{8,  100, 1, 0},
-		{18, 104, 1, 0},
-		{18, 108, 1, 0},
-		{18, 112, 1, 0},
-		{18, 116, 1, 0},
 	},
 	(MetaStructMember []){
 		{17, 0,  1, 0},
-		{8,  8,  1, 0},
+		{18, 8,  1, 0},
 		{18, 12, 1, 0},
+		{18, 16, 1, 0},
+		{18, 20, 1, 0},
+		{18, 24, 1, 0},
+		{18, 28, 1, 0},
+		{10, 32, 1, 0},
+		{10, 36, 1, 0},
+		{10, 40, 1, 0},
+		{10, 44, 1, 0},
+		{8,  48, 1, 0},
+		{8,  52, 1, 0},
+		{8,  56, 1, 0},
+		{8,  60, 1, 0},
+		{18, 64, 1, 0},
+		{8,  68, 1, 0},
+		{18, 72, 1, 0},
+		{8,  76, 1, 0},
+		{8,  80, 1, 0},
+		{18, 84, 1, 0},
+		{18, 88, 1, 0},
+		{18, 92, 1, 0},
+		{18, 96, 1, 0},
+	},
+	(MetaStructMember []){
+		{18, 0, 1, 0},
+		{8,  4, 1, 0},
+		{18, 8, 1, 0},
 	},
 	(MetaStructMember []){
 		{18, 0,  1, 0},
@@ -722,10 +722,10 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 };
 
 read_only global MetaStructInfo meta_struct_info_by_id[] = {
-	{str8_comp("DecodeBakeParameters"),             11, 48,  0},
-	{str8_comp("FilterBakeParameters"),             13, 56,  0},
-	{str8_comp("DASBakeParameters"),                24, 120, 0},
-	{str8_comp("CoherencyWeightingBakeParameters"), 3,  16,  0},
+	{str8_comp("DecodeBakeParameters"),             11, 44,  0},
+	{str8_comp("FilterBakeParameters"),             13, 52,  0},
+	{str8_comp("DASBakeParameters"),                24, 100, 0},
+	{str8_comp("CoherencyWeightingBakeParameters"), 3,  12,  0},
 	{str8_comp("ReshapeBakeParameters"),            9,  36,  0},
 };
 
