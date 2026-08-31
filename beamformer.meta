@@ -380,8 +380,6 @@
 
 	@Shader(das.glsl) DAS
 	{
-		@Constant    MaxChannelCount
-
 		@Enumeration AcquisitionKind
 		@Enumeration InterpolationMode
 		@Enumeration RCAOrientation
@@ -389,6 +387,9 @@
 		@Flags
 		{
 			CoherencyWeighting
+			SingleFocus
+			SingleOrientation
+			Sparse
 		}
 
 		@Bake
@@ -401,7 +402,6 @@
 			[TransmitReceiveOrientations U64]
 
 			[AcquisitionKind             U32]
-			[Sparse                      B32]
 			[AcquisitionCount            S32]
 			[ReceiveChannelCount         S32]
 			[ChunkChannelCount           S32]
@@ -414,9 +414,7 @@
 			[InterpolationMode           U32]
 			[FNumber                     F32]
 
-			[SingleOrientation           B32]
 			[TransmitReceiveOrientation  U32]
-			[SingleFocus                 B32]
 			[FocusDepth                  F32]
 			[TransmitAngle               F32]
 

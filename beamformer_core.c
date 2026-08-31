@@ -927,29 +927,33 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				memory_copy(cp->das_voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));
 
 				u32 id = pb->parameters.acquisition_kind;
-				db->Sparse = id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES;
-				db->SingleFocus        = pb->parameters.single_focus;
-				db->SingleOrientation  = pb->parameters.single_orientation;
+				b32 sparse = id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES;
+				b32 single_focus       = pb->parameters.single_focus != 0;
+				b32 single_orientation = pb->parameters.single_orientation != 0;
 
-				sd->compile_flags |= BeamformerDASCompileFlags_CoherencyWeighting * pb->parameters.coherency_weighting;
+				sd->compile_flags |= BeamformerDASCompileFlags_CoherencyWeighting * (pb->parameters.coherency_weighting != 0);
+				sd->compile_flags |= BeamformerDASCompileFlags_SingleFocus        * single_focus;
+				sd->compile_flags |= BeamformerDASCompileFlags_SingleOrientation  * single_orientation;
+				sd->compile_flags |= BeamformerDASCompileFlags_Sparse             * sparse;
+
 				sd->layout   = layout_for_output(cp->output_points);
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
 
-				if (id != BeamformerAcquisitionKind_UFORCES && id != BeamformerAcquisitionKind_FORCES && !db->SingleFocus) {
+				if (id != BeamformerAcquisitionKind_UFORCES && id != BeamformerAcquisitionKind_FORCES && !single_focus) {
 					gpu_resource_push(resource_builder, v2, db->AcquisitionCount,
 					                  .store = &db->FocalVectors,
 					                  .data  = pb->focal_vectors,
 					                  .name  = str8("focal_vectors"));
 				}
 
-				if (id != BeamformerAcquisitionKind_UFORCES && id != BeamformerAcquisitionKind_FORCES && !db->SingleOrientation) {
+				if (id != BeamformerAcquisitionKind_UFORCES && id != BeamformerAcquisitionKind_FORCES && !single_orientation) {
 					gpu_resource_push(resource_builder, u8, db->AcquisitionCount,
 					                  .store = &db->TransmitReceiveOrientations,
 					                  .data  = pb->transmit_receive_orientations,
 					                  .name  = str8("transmit_receive_orientations"));
 				}
 
-				if (db->Sparse) {
+				if (sparse) {
 					gpu_resource_push(resource_builder, i16, db->AcquisitionCount,
 					                  .store = &db->SparseElements,
 					                  .data  = pb->sparse_elements,

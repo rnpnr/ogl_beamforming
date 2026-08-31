@@ -124,6 +124,9 @@ typedef enum {
 
 typedef enum {
 	BeamformerDASCompileFlags_CoherencyWeighting = 1 << 0,
+	BeamformerDASCompileFlags_SingleFocus        = 1 << 1,
+	BeamformerDASCompileFlags_SingleOrientation  = 1 << 2,
+	BeamformerDASCompileFlags_Sparse             = 1 << 3,
 } BeamformerDASCompileFlags;
 
 typedef enum {
@@ -193,7 +196,6 @@ typedef struct {
 	u64 SparseElements;
 	u64 TransmitReceiveOrientations;
 	u32 AcquisitionKind;
-	b32 Sparse;
 	i32 AcquisitionCount;
 	i32 ReceiveChannelCount;
 	i32 ChunkChannelCount;
@@ -204,9 +206,7 @@ typedef struct {
 	f32 TimeOffset;
 	u32 InterpolationMode;
 	f32 FNumber;
-	b32 SingleOrientation;
 	u32 TransmitReceiveOrientation;
-	b32 SingleFocus;
 	f32 FocusDepth;
 	f32 TransmitAngle;
 	u32 OutputSizeX;
@@ -612,26 +612,23 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{17, 32,  1, 0},
 		{17, 40,  1, 0},
 		{18, 48,  1, 0},
-		{14, 52,  1, 0},
+		{10, 52,  1, 0},
 		{10, 56,  1, 0},
 		{10, 60,  1, 0},
 		{10, 64,  1, 0},
-		{10, 68,  1, 0},
+		{8,  68,  1, 0},
 		{8,  72,  1, 0},
 		{8,  76,  1, 0},
 		{8,  80,  1, 0},
-		{8,  84,  1, 0},
-		{18, 88,  1, 0},
-		{8,  92,  1, 0},
-		{14, 96,  1, 0},
-		{18, 100, 1, 0},
-		{14, 104, 1, 0},
-		{8,  108, 1, 0},
-		{8,  112, 1, 0},
+		{18, 84,  1, 0},
+		{8,  88,  1, 0},
+		{18, 92,  1, 0},
+		{8,  96,  1, 0},
+		{8,  100, 1, 0},
+		{18, 104, 1, 0},
+		{18, 108, 1, 0},
+		{18, 112, 1, 0},
 		{18, 116, 1, 0},
-		{18, 120, 1, 0},
-		{18, 124, 1, 0},
-		{18, 128, 1, 0},
 	},
 	(MetaStructMember []){
 		{17, 0,  1, 0},
@@ -688,7 +685,6 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("SparseElements"),
 		str8_comp("TransmitReceiveOrientations"),
 		str8_comp("AcquisitionKind"),
-		str8_comp("Sparse"),
 		str8_comp("AcquisitionCount"),
 		str8_comp("ReceiveChannelCount"),
 		str8_comp("ChunkChannelCount"),
@@ -699,9 +695,7 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("TimeOffset"),
 		str8_comp("InterpolationMode"),
 		str8_comp("FNumber"),
-		str8_comp("SingleOrientation"),
 		str8_comp("TransmitReceiveOrientation"),
-		str8_comp("SingleFocus"),
 		str8_comp("FocusDepth"),
 		str8_comp("TransmitAngle"),
 		str8_comp("OutputSizeX"),
@@ -730,7 +724,7 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 read_only global MetaStructInfo meta_struct_info_by_id[] = {
 	{str8_comp("DecodeBakeParameters"),             11, 48,  0},
 	{str8_comp("FilterBakeParameters"),             13, 56,  0},
-	{str8_comp("DASBakeParameters"),                27, 132, 0},
+	{str8_comp("DASBakeParameters"),                24, 120, 0},
 	{str8_comp("CoherencyWeightingBakeParameters"), 3,  16,  0},
 	{str8_comp("ReshapeBakeParameters"),            9,  36,  0},
 };
@@ -825,7 +819,6 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"  uint64_t output_buffer;\n"
 	"};\n"
 	"\n"),
-	str8_comp("#define MaxChannelCount (256)\n\n"),
 	str8_comp(""
 	"#define AcquisitionKind_FORCES         0\n"
 	"#define AcquisitionKind_UFORCES        1\n"
@@ -853,6 +846,9 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 	str8_comp(""
 	"#define CoherencyWeighting ((CompileFlags & (1 << 0)) != 0)\n"
+	"#define SingleFocus        ((CompileFlags & (1 << 1)) != 0)\n"
+	"#define SingleOrientation  ((CompileFlags & (1 << 2)) != 0)\n"
+	"#define Sparse             ((CompileFlags & (1 << 3)) != 0)\n"
 	"\n"),
 	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
@@ -932,18 +928,18 @@ read_only global b8 beamformer_shader_primitive_is_vertex[] = {
 read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){0, 1, 2},
 	(i32 []){3, 4},
-	(i32 []){5, 6, 7, 8, 9, 10},
-	(i32 []){11},
-	(i32 []){12, 13},
+	(i32 []){5, 6, 7, 8, 9},
+	(i32 []){10},
+	(i32 []){11, 12},
 	0,
+	(i32 []){13},
 	(i32 []){14},
-	(i32 []){15},
 };
 
 read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	3,
 	2,
-	6,
+	5,
 	1,
 	2,
 	0,
@@ -962,6 +958,9 @@ read_only global str8 *beamformer_shader_compile_flag_names[] = {
 	},
 	(str8 []){
 		str8_comp("CoherencyWeighting"),
+		str8_comp("SingleFocus"),
+		str8_comp("SingleOrientation"),
+		str8_comp("Sparse"),
 	},
 	0,
 	(str8 []){
@@ -976,7 +975,7 @@ read_only global str8 *beamformer_shader_compile_flag_names[] = {
 read_only global u8 beamformer_shader_compile_flag_counts[] = {
 	2,
 	2,
-	1,
+	4,
 	0,
 	2,
 	0,
