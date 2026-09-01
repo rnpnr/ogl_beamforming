@@ -193,9 +193,10 @@ send_parameters(Options *options, u32 transmit_count)
 	bp.decode_mode    = BeamformerDecodeMode_Hadamard;
 	b32 full_aperture = options->full_aperture;
 	uv3 dec_data_dim  = decoded_data_dim(transmit_count, full_aperture).xyz;
-	bp.sample_count      = dec_data_dim.x;
-	bp.channel_count     = dec_data_dim.y;
-	bp.acquisition_count = dec_data_dim.z;
+	bp.sample_count           = dec_data_dim.x;
+	bp.receive_channel_count  = dec_data_dim.y;
+	bp.transmit_channel_count = dec_data_dim.y;
+	bp.acquisition_count      = dec_data_dim.z;
 
 	bp.raw_data_dimensions = raw_data_dim(transmit_count, full_aperture);
 	beamformer_push_parameters(&bp);

@@ -1,15 +1,11 @@
 /* See LICENSE for license details. */
-/* TODO(rnp):
- * [ ]: for finer grained evaluation of throughput latency just queue a data upload
- *      without replacing the data.
- * [ ]: bug: we aren't inserting rf data between each frame
- */
 
 #define BASE_EXPORT           function
 #define BASE_IMPORT           function
 #define BEAMFORMER_LIB_EXPORT function
 #include "base_platform.h"
 #include "ogl_beamformer_lib.c"
+#include "threads.c"
 
 #include <signal.h>
 #include <stdarg.h>
@@ -17,19 +13,46 @@
 #include <stdlib.h>
 #include <zstd.h>
 
-global iv3 g_output_points    = {{512, 1, 1024}};
-global v2  g_axial_extent     = {{ 0e-3f, 120e-3f}};
-//global v2  g_axial_extent     = {{ 10e-3f, 165e-3f}};
-global v2  g_lateral_extent   = {{-60e-3f,  60e-3f}};
-global f32 g_f_number         = 0.5f;
+//global iv3 output_points    = {{512, 1, 1024}};
+global v2  axial_extent     = {{ 0e-3f, 120e-3f}};
+global v2  lateral_extent   = {{-60e-3f,  60e-3f}};
+global f32 f_number         = 0.5f;
 
-typedef struct {
-	b32 loop;
-	u32 frame_number;
+#define DATA_FILE "/home/rnp/doc/school/grad/src/others/ogl_beamforming/data/"\
+                  "260820_Tiled1_Tiled_Data_2_FORCES-Rx-Columns_combined.bp"
 
-	char **remaining;
-	i32    remaining_count;
-} Options;
+typedef union {
+	struct {
+		f32 alpha, beta, gamma;
+		f32 x_translation;
+		f32 y_translation;
+	};
+	f32 E[5];
+} TileParameters;
+
+global Arena          *arena;
+
+global u32 wire_points = 1024;
+global v2 wire_targets[] = {
+	{{  1.3e-3f, 105.5e-3f}},
+	{{  1.5e-3f, 86.4e-3f}},
+	{{  3.6e-3f,  20.2e-3f}},
+	//{{  3.4e-3f,  58.4e-3f}},
+	{{ 23.2e-3f,  48.9e-3f}},
+	{{-15.1e-3f,  48.7e-3f}},
+};
+global f32 region_width = 12e-3;
+
+#define OutputImages (countof(wire_targets) * 2)
+
+global u64 iteration_count;
+global f32 max_output_values[OutputImages];
+global f32 resolutions[OutputImages];
+
+#define TileCount 2
+global TileParameters tile_parameters_log[TileCount][1 << 14];
+
+global b32 g_should_exit;
 
 #include "external/zemp_bp.h"
 
@@ -38,8 +61,6 @@ typedef struct {
 	ZBP_DataCompressionKind compression_kind;
 	str8                    bytes;
 } ZBP_Data;
-
-global b32 g_should_exit;
 
 #define die(...) die_((char *)__func__, __VA_ARGS__)
 function no_return void
@@ -57,101 +78,21 @@ die_(char *function_name, char *format, ...)
 	os_exit(1);
 }
 
-#if OS_LINUX
-
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
-
 function str8
-os_read_file_simp(char *fname)
+decompress_zstd_data(Arena *arena, str8 raw)
 {
-	str8 result;
-	i32 fd = open(fname, O_RDONLY);
-	if (fd < 0)
-		die("couldn't open file: %s\n", fname);
-
-	struct stat st;
-	if (stat(fname, &st) < 0)
-		die("couldn't stat file\n");
-
-	result.length = st.st_size;
-	result.data   = malloc((u64)st.st_size);
-	if (!result.data)
-		die("couldn't alloc space for reading\n");
-
-	i64 rlen = read(fd, result.data, (u32)st.st_size);
-	close(fd);
-
-	if (rlen != st.st_size)
-		die("couldn't read file: %s\n", fname);
-
+	str8 result = {.length = ZSTD_getFrameContentSize(raw.data, (u64)raw.length)};
+	result.data = push_array_no_zero(arena, u8, result.length, .align = 64);
+	u64 decompressed = ZSTD_decompress(result.data, result.length, raw.data, (u64)raw.length);
+	if (decompressed != (u64)result.length)
+		die("failed to decompress data\n");
 	return result;
-}
-
-#elif OS_WINDOWS
-
-function str8
-os_read_file_simp(char *fname)
-{
-	str8 result;
-	iptr h = CreateFileA(fname, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
-	if (h == INVALID_FILE)
-		die("couldn't open file: %s\n", fname);
-
-	w32_file_info fileinfo;
-	if (!GetFileInformationByHandle(h, &fileinfo))
-		die("couldn't get file info\n", stderr);
-
-	result.length = fileinfo.nFileSizeLow;
-	result.data   = malloc(fileinfo.nFileSizeLow);
-	if (!result.data)
-		die("couldn't alloc space for reading\n");
-
-	i32 rlen = 0;
-	if (!ReadFile(h, result.data, (i32)fileinfo.nFileSizeLow, &rlen, 0) && rlen != (i32)fileinfo.nFileSizeLow)
-		die("couldn't read file: %s\n", fname);
-	CloseHandle(h);
-
-	return result;
-}
-
-#else
-#error Unsupported Platform
-#endif
-
-function void
-stream_ensure_termination(Stream *s, u8 byte)
-{
-	b32 found = 0;
-	if (!s->errors && s->widx > 0)
-		found = s->data[s->widx - 1] == byte;
-	if (!found) {
-		s->errors |= s->cap - 1 < s->widx;
-		if (!s->errors)
-			s->data[s->widx++] = byte;
-	}
-}
-
-function void *
-decompress_zstd_data(str8 raw)
-{
-	u64 requested_size = ZSTD_getFrameContentSize(raw.data, (u64)raw.length);
-	void *out          = malloc(requested_size);
-	if (out) {
-		u64 decompressed  = ZSTD_decompress(out, requested_size, raw.data, (u64)raw.length);
-		if (decompressed != requested_size) {
-			free(out);
-			out = 0;
-		}
-	}
-	return out;
 }
 
 function b32
-beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char *path, ZBP_Data *raw_data)
+beamformer_simple_parameters_from_zbp_file(char *path, BeamformerSimpleParameters *bp, ZBP_Data *raw_data)
 {
-	str8 raw = os_read_file_simp(path);
+	str8 raw = os_read_entire_file(arena, path);
 	if (raw.length < (i64)sizeof(ZBP_BaseHeader) || ((ZBP_BaseHeader *)raw.data)->magic != ZBP_HeaderMagic)
 		return 0;
 
@@ -273,16 +214,20 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 			m4 transform;
 			memory_copy(transform.E, header->transducer_transform_matrix, sizeof(transform));
 
-			f32 start = transform.c[3].x + gap / 2;
-			f32 y_off = transform.c[3].y;
+			static_assert(TileCount == 2, "");
 
-			transform = m4_translation((v3){.x = start, .y = y_off});
+			u32 iteration = iteration_count++;
+			tile_parameters_log[0][iteration].x_translation = transform.c[3].x + gap / 2;
+			tile_parameters_log[0][iteration].y_translation = transform.c[3].y;
+			tile_parameters_log[1][iteration].x_translation = 0.5f * transform.c[3].x + 1.5f * gap;
+			tile_parameters_log[1][iteration].y_translation = transform.c[3].y;
+
+			transform = m4_translation((v3){.x = tile_parameters_log[0][iteration].x_translation,
+			                                .y = tile_parameters_log[0][iteration].y_translation});
 			memory_copy(bp->xdc_transform_matrices + 0, transform.E, sizeof(transform));
 
-			start = start - gap / 2;
-			start = 0.5f * start + 1.5f * gap;
-
-			transform = m4_translation((v3){.x = start, .y = y_off});
+			transform = m4_translation((v3){.x = tile_parameters_log[1][iteration].x_translation,
+			                                .y = tile_parameters_log[1][iteration].y_translation});
 			memory_copy(bp->xdc_transform_matrices + 1, transform.E, sizeof(transform));
 		}
 
@@ -400,51 +345,6 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 	return 1;
 }
 
-#define shift_n(v, c, n) v += n, c -= n
-#define shift(v, c) shift_n(v, c, 1)
-
-function void
-usage(char *argv0)
-{
-	die("%s [--loop] [--frame n] parameters_file\n"
-	    "    --loop:    reupload data forever\n"
-	    "    --frame n: use frame n of the data for display\n",
-	    argv0);
-}
-
-function Options
-parse_argv(i32 argc, char *argv[])
-{
-	Options result = {0};
-
-	char *argv0 = argv[0];
-	shift(argv, argc);
-
-	while (argc > 0) {
-		str8 arg = str8_from_c_str(*argv);
-
-		if (str8_equal(arg, str8("--loop"))) {
-			shift(argv, argc);
-			result.loop = 1;
-		} else if (str8_equal(arg, str8("--frame"))) {
-			shift(argv, argc);
-			if (argc) {
-				result.frame_number = (u32)atoi(*argv);
-				shift(argv, argc);
-			}
-		} else if (arg.length > 0 && arg.data[0] == '-') {
-			usage(argv0);
-		} else {
-			break;
-		}
-	}
-
-	result.remaining       = argv;
-	result.remaining_count = argc;
-
-	return result;
-}
-
 function b32
 send_frame(void *restrict data, BeamformerSimpleParameters *restrict bp, BeamformerViewPlaneTag tag, u32 slot)
 {
@@ -457,40 +357,29 @@ send_frame(void *restrict data, BeamformerSimpleParameters *restrict bp, Beamfor
 }
 
 function void
-execute_study(Arena *arena, Stream path, Options *options)
+load_parameters(BeamformerSimpleParameters *bp, ZBP_Data *raw_data)
 {
-	i32 path_work_index = path.widx;
-	stream_ensure_termination(&path, 0);
+	if (!beamformer_simple_parameters_from_zbp_file(DATA_FILE, bp, raw_data))
+		die("failed to load parameters file: " DATA_FILE "\n");
 
-	ZBP_Data raw_data = {0};
-	BeamformerSimpleParameters bp = {0};
-	if (!beamformer_simple_parameters_from_zbp_file(&bp, (char *)path.data, &raw_data))
-		die("failed to load parameters file: %s\n", (char *)path.data);
+	bp->output_points.x    = wire_points;
+	bp->f_number           = f_number;
+	bp->interpolation_mode = BeamformerInterpolationMode_Cubic;
 
-	v3 min_coordinate = (v3){{g_lateral_extent.x, g_axial_extent.x, 0}};
-	v3 max_coordinate = (v3){{g_lateral_extent.y, g_axial_extent.y, 0}};
-	bp.das_voxel_transform = das_transform(min_coordinate, max_coordinate, &g_output_points);
+	bp->decimation_rate = 1;
 
-	bp.output_points.xyz = g_output_points;
-	bp.output_points.w   = 1;
-
-	bp.f_number           = g_f_number;
-	bp.interpolation_mode = BeamformerInterpolationMode_Cubic;
-
-	bp.decimation_rate = 1;
-
-	if (bp.data_kind != BeamformerDataKind_Float32Complex &&
-	    bp.data_kind != BeamformerDataKind_Int16Complex)
+	if (bp->data_kind != BeamformerDataKind_Float32Complex &&
+	    bp->data_kind != BeamformerDataKind_Int16Complex)
 	{
-		bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_Demodulate;
+		bp->compute_stages[bp->compute_stages_count++] = BeamformerShaderKind_Demodulate;
 	}
-	bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_Decode;
-	bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_DAS;
+	bp->compute_stages[bp->compute_stages_count++] = BeamformerShaderKind_Decode;
+	bp->compute_stages[bp->compute_stages_count++] = BeamformerShaderKind_DAS;
 
-	BeamformerFilterParameters filter = {.sampling_frequency = bp.sampling_frequency / 2};
+	BeamformerFilterParameters filter = {.sampling_frequency = bp->sampling_frequency / 2};
 	{
-		BeamformerEmissionParameters *ep = &bp.emission_parameters;
-		switch (bp.emission_parameters.kind) {
+		BeamformerEmissionParameters *ep = &bp->emission_parameters;
+		switch (bp->emission_parameters.kind) {
 
 		case BeamformerEmissionKind_Sine:{
 			filter.kind                    = BeamformerFilterKind_Kaiser;
@@ -502,8 +391,8 @@ execute_study(Arena *arena, Stream path, Options *options)
 		case BeamformerEmissionKind_Chirp:{
 			filter.kind                        = BeamformerFilterKind_MatchedChirp;
 			filter.matched_chirp.duration      = ep->chirp.duration;
-			filter.matched_chirp.min_frequency = ep->chirp.min_frequency - bp.demodulation_frequency;
-			filter.matched_chirp.max_frequency = ep->chirp.max_frequency - bp.demodulation_frequency;
+			filter.matched_chirp.min_frequency = ep->chirp.min_frequency - bp->demodulation_frequency;
+			filter.matched_chirp.max_frequency = ep->chirp.max_frequency - bp->demodulation_frequency;
 			filter.complex                     = 1;
 
 			//bp.time_offset += ep->chirp.duration / 2;
@@ -514,83 +403,19 @@ execute_study(Arena *arena, Stream path, Options *options)
 
 		beamformer_create_filter(&filter, 0, 0);
 
-		bp.compute_stage_parameters[0] = 0;
+		bp->compute_stage_parameters[0] = 0;
 	}
 
-	beamformer_push_simple_parameters(&bp);
+	beamformer_push_simple_parameters_at(bp, 0);
 
 	beamformer_set_global_timeout(1000);
 
-	void *data = 0;
-	if (raw_data.bytes.length == 0) {
-		// NOTE(rnp): strip ".bp"
-		stream_reset(&path, path_work_index - 3);
+	if (raw_data->bytes.length == 0)
+		die("bp file must contain embedded raw data\n");
 
-		stream_append_byte(&path, '_');
-		stream_append_u64_width(&path, options->frame_number, 2);
-		stream_append_str8(&path, str8(".zst"));
-		stream_ensure_termination(&path, 0);
-		str8 compressed_data = os_read_file_simp((char *)path.data);
-
-		data = decompress_zstd_data(compressed_data);
-		if (!data)
-			die("failed to decompress data: %s\n", path.data);
-		free(compressed_data.data);
-	} else {
-		if (raw_data.compression_kind == ZBP_DataCompressionKind_ZSTD) {
-			data = decompress_zstd_data(raw_data.bytes);
-			if (!data)
-				die("failed to decompress data: %s\n", path.data);
-		} else {
-			data = raw_data.bytes.data;
-		}
-	}
-
-	if (options->loop) {
-		BeamformerLiveImagingParameters lip = {
-			.active = 1,
-			.acquisition_kind = bp.acquisition_kind,
-			.save_enabled = 1,
-			.acquisition_kind_enabled_flags = 1 << bp.acquisition_kind,
-		};
-
-		str8 short_name = str8("Throughput");
-		memory_copy(lip.save_name_tag, short_name.data, (u64)short_name.length);
-		lip.save_name_tag_length = (i32)short_name.length;
-		beamformer_set_live_parameters(&lip);
-
-		u32 frame = 0;
-		f32 times[32] = {0};
-		f32 data_size = (f32)(bp.raw_data_dimensions.E[0] * bp.raw_data_dimensions.E[1]
-		                      * beamformer_data_kind_byte_size[bp.data_kind]);
-		u64 start = os_timer_count();
-		f64 frequency = os_timer_frequency();
-		for (;!g_should_exit;) {
-			if (send_frame(data, &bp, BeamformerViewPlaneTag_XZ, 0)) {
-				u64 now   = os_timer_count();
-				f64 delta = (now - start) / frequency;
-				start = now;
-
-				if ((frame % 16) == 0) {
-					f32 sum = 0;
-					for (u32 i = 0; i < countof(times); i++)
-						sum += times[i] / countof(times);
-					printf("Frame Time: %8.3f [ms] | 32-Frame Average: %8.3f [ms] | %8.3f GB/s\n",
-					       delta * 1e3, sum * 1e3, data_size / (sum * (GB(1))));
-				}
-
-				times[frame % countof(times)] = delta;
-				frame++;
-			}
-			i32 flag = beamformer_live_parameters_get_dirty_flag();
-			if (flag != -1 && (1 << flag) == BeamformerLiveImagingDirtyFlags_StopImaging)
-				break;
-		}
-
-		lip.active = 0;
-		beamformer_set_live_parameters(&lip);
-	} else {
-		send_frame(data, &bp, BeamformerViewPlaneTag_XZ, 0);
+	if (raw_data->compression_kind == ZBP_DataCompressionKind_ZSTD) {
+		raw_data->bytes = decompress_zstd_data(arena, raw_data->bytes);
+		raw_data->compression_kind = ZBP_DataCompressionKind_None;
 	}
 }
 
@@ -600,19 +425,259 @@ sigint(i32 _signo)
 	g_should_exit = 1;
 }
 
+global u64 g_random_state[4];
+
+function void
+init_random(void)
+{
+	u64 clock = os_timer_count();
+	g_random_state[0] = (u64)&g_should_exit ^ ror_u64(clock, 0);
+	g_random_state[1] = (u64)&main          ^ ror_u64(clock, 11);
+	g_random_state[2] = (u64)&die_          ^ ror_u64(clock, 17);
+	g_random_state[3] = (u64)&sigint        ^ ror_u64(clock, 23);
+}
+
+function u64
+xoroshiro256star(u64 s[4])
+{
+	u64 ts1 = s[1] * 5;
+	u64 result = ((ts1 << 7) | (ts1 >> 57)) * 9;
+	u64 t = s[1] << 17;
+	s[2] ^= s[0];
+	s[3] ^= s[1];
+	s[1] ^= s[2];
+	s[0] ^= s[3];
+	s[2] ^= t;
+	s[3] = ((s[3] << 45) | (s[3] >> 19));
+	return result;
+}
+
+function f64
+random_uniform(void)
+{
+	return xoroshiro256star(g_random_state) / (f64)UINT64_MAX;
+}
+
+function void
+start_beamforming(BeamformerSimpleParameters *restrict bp, void *restrict data)
+{
+	bp->output_points.x = wire_points;
+	bp->output_points.y = 1;
+	bp->output_points.z = 1;
+
+	for EachElement(wire_targets, wire) {
+		v3 p = {.x = wire_targets[wire].x, .z = wire_targets[wire].y};
+		bp->das_voxel_transform = das_transform_1d(v3_add(p, (v3){.x = -region_width / 2.f}),
+		                                           v3_add(p, (v3){.x =  region_width / 2.f}));
+		beamformer_push_parameters_at((BeamformerParameters *)bp, 0);
+		send_frame(data, bp, BeamformerViewPlaneTag_XY, 0);
+
+		bp->das_voxel_transform = das_transform_1d(v3_add(p, (v3){.z = -region_width / 2.f}),
+		                                           v3_add(p, (v3){.z =  region_width / 2.f}));
+		beamformer_push_parameters_at((BeamformerParameters *)bp, 0);
+		send_frame(data, bp, BeamformerViewPlaneTag_YZ, 0);
+	}
+}
+
+function void
+iteration(BeamformerSimpleParameters *bp)
+{
+	// NOTE(rnp): make sure first iteration is always an improvement
+	// so we don't need to special case it
+	local_persist f32 last_average_resolution = 100.f;
+
+	// NOTE(rnp): temperature for annealing; starting value doesn't matter too much
+	local_persist f64 T = 1e2;
+
+	f32 average_resolution = 0;
+	for EachElement(resolutions, it)
+		//average_resolution += resolutions[it] / (f32)countof(resolutions);
+		average_resolution = Max(average_resolution, resolutions[it]);
+
+	f32 dResolution = average_resolution - last_average_resolution;
+	last_average_resolution = average_resolution;
+
+	u32 iteration = iteration_count++;
+	for EachIndex(TileCount, tile) {
+		if (dResolution < 0) {
+			// NOTE(rnp): improvement; keep last parameters
+			tile_parameters_log[tile][iteration] = tile_parameters_log[tile][iteration - 1];
+		} else {
+			// NOTE(rnp): worse result; use annealed probability to determine acceptance
+			f64 P = exp_f64(-dResolution / T);
+			f64 R = random_uniform();
+			if (R < P)
+				tile_parameters_log[tile][iteration] = tile_parameters_log[tile][iteration - 1];
+			else
+				tile_parameters_log[tile][iteration] = tile_parameters_log[tile][iteration - 2];
+		}
+	}
+
+	// NOTE(rnp): reduce temperature for next iteration
+	T *= 0.99;
+
+	static_assert(countof(tile_parameters_log[0][0].E) == 5, "");
+	// NOTE(rnp): alpha, beta, gamma, x, y
+	f32 scales[5] = {0.03f, 0.03f, 0.03f, 0.0005f, 0.f};
+	//for EachIndex(TileCount, tile) {
+	{ u32 tile = 1;
+		TileParameters *t = tile_parameters_log[tile] + iteration;
+		for EachElement(t->E, it)
+			t->E[it] += scales[it] * (2.0 * random_uniform() - 1.0);
+	}
+
+	for EachIndex(TileCount, tile) {
+		TileParameters *t = tile_parameters_log[tile] + iteration;
+		m4 R = m4_rotation_from_euler(t->alpha, t->beta, t->gamma);
+		m4 T = m4_translation((v3){.x = t->x_translation, .y = t->y_translation});
+		m4 transform = m4_mul(T, R);
+		memory_copy(bp->xdc_transform_matrices + tile, transform.E, sizeof(transform));
+	}
+
+	beamformer_push_simple_parameters_at(bp, 0);
+}
+
+function void
+optimize(void)
+{
+	BeamformerSimpleParameters bp = {0};
+	ZBP_Data raw_data = {0};
+
+	// NOTE(rnp): load dataset, setup initial parameters
+	if (lane_index() == 0) {
+		load_parameters(&bp, &raw_data);
+		start_beamforming(&bp, raw_data.bytes.data);
+	}
+
+	u64 image_size = AlignUpPowerOfTwo(sizeof(v2) * wire_points, 64);
+	v2 *frame_readback_buffer;
+	if (lane_index() == 0)
+	{
+		frame_readback_buffer = arena_alloc(arena, .size = image_size, .count = OutputImages,
+		                                    .align = 64, .flags = ArenaAllocateFlags_NoZero);
+	}
+
+	lane_sync_u64(&frame_readback_buffer, 0);
+
+	for (;iteration_count < countof(*tile_parameters_log) && !g_should_exit;) {
+		////////////////////////////
+		// NOTE(rnp): update parameters
+		lane_sync();
+		if (lane_index() == 0)
+			iteration(&bp);
+
+		////////////////////////////
+		// NOTE(rnp): fetch results
+		if (lane_index() == 0) {
+			u64 readback_buffer_size = image_size * OutputImages;
+			b32 result = beamformer_get_last_frames(frame_readback_buffer, readback_buffer_size, OutputImages);
+			if unlikely(!result)
+				printf("lib error: %s\n", beamformer_get_last_error_string());
+		}
+
+		////////////////////////////
+		// NOTE(rnp): start next iteration
+		if (lane_index() == 0)
+			start_beamforming(&bp, raw_data.bytes.data);
+
+		lane_sync();
+
+		////////////////////////////
+		// NOTE(rnp): compute metrics
+		RangeU64 range = lane_range(OutputImages);
+		for (u64 frame = range.start; frame < range.stop; frame++) {
+			f32  max_value = 0;
+			v2  *image     = (v2 *)((u8 *)frame_readback_buffer + image_size * frame);
+			for EachIndex(wire_points, index) {
+				f32 value = v2_magnitude_squared(image[index]);
+				max_value = Max(max_value, value);
+			}
+			max_output_values[frame] = max_value;
+
+			u32 first_resolution_index = 0;
+			for EachIndex(wire_points, index) {
+				f32 value = v2_magnitude_squared(image[index]);
+				if (value >= 0.5f * max_value) {
+					first_resolution_index = index;
+					break;
+				}
+			}
+
+			u32 last_resolution_index = 0;
+			for EachIndex(wire_points, index) {
+				f32 value = v2_magnitude_squared(image[wire_points - 1 - index]);
+				if (value >= 0.5f * max_value) {
+					last_resolution_index = wire_points - 1 - index;
+					break;
+				}
+			}
+
+			f32 axis_inc = region_width / (wire_points - 1);
+			if (last_resolution_index > first_resolution_index)
+				resolutions[frame] = axis_inc * (last_resolution_index - first_resolution_index);
+			else
+				resolutions[frame] = 10.f;
+
+			///u32 max_value_index = 0;
+			///for EachIndex(wire_points, index) {
+			///	f32 value = v2_magnitude_squared(image[index]);
+			///	if (value == max_value) {
+			///		max_value_index = index;
+			///		break;
+			///	}
+			///}
+			///u32 wire_bin = frame / 2;
+			///u32 dir_bin  = frame % 2;
+			///wire_targets[wire_bin].E[dir_bin] = wire_targets[wire_bin].E[dir_bin] - region_width / 2.f + axis_inc * max_value_index;
+		}
+	}
+
+	if (lane_index() == 0) {
+		v2 min_coordinate = {.x = lateral_extent.x, .y = axial_extent.x};
+		v2 max_coordinate = {.x = lateral_extent.y, .y = axial_extent.y};
+		bp.output_points.x = 512;
+		bp.output_points.y = 512;
+		bp.das_voxel_transform = das_transform_2d_xz(min_coordinate, max_coordinate, 0);
+		beamformer_push_parameters_at((BeamformerParameters *)&bp, 0);
+
+		send_frame(raw_data.bytes.data, &bp, BeamformerViewPlaneTag_XZ, 0);
+	}
+}
+
+function OS_THREAD_ENTRY_POINT_FN(thread_entry_point)
+{
+	lane_context(user_context);
+	optimize();
+	return 0;
+}
+
 BASE_IMPORT void
 entry_point(i32 argc, char *argv[])
 {
-	Options options = parse_argv(argc, argv);
-
-	if (options.remaining_count != 1)
-		usage(argv[0]);
-
 	signal(SIGINT, sigint);
 
-	Arena  *arena = arena_create();
-	Stream  path  = stream_alloc(arena, KB(4));
-	stream_append_str8(&path, str8_from_c_str(options.remaining[0]));
+	init_random();
 
-	execute_study(arena, path, &options);
+	arena = arena_create();
+
+	u32 thread_count = Min(OutputImages, os_system_info()->logical_processor_count);
+	ThreadContext *threads = push_array(arena, ThreadContext, thread_count);
+	OSBarrier      barrier = os_barrier_alloc(thread_count);
+
+	local_persist u64 broadcast_memory;
+	for EachIndex(thread_count, it) {
+		Stream sb = stream_from_buffer(threads[it].name, countof(threads[it].name) - 1);
+		stream_append_str8(&sb, str8("[worker "));
+		stream_append_u64(&sb, it);
+		stream_append_byte(&sb, ']');
+
+		threads[it].lane_context.count   = thread_count;
+		threads[it].lane_context.index   = it;
+		threads[it].lane_context.barrier = barrier;
+		threads[it].lane_context.broadcast_memory = &broadcast_memory;
+
+		if (it != 0) os_create_thread((char *)threads[it].name, threads + it, thread_entry_point);
+	}
+
+	thread_entry_point(threads + 0);
 }

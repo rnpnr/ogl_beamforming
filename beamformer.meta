@@ -5,6 +5,7 @@
 @Constant(256)    MaxEmissionsCount
 @Constant(16)     MaxComputeShaderStages
 @Constant(16)     MaxParameterBlocks
+@Constant(16)     MaxArrayTiles
 @Constant(3)      MaxRawDataFramesInFlight
 
 @Enumeration DecodeMode
@@ -160,13 +161,15 @@
 @Struct ParametersHead
 {
 	[das_voxel_transform          M4             ]
-	[xdc_transform                M4             ]
 	[xdc_element_pitch            V2             ]
 	[raw_data_dimensions          UV2            ]
 	[focal_vector                 V2             ]
 	[transmit_receive_orientation U32            ]
 	[sample_count                 U32            ]
-	[channel_count                U32            ]
+	[transmit_channel_count       U16            ]
+	[receive_channel_count        U16            ]
+	[xdc_receive_tile_count       U16            ]
+	[xdc_transmit_tile_count      U16            ]
 	[acquisition_count            U32            ]
 	[acquisition_kind             AcquisitionKind]
 	[decode_mode                  DecodeMode     ]
@@ -212,6 +215,7 @@
 	[channel_mapping               S16        MaxChannelCount       ]
 	[sparse_elements               S16        MaxEmissionsCount     ]
 	[transmit_receive_orientations U8         MaxEmissionsCount     ]
+	[xdc_transform_matrices        M4         MaxArrayTiles         ]
 	[steering_angles               F32        MaxEmissionsCount     ]
 	[focal_depths                  F32        MaxEmissionsCount     ]
 	[compute_stages                S32        MaxComputeShaderStages]
@@ -395,6 +399,7 @@
 		@Bake
 		{
 			[RFData                      U64]
+			[TransducerTransforms        U32]
 			[FocalVectors                U32]
 			[Hadamard                    U32]
 			[IncoherentFrame             U32]
@@ -403,9 +408,13 @@
 
 			[AcquisitionKind             U32]
 			[AcquisitionCount            S32]
-			[ReceiveChannelCount         S32]
-			[ChunkChannelCount           S32]
 			[SampleCount                 S32]
+			[ReceiveChannelCount         U16]
+			[TransmitChannelCount        U16]
+			[ReceiveTileCount            U16]
+			[TransmitTileCount           U16]
+			[ChunkChannelCount           U16]
+			[TransmitReceiveOrientation  U16]
 
 			[SamplingFrequency           F32]
 			[DemodulationFrequency       F32]
@@ -414,7 +423,6 @@
 			[InterpolationMode           U32]
 			[FNumber                     F32]
 
-			[TransmitReceiveOrientation  U32]
 			[FocusDepth                  F32]
 			[TransmitAngle               F32]
 
@@ -427,7 +435,6 @@
 
 		@PushConstants
 		{
-			[xdc_transform      M4]
 			[voxel_transform    M4]
 			[xdc_element_pitch  V2]
 			[output_frame      U64]

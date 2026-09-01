@@ -432,10 +432,11 @@ beamformer_flush_commands(void)
 }
 
 #define BEAMFORMER_UPLOAD_FNS \
-	X(channel_mapping,               i16, 1, ChannelMapping) \
-	X(focal_vectors,                 f32, 2, FocalVectors)   \
-	X(sparse_elements,               i16, 1, SparseElements) \
-	X(transmit_receive_orientations, u8,  1, TransmitReceiveOrientations)
+	X(transducer_transforms,         f32, 16, TransducerTransforms) \
+	X(channel_mapping,               i16, 1,  ChannelMapping) \
+	X(focal_vectors,                 f32, 2,  FocalVectors)   \
+	X(sparse_elements,               i16, 1,  SparseElements) \
+	X(transmit_receive_orientations, u8,  1,  TransmitReceiveOrientations)
 
 #define X(name, dtype, elements, region_name) \
 b32 beamformer_push_##name ##_at(dtype *data, u32 count, u32 block) { \
@@ -497,7 +498,7 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 
 	u64 arena_size  = scratch->reserved - scratch->position;
 	u64 max_rf_size = g_beamformer_library_context.bp->capabilities.max_rf_data_size;
-	u32 rf_size     = bp->acquisition_count * bp->sample_count * bp->channel_count * beamformer_data_kind_byte_size[data_kind];
+	u32 rf_size     = bp->acquisition_count * bp->sample_count * bp->receive_channel_count * beamformer_data_kind_byte_size[data_kind];
 	u32 raw_size    = bp->raw_data_dimensions.x * bp->raw_data_dimensions.y * beamformer_data_kind_byte_size[data_kind];
 
 	// TODO(rnp): support multi push upload so that max_rf_size is actual limit
@@ -507,7 +508,7 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 	{
 		if (lib_try_lock(BeamformerSharedMemoryLockKind_UploadRF, timeout_ms)) {
 			if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
-				u32 channel_count      = bp->channel_count;
+				u32 channel_count      = bp->receive_channel_count;
 				u32 out_channel_stride = beamformer_data_kind_byte_size[data_kind] * bp->sample_count * bp->acquisition_count;
 				u32 in_channel_stride  = beamformer_data_kind_byte_size[data_kind] * bp->raw_data_dimensions.x;
 
@@ -540,12 +541,13 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 							#undef X
 						};
 
+						beamformer_reduce_a1s2_contrast_fn *reduce = reduce_a1s2_fn_table[reduce_a1s2_index_map[data_kind]];
 						u32 sample_count       = bp->sample_count * beamformer_data_kind_element_count[data_kind];
 						u32 acquisition_stride = sample_count * beamformer_data_kind_element_size[data_kind];
 						for (u32 acquisition = 0; acquisition < bp->acquisition_count; acquisition++) {
 							void *out = memory + acquisition * acquisition_stride;
 							void *in  = (u8 *)data + in_off + 3 * acquisition * acquisition_stride;
-							reduce_a1s2_fn_table[reduce_a1s2_index_map[data_kind]](out, in, sample_count);
+							reduce(out, in, sample_count);
 						}
 					}break;
 					}
@@ -620,10 +622,13 @@ beamformer_push_simple_parameters_at(BeamformerSimpleParameters *bp, u32 block)
 
 		result &= beamformer_push_parameters_at((BeamformerParameters *)bp, block);
 		result &= beamformer_push_pipeline_at(bp->compute_stages, bp->compute_stages_count, (BeamformerDataKind)bp->data_kind, block);
-		result &= beamformer_push_channel_mapping_at(bp->channel_mapping, bp->channel_count, block);
+		result &= beamformer_push_channel_mapping_at(bp->channel_mapping, bp->receive_channel_count, block);
 		result &= beamformer_push_focal_vectors_at((f32 *)focal_vectors, countof(focal_vectors), block);
 		result &= beamformer_push_transmit_receive_orientations_at(bp->transmit_receive_orientations,
 		                                                           bp->acquisition_count, block);
+
+		u32 tile_count = Max(1, bp->xdc_receive_tile_count) * Max(1, bp->xdc_transmit_tile_count);
+		result &= beamformer_push_transducer_transforms_at((f32 *)bp->xdc_transform_matrices, tile_count, block);
 
 		if (bp->acquisition_kind == BeamformerAcquisitionKind_UFORCES ||
 		    bp->acquisition_kind == BeamformerAcquisitionKind_UHERCULES)

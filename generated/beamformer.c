@@ -10,6 +10,7 @@
 #define BeamformerMaxEmissionsCount        (256)
 #define BeamformerMaxComputeShaderStages   (16)
 #define BeamformerMaxParameterBlocks       (16)
+#define BeamformerMaxArrayTiles            (16)
 #define BeamformerMaxRawDataFramesInFlight (3)
 
 typedef enum {
@@ -190,6 +191,7 @@ typedef struct {
 
 typedef struct {
 	u64 RFData;
+	u32 TransducerTransforms;
 	u32 FocalVectors;
 	u32 Hadamard;
 	u32 IncoherentFrame;
@@ -197,16 +199,19 @@ typedef struct {
 	u32 TransmitReceiveOrientations;
 	u32 AcquisitionKind;
 	i32 AcquisitionCount;
-	i32 ReceiveChannelCount;
-	i32 ChunkChannelCount;
 	i32 SampleCount;
+	u16 ReceiveChannelCount;
+	u16 TransmitChannelCount;
+	u16 ReceiveTileCount;
+	u16 TransmitTileCount;
+	u16 ChunkChannelCount;
+	u16 TransmitReceiveOrientation;
 	f32 SamplingFrequency;
 	f32 DemodulationFrequency;
 	f32 SpeedOfSound;
 	f32 TimeOffset;
 	u32 InterpolationMode;
 	f32 FNumber;
-	u32 TransmitReceiveOrientation;
 	f32 FocusDepth;
 	f32 TransmitAngle;
 	u32 OutputSizeX;
@@ -244,7 +249,6 @@ typedef struct {
 } BeamformerFilterPushConstants;
 
 typedef struct {
-	m4  xdc_transform;
 	m4  voxel_transform;
 	v2  xdc_element_pitch;
 	u64 output_frame;
@@ -328,13 +332,15 @@ typedef struct {
 
 typedef struct {
 	m4                        das_voxel_transform;
-	m4                        xdc_transform;
 	v2                        xdc_element_pitch;
 	uv2                       raw_data_dimensions;
 	v2                        focal_vector;
 	u32                       transmit_receive_orientation;
 	u32                       sample_count;
-	u32                       channel_count;
+	u16                       transmit_channel_count;
+	u16                       receive_channel_count;
+	u16                       xdc_receive_tile_count;
+	u16                       xdc_transmit_tile_count;
 	u32                       acquisition_count;
 	BeamformerAcquisitionKind acquisition_kind;
 	BeamformerDecodeMode      decode_mode;
@@ -364,13 +370,15 @@ typedef struct {
 
 typedef struct {
 	m4                           das_voxel_transform;
-	m4                           xdc_transform;
 	v2                           xdc_element_pitch;
 	uv2                          raw_data_dimensions;
 	v2                           focal_vector;
 	u32                          transmit_receive_orientation;
 	u32                          sample_count;
-	u32                          channel_count;
+	u16                          transmit_channel_count;
+	u16                          receive_channel_count;
+	u16                          xdc_receive_tile_count;
+	u16                          xdc_transmit_tile_count;
 	u32                          acquisition_count;
 	BeamformerAcquisitionKind    acquisition_kind;
 	BeamformerDecodeMode         decode_mode;
@@ -394,13 +402,15 @@ typedef struct {
 
 typedef struct {
 	m4                           das_voxel_transform;
-	m4                           xdc_transform;
 	v2                           xdc_element_pitch;
 	uv2                          raw_data_dimensions;
 	v2                           focal_vector;
 	u32                          transmit_receive_orientation;
 	u32                          sample_count;
-	u32                          channel_count;
+	u16                          transmit_channel_count;
+	u16                          receive_channel_count;
+	u16                          xdc_receive_tile_count;
+	u16                          xdc_transmit_tile_count;
 	u32                          acquisition_count;
 	BeamformerAcquisitionKind    acquisition_kind;
 	BeamformerDecodeMode         decode_mode;
@@ -423,6 +433,7 @@ typedef struct {
 	i16                          channel_mapping[BeamformerMaxChannelCount];
 	i16                          sparse_elements[BeamformerMaxEmissionsCount];
 	u8                           transmit_receive_orientations[BeamformerMaxEmissionsCount];
+	m4                           xdc_transform_matrices[BeamformerMaxArrayTiles];
 	f32                          steering_angles[BeamformerMaxEmissionsCount];
 	f32                          focal_depths[BeamformerMaxEmissionsCount];
 	i32                          compute_stages[BeamformerMaxComputeShaderStages];
@@ -605,30 +616,34 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{18, 48, 1, 0},
 	},
 	(MetaStructMember []){
-		{17, 0,  1, 0},
-		{18, 8,  1, 0},
-		{18, 12, 1, 0},
-		{18, 16, 1, 0},
-		{18, 20, 1, 0},
-		{18, 24, 1, 0},
-		{18, 28, 1, 0},
-		{10, 32, 1, 0},
-		{10, 36, 1, 0},
-		{10, 40, 1, 0},
-		{10, 44, 1, 0},
-		{8,  48, 1, 0},
-		{8,  52, 1, 0},
-		{8,  56, 1, 0},
-		{8,  60, 1, 0},
-		{18, 64, 1, 0},
-		{8,  68, 1, 0},
-		{18, 72, 1, 0},
-		{8,  76, 1, 0},
-		{8,  80, 1, 0},
-		{18, 84, 1, 0},
-		{18, 88, 1, 0},
-		{18, 92, 1, 0},
-		{18, 96, 1, 0},
+		{17, 0,   1, 0},
+		{18, 8,   1, 0},
+		{18, 12,  1, 0},
+		{18, 16,  1, 0},
+		{18, 20,  1, 0},
+		{18, 24,  1, 0},
+		{18, 28,  1, 0},
+		{18, 32,  1, 0},
+		{10, 36,  1, 0},
+		{10, 40,  1, 0},
+		{19, 44,  1, 0},
+		{19, 46,  1, 0},
+		{19, 48,  1, 0},
+		{19, 50,  1, 0},
+		{19, 52,  1, 0},
+		{19, 54,  1, 0},
+		{8,  56,  1, 0},
+		{8,  60,  1, 0},
+		{8,  64,  1, 0},
+		{8,  68,  1, 0},
+		{18, 72,  1, 0},
+		{8,  76,  1, 0},
+		{8,  80,  1, 0},
+		{8,  84,  1, 0},
+		{18, 88,  1, 0},
+		{18, 92,  1, 0},
+		{18, 96,  1, 0},
+		{18, 100, 1, 0},
 	},
 	(MetaStructMember []){
 		{18, 0, 1, 0},
@@ -679,6 +694,7 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 	},
 	(str8 []){
 		str8_comp("RFData"),
+		str8_comp("TransducerTransforms"),
 		str8_comp("FocalVectors"),
 		str8_comp("Hadamard"),
 		str8_comp("IncoherentFrame"),
@@ -686,16 +702,19 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("TransmitReceiveOrientations"),
 		str8_comp("AcquisitionKind"),
 		str8_comp("AcquisitionCount"),
-		str8_comp("ReceiveChannelCount"),
-		str8_comp("ChunkChannelCount"),
 		str8_comp("SampleCount"),
+		str8_comp("ReceiveChannelCount"),
+		str8_comp("TransmitChannelCount"),
+		str8_comp("ReceiveTileCount"),
+		str8_comp("TransmitTileCount"),
+		str8_comp("ChunkChannelCount"),
+		str8_comp("TransmitReceiveOrientation"),
 		str8_comp("SamplingFrequency"),
 		str8_comp("DemodulationFrequency"),
 		str8_comp("SpeedOfSound"),
 		str8_comp("TimeOffset"),
 		str8_comp("InterpolationMode"),
 		str8_comp("FNumber"),
-		str8_comp("TransmitReceiveOrientation"),
 		str8_comp("FocusDepth"),
 		str8_comp("TransmitAngle"),
 		str8_comp("OutputSizeX"),
@@ -724,7 +743,7 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 read_only global MetaStructInfo meta_struct_info_by_id[] = {
 	{str8_comp("DecodeBakeParameters"),             11, 44,  0},
 	{str8_comp("FilterBakeParameters"),             13, 52,  0},
-	{str8_comp("DASBakeParameters"),                24, 100, 0},
+	{str8_comp("DASBakeParameters"),                28, 104, 0},
 	{str8_comp("CoherencyWeightingBakeParameters"), 3,  12,  0},
 	{str8_comp("ReshapeBakeParameters"),            9,  36,  0},
 };
@@ -852,7 +871,6 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
-	"  f32mat4  xdc_transform;\n"
 	"  f32mat4  voxel_transform;\n"
 	"  f32vec2  xdc_element_pitch;\n"
 	"  uint64_t output_frame;\n"

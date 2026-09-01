@@ -53,6 +53,7 @@ layout(std430, buffer_reference) buffer F32V2 { f32vec2 x[]; };
 layout(std430, buffer_reference) buffer F32V4 { f32vec4 x[]; };
 layout(std430, buffer_reference) buffer F16V2 { f16vec2 x[]; };
 layout(std430, buffer_reference) buffer F16V4 { f16vec4 x[]; };
+layout(std430, buffer_reference) buffer M4    { mat4    x[]; };
 
 #define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
 #define TX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 4, 4)
@@ -239,9 +240,23 @@ f32 rca_transmit_distance(const vec3 world_point, const vec2 focal_vector, const
 	return result;
 }
 
+mat4 transducer_transform(const u32 acquisition)
+{
+	const u32 receive_tile_channels = ReceiveChannelCount / ReceiveTileCount;
+	const u32 receive_index = channel_offset / receive_tile_channels;
+
+	const u32 transmit_tile_channels = TransmitChannelCount / TransmitTileCount;
+	const u32 transmit_index = acquisition / transmit_tile_channels;
+
+	mat4 result = M4(HeapBase + TransducerTransforms).x[transmit_index * ReceiveTileCount + receive_index];
+	return result;
+}
+
 RESULT_TYPE RCA(const vec3 world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
+
+	const mat4 xdc_transform = transducer_transform(0);
 	for (s32 acquisition = 0; acquisition < s32(AcquisitionCount); acquisition++) {
 		const u8   tx_rx_orientation = tx_rx_orientation_for_acquisition(acquisition);
 		const bool rx_rows           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows;
@@ -271,6 +286,9 @@ RESULT_TYPE RCA(const vec3 world_point)
 
 RESULT_TYPE HERCULES(const vec3 world_point)
 {
+	// TODO(rnp): this whole thing needs have an outer loop over transmit tiles
+	const mat4 xdc_transform     = transducer_transform(0);
+
 	const u8   tx_rx_orientation = tx_rx_orientation_for_acquisition(0);
 	const bool rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
 	const vec2 focal_vector      = focal_vector_for_acquisition(0);
@@ -323,6 +341,7 @@ RESULT_TYPE FORCES(const vec3 world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
+	const mat4 xdc_transform   = transducer_transform(0);
 	const vec3 xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
 
 	// TODO(rnp): the sign of the origin offset might be flipped
@@ -360,6 +379,7 @@ RESULT_TYPE READI_FORCES(const vec3 world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
+	const mat4 xdc_transform   = transducer_transform(0);
 	const vec3 xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
 
 	// TODO(rnp): the sign of the origin offset might be flipped

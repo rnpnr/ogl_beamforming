@@ -555,7 +555,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	BeamformerDataKind das_data_kind = cp->iq_pipeline ? BeamformerDataKind_Float32Complex
 	                                                   : BeamformerDataKind_Float32;
 
-	cp->channel_count = pb->parameters.channel_count;
+	cp->channel_count = pb->parameters.receive_channel_count;
 	u32 chunk_channel_count = Min(cp->channel_count, BeamformerChunkChannelCount);
 
 	cp->rf_size = input_sample_count * pb->parameters.acquisition_count * chunk_channel_count
@@ -891,7 +891,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->FNumber               = pb->parameters.f_number;
 				db->AcquisitionKind       = pb->parameters.acquisition_kind;
 				db->SampleCount           = input_sample_count;
-				db->ReceiveChannelCount   = pb->parameters.channel_count;
+				db->ReceiveChannelCount   = pb->parameters.receive_channel_count;
+				db->TransmitChannelCount  = pb->parameters.transmit_channel_count;
+				db->ReceiveTileCount      = Max(1, pb->parameters.xdc_receive_tile_count);
+				db->TransmitTileCount     = Max(1, pb->parameters.xdc_transmit_tile_count);
 				db->AcquisitionCount      = pb->parameters.acquisition_count;
 				db->ChunkChannelCount     = chunk_channel_count;
 				db->InterpolationMode     = pb->parameters.interpolation_mode;
@@ -905,9 +908,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 				u64 pp_size = beamformer_context->compute_context.ping_pong_buffer.size / PING_PONG_BUFFER_SLOTS;
 				db->RFData  = beamformer_context->compute_context.ping_pong_buffer.gpu_pointer + (PING_PONG_BUFFER_SLOTS - 1) * pp_size;
-
-				// NOTE(rnp): old gcc will miscompile an assignment
-				memory_copy(cp->xdc_transform.E, pb->parameters.xdc_transform.E, sizeof(cp->xdc_transform));
 
 				cp->voxel_transform   = m4_mul(cp->ui_voxel_transform, pb->parameters.das_voxel_transform);
 				cp->xdc_element_pitch = pb->parameters.xdc_element_pitch;
@@ -927,32 +927,33 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				sd->layout   = layout_for_output(cp->output_points);
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
 
+				sd->uses_heap = 1;
+				db->TransducerTransforms = gpu_resource_push(resource_builder, m4, db->TransmitTileCount * db->ReceiveTileCount,
+				                                             .data = pb->transducer_transforms,
+				                                             .name = str8("transducer_transforms"));
+
 				if (id != BeamformerAcquisitionKind_UFORCES && id != BeamformerAcquisitionKind_FORCES && !single_focus) {
 					db->FocalVectors = gpu_resource_push(resource_builder, v2, db->AcquisitionCount,
 					                                     .data = pb->focal_vectors,
 					                                     .name = str8("focal_vectors"));
-					sd->uses_heap = 1;
 				}
 
 				if (id != BeamformerAcquisitionKind_UFORCES && id != BeamformerAcquisitionKind_FORCES && !single_orientation) {
 					db->TransmitReceiveOrientations = gpu_resource_push(resource_builder, u8, db->AcquisitionCount,
 					                                                    .data = pb->transmit_receive_orientations,
 					                                                    .name = str8("transmit_receive_orientations"));
-					sd->uses_heap = 1;
 				}
 
 				if (sparse) {
 					db->SparseElements = gpu_resource_push(resource_builder, i16, db->AcquisitionCount,
 					                                       .data = pb->sparse_elements,
 					                                       .name = str8("sparse_elements"));
-					sd->uses_heap = 1;
 				}
 
 				if (pb->parameters.coherency_weighting) {
 					db->IncoherentFrame = gpu_resource_push(resource_builder, u32, 0,
 					                                        .size = beamformer_incoherent_frame_byte_size(cp->output_points, das_data_kind),
 					                                        .name = str8("incoherent_buffer"));
-					sd->uses_heap = 1;
 				}
 
 				cp->readi_group = pb->parameters.readi_group;
@@ -961,7 +962,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 					db->Hadamard = gpu_resource_push(resource_builder, f16, order * order,
 					                                 .data = make_hadamard_transpose(scratch, order, 0),
 					                                 .name = str8("readi_hadamard"));
-					sd->uses_heap = 1;
 				}
 			}break;
 
@@ -1296,7 +1296,6 @@ do_compute_shader(GPUCommandList cmd, BeamformerComputePlan *cp, BeamformerFrame
 			.readi_group       = cp->readi_group,
 		};
 		memory_copy(pc.voxel_transform.E, cp->das_voxel_transform.E, sizeof(pc.voxel_transform));
-		memory_copy(pc.xdc_transform.E,   cp->xdc_transform.E,       sizeof(pc.xdc_transform));
 
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
