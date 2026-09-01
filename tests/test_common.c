@@ -50,9 +50,12 @@ beamformer_simple_parameters_from_zbp_file(Arena *arena, BeamformerSimpleParamet
 	case 1:{
 		ZBP_HeaderV1 *header       = (ZBP_HeaderV1 *)raw.data;
 
-		bp->sample_count           = header->sample_count;
-		bp->channel_count          = header->channel_count;
-		bp->acquisition_count      = header->receive_event_count;
+		bp->sample_count            = header->sample_count;
+		bp->acquisition_count       = header->receive_event_count;
+		bp->receive_channel_count   = header->channel_count;
+		bp->transmit_channel_count  = header->channel_count;
+		bp->xdc_receive_tile_count  = 1;
+		bp->xdc_transmit_tile_count = 1;
 
 		bp->sampling_mode          = BeamformerSamplingMode_4X;
 		bp->acquisition_kind       = header->beamform_mode;
@@ -62,8 +65,8 @@ beamformer_simple_parameters_from_zbp_file(Arena *arena, BeamformerSimpleParamet
 		bp->speed_of_sound         = header->speed_of_sound;
 		bp->time_offset            = header->time_offset;
 
-		memory_copy(bp->channel_mapping,       header->channel_mapping,             sizeof(*bp->channel_mapping) * bp->channel_count);
-		memory_copy(bp->xdc_transform.E,       header->transducer_transform_matrix, sizeof(bp->xdc_transform));
+		memory_copy(bp->xdc_transform_matrices + 0, header->transducer_transform_matrix, sizeof(header->transducer_transform_matrix));
+		memory_copy(bp->channel_mapping,       header->channel_mapping,             sizeof(*bp->channel_mapping) * bp->receive_channel_count);
 		memory_copy(bp->xdc_element_pitch.E,   header->transducer_element_pitch,    sizeof(bp->xdc_element_pitch));
 		// NOTE(rnp): ignores emission count and ensemble count
 		memory_copy(bp->raw_data_dimensions.E, header->raw_data_dimension,          sizeof(bp->raw_data_dimensions));
@@ -120,9 +123,12 @@ beamformer_simple_parameters_from_zbp_file(Arena *arena, BeamformerSimpleParamet
 	case 2:{
 		ZBP_HeaderV2 *header       = (ZBP_HeaderV2 *)raw.data;
 
-		bp->sample_count           = header->sample_count;
-		bp->channel_count          = header->channel_count;
-		bp->acquisition_count      = header->receive_event_count;
+		bp->sample_count            = header->sample_count;
+		bp->acquisition_count       = header->receive_event_count;
+		bp->receive_channel_count   = header->channel_count;
+		bp->transmit_channel_count  = header->channel_count;
+		bp->xdc_receive_tile_count  = 1;
+		bp->xdc_transmit_tile_count = 1;
 
 		read_only BeamformerSamplingMode zbp_sampling_mode_to_beamformer[] = {
 			[ZBP_SamplingMode_Standard] = BeamformerSamplingMode_4X,
@@ -141,13 +147,13 @@ beamformer_simple_parameters_from_zbp_file(Arena *arena, BeamformerSimpleParamet
 
 		if (header->channel_mapping_offset != -1) {
 			memory_copy(bp->channel_mapping, raw.data + header->channel_mapping_offset,
-			         sizeof(*bp->channel_mapping) * bp->channel_count);
+			            sizeof(*bp->channel_mapping) * bp->receive_channel_count);
 		} else {
-			for EachIndex(bp->channel_count, it)
+			for EachIndex(bp->receive_channel_count, it)
 				bp->channel_mapping[it] = it;
 		}
 
-		memory_copy(bp->xdc_transform.E,       header->transducer_transform_matrix, sizeof(bp->xdc_transform));
+		memory_copy(bp->xdc_transform_matrices + 0, header->transducer_transform_matrix, sizeof(header->transducer_transform_matrix));
 		memory_copy(bp->xdc_element_pitch.E,   header->transducer_element_pitch,    sizeof(bp->xdc_element_pitch));
 		// NOTE(rnp): ignores group count and ensemble count
 		memory_copy(bp->raw_data_dimensions.E, header->raw_data_dimension,          sizeof(bp->raw_data_dimensions));

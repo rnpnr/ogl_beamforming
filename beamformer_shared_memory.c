@@ -66,6 +66,7 @@ typedef struct {
 #define BEAMFORMER_PARAMETER_BLOCK_REGION_LIST \
 	X(ComputePipeline,             pipeline)        \
 	X(ChannelMapping,              channel_mapping) \
+	X(TransducerTransforms,        transducer_transforms) \
 	X(FocalVectors,                focal_vectors)   \
 	X(Parameters,                  parameters)      \
 	X(SparseElements,              sparse_elements) \
@@ -111,6 +112,7 @@ typedef struct {
 
 	BeamformerComputePipeline pipeline;
 
+	alignas(16) m4  transducer_transforms[BeamformerMaxArrayTiles];
 	alignas(16) i16 channel_mapping[BeamformerMaxChannelCount];
 	alignas(16) i16 sparse_elements[BeamformerMaxChannelCount];
 	alignas(16) u8  transmit_receive_orientations[BeamformerMaxChannelCount];

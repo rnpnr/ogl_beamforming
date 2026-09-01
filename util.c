@@ -647,6 +647,11 @@ stream_append_struct_member(Stream *s, const MetaStructMember *m, const void *st
 		memory_copy(&value, ((u8 *)struct_base + m->offset), sizeof(value));
 		stream_append_str8(s, value ? str8("True") : str8("False"));
 	}break;
+	case MetaKind_U16:{
+		u16 value;
+		memory_copy(&value, ((u8 *)struct_base + m->offset), sizeof(value));
+		stream_append_u64(s, value);
+	}break;
 	case MetaKind_U32:{
 		u32 value;
 		memory_copy(&value, ((u8 *)struct_base + m->offset), sizeof(value));
@@ -657,6 +662,11 @@ stream_append_struct_member(Stream *s, const MetaStructMember *m, const void *st
 		memory_copy(&value, ((u8 *)struct_base + m->offset), sizeof(value));
 		stream_append_str8(s, str8("0x"));
 		stream_append_hex_u64(s, value);
+	}break;
+	case MetaKind_S16:{
+		i16 value;
+		memory_copy(&value, ((u8 *)struct_base + m->offset), sizeof(value));
+		stream_append_i64(s, value);
 	}break;
 	case MetaKind_S32:{
 		i32 value;

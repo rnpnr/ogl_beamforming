@@ -8,7 +8,8 @@
 #include "test_common.c"
 
 global iv3 g_output_points    = {{512, 1, 1024}};
-global v2  g_axial_extent     = {{ 10e-3f, 165e-3f}};
+global v2  g_axial_extent     = {{ 0e-3f, 120e-3f}};
+//global v2  g_axial_extent     = {{ 10e-3f, 165e-3f}};
 global v2  g_lateral_extent   = {{-60e-3f,  60e-3f}};
 global f32 g_f_number         = 0.5f;
 
@@ -86,6 +87,27 @@ execute_study(Arena *arena, Stream path, Options *options)
 	if (!beamformer_simple_parameters_from_zbp_file(arena, &bp, (char *)path.data, &raw_data, 0))
 		die("failed to load parameters file: %s\n", (char *)path.data);
 	stream_reset(&path, path_work_index);
+
+	{
+		f32 gap = 9.6e-3f;
+		bp.xdc_receive_tile_count = 2;
+
+		m4 transform;
+		memory_copy(transform.E, bp.xdc_transform_matrices + 0, sizeof(transform));
+
+		f32 start = transform.c[3].x + gap / 2;
+		f32 y_off = transform.c[3].y;
+
+		transform = m4_translation((v3){.x = start, .y = y_off});
+		memory_copy(bp.xdc_transform_matrices + 0, transform.E, sizeof(transform));
+
+		start = start - gap / 2;
+		start = 0.5f * start + 1.5f * gap;
+
+		transform = m4_translation((v3){.x = start, .y = y_off});
+		memory_copy(bp.xdc_transform_matrices + 1, transform.E, sizeof(transform));
+	}
+
 
 	v3 min_coordinate = (v3){{g_lateral_extent.x, g_axial_extent.x, 0}};
 	v3 max_coordinate = (v3){{g_lateral_extent.y, g_axial_extent.y, 0}};
