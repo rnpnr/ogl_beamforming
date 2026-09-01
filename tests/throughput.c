@@ -18,7 +18,8 @@
 #include <zstd.h>
 
 global iv3 g_output_points    = {{512, 1, 1024}};
-global v2  g_axial_extent     = {{ 10e-3f, 165e-3f}};
+global v2  g_axial_extent     = {{ 0e-3f, 120e-3f}};
+//global v2  g_axial_extent     = {{ 10e-3f, 165e-3f}};
 global v2  g_lateral_extent   = {{-60e-3f,  60e-3f}};
 global f32 g_f_number         = 0.5f;
 
@@ -159,9 +160,12 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 	case 1:{
 		ZBP_HeaderV1 *header       = (ZBP_HeaderV1 *)raw.data;
 
-		bp->sample_count           = header->sample_count;
-		bp->channel_count          = header->channel_count;
-		bp->acquisition_count      = header->receive_event_count;
+		bp->sample_count            = header->sample_count;
+		bp->receive_channel_count   = header->channel_count;
+		bp->transmit_channel_count  = header->channel_count;
+		bp->xdc_receive_tile_count  = 1;
+		bp->xdc_transmit_tile_count = 1;
+		bp->acquisition_count       = header->receive_event_count;
 
 		bp->sampling_mode          = BeamformerSamplingMode_4X;
 		bp->acquisition_kind       = header->beamform_mode;
@@ -171,8 +175,8 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 		bp->speed_of_sound         = header->speed_of_sound;
 		bp->time_offset            = header->time_offset;
 
-		memory_copy(bp->channel_mapping,       header->channel_mapping,             sizeof(*bp->channel_mapping) * bp->channel_count);
-		memory_copy(bp->xdc_transform.E,       header->transducer_transform_matrix, sizeof(bp->xdc_transform));
+		memory_copy(bp->xdc_transform_matrices + 0, header->transducer_transform_matrix, sizeof(header->transducer_transform_matrix));
+		memory_copy(bp->channel_mapping,       header->channel_mapping,             sizeof(*bp->channel_mapping) * bp->receive_channel_count);
 		memory_copy(bp->xdc_element_pitch.E,   header->transducer_element_pitch,    sizeof(bp->xdc_element_pitch));
 		// NOTE(rnp): ignores emission count and ensemble count
 		memory_copy(bp->raw_data_dimensions.E, header->raw_data_dimension,          sizeof(bp->raw_data_dimensions));
@@ -227,9 +231,12 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 	case 2:{
 		ZBP_HeaderV2 *header       = (ZBP_HeaderV2 *)raw.data;
 
-		bp->sample_count           = header->sample_count;
-		bp->channel_count          = header->channel_count;
-		bp->acquisition_count      = header->receive_event_count;
+		bp->sample_count            = header->sample_count;
+		bp->receive_channel_count   = header->channel_count;
+		bp->transmit_channel_count  = header->channel_count;
+		bp->xdc_receive_tile_count  = 1;
+		bp->xdc_transmit_tile_count = 1;
+		bp->acquisition_count       = header->receive_event_count;
 
 		read_only local_persist BeamformerSamplingMode zbp_sampling_mode_to_beamformer[] = {
 			[ZBP_SamplingMode_Standard] = BeamformerSamplingMode_4X,
@@ -248,16 +255,36 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 
 		if (header->channel_mapping_offset != -1) {
 			memory_copy(bp->channel_mapping, raw.data + header->channel_mapping_offset,
-			         sizeof(*bp->channel_mapping) * bp->channel_count);
+			         sizeof(*bp->channel_mapping) * bp->receive_channel_count);
 		} else {
-			for EachIndex(bp->channel_count, it)
+			for EachIndex(bp->receive_channel_count, it)
 				bp->channel_mapping[it] = it;
 		}
 
-		memory_copy(bp->xdc_transform.E,       header->transducer_transform_matrix, sizeof(bp->xdc_transform));
+		memory_copy(bp->xdc_transform_matrices + 0, header->transducer_transform_matrix, sizeof(header->transducer_transform_matrix));
 		memory_copy(bp->xdc_element_pitch.E,   header->transducer_element_pitch,    sizeof(bp->xdc_element_pitch));
 		// NOTE(rnp): ignores group count and ensemble count
 		memory_copy(bp->raw_data_dimensions.E, header->raw_data_dimension,          sizeof(bp->raw_data_dimensions));
+
+		{
+			f32 gap = 9.6e-3f;
+			bp->xdc_receive_tile_count = 2;
+
+			m4 transform;
+			memory_copy(transform.E, header->transducer_transform_matrix, sizeof(transform));
+
+			f32 start = transform.c[3].x + gap / 2;
+			f32 y_off = transform.c[3].y;
+
+			transform = m4_translation((v3){.x = start, .y = y_off});
+			memory_copy(bp->xdc_transform_matrices + 0, transform.E, sizeof(transform));
+
+			start = start - gap / 2;
+			start = 0.5f * start + 1.5f * gap;
+
+			transform = m4_translation((v3){.x = start, .y = y_off});
+			memory_copy(bp->xdc_transform_matrices + 1, transform.E, sizeof(transform));
+		}
 
 		bp->data_kind              = header->raw_data_kind;
 		raw_data->kind             = header->raw_data_kind;

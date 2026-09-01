@@ -512,6 +512,21 @@ m4_scale(v3 scale)
 }
 
 function m4
+m4_rotation_from_euler(f32 alpha, f32 beta, f32 gamma)
+{
+	f32 ca = cos_f32(alpha), sa = sin_f32(alpha);
+	f32 cb = cos_f32(beta),  sb = sin_f32(beta);
+	f32 cg = cos_f32(gamma), sg = sin_f32(gamma);
+
+	m4 result;
+	result.c[0] = (v4){{ cb * cg,  ca * sg + sa * sb * cg, sa * sg - ca * sb * cg, 0}};
+	result.c[1] = (v4){{-cb * sg,  ca * cg - sa * sb * sg, sa * cg + ca * sb * sg, 0}};
+	result.c[2] = (v4){{ sb,      -sa * cb,                ca * cb,                0}};
+	result.c[3] = (v4){{0, 0, 0, 1}};
+	return result;
+}
+
+function m4
 m4_rotation_about_axis(v3 axis, f32 turns)
 {
 	assert(f32_equal(v3_magnitude_squared(axis), 1.0f));

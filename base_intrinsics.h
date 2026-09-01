@@ -188,6 +188,22 @@ ctz_u64(u64 a)
 
 #endif
 
+function force_inline u64
+ror_u64(u64 a, u64 r)
+{
+	u64 result = (a >> r) | (a << (64ul - r));
+	return result;
+}
+
+function force_inline f32
+inf32(void)
+{
+	union {u32 u; f32 f;} result;
+	result.u = 0x7F800000u;
+	return result.f;
+}
+
+
 #if ARCH_ARM64
 /* NOTE(rnp): we are only doing a handful of f32x4 operations so we will just use NEON and do
  * the macro renaming thing. If you are implementing a serious wide vector operation you should
@@ -244,13 +260,5 @@ typedef __m128i u32x4;
 #define store_fence           _mm_sfence
 
 #endif
-
-function force_inline f32
-inf32(void)
-{
-	union {u32 u; f32 f;} result;
-	result.u = 0x7F800000u;
-	return result.f;
-}
 
 #endif /* BASE_INTRINSICS_H */
