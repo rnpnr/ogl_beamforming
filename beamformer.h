@@ -72,10 +72,6 @@ BEAMFORMER_IMPORT void           os_add_file_watch(const char *path, int64_t pat
 
 BEAMFORMER_IMPORT void *         os_lookup_symbol(OSLibrary library, const char *symbol);
 
-BEAMFORMER_IMPORT OSThread       os_create_thread(const char *name, void *user_context, os_thread_entry_point_fn *fn);
-BEAMFORMER_IMPORT OSBarrier      os_barrier_alloc(u32 thread_count);
-BEAMFORMER_IMPORT void           os_barrier_enter(OSBarrier);
-
 // NOTE(rnp): currently beamformer will only create one window.
 // once raylib is removed it may request multiple
 BEAMFORMER_IMPORT OSWindow       os_window_create(uint8_t *title, int64_t title_length, int32_t width, int32_t height);

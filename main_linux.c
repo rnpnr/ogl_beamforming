@@ -32,130 +32,7 @@
 
 #include <dlfcn.h>
 
-typedef struct OSLinuxEntity OSLinuxEntity;
-typedef struct {
-	void          *handle;
-	OSLinuxEntity *prev, *next;
-} OSLinuxWindow;
-
-typedef enum {
-	OSLinuxFileWatchKind_Platform,
-	OSLinuxFileWatchKind_User,
-} OSLinuxFileWatchKind;
-
-typedef struct OSLinuxFileWatchDirectory OSLinuxFileWatchDirectory;
-typedef struct OSLinuxFileWatch OSLinuxFileWatch;
-struct OSLinuxFileWatch {
-	OSLinuxFileWatchKind  kind;
-	u64                   hash;
-	u64                   update_time;
-	void                 *user_context;
-
-	OSLinuxFileWatchDirectory *parent;
-	OSLinuxFileWatch *prev, *next;
-};
-
-struct OSLinuxFileWatchDirectory {
-	u64  hash;
-	i64  handle;
-	str8 name;
-
-	OSLinuxFileWatch *first_child;
-	OSLinuxFileWatch *last_child;
-	OSLinuxFileWatchDirectory *prev, *next;
-};
-
-typedef enum {
-	OSLinuxEntityKind_Window,
-	OSLinuxEntityKind_FileWatch,
-	OSLinuxEntityKind_FileWatchDirectory,
-} OSLinuxEntityKind;
-
-struct OSLinuxEntity {
-	OSLinuxEntityKind kind;
-	union {
-		OSLinuxFileWatch          file_watch;
-		OSLinuxFileWatchDirectory file_watch_directory;
-		OSLinuxWindow             window;
-	} as;
-	OSLinuxEntity *next;
-};
-
-typedef struct {
-	Arena        *arena;
-	i32           arena_lock;
-
-	i32           inotify_handle;
-
-	BeamformerInput *input;
-
-	struct {
-		OSLinuxFileWatchDirectory *first;
-		OSLinuxFileWatchDirectory *last;
-	} file_watch_directories;
-
-	struct {
-		OSLinuxEntity *first;
-		OSLinuxEntity *last;
-	} windows;
-
-	OSLinuxEntity *entity_freelist;
-} OSLinux_Context;
-global OSLinux_Context os_linux_context;
-
-function OSLinuxEntity *
-os_entity_allocate(OSLinuxEntityKind kind)
-{
-	OSLinuxEntity *result = 0;
-	DeferLoop(take_lock(&os_linux_context.arena_lock, -1), release_lock(&os_linux_context.arena_lock))
-	{
-		result = SLLPopFreelist(os_linux_context.entity_freelist);
-		if (!result) result = push_struct_no_zero(os_linux_context.arena, OSLinuxEntity);
-	}
-
-	zero_struct(result);
-	result->kind = kind;
-	return result;
-}
-
-BEAMFORMER_IMPORT OSThread
-os_create_thread(const char *name, void *user_context, os_thread_entry_point_fn *fn)
-{
-	pthread_t thread;
-	pthread_create(&thread, 0, (void *)fn, (void *)user_context);
-
-	if (name) {
-		char buffer[16];
-		str8 name_str = str8_from_c_str((char *)name);
-		u64  length   = (u64)Clamp(name_str.length, 0, countof(buffer) - 1);
-		memory_copy(buffer, (char *)name, length);
-		buffer[length] = 0;
-		pthread_setname_np(thread, buffer);
-	}
-
-	OSThread result = {(u64)thread};
-	return result;
-}
-
-BEAMFORMER_IMPORT OSBarrier
-os_barrier_alloc(u32 count)
-{
-	OSBarrier result = {0};
-	DeferLoop(take_lock(&os_linux_context.arena_lock, -1), release_lock(&os_linux_context.arena_lock))
-	{
-		pthread_barrier_t *barrier = push_struct(os_linux_context.arena, pthread_barrier_t);
-		pthread_barrier_init(barrier, 0, count);
-		result.value[0] = (u64)barrier;
-	}
-	return result;
-}
-
-BEAMFORMER_IMPORT void
-os_barrier_enter(OSBarrier barrier)
-{
-	pthread_barrier_t *b = (pthread_barrier_t *)barrier.value[0];
-	if (b) pthread_barrier_wait(b);
-}
+global BeamformerInput beamformer_input_main;
 
 BEAMFORMER_IMPORT void
 os_console_log(u8 *data, i64 length)
@@ -189,7 +66,7 @@ os_lookup_symbol(OSLibrary library, const char *symbol)
 function void *
 allocate_shared_memory(char *name, i64 requested_capacity, u64 *capacity)
 {
-	u64 rounded_capacity = round_up_to(requested_capacity, ARCH_X64? KB(4) : linux_system_info.page_size);
+	u64 rounded_capacity = round_up_to(requested_capacity, ARCH_X64? KB(4) : os_linux_context.system_info.page_size);
 	void *result = 0;
 	i32 fd = shm_open(name, O_CREAT|O_RDWR, S_IRUSR|S_IWUSR);
 	if (fd > 0 && ftruncate(fd, rounded_capacity) != -1) {
@@ -295,7 +172,7 @@ os_window_create(u8 *title, i64 title_length, i32 width, i32 height)
 	}
 
 	we->as.window.handle = GetPlatformWindowHandle();
-	os_window_equip_common(os_linux_context.input, we->as.window.handle);
+	os_window_equip_common(&beamformer_input_main, we->as.window.handle);
 	raylib_window_resize = glfwSetWindowSizeCallback(we->as.window.handle, os_window_resize_callback);
 
 	/* NOTE: do this after initing so that the window starts out floating in tiling wm */
@@ -341,12 +218,12 @@ load_library(char *name, char *temp_name, u32 flags)
 
 #if BEAMFORMER_DEBUG
 function void
-debug_library_reload(void *beamformer, BeamformerInput *input)
+debug_library_reload(void *beamformer)
 {
 	local_persist OSLibrary beamformer_library_handle = {OSInvalidHandleValue};
 
 	if ValidHandle(beamformer_library_handle) {
-		beamformer_debug_hot_release(beamformer, input);
+		beamformer_debug_hot_release(beamformer, &beamformer_input_main);
 		dlclose((void *)beamformer_library_handle.value[0]);
 		beamformer_library_handle = (OSLibrary){OSInvalidHandleValue};
 	}
@@ -361,18 +238,19 @@ debug_library_reload(void *beamformer, BeamformerInput *input)
 	}
 }
 #else
-#define debug_library_reload(a, b) (void)(a), (void)(b)
+#define debug_library_reload(a) (void)(a)
 #endif /* BEAMFORMER_DEBUG */
 
 function void
-load_platform_libraries(BeamformerInput *input)
+load_platform_libraries(void)
 {
 	#if BEAMFORMER_DEBUG
-		debug_library_reload(0, input);
+		debug_library_reload(0);
 		os_linux_add_file_watch(str8(OS_DEBUG_LIB_NAME), (void *)BeamformerInputEventKind_ExecutableReload,
 		                        OSLinuxFileWatchKind_Platform);
 	#endif
 
+	BeamformerInput *input = &beamformer_input_main;
 	input->vulkan_library_handle = (OSLibrary){OSInvalidHandleValue};
 	#define X(name) \
 		if InvalidHandle(input->vulkan_library_handle) \
@@ -393,7 +271,7 @@ load_platform_libraries(BeamformerInput *input)
 }
 
 function void
-dispatch_file_watch_events(void *beamformer, BeamformerInput *input)
+dispatch_file_watch_events(void *beamformer)
 {
 	local_persist alignas(16) u8 mem[KB(4)];
 	struct inotify_event *event;
@@ -417,13 +295,13 @@ dispatch_file_watch_events(void *beamformer, BeamformerInput *input)
 						if (fw->kind == OSLinuxFileWatchKind_Platform) {
 							assert((u64)fw->user_context == BeamformerInputEventKind_ExecutableReload);
 							if ((u64)fw->user_context == BeamformerInputEventKind_ExecutableReload)
-								debug_library_reload(beamformer, input);
+								debug_library_reload(beamformer);
 							input_event.kind = (u64)fw->user_context;
 						} else {
 							input_event.kind = BeamformerInputEventKind_FileEvent;
 							input_event.file_watch_user_context = fw->user_context;
 						}
-						os_push_input_event(input, input_event);
+						os_push_input_event(&beamformer_input_main, input_event);
 					}
 					fw->update_time = current_time;
 					break;
@@ -436,11 +314,9 @@ dispatch_file_watch_events(void *beamformer, BeamformerInput *input)
 BASE_IMPORT void
 entry_point(i32 argc, char *argv[])
 {
-	os_linux_context.arena          = arena_create(.name = "Platform Arena");
 	os_linux_context.inotify_handle = inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
 
-	BeamformerInput *input = push_struct(os_linux_context.arena, BeamformerInput);
-	os_linux_context.input = input;
+	BeamformerInput *input = &beamformer_input_main;
 	input->shared_memory   = allocate_shared_memory(OS_SHARED_MEMORY_NAME, OS_SHARED_MEMORY_SIZE,
 	                                                &input->shared_memory_size);
 	if (input->shared_memory) {
@@ -452,7 +328,7 @@ entry_point(i32 argc, char *argv[])
 		.kind = BeamformerInputEventKind_ExecutableReload,
 	});
 
-	load_platform_libraries(input);
+	load_platform_libraries();
 
 	void *beamformer = beamformer_init(input);
 
@@ -465,7 +341,7 @@ entry_point(i32 argc, char *argv[])
 
 		poll(fds, countof(fds), 0);
 		if (fds[0].revents & POLLIN)
-			dispatch_file_watch_events(beamformer, input);
+			dispatch_file_watch_events(beamformer);
 
 		beamformer_frame_step(beamformer, input);
 

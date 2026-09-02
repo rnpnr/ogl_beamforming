@@ -32,22 +32,10 @@
 #include "beamformer.c"
 #include "base_win32.c"
 
-typedef struct {
-	u32 reserved1;
-	u32 reserved2;
-	u64 Reserved3[2];
-	u32 reserved4;
-	u32 reserved5;
-} w32_synchronization_barrier;
-
-W32(u64)    CreateThread(iptr, u64, iptr, iptr, u32, u32 *);
-W32(b32)    EnterSynchronizationBarrier(w32_synchronization_barrier *, u32);
 W32(b32)    FreeLibrary(u64);
 W32(void *) GetModuleHandleA(const c8 *);
 W32(void *) GetProcAddress(u64, const c8 *);
-W32(b32)    InitializeSynchronizationBarrier(w32_synchronization_barrier *, i32, i32);
 W32(void *) LoadLibraryA(const c8 *);
-W32(i32)    SetThreadDescription(u64, u16 *);
 
 #define OS_SHARED_MEMORY_SIZE  GB(2)
 
@@ -62,135 +50,7 @@ W32(i32)    SetThreadDescription(u64, u16 *);
 #define OS_VULKAN_SONAME_LIST \
 	X("vulkan-1.dll") \
 
-enum {OSW32_FileWatchDirectoryBufferSize = KB(4)};
-
-typedef struct OSW32Entity OSW32Entity;
-typedef struct {
-	void *handle;
-	OSW32Entity *prev, *next;
-} OSW32Window;
-
-typedef enum {
-	OSW32FileWatchKind_Platform,
-	OSW32FileWatchKind_User,
-} OSW32FileWatchKind;
-
-typedef struct OSW32FileWatchDirectory OSW32FileWatchDirectory;
-typedef struct OSW32FileWatch OSW32FileWatch;
-struct OSW32FileWatch {
-	OSW32FileWatchKind  kind;
-	u64                 hash;
-	u64                 update_time;
-	void               *user_context;
-
-	OSW32FileWatchDirectory *parent;
-	OSW32FileWatch *prev, *next;
-};
-
-struct OSW32FileWatchDirectory {
-	u64  hash;
-	i64  handle;
-	str8 name;
-
-	OSW32FileWatch *first_child;
-	OSW32FileWatch *last_child;
-	OSW32FileWatchDirectory *prev, *next;
-
-	w32_overlapped          overlapped;
-  w32_io_completion_event event;
-
-	void *buffer;
-};
-
-typedef enum {
-	OSW32EntityKind_Window,
-	OSW32EntityKind_FileWatch,
-	OSW32EntityKind_FileWatchDirectory,
-} OSW32EntityKind;
-
-struct OSW32Entity {
-	OSW32EntityKind kind;
-	union {
-		OSW32FileWatch          file_watch;
-		OSW32FileWatchDirectory file_watch_directory;
-		OSW32Window             window;
-	} as;
-	OSW32Entity *next;
-};
-
-typedef struct {
-	Arena        *arena;
-	i32           arena_lock;
-	i64           error_handle;
-	i64           io_completion_handle;
-
-	BeamformerInput *input;
-
-	struct {
-		OSW32FileWatchDirectory *first;
-		OSW32FileWatchDirectory *last;
-	} file_watch_directories;
-
-	struct {
-		OSW32Entity *first;
-		OSW32Entity *last;
-	} windows;
-
-	OSW32Entity *entity_freelist;
-} OSW32_Context;
-global OSW32_Context os_w32_context;
-
-function OSW32Entity *
-os_entity_allocate(OSW32EntityKind kind)
-{
-	OSW32Entity *result = 0;
-	DeferLoop(take_lock(&os_w32_context.arena_lock, -1), release_lock(&os_w32_context.arena_lock))
-	{
-		result = SLLPopFreelist(os_w32_context.entity_freelist);
-		if (!result) result = push_struct_no_zero(os_w32_context.arena, OSW32Entity);
-	}
-
-	zero_struct(result);
-	result->kind = kind;
-	return result;
-}
-
-BEAMFORMER_IMPORT OSThread
-os_create_thread(const char *name, void *user_context, os_thread_entry_point_fn *fn)
-{
-	OSThread result = {(u64)CreateThread(0, 0, (iptr)fn, (iptr)user_context, 0, 0)};
-	if (result.value[0]) {
-		Temp scratch;
-		DeferLoop(take_lock(&os_w32_context.arena_lock, -1), release_lock(&os_w32_context.arena_lock))
-		DeferLoop(scratch = temp_begin(os_w32_context.arena), temp_end(scratch))
-		{
-			SetThreadDescription(result.value[0], str16_from_str8(scratch.arena, str8_from_c_str((c8 *)name)).data);
-		}
-	} else {
-		result.value[0] = OSInvalidHandleValue;
-	}
-	return result;
-}
-
-BEAMFORMER_IMPORT OSBarrier
-os_barrier_alloc(u32 count)
-{
-	OSBarrier result = {0};
-	DeferLoop(take_lock(&os_w32_context.arena_lock, -1), release_lock(&os_w32_context.arena_lock))
-	{
-		w32_synchronization_barrier *barrier = push_struct(os_w32_context.arena, w32_synchronization_barrier);
-		InitializeSynchronizationBarrier(barrier, (i32)count, -1);
-		result.value[0] = (u64)barrier;
-	}
-	return result;
-}
-
-BEAMFORMER_IMPORT void
-os_barrier_enter(OSBarrier barrier)
-{
-	w32_synchronization_barrier *b = (w32_synchronization_barrier *)barrier.value[0];
-	if (b) EnterSynchronizationBarrier(b, 0);
-}
+global BeamformerInput beamformer_input_main;
 
 BEAMFORMER_IMPORT void
 os_console_log(u8 *data, i64 length)
@@ -224,7 +84,7 @@ os_lookup_symbol(OSLibrary library, const char *symbol)
 function void *
 allocate_shared_memory(char *name, i64 requested_capacity, u64 *capacity)
 {
-	u64 rounded_capacity = round_up_to(requested_capacity, win32_system_info.page_size);
+	u64 rounded_capacity = round_up_to(requested_capacity, os_w32_context.system_info.page_size);
 	void *result = 0;
 	iptr h = CreateFileMappingA(-1, 0, PAGE_READWRITE, (rounded_capacity >> 32u),
 	                            (rounded_capacity & 0xFFFFFFFFul), name);
@@ -337,7 +197,7 @@ os_window_create(u8 *title, i64 title_length, i32 width, i32 height)
 	}
 
 	we->as.window.handle = GetPlatformWindowHandle();
-	os_window_equip_common(os_w32_context.input, we->as.window.handle);
+	os_window_equip_common(&beamformer_input_main, we->as.window.handle);
 	raylib_window_resize = glfwSetWindowSizeCallback(we->as.window.handle, os_window_resize_callback);
 
 	/* NOTE: do this after initing so that the window starts out floating in tiling wm */
@@ -393,12 +253,12 @@ load_library(char *name, char *temp_name)
 
 #if BEAMFORMER_DEBUG
 function void
-debug_library_reload(void *beamformer, BeamformerInput *input)
+debug_library_reload(void *beamformer)
 {
 	local_persist OSLibrary beamformer_library_handle = {OSInvalidHandleValue};
 
 	if ValidHandle(beamformer_library_handle) {
-		beamformer_debug_hot_release(beamformer, input);
+		beamformer_debug_hot_release(beamformer, &beamformer_input_main);
 		FreeLibrary(beamformer_library_handle.value[0]);
 		beamformer_library_handle = (OSLibrary){OSInvalidHandleValue};
 	}
@@ -413,18 +273,19 @@ debug_library_reload(void *beamformer, BeamformerInput *input)
 	}
 }
 #else
-#define debug_library_reload(a, b) (void)(a), (void)(b)
+#define debug_library_reload(a) (void)(a)
 #endif /* BEAMFORMER_DEBUG */
 
 function void
-load_platform_libraries(BeamformerInput *input)
+load_platform_libraries(void)
 {
 	#if BEAMFORMER_DEBUG
-		debug_library_reload(0, input);
+		debug_library_reload(0);
 		os_w32_add_file_watch(str8(OS_DEBUG_LIB_NAME), (void *)BeamformerInputEventKind_ExecutableReload,
 		                      OSW32FileWatchKind_Platform);
 	#endif
 
+	BeamformerInput *input = &beamformer_input_main;
 	input->vulkan_library_handle = (OSLibrary){OSInvalidHandleValue};
 	#define X(name) \
 		if InvalidHandle(input->vulkan_library_handle) \
@@ -445,7 +306,7 @@ load_platform_libraries(BeamformerInput *input)
 }
 
 function void
-dispatch_file_watch(void *beamformer, BeamformerInput *input, u64 current_time, OSW32FileWatchDirectory *fw_dir, Arena *scratch)
+dispatch_file_watch(void *beamformer, u64 current_time, OSW32FileWatchDirectory *fw_dir, Arena *scratch)
 {
 	i64 offset = 0;
 	w32_file_notify_info *fni = (w32_file_notify_info *)fw_dir->buffer;
@@ -468,13 +329,13 @@ dispatch_file_watch(void *beamformer, BeamformerInput *input, u64 current_time, 
 				if (fw->kind == OSW32FileWatchKind_Platform) {
 					assert((u64)fw->user_context == BeamformerInputEventKind_ExecutableReload);
 					if ((u64)fw->user_context == BeamformerInputEventKind_ExecutableReload)
-						debug_library_reload(beamformer, input);
+						debug_library_reload(beamformer);
 					input_event.kind = (u64)fw->user_context;
 				} else {
 					input_event.kind = BeamformerInputEventKind_FileEvent;
 					input_event.file_watch_user_context = fw->user_context;
 				}
-				os_push_input_event(input, input_event);
+				os_push_input_event(&beamformer_input_main, input_event);
 			}
 			fw->update_time = current_time;
 			break;
@@ -486,7 +347,7 @@ dispatch_file_watch(void *beamformer, BeamformerInput *input, u64 current_time, 
 }
 
 function void
-clear_io_queue(void *beamformer, BeamformerInput *input, Arena *scratch)
+clear_io_queue(void *beamformer, Arena *scratch)
 {
 	iptr handle = os_w32_context.io_completion_handle;
 	w32_overlapped *overlapped;
@@ -500,7 +361,7 @@ clear_io_queue(void *beamformer, BeamformerInput *input, Arena *scratch)
 		switch (event->tag) {
 		case W32IOEvent_FileWatch:{
 			OSW32FileWatchDirectory *dir = (OSW32FileWatchDirectory *)event->context;
-			dispatch_file_watch(beamformer, input, current_time, dir, scratch);
+			dispatch_file_watch(beamformer, current_time, dir, scratch);
 			zero_struct(&dir->overlapped);
 			ReadDirectoryChangesW(dir->handle, dir->buffer, OSW32_FileWatchDirectoryBufferSize, 0,
 			                      FILE_NOTIFY_CHANGE_LAST_WRITE, 0, &dir->overlapped, 0);
@@ -512,12 +373,9 @@ clear_io_queue(void *beamformer, BeamformerInput *input, Arena *scratch)
 BASE_IMPORT void
 entry_point(i32 argc, char *argv[])
 {
-	os_w32_context.arena                = arena_create(.name = "Platform Arena");
-	os_w32_context.error_handle         = GetStdHandle(STD_ERROR_HANDLE);
 	os_w32_context.io_completion_handle = CreateIoCompletionPort(INVALID_FILE, 0, 0, 0);
 
-	BeamformerInput *input = push_struct(os_w32_context.arena, BeamformerInput);
-	os_w32_context.input   = input;
+	BeamformerInput *input = &beamformer_input_main;
 	input->shared_memory   = allocate_shared_memory(OS_SHARED_MEMORY_NAME, OS_SHARED_MEMORY_SIZE,
 	                                                &input->shared_memory_size);
 	if (input->shared_memory) {
@@ -529,7 +387,7 @@ entry_point(i32 argc, char *argv[])
 		.kind = BeamformerInputEventKind_ExecutableReload,
 	});
 
-	load_platform_libraries(input);
+	load_platform_libraries();
 
 	void *beamformer = beamformer_init(input);
 
@@ -540,7 +398,7 @@ entry_point(i32 argc, char *argv[])
 		DeferLoop(take_lock(&os_w32_context.arena_lock, -1), release_lock(&os_w32_context.arena_lock))
 		DeferLoop(scratch = temp_begin(os_w32_context.arena), temp_end(scratch))
 		{
-			clear_io_queue(beamformer, input, scratch.arena);
+			clear_io_queue(beamformer, scratch.arena);
 		}
 
 		beamformer_frame_step(beamformer, input);

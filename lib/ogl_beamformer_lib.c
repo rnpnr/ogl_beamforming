@@ -22,7 +22,6 @@ W32(iptr) OpenFileMappingA(u32, b32, c8 *);
 #error Unsupported Platform
 #endif
 
-#include "../util_os.c"
 #include "../beamformer_compute_stats.c"
 #include "../beamformer_shared_memory.c"
 

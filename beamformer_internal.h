@@ -131,7 +131,6 @@ typedef struct {
 } RenderModel;
 
 #include "threads.c"
-#include "util_os_ui.c"
 
 ///////////////////////////
 // NOTE: vulkan layer API
@@ -223,7 +222,7 @@ DEBUG_IMPORT renderdoc_end_frame_capture_fn   *end_frame_capture;
 #define renderdoc_attached(...) (0)
 #endif
 
-#include "util_os.c"
+#include "util_os_ui.c"
 
 ///////////////////////////////
 // NOTE: CUDA Library Bindings

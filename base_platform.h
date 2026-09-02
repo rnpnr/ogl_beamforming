@@ -2,6 +2,21 @@
 #ifndef BASE_PLATFORM_H
 #define BASE_PLATFORM_H
 
+/*
+ * CONFIGURATION
+ *
+ * BASE_EXPORT
+ *   the attributes for functions defined by the platfom layer. for example
+ *   `#define BASE_EXPORT static` in a single translation unit build
+ *
+ * BASE_IMPORT
+ *   the attributes to apply on the entry_point() called from main()
+ *
+ * BASE_PLATFORM_NO_MAIN:
+ *   define if you do not want a main() function (useful for library code)
+ *
+ */
+
 #ifndef BASE_EXPORT
 #define BASE_EXPORT
 #endif
@@ -12,6 +27,9 @@
 
 #ifndef BASE_PLATFORM_NO_MAIN
 #define BASE_PLATFORM_NO_MAIN 0
+#else
+#undef BASE_PLATFORM_NO_MAIN
+#define BASE_PLATFORM_NO_MAIN 1
 #endif
 
 #include "base_types.h"
@@ -50,11 +68,14 @@ BASE_EXPORT u64            os_timer_count(void);
 
 BASE_EXPORT str8           os_read_entire_file(Arena *arena, const char *file);
 
+BASE_EXPORT OSThread       os_create_thread(const char *name, void *user_context, os_thread_entry_point_fn *fn);
+BASE_EXPORT OSBarrier      os_barrier_alloc(u32 thread_count);
+BASE_EXPORT void           os_barrier_enter(OSBarrier);
+
 /* NOTE(rnp): memory watch timed waiting functions. (-1) is an infinite timeout.
  * Used with the intention of yielding the thread back to the OS. */
 BASE_EXPORT u32            os_wait_on_address(i32 *lock, i32 current, u32 timeout_ms);
 BASE_EXPORT void           os_wake_all_waiters(i32 *lock);
-
 
 /* NOTE(rnp): this functionality is only needed on win32 to provide cross process
  * synchronization. While posix has equivalent functionality there is no reason to

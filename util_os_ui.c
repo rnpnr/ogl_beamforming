@@ -227,3 +227,20 @@ os_build_frame_input(BeamformerInput *input)
 	input->mouse_x = new_mouse.x;
 	input->mouse_y = new_mouse.y;
 }
+
+#if BEAMFORMER_RENDERDOC_HOOKS
+function void
+load_renderdoc_functions(BeamformerInput *input, OSLibrary rdoc)
+{
+	if ValidHandle(rdoc) {
+		renderdoc_get_api_fn *get_api = os_lookup_symbol(rdoc, "RENDERDOC_GetAPI");
+		if (get_api) {
+			RenderDocAPI *api = 0;
+			if (get_api(10600, (void **)&api)) {
+				input->renderdoc_start_frame_capture = RENDERDOC_START_FRAME_CAPTURE(api);
+				input->renderdoc_end_frame_capture   = RENDERDOC_END_FRAME_CAPTURE(api);
+			}
+		}
+	}
+}
+#endif

@@ -87,6 +87,14 @@ typedef struct {
 	iptr event_handle;
 } w32_overlapped;
 
+typedef struct {
+	u32 reserved1;
+	u32 reserved2;
+	u64 Reserved3[2];
+	u32 reserved4;
+	u32 reserved5;
+} w32_synchronization_barrier;
+
 typedef enum {
 	W32IOEvent_FileWatch,
 } W32IOEvent;
@@ -96,11 +104,6 @@ typedef struct {
 	iptr context;
 } w32_io_completion_event;
 
-typedef struct {
-	iptr *semaphores;
-	u32   reserved_count;
-} w32_shared_memory_context;
-
 #define W32(r) __declspec(dllimport) r __stdcall
 W32(b32)    CloseHandle(iptr);
 W32(b32)    CopyFileA(c8 *, c8 *, b32);
@@ -108,7 +111,9 @@ W32(iptr)   CreateFileA(c8 *, u32, u32, void *, u32, u32, void *);
 W32(iptr)   CreateFileMappingA(iptr, void *, u32, u32, u32, c8 *);
 W32(iptr)   CreateIoCompletionPort(iptr, iptr, uptr, u32);
 W32(iptr)   CreateSemaphoreA(iptr, i32, i32, c8 *);
+W32(u64)    CreateThread(iptr, u64, iptr, iptr, u32, u32 *);
 W32(b32)    DeleteFileA(c8 *);
+W32(b32)    EnterSynchronizationBarrier(w32_synchronization_barrier *, u32);
 W32(void)   ExitProcess(i32);
 W32(i32)    GetFileAttributesA(c8 *);
 W32(b32)    GetFileInformationByHandle(iptr, void *);
@@ -116,12 +121,14 @@ W32(i32)    GetLastError(void);
 W32(b32)    GetQueuedCompletionStatus(iptr, u32 *, uptr *, w32_overlapped **, u32);
 W32(iptr)   GetStdHandle(i32);
 W32(void)   GetSystemInfo(w32_system_info *);
+W32(b32)    InitializeSynchronizationBarrier(w32_synchronization_barrier *, i32, i32);
 W32(void *) MapViewOfFile(iptr, u32, u32, u32, u64);
 W32(b32)    QueryPerformanceCounter(u64 *);
 W32(b32)    QueryPerformanceFrequency(u64 *);
 W32(b32)    ReadDirectoryChangesW(iptr, u8 *, u32, b32, u32, u32 *, void *, void *);
 W32(b32)    ReadFile(iptr, u8 *, i32, i32 *, void *);
 W32(b32)    ReleaseSemaphore(iptr, i32, i32 *);
+W32(i32)    SetThreadDescription(u64, u16 *);
 W32(u32)    WaitForSingleObject(iptr, u32);
 W32(b32)    WaitOnAddress(void *, void *, u64, u32);
 W32(i32)    WakeByAddressAll(void *);
@@ -130,7 +137,83 @@ W32(void *) VirtualAlloc(u8 *, i64, u32, u32);
 W32(b32)    VirtualFree(void *, u64, u32);
 W32(b32)    VirtualProtect(void *, u64, u32, u32 *);
 
-global OSSystemInfo win32_system_info;
+enum {OSW32_FileWatchDirectoryBufferSize = KB(4)};
+
+typedef struct OSW32Entity OSW32Entity;
+typedef struct {
+	void *handle;
+	OSW32Entity *prev, *next;
+} OSW32Window;
+
+typedef enum {
+	OSW32FileWatchKind_Platform,
+	OSW32FileWatchKind_User,
+} OSW32FileWatchKind;
+
+typedef struct OSW32FileWatchDirectory OSW32FileWatchDirectory;
+typedef struct OSW32FileWatch OSW32FileWatch;
+struct OSW32FileWatch {
+	OSW32FileWatchKind  kind;
+	u64                 hash;
+	u64                 update_time;
+	void               *user_context;
+
+	OSW32FileWatchDirectory *parent;
+	OSW32FileWatch *prev, *next;
+};
+
+struct OSW32FileWatchDirectory {
+	u64  hash;
+	i64  handle;
+	str8 name;
+
+	OSW32FileWatch *first_child;
+	OSW32FileWatch *last_child;
+	OSW32FileWatchDirectory *prev, *next;
+
+	w32_overlapped          overlapped;
+  w32_io_completion_event event;
+
+	void *buffer;
+};
+
+typedef enum {
+	OSW32EntityKind_Window,
+	OSW32EntityKind_FileWatch,
+	OSW32EntityKind_FileWatchDirectory,
+} OSW32EntityKind;
+
+struct OSW32Entity {
+	OSW32EntityKind kind;
+	union {
+		OSW32FileWatch          file_watch;
+		OSW32FileWatchDirectory file_watch_directory;
+		OSW32Window             window;
+	} as;
+	OSW32Entity *next;
+};
+
+typedef struct {
+	OSSystemInfo  system_info;
+
+	Arena        *arena;
+	i32           arena_lock;
+	i64           error_handle;
+	i64           io_completion_handle;
+
+	struct {
+		OSW32FileWatchDirectory *first;
+		OSW32FileWatchDirectory *last;
+	} file_watch_directories;
+
+	struct {
+		OSW32Entity *first;
+		OSW32Entity *last;
+	} windows;
+
+	OSW32Entity *entity_freelist;
+} OSW32_Context;
+global OSW32_Context os_w32_context;
 
 function b32
 os_write_file(iptr file, void *data, i64 length)
@@ -169,20 +252,20 @@ os_system_info_init(void)
 	w32_system_info info = {0};
 	GetSystemInfo(&info);
 
-	win32_system_info.timer_frequency         = os_timer_frequency();
-	win32_system_info.logical_processor_count = info.number_of_processors;
-	win32_system_info.page_size               = info.page_size;
-	win32_system_info.path_separator_byte     = '\\';
+	os_w32_context.system_info.timer_frequency         = os_timer_frequency();
+	os_w32_context.system_info.logical_processor_count = info.number_of_processors;
+	os_w32_context.system_info.page_size               = info.page_size;
+	os_w32_context.system_info.path_separator_byte     = '\\';
 }
 
 BASE_EXPORT OSSystemInfo *
 os_system_info(void)
 {
 	#if BASE_PLATFORM_NO_MAIN
-	if unlikely(win32_system_info.path_separator_byte == 0)
+	if unlikely(os_w32_context.system_info.path_separator_byte == 0)
 		os_system_info_init();
 	#endif
-	return &win32_system_info;
+	return &os_w32_context.system_info;
 }
 
 BASE_EXPORT void *
@@ -291,6 +374,58 @@ os_copy_file(char *name, char *new)
 	return CopyFileA(name, new, 0);
 }
 
+function OSW32Entity *
+os_entity_allocate(OSW32EntityKind kind)
+{
+	OSW32Entity *result = 0;
+	DeferLoop(take_lock(&os_w32_context.arena_lock, -1), release_lock(&os_w32_context.arena_lock))
+	{
+		result = SLLPopFreelist(os_w32_context.entity_freelist);
+		if (!result) result = push_struct_no_zero(os_w32_context.arena, OSW32Entity);
+	}
+
+	zero_struct(result);
+	result->kind = kind;
+	return result;
+}
+
+BASE_EXPORT OSThread
+os_create_thread(const char *name, void *user_context, os_thread_entry_point_fn *fn)
+{
+	OSThread result = {(u64)CreateThread(0, 0, (iptr)fn, (iptr)user_context, 0, 0)};
+	if (result.value[0]) {
+		Temp scratch;
+		DeferLoop(take_lock(&os_w32_context.arena_lock, -1), release_lock(&os_w32_context.arena_lock))
+		DeferLoop(scratch = temp_begin(os_w32_context.arena), temp_end(scratch))
+		{
+			SetThreadDescription(result.value[0], str16_from_str8(scratch.arena, str8_from_c_str((c8 *)name)).data);
+		}
+	} else {
+		result.value[0] = OSInvalidHandleValue;
+	}
+	return result;
+}
+
+BASE_EXPORT OSBarrier
+os_barrier_alloc(u32 count)
+{
+	OSBarrier result = {0};
+	DeferLoop(take_lock(&os_w32_context.arena_lock, -1), release_lock(&os_w32_context.arena_lock))
+	{
+		w32_synchronization_barrier *barrier = push_struct(os_w32_context.arena, w32_synchronization_barrier);
+		InitializeSynchronizationBarrier(barrier, (i32)count, -1);
+		result.value[0] = (u64)barrier;
+	}
+	return result;
+}
+
+BASE_EXPORT void
+os_barrier_enter(OSBarrier barrier)
+{
+	w32_synchronization_barrier *b = (w32_synchronization_barrier *)barrier.value[0];
+	if (b) EnterSynchronizationBarrier(b, 0);
+}
+
 BASE_EXPORT b32
 os_wait_on_address(i32 *value, i32 current, u32 timeout_ms)
 {
@@ -313,6 +448,8 @@ extern i32
 main(i32 argc, char *argv[])
 {
 	os_system_info_init();
+	os_w32_context.arena        = arena_create(.name = "Platform Arena");
+	os_w32_context.error_handle = GetStdHandle(STD_ERROR_HANDLE);
 
 	entry_point(argc, argv);
 

@@ -24,7 +24,76 @@
 #include <sys/sysinfo.h>
 #include <unistd.h>
 
-global OSSystemInfo linux_system_info;
+typedef struct OSLinuxEntity OSLinuxEntity;
+typedef struct {
+	void          *handle;
+	OSLinuxEntity *prev, *next;
+} OSLinuxWindow;
+
+typedef enum {
+	OSLinuxFileWatchKind_Platform,
+	OSLinuxFileWatchKind_User,
+} OSLinuxFileWatchKind;
+
+typedef struct OSLinuxFileWatchDirectory OSLinuxFileWatchDirectory;
+typedef struct OSLinuxFileWatch OSLinuxFileWatch;
+struct OSLinuxFileWatch {
+	OSLinuxFileWatchKind  kind;
+	u64                   hash;
+	u64                   update_time;
+	void                 *user_context;
+
+	OSLinuxFileWatchDirectory *parent;
+	OSLinuxFileWatch *prev, *next;
+};
+
+struct OSLinuxFileWatchDirectory {
+	u64  hash;
+	i64  handle;
+	str8 name;
+
+	OSLinuxFileWatch *first_child;
+	OSLinuxFileWatch *last_child;
+	OSLinuxFileWatchDirectory *prev, *next;
+};
+
+typedef enum {
+	OSLinuxEntityKind_Window,
+	OSLinuxEntityKind_FileWatch,
+	OSLinuxEntityKind_FileWatchDirectory,
+} OSLinuxEntityKind;
+
+struct OSLinuxEntity {
+	OSLinuxEntityKind kind;
+	union {
+		OSLinuxFileWatch          file_watch;
+		OSLinuxFileWatchDirectory file_watch_directory;
+		OSLinuxWindow             window;
+	} as;
+	OSLinuxEntity *next;
+};
+
+typedef struct {
+	OSSystemInfo  system_info;
+
+	Arena        *arena;
+	i32           arena_lock;
+
+	i32           inotify_handle;
+
+	struct {
+		OSLinuxFileWatchDirectory *first;
+		OSLinuxFileWatchDirectory *last;
+	} file_watch_directories;
+
+	struct {
+		OSLinuxEntity *first;
+		OSLinuxEntity *last;
+	} windows;
+
+	OSLinuxEntity *entity_freelist;
+} OSLinux_Context;
+global OSLinux_Context os_linux_context;
 
 function b32
 os_write_file(i32 file, void *data, i64 length)
@@ -75,20 +144,20 @@ os_number_of_processors(void)
 function void
 os_system_info_init(void)
 {
-	linux_system_info.timer_frequency         = os_timer_frequency();
-	linux_system_info.logical_processor_count = os_number_of_processors();
-	linux_system_info.page_size               = ARCH_X64? KB(4) : getauxval(AT_PAGESZ);
-	linux_system_info.path_separator_byte     = '/';
+	os_linux_context.system_info.timer_frequency         = os_timer_frequency();
+	os_linux_context.system_info.logical_processor_count = os_number_of_processors();
+	os_linux_context.system_info.page_size               = ARCH_X64? KB(4) : getauxval(AT_PAGESZ);
+	os_linux_context.system_info.path_separator_byte     = '/';
 }
 
 BASE_EXPORT OSSystemInfo *
 os_system_info(void)
 {
 	#if BASE_PLATFORM_NO_MAIN
-	if unlikely(linux_system_info.path_separator_byte == 0)
+	if unlikely(os_linux_context.system_info.path_separator_byte == 0)
 		os_system_info_init();
 	#endif
-	return &linux_system_info;
+	return &os_linux_context.system_info;
 }
 
 BASE_EXPORT void *
@@ -195,6 +264,60 @@ os_copy_file(char *name, char *new)
 	return result;
 }
 
+function OSLinuxEntity *
+os_entity_allocate(OSLinuxEntityKind kind)
+{
+	OSLinuxEntity *result = 0;
+	DeferLoop(take_lock(&os_linux_context.arena_lock, -1), release_lock(&os_linux_context.arena_lock))
+	{
+		result = SLLPopFreelist(os_linux_context.entity_freelist);
+		if (!result) result = push_struct_no_zero(os_linux_context.arena, OSLinuxEntity);
+	}
+
+	zero_struct(result);
+	result->kind = kind;
+	return result;
+}
+
+BASE_EXPORT OSThread
+os_create_thread(const char *name, void *user_context, os_thread_entry_point_fn *fn)
+{
+	pthread_t thread;
+	pthread_create(&thread, 0, (void *)fn, (void *)user_context);
+
+	if (name) {
+		char buffer[16];
+		str8 name_str = str8_from_c_str((char *)name);
+		u64  length   = (u64)Clamp(name_str.length, 0, countof(buffer) - 1);
+		memory_copy(buffer, (char *)name, length);
+		buffer[length] = 0;
+		pthread_setname_np(thread, buffer);
+	}
+
+	OSThread result = {(u64)thread};
+	return result;
+}
+
+BASE_EXPORT OSBarrier
+os_barrier_alloc(u32 count)
+{
+	OSBarrier result = {0};
+	DeferLoop(take_lock(&os_linux_context.arena_lock, -1), release_lock(&os_linux_context.arena_lock))
+	{
+		pthread_barrier_t *barrier = push_struct(os_linux_context.arena, pthread_barrier_t);
+		pthread_barrier_init(barrier, 0, count);
+		result.value[0] = (u64)barrier;
+	}
+	return result;
+}
+
+BASE_EXPORT void
+os_barrier_enter(OSBarrier barrier)
+{
+	pthread_barrier_t *b = (pthread_barrier_t *)barrier.value[0];
+	if (b) pthread_barrier_wait(b);
+}
+
 BASE_EXPORT b32
 os_wait_on_address(i32 *value, i32 current, u32 timeout_ms)
 {
@@ -223,6 +346,7 @@ extern i32
 main(i32 argc, char *argv[])
 {
 	os_system_info_init();
+	os_linux_context.arena = arena_create(.name = "Platform Arena");
 
 	entry_point(argc, argv);
 
