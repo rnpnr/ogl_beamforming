@@ -7,7 +7,8 @@
 #include "vulkan.h"
 #include "external/glslang/glslang/Include/glslang_c_interface.h"
 
-#define ForceSingleQueue (0)
+#define ForceSingleQueue             (0)
+#define SupportNonCoherentHostMemory (0)
 
 #define glslang_info(s) str8("[glslang] " s)
 #define vulkan_info(s)  str8("[vulkan]  " s)
@@ -1428,6 +1429,18 @@ vk_load_physical_device(Arena *arena, Stream *err)
 		vk->memory_info.memory_host_coherent[it] = (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
 	}
 
+	if (!SupportNonCoherentHostMemory) {
+		if (!vk->memory_info.memory_host_coherent[VulkanMemoryKind_Host])
+			stream_append_str8(err, vulkan_info("fatal error: host visible memory is not coherent\n"));
+		if (!vk->memory_info.memory_host_coherent[VulkanMemoryKind_BAR])
+			stream_append_str8(err, vulkan_info("fatal error: BAR memory is not coherent\n"));
+		if (!vk->memory_info.memory_host_coherent[VulkanMemoryKind_Host] ||
+		    !vk->memory_info.memory_host_coherent[VulkanMemoryKind_BAR])
+		{
+			fatal(stream_to_str8(err));
+		}
+	}
+
 	vulkan_config.driver_api_version       = dp.properties.apiVersion;
 	vk->memory_info.max_allocation_size    = v11p.maxMemoryAllocationSize;
 	vk->memory_info.non_coherent_atom_size = dp.properties.limits.nonCoherentAtomSize;
@@ -1959,17 +1972,21 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 				InvalidCodePath;
 			} else {
 				assert(source->host_pointer);
-				b32 coherent = vk->memory_info.memory_host_coherent[source->memory_kind];
-				if (!coherent) {
-					u64 nca_size = vk->memory_info.non_coherent_atom_size;
-					VkMappedMemoryRange mrs[1] = {{
-						.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-						.memory = source->memory,
-						.offset = source_offset - (source_offset % nca_size),
-						.size   = gpu_round_up_to_sync_size(size, nca_size),
-					}};
-					vkInvalidateMappedMemoryRanges(vk->device, countof(mrs), mrs);
-				}
+				#if SupportNonCoherentHostMemory
+					b32 coherent = vk->memory_info.memory_host_coherent[source->memory_kind];
+					if (!coherent) {
+						u64 nca_size = vk->memory_info.non_coherent_atom_size;
+						VkMappedMemoryRange mrs[1] = {{
+							.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+							.memory = source->memory,
+							.offset = source_offset - (source_offset % nca_size),
+							.size   = gpu_round_up_to_sync_size(size, nca_size),
+						}};
+						vkInvalidateMappedMemoryRanges(vk->device, countof(mrs), mrs);
+					}
+				#else
+					assert(vk->memory_info.memory_host_coherent[source->memory_kind]);
+				#endif
 
 				void *dest = (u8 *)destination->host_pointer + destination_offset;
 				void *src  = (u8 *)source->host_pointer + source_offset;
@@ -1995,17 +2012,21 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 			if (non_temporal) memory_copy_non_temporal(dest, src, size);
 			else              memory_copy(dest, src, size);
 
-			b32 coherent = vk->memory_info.memory_host_coherent[destination->memory_kind];
-			if (!coherent) {
-				u64 nca_size = vk->memory_info.non_coherent_atom_size;
-				VkMappedMemoryRange mrs[1] = {{
-					.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-					.memory = destination->memory,
-					.offset = destination_offset - (destination_offset % nca_size),
-					.size   = gpu_round_up_to_sync_size(size, nca_size),
-				}};
-				vkFlushMappedMemoryRanges(vk->device, countof(mrs), mrs);
-			}
+			#if SupportNonCoherentHostMemory
+				b32 coherent = vk->memory_info.memory_host_coherent[destination->memory_kind];
+				if (!coherent) {
+					u64 nca_size = vk->memory_info.non_coherent_atom_size;
+					VkMappedMemoryRange mrs[1] = {{
+						.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+						.memory = destination->memory,
+						.offset = destination_offset - (destination_offset % nca_size),
+						.size   = gpu_round_up_to_sync_size(size, nca_size),
+					}};
+					vkFlushMappedMemoryRanges(vk->device, countof(mrs), mrs);
+				}
+			#else
+				assert(vk->memory_info.memory_host_coherent[destination->memory_kind]);
+			#endif
 		}break;
 		InvalidDefaultCase;
 
