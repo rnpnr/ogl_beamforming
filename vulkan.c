@@ -10,6 +10,7 @@
 #define VulkanDebug BEAMFORMER_DEBUG
 
 #define ForceSingleQueue             (0)
+#define ForceStagingBuffers          (0)
 #define SupportNonCoherentHostMemory (0)
 
 #define glslang_info(s) str8("[glslang] " s)
@@ -29,7 +30,11 @@ typedef enum {
 
 typedef enum {
 	VulkanMemoryKind_Device,
+	#if ForceStagingBuffers
+	VulkanMemoryKind_BAR = VulkanMemoryKind_Device,
+	#else
 	VulkanMemoryKind_BAR,
+	#endif
 	VulkanMemoryKind_Host,
 	VulkanMemoryKind_Count,
 } VulkanMemoryKind;
@@ -1072,7 +1077,11 @@ vk_buffer_allocate_common(VulkanBuffer *vb, VulkanBufferAllocateInfo *ai)
 	 *    the ability to import an existing external allocation
 	 */
 	u32 host_rw_flags = (ai->flags & GPUUsageFlag_HostReadWrite);
-	b32 result = vk_buffer_allocate_common_base(vb, ai, host_rw_flags ? VulkanMemoryKind_BAR : VulkanMemoryKind_Device);
+
+	b32 result = 0;
+	if ((ForceStagingBuffers && !host_rw_flags) || !ForceStagingBuffers)
+		result = vk_buffer_allocate_common_base(vb, ai, host_rw_flags ? VulkanMemoryKind_BAR : VulkanMemoryKind_Device);
+
 	if (!result && host_rw_flags) {
 		u32 transfer_queue_family = vk->queues[vk->queue_indices[VulkanQueueKind_Transfer]]->queue_family;
 
@@ -1446,8 +1455,10 @@ vk_load_physical_device(Arena *arena, Stream *err)
 		}
 	}
 
-	u32 bar_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
 	i32 bar_index = -1;
+
+	#if !ForceStagingBuffers
+	u32 bar_flags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
 	for (u32 i = 0; i < bmp->memoryTypeCount; i++) {
 		if ((bmp->memoryTypes[i].propertyFlags & bar_flags) == bar_flags) {
 			u32 heap_index = bmp->memoryTypes[i].heapIndex;
@@ -1458,6 +1469,7 @@ vk_load_physical_device(Arena *arena, Stream *err)
 	}
 
 	vk->memory_info.memory_type_indices[VulkanMemoryKind_BAR] = bar_index;
+	#endif
 
 	vk->memory_info.memory_type_indices[VulkanMemoryKind_Host] = -1;
 	for (u32 i = 0; i < bmp->memoryTypeCount; i++) {
@@ -1491,10 +1503,10 @@ vk_load_physical_device(Arena *arena, Stream *err)
 	if (!SupportNonCoherentHostMemory) {
 		if (!vk->memory_info.memory_host_coherent[VulkanMemoryKind_Host])
 			stream_append_str8(err, vulkan_info("fatal error: host visible memory is not coherent\n"));
-		if (!vk->memory_info.memory_host_coherent[VulkanMemoryKind_BAR])
+		if (!vk->memory_info.memory_host_coherent[VulkanMemoryKind_BAR] && !ForceStagingBuffers)
 			stream_append_str8(err, vulkan_info("fatal error: BAR memory is not coherent\n"));
 		if (!vk->memory_info.memory_host_coherent[VulkanMemoryKind_Host] ||
-		    !vk->memory_info.memory_host_coherent[VulkanMemoryKind_BAR])
+		    (!vk->memory_info.memory_host_coherent[VulkanMemoryKind_BAR] && !ForceStagingBuffers))
 		{
 			fatal(stream_to_str8(err));
 		}
@@ -2042,8 +2054,10 @@ function force_inline void
 vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 destination_offset, u64 source_offset, u64 size, b32 non_temporal)
 {
 	VulkanContext *vk = vulkan_context;
+	(void)vk;
 
 	switch (source->memory_kind) {
+	#if !ForceStagingBuffers
 	case VulkanMemoryKind_BAR:
 	{
 		switch (destination->memory_kind) {
@@ -2080,9 +2094,11 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 		InvalidDefaultCase;
 		}
 	}break;
+	#endif
 
 	case VulkanMemoryKind_Host:{
 		switch (destination->memory_kind) {
+		#if !ForceStagingBuffers
 		case VulkanMemoryKind_BAR:{
 			assert(destination->host_pointer);
 
@@ -2109,10 +2125,11 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 				assert(vk->memory_info.memory_host_coherent[destination->memory_kind]);
 			#endif
 		}break;
+		#endif
 
 		case VulkanMemoryKind_Device:{
 			VulkanBuffer *db = vk_entity_data((u64)destination->next, VulkanEntityKind_Buffer);
-			assert(db->memory_size <= size);
+			assert(size <= db->memory_size);
 			void *dest = (u8 *)db->host_pointer;
 			void *src  = (u8 *)source->host_pointer + source_offset;
 			// NOTE(rnp): don't trash the CPU cache for large data stores
@@ -2139,7 +2156,7 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 		case VulkanMemoryKind_Host:{
 			VulkanBuffer *sb = vk_entity_data((u64)source->next, VulkanEntityKind_Buffer);
 
-			assert(sb->memory_size <= size);
+			assert(size <= sb->memory_size);
 
 			GPUCommandList cb = gpu_command_list_begin(GPUTimeline_Transfer);
 			vk_command_copy_buffer(vk_command_buffer(cb), sb->buffer, 0, source->buffer, source_offset, size);
