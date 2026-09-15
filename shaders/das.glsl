@@ -295,7 +295,7 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 		rf_pointer     -= InputDataKindByteSize * u32(InterpolationMode == InterpolationMode_Cubic);
 
 		for (f32 transmit = f32(Sparse); transmit < f32(AcquisitionCount); transmit += 1.f) {
-			f32 tx_channel = Sparse ? f32(S16(HeapBase + SparseElements).x[s32(transmit) - s32(Sparse)]) : transmit;
+			f32 tx_channel = Sparse ? f32(S16(HeapBase + SparseElements - 2 * u32(Sparse)).x[s32(transmit)]) : transmit;
 
 			f32 element_transmit_delta_squared = tx_world_point - tx_channel * tx_pitch;
 			element_transmit_delta_squared *= element_transmit_delta_squared;
@@ -341,7 +341,7 @@ RESULT_TYPE FORCES(const vec3 world_point)
 			f32 receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
 			f32 apodization   = apodize(a_arg);
 			for (f32 transmit = f32(Sparse); transmit < f32(AcquisitionCount); transmit += 1.f) {
-				f32 tx_channel = Sparse ? f32(S16(HeapBase + SparseElements).x[s32(transmit) - s32(Sparse)]) : transmit;
+				f32 tx_channel = Sparse ? f32(S16(HeapBase + SparseElements - 2 * u32(Sparse)).x[s32(transmit)]) : transmit;
 				f32 transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_channel;
 				f32 transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
 
