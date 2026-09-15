@@ -277,9 +277,14 @@ gpu_resource_build_end(GPUResourceBuilder *rb, GPUBuffer *buffer)
 
 	//////////////////////////////////////
 	// NOTE(rnp): upload data
+	u64 last_wait_value = 0;
 	for (GPUResource *r = rb->resource_list; r; r = r->next)
 		if (r->data)
-			gpu_buffer_range_upload(buffer, r->data, r->offset, r->size, 0);
+			last_wait_value = gpu_buffer_range_upload(buffer, r->data, r->offset, r->size, 0);
+
+	// TODO(rnp): cleanup this pointless stall
+	if (vk_buffer_needs_sync(buffer))
+		gpu_host_wait_timeline(GPUTimeline_Transfer, last_wait_value, -1ULL);
 }
 
 function BeamformerComputePlan *
@@ -1741,7 +1746,6 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 				.size  = countof(rf->upload_complete_values) * rf->active_rf_size,
 				.flags = GPUUsageFlag_HostWrite,
 				.label = str8("RawRFBuffer"),
-				.single_transfer_size = rf->active_rf_size,
 			};
 			gpu_buffer_allocate(&rf->buffer, allocate_info);
 		}
@@ -1754,14 +1758,14 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 
 		assert((ctx->shared_memory_size % os_system_info()->page_size) == 0 &&
 		       (os_system_info()->page_size % gpu_round_up_to_sync_size(1, 64)) == 0);
-		gpu_buffer_range_upload(&rf->buffer, beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size),
-		                        slot * rf->active_rf_size, rf->active_rf_size, 1);
+		u64 wait_value = gpu_buffer_range_upload(&rf->buffer, beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size),
+		                                         slot * rf->active_rf_size, rf->active_rf_size, 1);
 		store_fence();
 
 		beamformer_shared_memory_release_lock(ctx->shared_memory, (i32)scratch_lock);
 		post_sync_barrier(ctx->shared_memory, upload_lock);
 
-		atomic_store_u64(rf->upload_complete_values + slot, gpu_host_signal_timeline(GPUTimeline_Transfer));
+		atomic_store_u64(rf->upload_complete_values + slot, wait_value);
 		atomic_add_u64(&rf->insertion_index, 1);
 
 		os_wake_all_waiters(ctx->compute_worker_sync);

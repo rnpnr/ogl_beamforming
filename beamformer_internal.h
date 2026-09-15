@@ -118,12 +118,6 @@ typedef struct {
 	GPUUsageFlags     flags;
 	i64               size;
 
-	// NOTE(rnp): when the buffer is used as a destination for CPU->GPU transfers
-	// and the GPU doesn't support full UMA/ReBAR access this indicates the maximum
-	// size the CPU will try to transfer in one go. This can be used to reduce to
-	// reduce CPU memory overhead for large GPU side buffers
-	i64               single_transfer_size;
-
 	// NOTE(rnp): only required if buffer will be used on multiple timelines
 	u32               timeline_count;
 	GPUTimeline      *timelines_used;
@@ -149,7 +143,7 @@ DEBUG_IMPORT GPUInfo *gpu_info(void);
 
 DEBUG_IMPORT void gpu_buffer_allocate(GPUBuffer *, GPUBufferAllocateInfo info);
 DEBUG_IMPORT void gpu_buffer_release(GPUBuffer *);
-DEBUG_IMPORT void gpu_buffer_range_upload(GPUBuffer *, void *data, u64 offset, u64 size, b32 non_temporal);
+DEBUG_IMPORT u64  gpu_buffer_range_upload(GPUBuffer *, void *data, u64 offset, u64 size, b32 non_temporal);
 DEBUG_IMPORT void gpu_buffer_range_download(void *output, GPUBuffer *, u64 source_offset, u64 size, b32 non_temporal);
 DEBUG_IMPORT u64  gpu_round_up_to_sync_size(u64, u64 min);
 

@@ -1086,6 +1086,8 @@ vk_buffer_allocate_common(VulkanBuffer *vb, VulkanBufferAllocateInfo *ai)
 		u32 transfer_queue_family = vk->queues[vk->queue_indices[VulkanQueueKind_Transfer]]->queue_family;
 
 		ai->flags &= ~GPUUsageFlag_HostReadWrite;
+		ai->flags |= GPUUsageFlag_TransferDestination;
+
 		b32 found = 0;
 		for EachElement(ai->queue_family_indices, it) {
 			if (ai->queue_family_indices[it] == transfer_queue_family) {
@@ -1103,7 +1105,7 @@ vk_buffer_allocate_common(VulkanBuffer *vb, VulkanBufferAllocateInfo *ai)
 			VulkanBufferAllocateInfo asi = {
 				.size                    = AlignUpPowerOfTwo(host_size, vk->memory_info.non_coherent_atom_size),
 				.index_type              = VK_INDEX_TYPE_NONE_KHR,
-				.flags                   = host_rw_flags,
+				.flags                   = host_rw_flags|GPUUsageFlag_TransferSource,
 				.queue_family_count      = 1,
 				.queue_family_indices[0] = vk->queues[vk->queue_indices[VulkanQueueKind_Transfer]]->queue_family,
 			};
@@ -2050,12 +2052,13 @@ vk_command_copy_buffer(VkCommandBuffer cb, VkBuffer db, u64 destination_offset, 
 	vkCmdCopyBuffer2(cb, &copy_buffer_info);
 }
 
-function force_inline void
+function force_inline u64
 vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 destination_offset, u64 source_offset, u64 size, b32 non_temporal)
 {
 	VulkanContext *vk = vulkan_context;
 	(void)vk;
 
+	u64 result = 0;
 	switch (source->memory_kind) {
 	#if !ForceStagingBuffers
 	case VulkanMemoryKind_BAR:
@@ -2130,7 +2133,7 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 		case VulkanMemoryKind_Device:{
 			VulkanBuffer *db = vk_entity_data((u64)destination->next, VulkanEntityKind_Buffer);
 			assert(size <= db->memory_size);
-			void *dest = (u8 *)db->host_pointer;
+			void *dest = (u8 *)db->host_pointer + destination_offset;
 			void *src  = (u8 *)source->host_pointer + source_offset;
 			// NOTE(rnp): don't trash the CPU cache for large data stores
 			if (non_temporal) memory_copy_non_temporal(dest, src, size);
@@ -2138,10 +2141,8 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 			store_fence();
 
 			GPUCommandList cb = gpu_command_list_begin(GPUTimeline_Transfer);
-			vk_command_copy_buffer(vk_command_buffer(cb), destination->buffer, destination_offset, db->buffer, 0, size);
-			u64 wait_value = gpu_command_list_end(cb, (VulkanHandle){0}, (VulkanHandle){0});
-			// TODO(rnp): asynchronous transfers
-			gpu_host_wait_timeline(GPUTimeline_Transfer, wait_value, -1ULL);
+			vk_command_copy_buffer(vk_command_buffer(cb), destination->buffer, destination_offset, db->buffer, destination_offset, size);
+			result = gpu_command_list_end(cb, (VulkanHandle){0}, (VulkanHandle){0});
 		}break;
 
 		InvalidDefaultCase;
@@ -2175,9 +2176,11 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 
 	InvalidDefaultCase;
 	}
+
+	return result;
 }
 
-DEBUG_IMPORT void
+DEBUG_IMPORT u64
 gpu_buffer_range_upload(GPUBuffer *b, void *data, u64 offset, u64 size, b32 non_temporal)
 {
 	VulkanBuffer *db = vk_entity_data(b->handle.value, VulkanEntityKind_Buffer);
@@ -2185,7 +2188,8 @@ gpu_buffer_range_upload(GPUBuffer *b, void *data, u64 offset, u64 size, b32 non_
 		.host_pointer = data,
 		.memory_kind  = VulkanMemoryKind_Host,
 	};
-	vk_buffer_buffer_copy(db, &sb, offset, 0, size, non_temporal);
+	u64 result = vk_buffer_buffer_copy(db, &sb, offset, 0, size, non_temporal);
+	return result;
 }
 
 DEBUG_IMPORT void
