@@ -118,7 +118,7 @@ typedef struct {
 	GPUUsageFlags     flags;
 	i64               size;
 
-	// NOTE(rnp): only required if buffer will be used on multiple timelines
+	// NOTE(rnp): these are required if buffer will have any CPU<->GPU transfers
 	u32               timeline_count;
 	GPUTimeline      *timelines_used;
 

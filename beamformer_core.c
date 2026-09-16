@@ -272,6 +272,8 @@ gpu_resource_build_end(GPUResourceBuilder *rb, GPUBuffer *buffer)
 			.size  = size,
 			.flags = GPUUsageFlag_HostWrite,
 			.label = push_str8_f(rb->arena, "GPU Temp Arena [%p]", buffer),
+			.timelines_used = (GPUTimeline []){GPUTimeline_Compute},
+			.timeline_count = 1,
 		});
 	}
 
@@ -1742,12 +1744,13 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 
 		rf->active_rf_size = gpu_round_up_to_sync_size(rf_block_rf_size & 0xFFFFFFFFULL, 64);
 		if unlikely(rf->buffer.size < countof(rf->upload_complete_values) * rf->active_rf_size) {
-			GPUBufferAllocateInfo allocate_info = {
+			gpu_buffer_allocate(&rf->buffer, (GPUBufferAllocateInfo){
 				.size  = countof(rf->upload_complete_values) * rf->active_rf_size,
 				.flags = GPUUsageFlag_HostWrite,
 				.label = str8("RawRFBuffer"),
-			};
-			gpu_buffer_allocate(&rf->buffer, allocate_info);
+				.timelines_used = (GPUTimeline []){GPUTimeline_Compute},
+				.timeline_count = 1,
+			});
 		}
 
 		u64 slot = rf->insertion_index % countof(rf->upload_complete_values);
