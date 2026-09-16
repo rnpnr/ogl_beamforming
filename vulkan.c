@@ -1078,12 +1078,14 @@ vk_buffer_allocate_common(VulkanBuffer *vb, VulkanBufferAllocateInfo *ai)
 	 */
 	u32 host_rw_flags = (ai->flags & GPUUsageFlag_HostReadWrite);
 
+	assert(!host_rw_flags || (host_rw_flags && ai->queue_family_count > 0));
+
 	b32 result = 0;
 	if ((ForceStagingBuffers && !host_rw_flags) || !ForceStagingBuffers)
 		result = vk_buffer_allocate_common_base(vb, ai, host_rw_flags ? VulkanMemoryKind_BAR : VulkanMemoryKind_Device);
 
 	if (!result && host_rw_flags) {
-		u32 transfer_queue_family = vk->queues[vk->queue_indices[VulkanQueueKind_Transfer]]->queue_family;
+		u32 transfer_queue_family = vk->queues[VulkanQueueKind_Transfer]->queue_family;
 
 		ai->flags &= ~GPUUsageFlag_HostReadWrite;
 		ai->flags |= GPUUsageFlag_TransferDestination;
@@ -1107,7 +1109,7 @@ vk_buffer_allocate_common(VulkanBuffer *vb, VulkanBufferAllocateInfo *ai)
 				.index_type              = VK_INDEX_TYPE_NONE_KHR,
 				.flags                   = host_rw_flags|GPUUsageFlag_TransferSource,
 				.queue_family_count      = 1,
-				.queue_family_indices[0] = vk->queues[vk->queue_indices[VulkanQueueKind_Transfer]]->queue_family,
+				.queue_family_indices[0] = vk->queues[VulkanQueueKind_Transfer]->queue_family,
 			};
 			Temp scratch;
 			DeferLoop(take_lock(&vk->arena_lock, -1), release_lock(&vk->arena_lock))
@@ -1675,20 +1677,32 @@ vk_load_queues(Arena *arena, Stream *err)
 
 	/////////////////////////////////////////////
 	// NOTE(rnp): fill in info and create device
-	for EachElement(vk->queues, it) {
-		u32 index = queue_subindices[it];
-		for (i32 i = 0; i < queue_indices[it]; i++)
-			index += assigned_subindices[i];
-		vk->queue_indices[it] = index;
-	}
 
-	for EachElement(vk->queues, it) {
-		if (vk->queues[vk->queue_indices[it]] == 0) {
-			vk->queues[vk->queue_indices[it]] = push_struct(vk->arena, VulkanQueue);
-			vk->queues[vk->queue_indices[it]]->queue_family = queue_indices[it];
-			vk->queues[vk->queue_indices[it]]->queue_index  = queue_subindices[it];
+	u32 unique_queue_count = 0;
+	for EachElement(vk->queues, i) {
+		VulkanQueue *qp = 0;
+
+		u32 unique_queue_index = unique_queue_count;
+		for EachElement(vk->queues, j) {
+			if (vk->queues[j] &&
+			    vk->queues[j]->queue_family == queue_indices[i] &&
+			    vk->queues[j]->queue_index  == queue_subindices[i])
+			{
+				qp = vk->queues[j];
+				unique_queue_index = j;
+				break;
+			}
 		}
-		vk->queues[it] = vk->queues[vk->queue_indices[it]];
+
+		if (!qp) {
+			qp = push_struct(vk->arena, VulkanQueue);
+			qp->queue_family = queue_indices[i];
+			qp->queue_index  = queue_subindices[i];
+			unique_queue_count++;
+		}
+
+		vk->queues[i]        = qp;
+		vk->queue_indices[i] = unique_queue_index;
 	}
 
 	for EachElement(vk->command_pools, it)
@@ -1700,16 +1714,16 @@ vk_load_queues(Arena *arena, Stream *err)
 	for (u32 i = 0; i < VulkanQueueKind_Count; i++)
 		for (u32 j = 0; j < VulkanQueueKind_Count; j++)
 			queue_priorities[i][j] = 1.0f;
-	queue_priorities[queue_indices[VulkanQueueKind_Compute]][queue_subindices[VulkanQueueKind_Compute]] = 0.5f;
+	queue_priorities[vk->queue_indices[VulkanQueueKind_Compute]][queue_subindices[VulkanQueueKind_Compute]] = 0.5f;
 
 	u32 queue_create_index = 0;
 	b32 queue_info_filled[VulkanQueueKind_Count] = {0};
-	for (u32 q = 0; q < vk->unique_queues; q++) {
-		u32 base_q = queue_indices[q];
-		if (!queue_info_filled[base_q]) {
+	for EachElement(vk->queue_indices, q) {
+		u32 base_q = vk->queue_indices[q];
+		if (!queue_info_filled[base_q] && assigned_subindices[q] > 0) {
 			queue_create_infos[queue_create_index++] = (VkDeviceQueueCreateInfo){
 				.sType            = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-				.queueFamilyIndex = base_q,
+				.queueFamilyIndex = vk->queues[base_q]->queue_family,
 				.queueCount       = assigned_subindices[q],
 				.pQueuePriorities = queue_priorities[q],
 			};
@@ -1803,9 +1817,8 @@ vk_load_queues(Arena *arena, Stream *err)
 	#undef X
 
 	for (u32 q = 0; q < vk->unique_queues; q++) {
-		VulkanQueue *qp = vk->queues[q];
+		VulkanQueue *qp = vk->queues[vk->queue_indices[q]];
 		vkGetDeviceQueue(vk->device, qp->queue_family, qp->queue_index, &qp->queue);
-
 		qp->timeline_semaphore = vk_make_semaphore(0);
 	}
 
