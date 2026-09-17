@@ -1545,6 +1545,12 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				slot = (rf->compute_index - 1) % countof(rf->upload_complete_values);
 			}
 
+			// NOTE(rnp): nvidia needs a memory barrier between pipeline stages
+			// for correct output. It doesn't seem to effect performance on nvidia cards.
+			// It does have a very minor performance decrease on AMD, but technically its
+			// against vulkan spec to skip them so for simplicity we will default to for now
+			b32 pipeline_memory_barrier = 1; //gpu_info()->vendor == GPUVendor_NVIDIA;
+
 			for (u32 channel_offset = 0;
 			     channel_offset < cp->channel_count;
 			     channel_offset += BeamformerChunkChannelCount)
@@ -1567,6 +1573,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 
 					gpu_command_copy_buffer(cmd, &cs->ping_pong_buffer, input_index * pp_size, &rf->buffer, copy_offset, copy_size);
 					gpu_command_clear_buffer(cmd, &cs->ping_pong_buffer, input_index * pp_size + copy_size, clear_size, 0);
+					// TODO(rnp): technically this should be a transfer to compute barrier
+					// but a full memory barrier will also do the trick
 					gpu_command_pipeline_barrier(cmd, 1);
 				}
 
@@ -1581,14 +1589,14 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 					u64 output_pointer = pp_output_pointer;
 					u64 input_pointer  = (i == 0 && !special_handling) ? rf_pointer : pp_input_pointer;
 
-					if (i != 0) gpu_command_pipeline_barrier(cmd, 0);
+					if (i != 0) gpu_command_pipeline_barrier(cmd, pipeline_memory_barrier);
 					do_compute_shader(cmd, cp, frame, input_pointer, output_pointer, i, channel_offset);
 					gpu_command_timestamp(cmd);
 				}
 			}
 
 			for (u32 i = cp->first_image_shader_index; i < cp->pipeline.shader_count; i++) {
-				gpu_command_pipeline_barrier(cmd, 0);
+				gpu_command_pipeline_barrier(cmd, pipeline_memory_barrier);
 				do_compute_shader(cmd, cp, frame, 0, 0, i, 0);
 				gpu_command_timestamp(cmd);
 			}
