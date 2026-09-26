@@ -199,6 +199,8 @@ typedef struct {
 	i32 ReceiveChannelCount;
 	i32 ChunkChannelCount;
 	i32 SampleCount;
+	u32 AcquisitionByteStride;
+	u32 ChannelByteStride;
 	f32 SamplingFrequency;
 	f32 DemodulationFrequency;
 	f32 SpeedOfSound;
@@ -615,19 +617,21 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 		{10, 28, 1, 0},
 		{10, 32, 1, 0},
 		{10, 36, 1, 0},
-		{8,  40, 1, 0},
-		{8,  44, 1, 0},
+		{18, 40, 1, 0},
+		{18, 44, 1, 0},
 		{8,  48, 1, 0},
 		{8,  52, 1, 0},
-		{18, 56, 1, 0},
+		{8,  56, 1, 0},
 		{8,  60, 1, 0},
 		{18, 64, 1, 0},
 		{8,  68, 1, 0},
-		{8,  72, 1, 0},
-		{18, 76, 1, 0},
-		{18, 80, 1, 0},
+		{18, 72, 1, 0},
+		{8,  76, 1, 0},
+		{8,  80, 1, 0},
 		{18, 84, 1, 0},
 		{18, 88, 1, 0},
+		{18, 92, 1, 0},
+		{18, 96, 1, 0},
 	},
 	(MetaStructMember []){
 		{18, 0, 1, 0},
@@ -687,6 +691,8 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("ReceiveChannelCount"),
 		str8_comp("ChunkChannelCount"),
 		str8_comp("SampleCount"),
+		str8_comp("AcquisitionByteStride"),
+		str8_comp("ChannelByteStride"),
 		str8_comp("SamplingFrequency"),
 		str8_comp("DemodulationFrequency"),
 		str8_comp("SpeedOfSound"),
@@ -720,11 +726,11 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 };
 
 read_only global MetaStructInfo meta_struct_info_by_id[] = {
-	{str8_comp("DecodeBakeParameters"),             11, 44, 0},
-	{str8_comp("FilterBakeParameters"),             13, 52, 0},
-	{str8_comp("DASBakeParameters"),                23, 92, 0},
-	{str8_comp("CoherencyWeightingBakeParameters"), 3,  12, 0},
-	{str8_comp("ReshapeBakeParameters"),            9,  36, 0},
+	{str8_comp("DecodeBakeParameters"),             11, 44,  0},
+	{str8_comp("FilterBakeParameters"),             13, 52,  0},
+	{str8_comp("DASBakeParameters"),                25, 100, 0},
+	{str8_comp("CoherencyWeightingBakeParameters"), 3,  12,  0},
+	{str8_comp("ReshapeBakeParameters"),            9,  36,  0},
 };
 
 read_only global str8 beamformer_shader_names[] = {

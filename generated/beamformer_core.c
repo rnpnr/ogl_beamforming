@@ -3,6 +3,22 @@
 // GENERATED CODE
 
 typedef enum {
+	BeamformerDataLayout_ChannelEventSample = 0,
+	BeamformerDataLayout_ChannelSampleEvent = 1,
+	BeamformerDataLayout_EventChannelSample = 2,
+	BeamformerDataLayout_SampleChannelEvent = 3,
+	BeamformerDataLayout_Image              = 4,
+	BeamformerDataLayout_Count,
+} BeamformerDataLayout;
+
+typedef enum {
+	BeamformerRFDimension_Channels = 0,
+	BeamformerRFDimension_Events   = 1,
+	BeamformerRFDimension_Samples  = 2,
+	BeamformerRFDimension_Count,
+} BeamformerRFDimension;
+
+typedef enum {
 	BeamformerPanelKind_Nil                 = 0,
 	BeamformerPanelKind_Split               = 1,
 	BeamformerPanelKind_TabGroup            = 2,

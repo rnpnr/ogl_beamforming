@@ -467,15 +467,17 @@ struct BeamformerComputeGraphNode {
 	// the shader requires a fixed layout for input, output, or both. When two adjacent
 	// nodes require incompatible layouts the second pass over the graph will insert
 	// Reshape shaders in between.
-	BeamformerDataKind input_data_kind;
-	iv3                input_stride;
+	BeamformerDataKind   input_data_kind;
+	BeamformerDataLayout input_data_layout;
 
-	BeamformerDataKind output_data_kind;
-	iv3                output_stride;
+	BeamformerDataKind   output_data_kind;
+	BeamformerDataLayout output_data_layout;
 
-	b32                requires_fp_input;
+	uv3 rf_dimensions;
 
-	i32                user_pipeline_index;
+	b32 requires_fp_input;
+
+	i32 user_pipeline_index;
 
 	BeamformerComputeGraphNode *prev;
 	BeamformerComputeGraphNode *next;
@@ -510,14 +512,59 @@ push_compute_graph_node(BeamformerComputeGraph *graph, BeamformerShaderKind kind
 {
 	BeamformerComputeGraphNode *result = push_struct(arena, BeamformerComputeGraphNode);
 	if (graph) {
+		if (graph->last) result->rf_dimensions = graph->last->rf_dimensions;
 		DLLInsertLast(0, graph->first, graph->last, result, next, prev);
 		graph->count++;
 	}
 	result->kind = kind;
 	result->user_pipeline_index = -1;
-	// NOTE(rnp): initially don't care data kind
-	result->input_data_kind  = BeamformerDataKind_Count;
-	result->output_data_kind = BeamformerDataKind_Count;
+	// NOTE(rnp): initially don't care data parameters
+	result->input_data_kind    = BeamformerDataKind_Count;
+	result->output_data_kind   = BeamformerDataKind_Count;
+	result->input_data_layout  = BeamformerDataLayout_Count;
+	result->output_data_layout = BeamformerDataLayout_Count;
+	return result;
+}
+
+function uv3
+beamformer_data_strides(BeamformerDataLayout layout, uv3 rf_dimensions)
+{
+	u32 channel_count = rf_dimensions.E[BeamformerRFDimension_Channels];
+	u32 event_count   = rf_dimensions.E[BeamformerRFDimension_Events];
+	u32 sample_count  = rf_dimensions.E[BeamformerRFDimension_Samples];
+
+	uv3 result = {0};
+	switch (layout) {
+	InvalidDefaultCase;
+
+	case BeamformerDataLayout_Image:{}break;
+
+	case BeamformerDataLayout_ChannelEventSample:{
+		result.E[BeamformerRFDimension_Channels] = event_count * sample_count;
+		result.E[BeamformerRFDimension_Events]   = sample_count;
+		result.E[BeamformerRFDimension_Samples]  = 1;
+	}break;
+
+	case BeamformerDataLayout_ChannelSampleEvent:{
+		result.E[BeamformerRFDimension_Channels] = event_count * sample_count;
+		result.E[BeamformerRFDimension_Events]   = 1;
+		result.E[BeamformerRFDimension_Samples]  = event_count;
+	}break;
+
+	case BeamformerDataLayout_EventChannelSample:{
+		result.E[BeamformerRFDimension_Events]   = channel_count * sample_count;
+		result.E[BeamformerRFDimension_Channels] = sample_count;
+		result.E[BeamformerRFDimension_Samples]  = 1;
+	}break;
+
+	case BeamformerDataLayout_SampleChannelEvent:{
+		result.E[BeamformerRFDimension_Samples]  = channel_count * event_count;
+		result.E[BeamformerRFDimension_Channels] = event_count;
+		result.E[BeamformerRFDimension_Events]   = 1;
+	}break;
+
+	}
+
 	return result;
 }
 
@@ -607,14 +654,14 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	// NOTE(rnp): First Pass: build initial graph and insert hard layout constraints
 	BeamformerComputeGraph graph = {0};
 	BeamformerComputeGraphNode *root_node = push_compute_graph_node(&graph, BeamformerShaderKind_Count, scratch);
-	root_node->input_data_kind  = input_data_kind;
-	root_node->input_stride.x   = 1;                                               // Sample Stride
-	root_node->input_stride.y   = pb->parameters.sample_count * acquisition_count; // Channel Stride
-	root_node->input_stride.z   = pb->parameters.sample_count;                     // Receive Event Stride
-	root_node->output_data_kind = input_data_kind;
-	root_node->output_stride.x  = 1;                                               // Sample Stride
-	root_node->output_stride.y  = pb->parameters.sample_count * acquisition_count; // Channel Stride
-	root_node->output_stride.z  = pb->parameters.sample_count;                     // Receive Event Stride
+	root_node->input_data_kind    = input_data_kind;
+	root_node->input_data_layout  = BeamformerDataLayout_ChannelEventSample;
+	root_node->output_data_kind   = input_data_kind;
+	root_node->output_data_layout = BeamformerDataLayout_ChannelEventSample;
+
+	root_node->rf_dimensions.E[BeamformerRFDimension_Channels] = chunk_channel_count;
+	root_node->rf_dimensions.E[BeamformerRFDimension_Events]   = pb->parameters.acquisition_count;
+	root_node->rf_dimensions.E[BeamformerRFDimension_Samples]  = pb->parameters.sample_count;
 
 	for EachIndex(pb->pipeline.shader_count, it) {
 		// NOTE(rnp): skip unnecessary shaders
@@ -639,6 +686,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		BeamformerComputeGraphNode *node = push_compute_graph_node(&graph, pb->pipeline.shaders[it], scratch);
 		node->user_pipeline_index = (i32)it;
 		switch (pb->pipeline.shaders[it]) {
+		case BeamformerShaderKind_Demodulate:{
+			node->rf_dimensions.E[BeamformerRFDimension_Samples] /= (2 * decimation_rate);
+		}break;
+
 		case BeamformerShaderKind_Decode:{
 			b32 low_precision   = beamformer_data_kind_element_size[input_data_kind] < 4;
 			b32 use_coop_matrix = gpu_info()->cooperative_matrix &&
@@ -649,14 +700,12 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 			node->requires_fp_input = 1;
 
 			// NOTE(rnp): fixed input layout required for reasonable performance
-			node->input_stride.x = chunk_channel_count * acquisition_count;
-			node->input_stride.y = acquisition_count;
-			node->input_stride.z = 1;
+			node->input_data_layout = BeamformerDataLayout_SampleChannelEvent;
 
 			if (use_coop_matrix) {
-				node->input_data_kind  = BeamformerDataKind_Float16;
-				node->output_data_kind = data_kind_to_element_kind[das_data_kind];
-				node->output_stride    = node->input_stride;
+				node->input_data_kind    = BeamformerDataKind_Float16;
+				node->output_data_kind   = data_kind_to_element_kind[das_data_kind];
+				node->output_data_layout = node->input_data_layout;
 			}
 		}break;
 
@@ -667,13 +716,15 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 			if (pb->parameters.decode_mode != BeamformerDecodeMode_None)
 				node->input_data_kind = das_data_kind;
 
-			node->input_stride.x   = 1;                                      // Sample Stride
-			node->input_stride.y   = input_sample_count * acquisition_count; // Channel Stride
-			node->input_stride.z   = input_sample_count;                     // Receive Event Stride
-			node->output_stride.x  = 1;
-			node->output_stride.y  = cp->output_points.x;
-			node->output_stride.z  = cp->output_points.x * cp->output_points.y;
-			node->output_data_kind = das_data_kind;
+			node->input_data_layout = BeamformerDataLayout_ChannelEventSample;
+			if (pb->parameters.acquisition_kind == BeamformerAcquisitionKind_RCA_TPW ||
+			    pb->parameters.acquisition_kind == BeamformerAcquisitionKind_RCA_VLS)
+			{
+				node->input_data_layout = BeamformerDataLayout_EventChannelSample;
+			}
+
+			node->output_data_layout = BeamformerDataLayout_Image;
+			node->output_data_kind   = das_data_kind;
 
 			// NOTE(rnp): insert implicit CoherencyWeighting node
 			if (pb->parameters.coherency_weighting)
@@ -691,19 +742,19 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 		// NOTE(rnp): data strides
 		{
-			b32 input_dont_care       = bv3_any(iv3_equal(node->input_stride, (iv3){0}));
-			b32 prev_output_dont_care = bv3_any(iv3_equal(node->prev->output_stride, (iv3){0}));
+			b32 input_dont_care       = node->input_data_layout        == BeamformerDataLayout_Count;
+			b32 prev_output_dont_care = node->prev->output_data_layout == BeamformerDataLayout_Count;
 
 			if (prev_output_dont_care && !input_dont_care)
-				node->prev->output_stride = node->input_stride;
+				node->prev->output_data_layout = node->input_data_layout;
 
 			if (!prev_output_dont_care && input_dont_care)
-				node->input_stride = node->prev->output_stride;
+				node->input_data_layout = node->prev->output_data_layout;
 
 			if (prev_output_dont_care && input_dont_care)
-				node->input_stride = node->prev->output_stride = node->prev->input_stride;
+				node->input_data_layout = node->prev->output_data_layout = node->prev->input_data_layout;
 
-			needs_reshape |= !bv3_all(iv3_equal(node->input_stride, node->prev->output_stride));
+			needs_reshape |= node->input_data_layout != node->prev->output_data_layout;
 		}
 
 		// NOTE(rnp): data kinds
@@ -735,10 +786,11 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 			BeamformerComputeGraphNode *last  = node->prev;
 			DLLInsertLast(0, node, last, new, next, prev);
 			graph.count++;
-			new->input_data_kind  = new->prev->output_data_kind;
-			new->input_stride     = new->prev->output_stride;
-			new->output_data_kind = new->next->input_data_kind;
-			new->output_stride    = new->next->input_stride;
+			new->rf_dimensions      = new->prev->rf_dimensions;
+			new->input_data_kind    = new->prev->output_data_kind;
+			new->input_data_layout  = new->prev->output_data_layout;
+			new->output_data_kind   = new->next->input_data_kind;
+			new->output_data_layout = new->next->input_data_layout;
 		}
 	}
 
@@ -755,7 +807,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	GPUResourceBuilder *resource_builder = gpu_resource_build_begin(scratch);
 	for (BeamformerComputeGraphNode *node = root_node->next; node; node = node->next) {
 		assert(node->prev->output_data_kind == node->input_data_kind);
-		assert(bv3_all(iv3_equal(node->prev->output_stride, node->input_stride)));
+		assert(node->prev->output_data_layout == node->input_data_layout);
 
 		BeamformerShaderParameters *sp = 0;
 		if (node->user_pipeline_index >= 0)
@@ -764,19 +816,22 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		if (compute_plan_push_shader(cp, node, sp)) {
 			BeamformerShaderDescriptor *sd = cp->shader_descriptors + cp->pipeline.shader_count - 1;
 
+			uv3 output_stride = beamformer_data_strides(node->output_data_layout, node->rf_dimensions);
+			uv3 input_stride  = beamformer_data_strides(node->input_data_layout,  node->prev->rf_dimensions);
+
 			switch (node->kind) {
 			case BeamformerShaderKind_Decode:{
 				BeamformerDecodeBakeParameters *db = &sd->bake.Decode;
 
-				u32 decode_sample_count = input_sample_count;
-				db->DecodeMode    = pb->parameters.decode_mode;
-				db->TransmitCount = pb->parameters.acquisition_count;
-				db->ChunkChannelCount = chunk_channel_count;
+				u32 decode_sample_count = node->rf_dimensions.E[BeamformerRFDimension_Samples];
+				db->DecodeMode        = pb->parameters.decode_mode;
+				db->TransmitCount     = node->rf_dimensions.E[BeamformerRFDimension_Events];
+				db->ChunkChannelCount = node->rf_dimensions.E[BeamformerRFDimension_Channels];
 
 				// NOTE(rnp): ignored when using coop matrices
-				db->OutputSampleStride   = node->output_stride.x;
-				db->OutputChannelStride  = node->output_stride.y;
-				db->OutputTransmitStride = node->output_stride.z;
+				db->OutputSampleStride   = output_stride.E[BeamformerRFDimension_Samples];
+				db->OutputChannelStride  = output_stride.E[BeamformerRFDimension_Channels];
+				db->OutputTransmitStride = output_stride.E[BeamformerRFDimension_Events];
 
 				db->ToProcess = 1;
 
@@ -811,21 +866,21 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 					sd->layout.y = 4;
 					sd->layout.z = 1;
 
-					sd->dispatch.x = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.x / (f32)db->ToProcess);
-					sd->dispatch.y = (u32)ceil_f32((f32)chunk_channel_count              / (f32)sd->layout.y);
-					sd->dispatch.z = (u32)ceil_f32((f32)decode_sample_count              / (f32)sd->layout.z);
+					sd->dispatch.x = (u32)ceil_f32((f32)db->TransmitCount     / (f32)sd->layout.x / (f32)db->ToProcess);
+					sd->dispatch.y = (u32)ceil_f32((f32)db->ChunkChannelCount / (f32)sd->layout.y);
+					sd->dispatch.z = (u32)ceil_f32((f32)decode_sample_count   / (f32)sd->layout.z);
 				} else {
 					/* NOTE(rnp): register caching. using more threads will cause the compiler to do
 					 * contortions to avoid spilling registers. using less gives higher performance */
 					sd->layout = (uv3){{subgroup_size / 2, 1, 1}};
 
-					sd->dispatch.x = (u32)ceil_f32((f32)decode_sample_count / (f32)sd->layout.x);
-					sd->dispatch.y = (u32)ceil_f32((f32)chunk_channel_count / (f32)sd->layout.y);
+					sd->dispatch.x = (u32)ceil_f32((f32)decode_sample_count   / (f32)sd->layout.x);
+					sd->dispatch.y = (u32)ceil_f32((f32)db->ChunkChannelCount / (f32)sd->layout.y);
 					sd->dispatch.z = 1;
 				}
 
 				sd->uses_heap = 1;
-				u32 order = pb->parameters.acquisition_count;
+				u32 order = db->TransmitCount;
 				db->Hadamard = gpu_resource_push(resource_builder, f16, order * order,
 				                                 .data = make_hadamard_transpose(scratch, order, use_coop_matrix),
 				                                 .name = str8("hadamard"));
@@ -850,21 +905,21 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				                                           .data = f->data,
 				                                           .name = push_str8_f(scratch, "filter_%u", sp->filter_slot));
 
-				fb->SampleCount    = input_sample_count;
+				fb->SampleCount    = node->rf_dimensions.E[BeamformerRFDimension_Samples];
 				fb->DecimationRate = demod ? decimation_rate : 1;
 
 				b32 deinterleave =  beamformer_data_kind_complex[node->input_data_kind] &&
 				                   !beamformer_data_kind_complex[node->output_data_kind];
 				if (deinterleave)
-					fb->BatchSampleCount = chunk_channel_count * input_sample_count * pb->parameters.acquisition_count;
+					fb->BatchSampleCount = node->rf_dimensions.x * node->rf_dimensions.y * node->rf_dimensions.z;
 
-				fb->OutputSampleStride   = node->output_stride.x;
-				fb->OutputChannelStride  = node->output_stride.y;
-				fb->OutputTransmitStride = node->output_stride.z;
+				fb->OutputSampleStride   = output_stride.E[BeamformerRFDimension_Samples];
+				fb->OutputChannelStride  = output_stride.E[BeamformerRFDimension_Channels];
+				fb->OutputTransmitStride = output_stride.E[BeamformerRFDimension_Events];
 
-				fb->InputSampleStride    = node->input_stride.x;
-				fb->InputChannelStride   = node->input_stride.y;
-				fb->InputTransmitStride  = node->input_stride.z;
+				fb->InputSampleStride    = input_stride.E[BeamformerRFDimension_Samples];
+				fb->InputChannelStride   = input_stride.E[BeamformerRFDimension_Channels];
+				fb->InputTransmitStride  = input_stride.E[BeamformerRFDimension_Events];
 
 				/* NOTE(rnp): when we are demodulating we pretend that the sampler was alternating
 				 * between sampling the I portion and the Q portion of an IQ signal. Therefore there
@@ -881,9 +936,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				}
 
 				sd->layout     = (uv3){{subgroup_size, 1, 1}};
-				sd->dispatch.x = (u32)ceil_f32((f32)input_sample_count               / (f32)sd->layout.x);
-				sd->dispatch.y = (u32)ceil_f32((f32)chunk_channel_count              / (f32)sd->layout.y);
-				sd->dispatch.z = (u32)ceil_f32((f32)pb->parameters.acquisition_count / (f32)sd->layout.z);
+				sd->dispatch.x = (u32)ceil_f32((f32)node->rf_dimensions.E[BeamformerRFDimension_Samples]  / (f32)sd->layout.x);
+				sd->dispatch.y = (u32)ceil_f32((f32)node->rf_dimensions.E[BeamformerRFDimension_Channels] / (f32)sd->layout.y);
+				sd->dispatch.z = (u32)ceil_f32((f32)node->rf_dimensions.E[BeamformerRFDimension_Events]   / (f32)sd->layout.z);
 			}break;
 
 			case BeamformerShaderKind_DAS:{
@@ -896,10 +951,14 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->TimeOffset            = time_offset;
 				db->FNumber               = pb->parameters.f_number;
 				db->AcquisitionKind       = pb->parameters.acquisition_kind;
-				db->SampleCount           = input_sample_count;
+				db->SampleCount           = node->rf_dimensions.E[BeamformerRFDimension_Samples];
 				db->ReceiveChannelCount   = pb->parameters.channel_count;
-				db->AcquisitionCount      = pb->parameters.acquisition_count;
-				db->ChunkChannelCount     = chunk_channel_count;
+				db->AcquisitionCount      = node->rf_dimensions.E[BeamformerRFDimension_Events];
+				db->ChunkChannelCount     = node->rf_dimensions.E[BeamformerRFDimension_Channels];
+				db->ChannelByteStride     = input_stride.E[BeamformerRFDimension_Channels]
+				                            * beamformer_data_kind_byte_size[node->input_data_kind];
+				db->AcquisitionByteStride = input_stride.E[BeamformerRFDimension_Events]
+				                            * beamformer_data_kind_byte_size[node->input_data_kind];
 				db->InterpolationMode     = pb->parameters.interpolation_mode;
 				db->TransmitAngle         = pb->parameters.focal_vector.E[0];
 				db->FocusDepth            = pb->parameters.focal_vector.E[1];
@@ -993,17 +1052,17 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				sd->compile_flags |= BeamformerReshapeCompileFlags_Deinterleave * deinterleave;
 				sd->compile_flags |= BeamformerReshapeCompileFlags_Interleave   * interleave;
 
-				rb->InputStrideX   = node->input_stride.x;
-				rb->InputStrideY   = node->input_stride.y;
-				rb->InputStrideZ   = node->input_stride.z;
-				rb->OutputStrideX  = node->output_stride.x;
-				rb->OutputStrideY  = node->output_stride.y;
-				rb->OutputStrideZ  = node->output_stride.z;
+				rb->InputStrideX   = input_stride.x;
+				rb->InputStrideY   = input_stride.y;
+				rb->InputStrideZ   = input_stride.z;
+				rb->OutputStrideX  = output_stride.x;
+				rb->OutputStrideY  = output_stride.y;
+				rb->OutputStrideZ  = output_stride.z;
 
 				// NOTE(rnp): order doesn't really matter here but it must match the dispatch layout
-				rb->SizeX          = input_sample_count;
-				rb->SizeY          = chunk_channel_count;
-				rb->SizeZ          = acquisition_count;
+				rb->SizeX          = node->rf_dimensions.x;
+				rb->SizeY          = node->rf_dimensions.y;
+				rb->SizeZ          = node->rf_dimensions.z;
 
 				sd->layout.x = 1;
 				sd->layout.z = Min(subgroup_size, rb->SizeZ);

@@ -1,4 +1,20 @@
 // See LICENSE for license details.
+@Enumeration DataLayout
+{
+	ChannelEventSample
+	ChannelSampleEvent
+	EventChannelSample
+	SampleChannelEvent
+	Image
+}
+
+@Enumeration RFDimension
+{
+	Channels
+	Events
+	Samples
+}
+
 @Flags PanelFlags
 {
 	List

@@ -405,6 +405,8 @@
 			[ReceiveChannelCount         S32]
 			[ChunkChannelCount           S32]
 			[SampleCount                 S32]
+			[AcquisitionByteStride       U32]
+			[ChannelByteStride           U32]
 
 			[SamplingFrequency           F32]
 			[DemodulationFrequency       F32]
