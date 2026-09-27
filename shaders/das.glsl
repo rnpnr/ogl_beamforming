@@ -334,24 +334,39 @@ RESULT_TYPE FORCES(const vec3 world_point)
 	f32 z_delta_squared     = xdc_world_point.z * xdc_world_point.z;
 	f32 transmit_yz_squared = transmit_y_delta * transmit_y_delta + z_delta_squared;
 
-	for (f32 chunk_channel = 0; chunk_channel < f32(batch_channel_count()); chunk_channel += 1.f) {
-		f32 rx_channel      = f32(channel_offset) + chunk_channel;
-		f32 receive_x_delta = xdc_world_point.x - rx_channel * xdc_element_pitch.x;
-		f32 a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
+	#define AcquisitionChunkSize 16
+	const u32 AcquisitionChunkCount = (AcquisitionCount + (AcquisitionChunkSize - 1)) / AcquisitionChunkSize;
+	for (u32 acquisition_chunk = 0; acquisition_chunk < AcquisitionChunkCount; acquisition_chunk++) {
+		u32 acquisition = acquisition_chunk * AcquisitionChunkSize;
+		if (Sparse && acquisition_chunk == 0) acquisition++;
 
-		if (a_arg < 0.5f) {
-			u64 rf_pointer = rf_data_pointer(u32(chunk_channel), u32(Sparse));
+		f32 transmit_indices[AcquisitionChunkSize];
+		for (u32 transmit = 0; transmit < AcquisitionChunkSize; transmit++) {
+			u32 index = acquisition + transmit;
+			if ((AcquisitionCount % AcquisitionChunkSize) != 0 && (index >= AcquisitionCount))
+				break;
+			f32 tx_channel = Sparse ? f32(S16(HeapBase + SparseElements - 2 * u32(Sparse)).x[index]) : f32(index);
+			f32 transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_channel;
+			transmit_indices[transmit] = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
+		}
 
-			f32 receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
-			f32 apodization   = apodize(a_arg);
-			for (f32 transmit = f32(Sparse); transmit < f32(AcquisitionCount); transmit += 1.f) {
-				f32 tx_channel = Sparse ? f32(S16(HeapBase + SparseElements - 2 * u32(Sparse)).x[s32(transmit)]) : transmit;
-				f32 transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_channel;
-				f32 transmit_index   = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
+		for (u32 channel = 0; channel < batch_channel_count(); channel += 1u) {
+			f32 rx_channel      = f32(channel_offset + channel);
+			f32 receive_x_delta = xdc_world_point.x - rx_channel * xdc_element_pitch.x;
+			f32 a_arg           = abs(FNumber * receive_x_delta / xdc_world_point.z);
 
-				SAMPLE_TYPE value = apodization * sample_rf(rf_pointer, receive_index + transmit_index);
-				result     += RESULT_STORE(value);
-				rf_pointer += AcquisitionByteStride;
+			if (a_arg < 0.5f) {
+				u64 rf_pointer    = rf_data_pointer(channel, acquisition);
+				f32 receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
+				f32 apodization   = apodize(a_arg);
+				for (u32 transmit = 0; transmit < AcquisitionChunkSize; transmit += 1u, rf_pointer += AcquisitionByteStride) {
+					if ((AcquisitionCount % AcquisitionChunkSize) != 0 &&
+					    (acquisition + transmit >= AcquisitionCount))
+						break;
+
+					SAMPLE_TYPE value = apodization * sample_rf(rf_pointer, receive_index + transmit_indices[transmit]);
+					result += RESULT_STORE(value);
+				}
 			}
 		}
 	}
