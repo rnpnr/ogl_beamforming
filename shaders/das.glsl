@@ -347,7 +347,7 @@ RESULT_TYPE FORCES(const vec3 world_point)
 				break;
 			f32 tx_channel = Sparse ? f32(S16(HeapBase + SparseElements - 2 * u32(Sparse)).x[index]) : f32(index);
 			f32 transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_channel;
-			transmit_indices[transmit] = sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta) * SamplingFrequency / SpeedOfSound;
+			transmit_indices[transmit] = sample_index(sqrt(transmit_yz_squared + transmit_x_delta * transmit_x_delta));
 		}
 
 		for (u32 channel = 0; channel < batch_channel_count(); channel += 1u) {
@@ -357,7 +357,7 @@ RESULT_TYPE FORCES(const vec3 world_point)
 
 			if (a_arg < 0.5f) {
 				u64 rf_pointer    = rf_data_pointer(channel, acquisition);
-				f32 receive_index = sample_index(sqrt(receive_x_delta * receive_x_delta + z_delta_squared));
+				f32 receive_index = sqrt(receive_x_delta * receive_x_delta + z_delta_squared) * SamplingFrequency / SpeedOfSound;
 				f32 apodization   = apodize(a_arg);
 				for (u32 transmit = 0; transmit < AcquisitionChunkSize; transmit += 1u, rf_pointer += AcquisitionByteStride) {
 					if ((AcquisitionCount % AcquisitionChunkSize) != 0 &&
