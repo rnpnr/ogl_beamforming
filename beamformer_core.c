@@ -89,8 +89,8 @@ typedef struct {
 	GPUResourceHashBucket hash_table[GPU_RESOURCE_HASH_TABLE_COUNT];
 } GPUResourceBuilder;
 
-read_only global BeamformerFrame       beamformer_nil_frame;
-read_only global BeamformerComputePlan beamformer_nil_compute_plan;
+read_only BeamformerFrame       beamformer_nil_frame;
+read_only BeamformerComputePlan beamformer_nil_compute_plan;
 
 global BeamformerCtx   *beamformer_context;
 global BeamformerInput *beamformer_input;
@@ -632,7 +632,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		}
 	}
 
-	read_only local_persist BeamformerDataKind data_kind_to_element_kind[] = {
+	read_only BeamformerDataKind data_kind_to_element_kind[] = {
 		[BeamformerDataKind_Int16]          = BeamformerDataKind_Float16,
 		[BeamformerDataKind_Float16]        = BeamformerDataKind_Float16,
 		[BeamformerDataKind_Float32]        = BeamformerDataKind_Float32,
@@ -641,7 +641,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		[BeamformerDataKind_Float32Complex] = BeamformerDataKind_Float32,
 	};
 
-	read_only local_persist BeamformerDataKind data_kind_to_fp_kind[] = {
+	read_only BeamformerDataKind data_kind_to_fp_kind[] = {
 		[BeamformerDataKind_Int16]          = BeamformerDataKind_Float16,
 		[BeamformerDataKind_Float16]        = BeamformerDataKind_Float16,
 		[BeamformerDataKind_Float32]        = BeamformerDataKind_Float32,

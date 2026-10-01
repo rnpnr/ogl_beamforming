@@ -120,7 +120,7 @@ static_assert(sizeof(BeamformerParameterBlock) % alignof(BeamformerParameterBloc
               "sizeof(BeamformerParametersBlock) must be a multiple of its alignment");
 
 #define X(k, field) [BeamformerParameterBlockRegion_##k] = offsetof(BeamformerParameterBlock, field),
-read_only global u16 BeamformerParameterBlockRegionOffsets[BeamformerParameterBlockRegion_Count] = {
+read_only u16 BeamformerParameterBlockRegionOffsets[BeamformerParameterBlockRegion_Count] = {
 	BEAMFORMER_PARAMETER_BLOCK_REGION_LIST
 };
 #undef X

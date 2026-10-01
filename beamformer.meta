@@ -257,55 +257,55 @@
 
 @Emit
 {
-	`read_only global u8 beamformer_data_kind_element_size[] = {`
+	`read_only u8 beamformer_data_kind_element_size[] = {`
 	@Expand(DataKindTable) `	$(size),`
 	`};`
 	``
-	`read_only global u8 beamformer_data_kind_element_count[] = {`
+	`read_only u8 beamformer_data_kind_element_count[] = {`
 	@Expand(DataKindTable) `	$(elements),`
 	`};`
 	``
-	`read_only global u8 beamformer_data_kind_byte_size[] = {`
+	`read_only u8 beamformer_data_kind_byte_size[] = {`
 	@Expand(DataKindTable) `	$(size) * $(elements),`
 	`};`
 	``
-	`read_only global b8 beamformer_data_kind_complex[] = {`
+	`read_only b8 beamformer_data_kind_complex[] = {`
 	@Expand(DataKindTable) `	$(complex),`
 	`};`
 	``
-	`read_only global str8 beamformer_data_kind_glsl_type[] = {`
+	`read_only str8 beamformer_data_kind_glsl_type[] = {`
 	@Expand(DataKindTable) `	str8_comp("$(glsl)"),`
 	`};`
 	``
-	`read_only global str8 beamformer_data_kind_str8[] = {`
+	`read_only str8 beamformer_data_kind_str8[] = {`
 	@Expand(DataKindTable) `	str8_comp("$(name)"),`
 	`};`
 	``
-	`read_only global u8 beamformer_contrast_mode_samples[] = {`
+	`read_only u8 beamformer_contrast_mode_samples[] = {`
 	@Expand(ContrastModeTable) `	$(samples),`
 	`};`
 	``
-	`read_only global str8 beamformer_contrast_mode_strings[] = {`
+	`read_only str8 beamformer_contrast_mode_strings[] = {`
 	@Expand(ContrastModeTable) `	str8_comp("$(name)"),`
 	`};`
 	``
-	`read_only global str8 beamformer_view_plane_tag_strings[] = {`
+	`read_only str8 beamformer_view_plane_tag_strings[] = {`
 	@Expand(ViewPlaneTag) `	str8_comp("$(name)"),`
 	`};`
 	``
-	`read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {`
+	`read_only u8 beamformer_acquisition_kind_has_fixed_transmits[] = {`
 	@Expand(AcquisitionKindTable) `	$(fixed_transmits),`
 	`};`
 	``
-	`read_only global str8 beamformer_acquisition_kind_strings[] = {`
+	`read_only str8 beamformer_acquisition_kind_strings[] = {`
 	@Expand(AcquisitionKindTable) `	str8_comp("$(pretty_name)"),`
 	`};`
 	``
-	`read_only global str8 beamformer_filter_kind_strings[] = {`
+	`read_only str8 beamformer_filter_kind_strings[] = {`
 	@Expand(FilterKindTable) `	str8_comp("$(name)"),`
 	`};`
 	``
-	`read_only global str8 beamformer_interpolation_mode_strings[] = {`
+	`read_only str8 beamformer_interpolation_mode_strings[] = {`
 	@Expand(InterpolationMode) `	str8_comp("$(name)"),`
 	`};`
 }

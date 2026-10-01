@@ -14,7 +14,7 @@
 //#define RF_TIME_SAMPLES 2432
 #define RF_TIME_SAMPLES 4096
 
-read_only global u32 decode_transmit_counts[] = {
+read_only u32 decode_transmit_counts[] = {
 	2, 4, 8, 12, 16, 20, 24, 32, 40, 48, 64, 80, 96, 128, 160, 192, 256
 };
 
@@ -201,7 +201,7 @@ send_parameters(Options *options, u32 transmit_count)
 	beamformer_push_parameters(&bp);
 
 	/* NOTE(rnp): use real channel mapping so that we still get ~random~ access pattern */
-	read_only local_persist i16 channel_mapping[] = {
+	read_only i16 channel_mapping[] = {
 		217, 129, 212, 188, 255, 131, 237, 190, 241, 130, 248, 187, 219, 128, 218, 181,
 		216, 134, 247, 180, 220, 132, 238, 178, 246, 133, 240, 179, 221, 135, 239, 173,
 		231, 137, 211, 172, 222, 139, 213, 170, 249, 138, 210, 171, 223, 136, 232, 189,

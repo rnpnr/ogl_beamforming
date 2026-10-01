@@ -454,7 +454,7 @@ typedef union {
 	BeamformerReshapeBakeParameters            Reshape;
 } BeamformerShaderBakeParameters;
 
-read_only global u8 beamformer_data_kind_element_size[] = {
+read_only u8 beamformer_data_kind_element_size[] = {
 	2,
 	2,
 	4,
@@ -463,7 +463,7 @@ read_only global u8 beamformer_data_kind_element_size[] = {
 	2,
 };
 
-read_only global u8 beamformer_data_kind_element_count[] = {
+read_only u8 beamformer_data_kind_element_count[] = {
 	1,
 	2,
 	1,
@@ -472,7 +472,7 @@ read_only global u8 beamformer_data_kind_element_count[] = {
 	2,
 };
 
-read_only global u8 beamformer_data_kind_byte_size[] = {
+read_only u8 beamformer_data_kind_byte_size[] = {
 	2 * 1,
 	2 * 2,
 	4 * 1,
@@ -481,7 +481,7 @@ read_only global u8 beamformer_data_kind_byte_size[] = {
 	2 * 2,
 };
 
-read_only global b8 beamformer_data_kind_complex[] = {
+read_only b8 beamformer_data_kind_complex[] = {
 	0,
 	1,
 	0,
@@ -490,7 +490,7 @@ read_only global b8 beamformer_data_kind_complex[] = {
 	1,
 };
 
-read_only global str8 beamformer_data_kind_glsl_type[] = {
+read_only str8 beamformer_data_kind_glsl_type[] = {
 	str8_comp("int16_t"),
 	str8_comp("i16vec2"),
 	str8_comp("float32_t"),
@@ -499,7 +499,7 @@ read_only global str8 beamformer_data_kind_glsl_type[] = {
 	str8_comp("f16vec2"),
 };
 
-read_only global str8 beamformer_data_kind_str8[] = {
+read_only str8 beamformer_data_kind_str8[] = {
 	str8_comp("Int16"),
 	str8_comp("Int16Complex"),
 	str8_comp("Float32"),
@@ -508,24 +508,24 @@ read_only global str8 beamformer_data_kind_str8[] = {
 	str8_comp("Float16Complex"),
 };
 
-read_only global u8 beamformer_contrast_mode_samples[] = {
+read_only u8 beamformer_contrast_mode_samples[] = {
 	1,
 	3,
 };
 
-read_only global str8 beamformer_contrast_mode_strings[] = {
+read_only str8 beamformer_contrast_mode_strings[] = {
 	str8_comp("None"),
 	str8_comp("A1S2"),
 };
 
-read_only global str8 beamformer_view_plane_tag_strings[] = {
+read_only str8 beamformer_view_plane_tag_strings[] = {
 	str8_comp("XZ"),
 	str8_comp("YZ"),
 	str8_comp("XY"),
 	str8_comp("Arbitrary"),
 };
 
-read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
+read_only u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
 	1,
 	0,
 	1,
@@ -541,7 +541,7 @@ read_only global u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
 	0,
 };
 
-read_only global str8 beamformer_acquisition_kind_strings[] = {
+read_only str8 beamformer_acquisition_kind_strings[] = {
 	str8_comp("FORCES"),
 	str8_comp("UFORCES"),
 	str8_comp("HERCULES"),
@@ -557,12 +557,12 @@ read_only global str8 beamformer_acquisition_kind_strings[] = {
 	str8_comp("ULM"),
 };
 
-read_only global str8 beamformer_filter_kind_strings[] = {
+read_only str8 beamformer_filter_kind_strings[] = {
 	str8_comp("Kaiser"),
 	str8_comp("MatchedChirp"),
 };
 
-read_only global str8 beamformer_interpolation_mode_strings[] = {
+read_only str8 beamformer_interpolation_mode_strings[] = {
 	str8_comp("Nearest"),
 	str8_comp("Linear"),
 	str8_comp("Cubic"),
@@ -577,7 +577,7 @@ typedef enum {
 	BeamformerStructKind_Count,
 } BeamformerStructKind;
 
-read_only global MetaStructMember *meta_struct_members_by_id[] = {
+read_only MetaStructMember *meta_struct_members_by_id[] = {
 	(MetaStructMember []){
 		{18, 0,  1, 0},
 		{18, 4,  1, 0},
@@ -651,7 +651,7 @@ read_only global MetaStructMember *meta_struct_members_by_id[] = {
 	},
 };
 
-read_only global str8 *meta_struct_member_names_by_id[] = {
+read_only str8 *meta_struct_member_names_by_id[] = {
 	(str8 []){
 		str8_comp("Hadamard"),
 		str8_comp("DecodeMode"),
@@ -725,7 +725,7 @@ read_only global str8 *meta_struct_member_names_by_id[] = {
 	},
 };
 
-read_only global MetaStructInfo meta_struct_info_by_id[] = {
+read_only MetaStructInfo meta_struct_info_by_id[] = {
 	{str8_comp("DecodeBakeParameters"),             11, 44,  0},
 	{str8_comp("FilterBakeParameters"),             13, 52,  0},
 	{str8_comp("DASBakeParameters"),                25, 100, 0},
@@ -733,7 +733,7 @@ read_only global MetaStructInfo meta_struct_info_by_id[] = {
 	{str8_comp("ReshapeBakeParameters"),            9,  36,  0},
 };
 
-read_only global str8 beamformer_shader_names[] = {
+read_only str8 beamformer_shader_names[] = {
 	str8_comp("Decode"),
 	str8_comp("Filter"),
 	str8_comp("Demodulate"),
@@ -746,7 +746,7 @@ read_only global str8 beamformer_shader_names[] = {
 	str8_comp("RenderBeamformed"),
 };
 
-read_only global BeamformerShaderKind beamformer_reloadable_shader_kinds[] = {
+read_only BeamformerShaderKind beamformer_reloadable_shader_kinds[] = {
 	BeamformerShaderKind_Decode,
 	BeamformerShaderKind_Filter,
 	BeamformerShaderKind_DAS,
@@ -757,7 +757,7 @@ read_only global BeamformerShaderKind beamformer_reloadable_shader_kinds[] = {
 	BeamformerShaderKind_RenderBeamformed,
 };
 
-read_only global str8 *beamformer_reloadable_shader_files[] = {
+read_only str8 *beamformer_reloadable_shader_files[] = {
 	(str8 []){str8_comp("decode.glsl")},
 	(str8 []){str8_comp("filter.glsl")},
 	(str8 []){str8_comp("das.glsl")},
@@ -768,7 +768,7 @@ read_only global str8 *beamformer_reloadable_shader_files[] = {
 	(str8 []){str8_comp("render_3d.vert.glsl"), str8_comp("render_3d.frag.glsl")},
 };
 
-read_only global i32 beamformer_shader_reloadable_index_by_shader[] = {
+read_only i32 beamformer_shader_reloadable_index_by_shader[] = {
 	0,
 	1,
 	1,
@@ -781,24 +781,24 @@ read_only global i32 beamformer_shader_reloadable_index_by_shader[] = {
 	7,
 };
 
-read_only global i32 beamformer_reloadable_compute_shader_info_indices[] = {
+read_only i32 beamformer_reloadable_compute_shader_info_indices[] = {
 	0,
 	1,
 	2,
 };
 
-read_only global i32 beamformer_reloadable_compute_helpers_shader_info_indices[] = {
+read_only i32 beamformer_reloadable_compute_helpers_shader_info_indices[] = {
 	3,
 	4,
 	5,
 	6,
 };
 
-read_only global i32 beamformer_reloadable_render_shader_info_indices[] = {
+read_only i32 beamformer_reloadable_render_shader_info_indices[] = {
 	7,
 };
 
-read_only global str8 beamformer_shader_global_header_strings[] = {
+read_only str8 beamformer_shader_global_header_strings[] = {
 	str8_comp(""
 	"#define DecodeMode_None     0\n"
 	"#define DecodeMode_Hadamard 1\n"
@@ -908,7 +908,7 @@ read_only global str8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 };
 
-read_only global b8 beamformer_shader_has_primitive[] = {
+read_only b8 beamformer_shader_has_primitive[] = {
 	0,
 	0,
 	0,
@@ -919,7 +919,7 @@ read_only global b8 beamformer_shader_has_primitive[] = {
 	1,
 };
 
-read_only global b8 beamformer_shader_primitive_is_vertex[] = {
+read_only b8 beamformer_shader_primitive_is_vertex[] = {
 	0,
 	0,
 	0,
@@ -930,7 +930,7 @@ read_only global b8 beamformer_shader_primitive_is_vertex[] = {
 	1,
 };
 
-read_only global i32 *beamformer_shader_header_vectors[] = {
+read_only i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){0, 1, 2},
 	(i32 []){3, 4},
 	(i32 []){5, 6, 7, 8, 9},
@@ -941,7 +941,7 @@ read_only global i32 *beamformer_shader_header_vectors[] = {
 	(i32 []){14},
 };
 
-read_only global i32 beamformer_shader_header_vector_lengths[] = {
+read_only i32 beamformer_shader_header_vector_lengths[] = {
 	3,
 	2,
 	5,
@@ -952,7 +952,7 @@ read_only global i32 beamformer_shader_header_vector_lengths[] = {
 	1,
 };
 
-read_only global str8 *beamformer_shader_compile_flag_names[] = {
+read_only str8 *beamformer_shader_compile_flag_names[] = {
 	(str8 []){
 		str8_comp("CooperativeMatrix"),
 		str8_comp("UseSharedMemory"),
@@ -977,7 +977,7 @@ read_only global str8 *beamformer_shader_compile_flag_names[] = {
 	0,
 };
 
-read_only global u8 beamformer_shader_compile_flag_counts[] = {
+read_only u8 beamformer_shader_compile_flag_counts[] = {
 	2,
 	2,
 	4,
@@ -988,7 +988,7 @@ read_only global u8 beamformer_shader_compile_flag_counts[] = {
 	0,
 };
 
-read_only global i32 beamformer_base_shader_to_bake_struct_id[] = {
+read_only i32 beamformer_base_shader_to_bake_struct_id[] = {
 	0,
 	1,
 	2,
@@ -999,7 +999,7 @@ read_only global i32 beamformer_base_shader_to_bake_struct_id[] = {
 	-1,
 };
 
-read_only global u8 beamformer_shader_push_constant_sizes[] = {
+read_only u8 beamformer_shader_push_constant_sizes[] = {
 	sizeof(BeamformerDecodePushConstants),
 	sizeof(BeamformerFilterPushConstants),
 	sizeof(BeamformerDASPushConstants),

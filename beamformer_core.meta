@@ -47,7 +47,7 @@
 @Expand(PanelTable) @Enumeration(`$(name)`) PanelKind
 @Emit
 {
-	`read_only global BeamformerPanelInfo beamformer_panel_infos[] = {`
+	`read_only BeamformerPanelInfo beamformer_panel_infos[] = {`
 	@Expand(PanelTable) `	{str8_comp("$(display)"), str8_comp("$(string)"), str8_comp("$(description)"), ($(list)*BeamformerPanelFlags_List)|($(needs_frame)*BeamformerPanelFlags_NeedsFrame)|($(has_settings)*BeamformerPanelFlags_HasSettings)},`
 	`};`
 }
@@ -104,7 +104,7 @@
 
 @Emit
 {
-	`read_only global BeamformerCommandInfo beamformer_command_infos[] = {`
+	`read_only BeamformerCommandInfo beamformer_command_infos[] = {`
 	`	{0},`
 	@Expand(CommandTable) `	{str8_comp("$(string)"), str8_comp("$(display_string)"), str8_comp("$(description)")},`
 	`};`

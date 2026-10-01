@@ -181,7 +181,7 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 		raw_data->kind             = ZBP_DataKind_Int16;
 		raw_data->compression_kind = ZBP_DataCompressionKind_ZSTD;
 
-		read_only local_persist u8 transmit_mode_to_orientation[] = {
+		read_only u8 transmit_mode_to_orientation[] = {
 			[0] = (ZBP_RCAOrientation_Rows    << 4) | ZBP_RCAOrientation_Rows,
 			[1] = (ZBP_RCAOrientation_Rows    << 4) | ZBP_RCAOrientation_Columns,
 			[2] = (ZBP_RCAOrientation_Columns << 4) | ZBP_RCAOrientation_Rows,
@@ -231,7 +231,7 @@ beamformer_simple_parameters_from_zbp_file(BeamformerSimpleParameters *bp, char 
 		bp->channel_count          = header->channel_count;
 		bp->acquisition_count      = header->receive_event_count;
 
-		read_only local_persist BeamformerSamplingMode zbp_sampling_mode_to_beamformer[] = {
+		read_only BeamformerSamplingMode zbp_sampling_mode_to_beamformer[] = {
 			[ZBP_SamplingMode_Standard] = BeamformerSamplingMode_4X,
 			[ZBP_SamplingMode_Bandpass] = BeamformerSamplingMode_2X,
 		};

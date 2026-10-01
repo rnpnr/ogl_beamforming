@@ -992,7 +992,7 @@ push_str8_f(Arena *arena, const char *format, ...)
 function NumberConversion
 integer_from_str8(str8 raw)
 {
-	read_only local_persist alignas(64) i8 lut[64] = {
+	read_only alignas(64) i8 lut[64] = {
 		 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, -1, -1, -1, -1, -1, -1,
 		-1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1,
 		-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,

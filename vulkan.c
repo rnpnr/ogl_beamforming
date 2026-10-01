@@ -173,7 +173,7 @@ typedef struct {
 	i32               entity_lock;
 } VulkanContext;
 
-read_only global char *vk_required_instance_extensions[] = {
+read_only char *vk_required_instance_extensions[] = {
 };
 
 #if OS_WINDOWS
@@ -198,14 +198,14 @@ read_only global char *vk_required_instance_extensions[] = {
 	VK_OS_REQUIRED_DEVICE_EXTENSIONS_LIST
 
 #define X(str) str8_comp(str),
-read_only global str8 vk_required_device_extensions[] = {VK_REQUIRED_DEVICE_EXTENSIONS_LIST};
+read_only str8 vk_required_device_extensions[] = {VK_REQUIRED_DEVICE_EXTENSIONS_LIST};
 #undef X
 
 #define VK_OPTIONAL_DEVICE_EXTENSIONS_LIST \
 	X(VK_KHR, cooperative_matrix) \
 
 #define X(p, s, ...) str8_comp(#p "_" #s),
-read_only global str8 vk_optional_device_extensions[] = {VK_OPTIONAL_DEVICE_EXTENSIONS_LIST};
+read_only str8 vk_optional_device_extensions[] = {VK_OPTIONAL_DEVICE_EXTENSIONS_LIST};
 #undef X
 
 #define VK_REQUIRED_PHYSICAL_FEATURES \
@@ -232,14 +232,14 @@ read_only global str8 vk_optional_device_extensions[] = {VK_OPTIONAL_DEVICE_EXTE
 	X(VK_KHR, shader_relaxed_extended_instruction) \
 
 #define X(p, s, ...) str8_comp(#p "_" #s),
-read_only global str8 vk_debug_extensions[] = {VK_DEBUG_EXTENSIONS};
+read_only str8 vk_debug_extensions[] = {VK_DEBUG_EXTENSIONS};
 #undef X
 
 #define VK_INSTANCE_DEBUG_EXTENSIONS_LIST \
 	X(VK_EXT, debug_utils) \
 
 #define X(p, s, ...) str8_comp(#p "_" #s),
-read_only global str8 vk_instance_debug_extensions[] = {VK_INSTANCE_DEBUG_EXTENSIONS_LIST};
+read_only str8 vk_instance_debug_extensions[] = {VK_INSTANCE_DEBUG_EXTENSIONS_LIST};
 #undef X
 
 #if VulkanDebug
@@ -250,7 +250,7 @@ read_only global str8 vk_instance_debug_extensions[] = {VK_INSTANCE_DEBUG_EXTENS
 #define VK_VALIDATION_LAYERS_LIST
 #endif
 
-read_only global str8 vk_validation_layers[] = {
+read_only str8 vk_validation_layers[] = {
 	#define X(vendor, name, ...) str8_comp("VK_LAYER_" #vendor "_" #name),
 	VK_VALIDATION_LAYERS_LIST
 	#undef X
@@ -589,7 +589,7 @@ vk_compile_shader_module(Arena *arena, u32 kind, str8 text, str8 name)
 function VkShaderStageFlags
 vk_stage_flags_from_shader_kind(VulkanShaderKind kind)
 {
-	read_only local_persist VkShaderStageFlags map[VulkanShaderKind_Count + 1] = {
+	read_only VkShaderStageFlags map[VulkanShaderKind_Count + 1] = {
 		[VulkanShaderKind_Vertex]   = VK_SHADER_STAGE_VERTEX_BIT,
 		[VulkanShaderKind_Mesh]     = VK_SHADER_STAGE_MESH_BIT_EXT,
 		[VulkanShaderKind_Fragment] = VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -1910,7 +1910,7 @@ vk_load(OSLibrary vulkan_library_handle, Stream *err)
 	vk_load_queues(vk->arena, err);
 	vk_load_graphics();
 
-	read_only local_persist str8 default_compute_shader = str8(""
+	read_only str8 default_compute_shader = str8(""
 		"#version 430 core\n"
 		"layout(push_constant) uniform pc { uint data[256 / 4]; };\n"
 		"void main() {}\n"
@@ -1918,12 +1918,12 @@ vk_load(OSLibrary vulkan_library_handle, Stream *err)
 	VulkanPipelineCreateInfo compute_create_info = {.text = default_compute_shader, .name = str8("error_compute_shader")};
 	vk->default_compute_pipeline = vk_compute_pipeline_from_info(vk->arena, &compute_create_info, 256);
 
-	read_only local_persist str8 default_vertex_shader = str8(""
+	read_only str8 default_vertex_shader = str8(""
 		"#version 430 core\n"
 		"layout(push_constant) uniform pc { uint data[256 / 4]; };\n"
 		"void main() {gl_Position = vec4(0);}\n"
 		"\n");
-	read_only local_persist str8 default_fragment_shader = str8(""
+	read_only str8 default_fragment_shader = str8(""
 		"#version 430 core\n"
 		"layout(location = 0) out vec4 out_colour;"
 		"layout(push_constant) uniform pc { uint data[256 / 4]; };\n"
@@ -2322,14 +2322,14 @@ vk_image_allocate(GPUImage *image, u32 width, u32 height, u32 mips, u32 samples,
 		[VulkanImageUsage_Count]        = VK_FORMAT_UNDEFINED,
 	};
 
-	read_only local_persist VkImageUsageFlagBits usage_extra_bit_map[VulkanImageUsage_Count + 1] = {
+	read_only VkImageUsageFlagBits usage_extra_bit_map[VulkanImageUsage_Count + 1] = {
 		[VulkanImageUsage_None]         = 0,
 		[VulkanImageUsage_Colour]       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 		[VulkanImageUsage_DepthStencil] = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
 		[VulkanImageUsage_Count]        = 0,
 	};
 
-	read_only local_persist VkImageAspectFlags usage_image_aspect_map[VulkanImageUsage_Count + 1] = {
+	read_only VkImageAspectFlags usage_image_aspect_map[VulkanImageUsage_Count + 1] = {
 		[VulkanImageUsage_None]         = 0,
 		[VulkanImageUsage_Colour]       = VK_IMAGE_ASPECT_COLOR_BIT,
 		[VulkanImageUsage_DepthStencil] = VK_IMAGE_ASPECT_DEPTH_BIT|VK_IMAGE_ASPECT_STENCIL_BIT,
@@ -2569,7 +2569,7 @@ gpu_command_bind_pipeline(GPUCommandList command, VulkanHandle pipeline)
 			InvalidCodePath;
 		}
 
-		read_only local_persist VkPipelineBindPoint bind_point_lut[GPUTimeline_Count] = {
+		read_only VkPipelineBindPoint bind_point_lut[GPUTimeline_Count] = {
 			[GPUTimeline_Graphics] = VK_PIPELINE_BIND_POINT_GRAPHICS,
 			[GPUTimeline_Compute]  = VK_PIPELINE_BIND_POINT_COMPUTE,
 			[GPUTimeline_Transfer] = -1,
@@ -2662,7 +2662,7 @@ gpu_command_timestamp(GPUCommandList command)
 		VulkanCommandBuffer *vcb = vk_entity_data(command.value, VulkanEntityKind_CommandBuffer);
 		VulkanCommandPool   *vcp = vk->command_pools[vcb->timeline];
 
-		read_only local_persist VkPipelineStageFlags2 stage_lut[GPUTimeline_Count] = {
+		read_only VkPipelineStageFlags2 stage_lut[GPUTimeline_Count] = {
 			[GPUTimeline_Graphics] = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
 			[GPUTimeline_Compute]  = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
 			[GPUTimeline_Transfer] = -1,

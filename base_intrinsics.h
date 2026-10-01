@@ -37,7 +37,7 @@
   #define read_only
 #endif
 #endif
-#define read_only const
+#define read_only static const
 
 #if !defined(countof)
   #define countof(a)     (i64)(sizeof(a) / sizeof(*a))

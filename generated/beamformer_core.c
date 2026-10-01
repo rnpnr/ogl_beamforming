@@ -90,7 +90,7 @@ typedef struct {
 	str8 description;
 } BeamformerCommandInfo;
 
-read_only global BeamformerPanelInfo beamformer_panel_infos[] = {
+read_only BeamformerPanelInfo beamformer_panel_infos[] = {
 	{str8_comp(""), str8_comp("nil"), str8_comp(""), (0*BeamformerPanelFlags_List)|(0*BeamformerPanelFlags_NeedsFrame)|(0*BeamformerPanelFlags_HasSettings)},
 	{str8_comp(""), str8_comp("split"), str8_comp(""), (0*BeamformerPanelFlags_List)|(0*BeamformerPanelFlags_NeedsFrame)|(0*BeamformerPanelFlags_HasSettings)},
 	{str8_comp(""), str8_comp("group"), str8_comp(""), (0*BeamformerPanelFlags_List)|(0*BeamformerPanelFlags_NeedsFrame)|(0*BeamformerPanelFlags_HasSettings)},
@@ -116,7 +116,7 @@ read_only global BeamformerPanelInfo beamformer_panel_infos[] = {
 	.drop_target_tree = beamformer_registers()->drop_target_tree, \
 	.drop_child_index = beamformer_registers()->drop_child_index, \
 
-read_only global BeamformerCommandInfo beamformer_command_infos[] = {
+read_only BeamformerCommandInfo beamformer_command_infos[] = {
 	{0},
 	{str8_comp("close_tab"), str8_comp("Close Tab"), str8_comp("Closes currently active tab.")},
 	{str8_comp("focus_tab"), str8_comp("Focus Tab"), str8_comp("Focus the currently selected tab in its group.")},

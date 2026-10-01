@@ -35,7 +35,7 @@ kronecker_product_f16(f16 *out, const f16 *a, iv2 a_dim, const f16 *b, iv2 b_dim
 function f16 *
 make_hadamard_transpose(Arena *arena, i32 dim, b32 row_major)
 {
-	read_only local_persist	f16 hadamard_12_12_transpose[] = {
+	read_only f16 hadamard_12_12_transpose[] = {
 		1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
 		1, -1, -1,  1, -1, -1, -1,  1,  1,  1, -1,  1,
 		1,  1, -1, -1,  1, -1, -1, -1,  1,  1,  1, -1,
@@ -50,7 +50,7 @@ make_hadamard_transpose(Arena *arena, i32 dim, b32 row_major)
 		1, -1,  1, -1, -1, -1,  1,  1,  1, -1,  1, -1,
 	};
 
-	read_only local_persist f16 hadamard_20_20_transpose[] = {
+	read_only f16 hadamard_20_20_transpose[] = {
 		1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,  1,
 		1, -1, -1,  1,  1, -1, -1, -1, -1,  1, -1,  1, -1,  1,  1,  1,  1, -1, -1,  1,
 		1, -1,  1,  1, -1, -1, -1, -1,  1, -1,  1, -1,  1,  1,  1,  1, -1, -1,  1, -1,

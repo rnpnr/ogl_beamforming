@@ -50,7 +50,7 @@
 
 #define UI_HASH_TABLE_COUNT 4096
 
-read_only global v4 g_colour_palette[] = {
+read_only v4 g_colour_palette[] = {
 	{{0.32f, 0.20f, 0.50f, 1.00f}},
 	{{0.14f, 0.39f, 0.61f, 1.00f}},
 	{{0.61f, 0.14f, 0.25f, 1.00f}},
@@ -451,7 +451,7 @@ typedef struct {
 global BeamformerUI    *ui_context;
 global BeamformerInput *beamformer_input;
 
-read_only global UINode ui_node_nil = {
+read_only UINode ui_node_nil = {
 	.parent           = (UINode *)&ui_node_nil,
 	.first_child      = (UINode *)&ui_node_nil,
 	.last_child       = (UINode *)&ui_node_nil,
@@ -459,7 +459,7 @@ read_only global UINode ui_node_nil = {
 	.next_sibling     = (UINode *)&ui_node_nil,
 };
 
-#define X(type, name, impl_type, impl) read_only global type ui_##name##_node_nil = {.v = (impl_type)impl};
+#define X(type, name, impl_type, impl) read_only type ui_##name##_node_nil = {.v = (impl_type)impl};
 UI_STACK_LIST
 #undef X
 
@@ -2917,7 +2917,7 @@ ui_build_frame_view_context_menu(BeamformerUIPanel *panel, BeamformerFrameView *
 	UIPrefHeight(ui_text_dim(1.1f, 1.f))
 	UIPrefWidth(ui_text_dim(1.f, 1.f))
 	{
-		read_only local_persist str8 dimension_strings[2][2] = {
+		read_only str8 dimension_strings[2][2] = {
 			{str8_comp("Extent Scale Bar"),  str8_comp("Magnitude Scale Bar")},
 			{str8_comp("Lateral Scale Bar"), str8_comp("Axial Scale Bar")    },
 		};
@@ -3465,7 +3465,7 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 
 			i32 dimension = iv3_dimension(bp->output_points.xyz);
 			if (dimension > 0) {
-				read_only local_persist str8 dimension_strings[3][2] = {
+				read_only str8 dimension_strings[3][2] = {
 					{str8_comp("Start Point"),    str8_comp("End Point")   },
 					{str8_comp("Lateral Extent"), str8_comp("Axial Extent")},
 					{str8_comp("Min Corner"),     str8_comp("Max Corner")  },
@@ -3495,7 +3495,7 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 							UIParent(unit_column)  ui_spacer(0);
 						}
 
-						read_only local_persist str8 axis_strings[2][3] = {
+						read_only str8 axis_strings[2][3] = {
 							{str8_comp("  X:"),   str8_comp("  Y:"),   str8_comp("  Z:")},
 							{str8_comp("  Min:"), str8_comp("  Max:"),                  },
 						};

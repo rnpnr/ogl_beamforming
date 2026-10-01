@@ -524,7 +524,7 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 					}break;
 
 					case BeamformerContrastMode_A1S2:{
-						read_only local_persist u8 reduce_a1s2_index_map[] = {
+						read_only u8 reduce_a1s2_index_map[] = {
 							[BeamformerDataKind_Int16]          = 0,
 							[BeamformerDataKind_Int16Complex]   = 0,
 							[BeamformerDataKind_Float32]        = 1,

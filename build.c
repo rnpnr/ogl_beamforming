@@ -149,7 +149,7 @@ typedef struct {
 } Config;
 global Config config;
 
-read_only global str8 c_file_header = str8_comp(""
+read_only str8 c_file_header = str8_comp(""
 	"/* See LICENSE for license details. */\n\n"
 	"// GENERATED CODE\n\n"
 );
@@ -168,7 +168,7 @@ function void
 build_log_base(BuildLogKind kind, char *format, va_list args)
 {
 	#define X(t, pre) pre,
-	read_only local_persist char *prefixes[BuildLogKind_Count + 1] = {BUILD_LOG_KINDS "[INVALID] "};
+	read_only char *prefixes[BuildLogKind_Count + 1] = {BUILD_LOG_KINDS "[INVALID] "};
 	#undef X
 	FILE *out = kind == BuildLogKind_Error? stderr : stdout;
 	fputs(prefixes[Min(kind, BuildLogKind_Count)], out);
@@ -1106,7 +1106,7 @@ typedef enum {
 } MetaEntryKind;
 
 #define X(k, ...) #k,
-read_only global char *meta_entry_kind_strings[] = {META_ENTRY_KIND_LIST};
+read_only char *meta_entry_kind_strings[] = {META_ENTRY_KIND_LIST};
 #undef X
 
 #define META_EMIT_LANG_LIST \
@@ -1121,31 +1121,31 @@ typedef enum {
 	MetaEmitLang_Count,
 } MetaEmitLang;
 
-read_only global u8 meta_kind_elements[] = {
+read_only u8 meta_kind_elements[] = {
 	#define X(_k, _c, _g, _b, _m, _by, elements, ...) elements,
 	META_KIND_LIST
 	#undef X
 };
 
-read_only global str8 meta_kind_meta_types[] = {
+read_only str8 meta_kind_meta_types[] = {
 	#define X(k, ...) str8_comp(#k),
 	META_KIND_LIST
 	#undef X
 };
 
-read_only global str8 meta_kind_matlab_types[] = {
+read_only str8 meta_kind_matlab_types[] = {
 	#define X(_k, _c, _g, _b, m, ...) str8_comp(#m),
 	META_KIND_LIST
 	#undef X
 };
 
-read_only global str8 meta_kind_base_c_types[] = {
+read_only str8 meta_kind_base_c_types[] = {
 	#define X(_k, _c, _g, base, ...) str8_comp(#base),
 	META_KIND_LIST
 	#undef X
 };
 
-read_only global str8 meta_kind_c_types[] = {
+read_only str8 meta_kind_c_types[] = {
 	#define X(_k, c, ...) str8_comp(#c),
 	META_KIND_LIST
 	#undef X
@@ -1323,7 +1323,7 @@ function MetaEntryKind
 meta_entry_kind_from_string(str8 s)
 {
 	#define X(k, ...) str8_comp(#k),
-	read_only local_persist str8 kinds[] = {META_ENTRY_KIND_LIST};
+	read_only str8 kinds[] = {META_ENTRY_KIND_LIST};
 	#undef X
 	MetaEntryKind result = MetaEntryKind_Invalid;
 	i64 id = meta_lookup_string_slow(kinds + 1, countof(kinds) - 1, s);
@@ -1404,7 +1404,7 @@ function str8
 meta_parser_token_name(MetaParser *p, MetaParseToken t)
 {
 	str8 result = str8("\"invalid\"");
-	read_only local_persist str8 names[MetaParseToken_Count] = {
+	read_only str8 names[MetaParseToken_Count] = {
 		[MetaParseToken_EOF] = str8_comp("\"EOF\""),
 		#define X(k, v, ...) [MetaParseToken_## v] = str8_comp(#k),
 		META_PARSE_TOKEN_LIST
@@ -1650,7 +1650,7 @@ function MetaEntryArgument
 meta_entry_argument_expect(MetaEntry *e, u32 index, MetaEntryArgumentKind kind)
 {
 	#define X(k, ...) #k,
-	read_only local_persist char *kinds[] = {META_ENTRY_ARGUMENT_KIND_LIST};
+	read_only char *kinds[] = {META_ENTRY_ARGUMENT_KIND_LIST};
 	#undef X
 
 	assert(e->argument_count > index);
@@ -1876,26 +1876,26 @@ typedef struct {
 DA_STRUCT(MetaEntity, MetaEntity);
 
 #define X(name, ...) str8_comp(#name),
-read_only global str8 meta_entity_kind_names[] = {META_ENTITY_KIND_LIST};
+read_only str8 meta_entity_kind_names[] = {META_ENTITY_KIND_LIST};
 #undef X
 #define X(_n, table, ...) table,
-read_only global b8 meta_entity_kind_is_table[] = {META_ENTITY_KIND_LIST};
+read_only b8 meta_entity_kind_is_table[] = {META_ENTITY_KIND_LIST};
 #undef X
 #define X(_n, _t, s, ...) s,
-read_only global b8 meta_entity_kind_is_struct[] = {META_ENTITY_KIND_LIST};
+read_only b8 meta_entity_kind_is_struct[] = {META_ENTITY_KIND_LIST};
 #undef X
 #define X(_n, _t, _s, srt, ...) srt,
-read_only global b8 meta_entity_kind_struct_reference_target[] = {META_ENTITY_KIND_LIST};
+read_only b8 meta_entity_kind_struct_reference_target[] = {META_ENTITY_KIND_LIST};
 #undef X
 
 #define X(k, ...) MetaEntityKind_##k,
-read_only global MetaEntityKind meta_struct_entity_kinds[] = {META_STRUCT_MAP_LIST};
+read_only MetaEntityKind meta_struct_entity_kinds[] = {META_STRUCT_MAP_LIST};
 #undef X
 #define X(_k, allow, ...) allow,
-read_only global b8 meta_struct_allow_references[] = {META_STRUCT_MAP_LIST};
+read_only b8 meta_struct_allow_references[] = {META_STRUCT_MAP_LIST};
 #undef X
 #define X(_k, _a, emit, ...) emit,
-read_only global b8 meta_struct_emit[] = {META_STRUCT_MAP_LIST};
+read_only b8 meta_struct_emit[] = {META_STRUCT_MAP_LIST};
 #undef X
 
 typedef enum {
@@ -2240,7 +2240,7 @@ typedef enum {
 	MetaExpansionToken_Count,
 } MetaExpansionToken;
 
-read_only global str8 meta_expansion_token_strings[] = {
+read_only str8 meta_expansion_token_strings[] = {
 	str8_comp("EOF"),
 	str8_comp("Indentifier"),
 	str8_comp("Number"),
@@ -2537,7 +2537,7 @@ meta_pack_table_begin(MetaEntry *e, MetaTable *t)
 	case MetaEntryKind_Enumeration:
 	case MetaEntryKind_Flags:
 	{
-		read_only local_persist str8 enumeration_fields[] = {str8_comp("name")};
+		read_only str8 enumeration_fields[] = {str8_comp("name")};
 		t->fields      = (str8 *)enumeration_fields;
 		t->field_count = countof(enumeration_fields);
 	}break;
@@ -2549,7 +2549,7 @@ meta_pack_table_begin(MetaEntry *e, MetaTable *t)
 	{
 		meta_entry_argument_expected_(e, 0, 0);
 		#define X(_i, name, ...) str8_comp(#name),
-		read_only local_persist str8 struct_fields[] = {META_STRUCT_FIELDS};
+		read_only str8 struct_fields[] = {META_STRUCT_FIELDS};
 		#undef X
 		t->fields      = (str8 *)struct_fields;
 		t->field_count = countof(struct_fields);
@@ -3000,7 +3000,7 @@ meta_embed(MetaContext *ctx, MetaEntry *e, i64 entry_count)
 	MetaEmitOperation *op;
 	op = da_push(ctx->arena, ops);
 	op->kind   = MetaEmitOperationKind_String;
-	op->string = push_str8_from_parts(ctx->arena, str8(""), str8("read_only global u8 "), e->name, str8("[] = {"));
+	op->string = push_str8_from_parts(ctx->arena, str8(""), str8("read_only u8 "), e->name, str8("[] = {"));
 
 	op = da_push(ctx->arena, ops);
 	op->kind   = MetaEmitOperationKind_FileBytes;
@@ -3027,7 +3027,7 @@ function MetaEmitLang
 meta_map_emit_lang(str8 lang, MetaEntry *e)
 {
 	#define X(k, ...) str8_comp(#k),
-	read_only local_persist str8 meta_lang_strings[] = {META_EMIT_LANG_LIST};
+	read_only str8 meta_lang_strings[] = {META_EMIT_LANG_LIST};
 	#undef X
 
 	i64 id = meta_lookup_string_slow(meta_lang_strings, MetaEmitLang_Count, lang);
@@ -3481,15 +3481,15 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 				b32 elements_reference = enum_count || (s->member_flags[member] & MetaBuildStructMemberFlag_ReferenceElements) != 0;
 				// NOTE(rnp): member name column
 				{
-					read_only local_persist str8 elements_count_open[MetaPushStructStyle_Count] = {
+					read_only str8 elements_count_open[MetaPushStructStyle_Count] = {
 						[MetaPushStructStyle_C]      = str8_comp("["),
 						[MetaPushStructStyle_MATLAB] = str8_comp("("),
 					};
-					read_only local_persist str8 elements_count_close[MetaPushStructStyle_Count] = {
+					read_only str8 elements_count_close[MetaPushStructStyle_Count] = {
 						[MetaPushStructStyle_C]      = str8_comp("]"),
 						[MetaPushStructStyle_MATLAB] = str8_comp(")"),
 					};
-					read_only local_persist i32 name_column[MetaPushStructStyle_Count] = {
+					read_only i32 name_column[MetaPushStructStyle_Count] = {
 						[MetaPushStructStyle_C]      = 1,
 						[MetaPushStructStyle_MATLAB] = 0,
 					};
@@ -3528,7 +3528,7 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 
 				// NOTE(rnp): type column
 				{
-					read_only local_persist i32 type_column[MetaPushStructStyle_Count] = {
+					read_only i32 type_column[MetaPushStructStyle_Count] = {
 						[MetaPushStructStyle_C]      = 0,
 						[MetaPushStructStyle_MATLAB] = 1,
 					};
@@ -3618,7 +3618,7 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 
 	///////////////////////////////
 	// NOTE(rnp): reloadable infos
-	meta_begin_scope(m, str8("read_only global " META_NAMESPACE_UPPER "ShaderKind " META_NAMESPACE_LOWER "_reloadable_shader_kinds[] = {"));
+	meta_begin_scope(m, str8("read_only " META_NAMESPACE_UPPER "ShaderKind " META_NAMESPACE_LOWER "_reloadable_shader_kinds[] = {"));
 	{
 		for (da_count shader = 0; shader < ctx->base_shader_count; shader++) {
 			da_count id = ctx->base_shader_ids[shader];
@@ -3626,7 +3626,7 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 		}
 	} meta_end_scope(m, str8("};\n"));
 
-	meta_begin_scope(m, str8("read_only global str8 *" META_NAMESPACE_LOWER "_reloadable_shader_files[] = {"));
+	meta_begin_scope(m, str8("read_only str8 *" META_NAMESPACE_LOWER "_reloadable_shader_files[] = {"));
 	{
 		for (da_count shader = 0; shader < ctx->base_shader_count; shader++) {
 			da_count    id = ctx->base_shader_ids[shader];
@@ -3638,7 +3638,7 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 		}
 	} meta_end_scope(m, str8("};\n"));
 
-	meta_begin_scope(m, str8("read_only global i32 " META_NAMESPACE_LOWER "_shader_reloadable_index_by_shader[] = {"));
+	meta_begin_scope(m, str8("read_only i32 " META_NAMESPACE_LOWER "_shader_reloadable_index_by_shader[] = {"));
 	{
 		for (da_count shader = 0; shader < ctx->entity_kind_counts[MetaEntityKind_Shader]; shader++) {
 			meta_indent(m);
@@ -3652,7 +3652,7 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 		for (da_count group = 0; group < ctx->entity_kind_counts[MetaEntityKind_ShaderGroup]; group++) {
 			da_count id   = ctx->entity_kind_ids[MetaEntityKind_ShaderGroup][group];
 			str8     name = ctx->entity_names.data[id];
-			meta_begin_line(m, str8("read_only global i32 " META_NAMESPACE_LOWER "_reloadable"));
+			meta_begin_line(m, str8("read_only i32 " META_NAMESPACE_LOWER "_reloadable"));
 			for (i64 i = 0; i < name.length; i++) {
 				if IsUpper(name.data[i])
 					stream_append_byte(&m->stream, '_');
@@ -3681,7 +3681,7 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 	// NOTE(rnp): shader header strings
 	Temp scratch;
 	DeferLoop(scratch = temp_begin(m->scratch), temp_end(scratch))
-	DeferLoop(meta_begin_scope(m, str8("read_only global str8 " META_NAMESPACE_LOWER
+	DeferLoop(meta_begin_scope(m, str8("read_only str8 " META_NAMESPACE_LOWER
 	                                   "_shader_global_header_strings[] = {")),
 	          meta_end_scope(m, str8("};\n")))
 	{
@@ -3762,14 +3762,14 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 		}
 	}
 
-	meta_begin_scope(m, str8("read_only global b8 " META_NAMESPACE_LOWER "_shader_has_primitive[] = {"));
+	meta_begin_scope(m, str8("read_only b8 " META_NAMESPACE_LOWER "_shader_has_primitive[] = {"));
 	for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
 		MetaShader *s = &ctx->entities.data[ctx->base_shader_ids[bs]].shader;
 		meta_push_line(m, s->kind == MetaShaderKind_Render ? str8("1,") : str8("0,"));
 	}
 	meta_end_scope(m, str8("};\n"));
 
-	meta_begin_scope(m, str8("read_only global b8 " META_NAMESPACE_LOWER "_shader_primitive_is_vertex[] = {"));
+	meta_begin_scope(m, str8("read_only b8 " META_NAMESPACE_LOWER "_shader_primitive_is_vertex[] = {"));
 	for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
 		MetaShader *s = &ctx->entities.data[ctx->base_shader_ids[bs]].shader;
 		b8 vertex = s->kind == MetaShaderKind_Render && s->render.kind == MetaShaderPrimitiveKind_Vertex;
@@ -3788,7 +3788,7 @@ meta_push_shader_bake(MetaprogramContext *m, MetaContext *ctx)
 
 		for EachElement(s->files, it) {
 			if (s->files[it].length > 0) {
-				meta_begin_line(m, str8("read_only global u8 " META_NAMESPACE_LOWER  "_shader_"));
+				meta_begin_line(m, str8("read_only u8 " META_NAMESPACE_LOWER  "_shader_"));
 				for (i64 i = 0; i < shader_name.length; i++)
 					stream_append_byte(&m->stream, ToLower(shader_name.data[i]));
 
@@ -3807,7 +3807,7 @@ meta_push_shader_bake(MetaprogramContext *m, MetaContext *ctx)
 		}
 	}
 
-	meta_begin_scope(m, str8("read_only global str8 *" META_NAMESPACE_LOWER "_shader_data[] = {")); {
+	meta_begin_scope(m, str8("read_only str8 *" META_NAMESPACE_LOWER "_shader_data[] = {")); {
 		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
 			MetaShader *s = &ctx->entities.data[ctx->base_shader_ids[bs]].shader;
 
@@ -4124,7 +4124,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 
 	// TODO(rnp): we may want this to include more than just the bake structs
 	if (ctx->base_shader_count)
-	DeferLoop(meta_begin_scope(m, str8("read_only global MetaStructMember *meta_struct_members_by_id[] = {")),
+	DeferLoop(meta_begin_scope(m, str8("read_only MetaStructMember *meta_struct_members_by_id[] = {")),
 	          meta_end_scope(m, str8("};\n")))
 	{
 		for EachIndex((u64)ctx->entity_kind_counts[MetaEntityKind_BakeParameters], id) {
@@ -4163,7 +4163,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 	}
 
 	if (ctx->base_shader_count)
-	DeferLoop(meta_begin_scope(m, str8("read_only global str8 *meta_struct_member_names_by_id[] = {")),
+	DeferLoop(meta_begin_scope(m, str8("read_only str8 *meta_struct_member_names_by_id[] = {")),
 	          meta_end_scope(m, str8("};\n")))
 	{
 		for EachIndex((u64)ctx->entity_kind_counts[MetaEntityKind_BakeParameters], id) {
@@ -4177,7 +4177,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 	}
 
 	if (ctx->base_shader_count)
-	DeferLoop(meta_begin_scope(m, str8("read_only global MetaStructInfo meta_struct_info_by_id[] = {")),
+	DeferLoop(meta_begin_scope(m, str8("read_only MetaStructInfo meta_struct_info_by_id[] = {")),
 	          meta_end_scope(m, str8("};\n")))
 	{
 		str8 *columns[4];
@@ -4210,7 +4210,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 	/////////////////////////////////
 	// NOTE(rnp): shader info tables
 	if (ctx->entity_kind_counts[MetaEntityKind_Shader])
-	DeferLoop(meta_begin_scope(m, str8("read_only global str8 " META_NAMESPACE_LOWER "_shader_names[] = {")),
+	DeferLoop(meta_begin_scope(m, str8("read_only str8 " META_NAMESPACE_LOWER "_shader_names[] = {")),
 	          meta_end_scope(m, str8("};\n")))
 	{
 		for (da_count shader = 0; shader < ctx->entity_kind_counts[MetaEntityKind_Shader]; shader++) {
@@ -4222,7 +4222,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 	meta_push_shader_reload_info(m, ctx);
 
 	if (ctx->base_shader_count)
-	DeferLoop(meta_begin_scope(m, str8("read_only global i32 *" META_NAMESPACE_LOWER "_shader_header_vectors[] = {")),
+	DeferLoop(meta_begin_scope(m, str8("read_only i32 *" META_NAMESPACE_LOWER "_shader_header_vectors[] = {")),
 	          meta_end_scope(m, str8("};\n")))
 	{
 		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
@@ -4245,7 +4245,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 	}
 
 	if (ctx->base_shader_count)
-	DeferLoop(meta_begin_scope(m, str8("read_only global i32 " META_NAMESPACE_LOWER "_shader_header_vector_lengths[] = {")),
+	DeferLoop(meta_begin_scope(m, str8("read_only i32 " META_NAMESPACE_LOWER "_shader_header_vector_lengths[] = {")),
 	          meta_end_scope(m, str8("};\n")))
 	{
 		for (da_count bs= 0; bs < ctx->base_shader_count; bs++) {
@@ -4258,7 +4258,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 	}
 
 	if (ctx->base_shader_count)
-	DeferLoop(meta_begin_scope(m, str8("read_only global str8 *" META_NAMESPACE_LOWER "_shader_compile_flag_names[] = {")),
+	DeferLoop(meta_begin_scope(m, str8("read_only str8 *" META_NAMESPACE_LOWER "_shader_compile_flag_names[] = {")),
 	          meta_end_scope(m, str8("};\n")))
 	{
 		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
@@ -4275,7 +4275,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 	}
 
 	if (ctx->base_shader_count)
-	DeferLoop(meta_begin_scope(m, str8("read_only global u8 " META_NAMESPACE_LOWER "_shader_compile_flag_counts[] = {")),
+	DeferLoop(meta_begin_scope(m, str8("read_only u8 " META_NAMESPACE_LOWER "_shader_compile_flag_counts[] = {")),
 	          meta_end_scope(m, str8("};\n")))
 	{
 		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {
@@ -4289,7 +4289,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 	}
 
 	if (ctx->base_shader_count)
-	DeferLoop(meta_begin_scope(m, str8("read_only global i32 "
+	DeferLoop(meta_begin_scope(m, str8("read_only i32 "
 	                                   META_NAMESPACE_LOWER "_base_shader_to_bake_struct_id[] = {")),
 	          meta_end_scope(m, str8("};\n")))
 	{
@@ -4305,7 +4305,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 	}
 
 	if (ctx->base_shader_count)
-	DeferLoop(meta_begin_scope(m, str8("read_only global u8 " META_NAMESPACE_LOWER "_shader_push_constant_sizes[] = {")),
+	DeferLoop(meta_begin_scope(m, str8("read_only u8 " META_NAMESPACE_LOWER "_shader_push_constant_sizes[] = {")),
 	          meta_end_scope(m, str8("};\n")))
 	{
 		for (da_count bs = 0; bs < ctx->base_shader_count; bs++) {

@@ -29,7 +29,7 @@ cephes_i0(f64 x)
 	 *
 	 * lim(x->0){ exp(-x) I0(x) } = 1.
 	 */
-	read_only local_persist f64 A[] = {
+	read_only f64 A[] = {
 		-4.41534164647933937950E-18,
 		 3.33079451882223809783E-17,
 		-2.43127984654795469359E-16,
@@ -67,7 +67,7 @@ cephes_i0(f64 x)
 	 *
 	 * lim(x->inf){ exp(-x) sqrt(x) I0(x) } = 1/sqrt(2pi).
 	 */
-	read_only local_persist f64 B[] = {
+	read_only f64 B[] = {
 		-7.23318048787475395456E-18,
 		-4.83050448594418207126E-18,
 		 4.46562142029675999901E-17,
