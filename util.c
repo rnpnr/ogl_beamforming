@@ -25,9 +25,9 @@ memory_equal(void *restrict left, void *restrict right, u64 n)
 }
 
 function void
-memory_copy(void *restrict dest, void *restrict src, u64 n)
+memory_copy(void *restrict dest, const void *restrict src, u64 n)
 {
-	u8 *s = src, *d = dest;
+	u8 *s = (u8 *)src, *d = dest;
 	#ifdef __AVX512BW__
 	{
 		for (; n >= 64; n -= 64, s += 64, d += 64)

@@ -346,7 +346,7 @@ beamformer_maximum_frames_for_simple_parameters(BeamformerSimpleParameters *bp)
 }
 
 function b32
-parameter_block_region_upload(void *data, u32 size, u32 block, u32 block_offset, i32 timeout_ms)
+parameter_block_region_upload(const void *data, u32 size, u32 block, u32 block_offset, i32 timeout_ms)
 {
 	i32 lock   = BeamformerSharedMemoryLockKind_Count + (i32)block;
 	b32 result = valid_parameter_block(block) && lib_try_lock(lock, timeout_ms);
@@ -438,7 +438,7 @@ beamformer_flush_commands(void)
 	X(transmit_receive_orientations, u8,  1, TransmitReceiveOrientations)
 
 #define X(name, dtype, elements, region_name) \
-b32 beamformer_push_##name ##_at(dtype *data, u32 count, u32 block) { \
+b32 beamformer_push_##name ##_at(const dtype *data, u32 count, u32 block) { \
 	b32 result = 0; \
 	if (lib_error_check(count <= countof(((BeamformerParameterBlock *)0)->name), BufferOverflow)) { \
 		result = parameter_block_region_upload(data, count * elements * sizeof(dtype), block, \
@@ -451,7 +451,7 @@ BEAMFORMER_UPLOAD_FNS
 #undef X
 
 #define X(name, dtype, ...) \
-b32 beamformer_push_##name (dtype *data, u32 count) { \
+b32 beamformer_push_##name (const dtype *data, u32 count) { \
 	b32 result = beamformer_push_##name ##_at(data, count, 0); \
 	return result; \
 }

@@ -125,21 +125,21 @@ BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_parameters(BeamformerParameters *
 BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_parameters_at(BeamformerParameters *,
                                                              uint32_t parameter_slot);
 
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_channel_mapping(int16_t *mapping, uint32_t count);
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_channel_mapping_at(int16_t *mapping, uint32_t count,
+BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_channel_mapping(const int16_t *mapping, uint32_t count);
+BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_channel_mapping_at(const int16_t *mapping, uint32_t count,
                                                                   uint32_t parameter_slot);
 
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_sparse_elements(int16_t *elements, uint32_t count);
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_sparse_elements_at(int16_t *elements, uint32_t count,
+BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_sparse_elements(const int16_t *elements, uint32_t count);
+BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_sparse_elements_at(const int16_t *elements, uint32_t count,
                                                                   uint32_t parameter_slot);
 
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_focal_vectors(float *vectors, uint32_t count);
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_focal_vectors_at(float *vectors, uint32_t count,
+BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_focal_vectors(const float *vectors, uint32_t count);
+BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_focal_vectors_at(const float *vectors, uint32_t count,
                                                                 uint32_t parameter_slot);
 
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_transmit_receive_orientations(uint8_t *values,
+BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_transmit_receive_orientations(const uint8_t *values,
                                                                              uint32_t count);
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_transmit_receive_orientations_at(uint8_t *values,
+BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_transmit_receive_orientations_at(const uint8_t *values,
                                                                                 uint32_t count,
                                                                                 uint32_t parameter_slot);
 
