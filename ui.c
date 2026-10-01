@@ -334,7 +334,7 @@ struct V4Node {V4Node *next; v4 v;};
 	X(F32Node,         border_thickness,       f32,         UI_BORDER_THICK) \
 	X(F32Node,         text_outline_thickness, f32,         0) \
 	X(UINodeFlagsNode, flags,                  UINodeFlags, 0) \
-	X(UIParentNode,    parent,                 UINode *,    (&ui_node_nil)) \
+	X(UIParentNode,    parent,                 UINode *,    ((UINode *)&ui_node_nil)) \
 	X(UISizeNode,      semantic_height,        UISize,      {0}) \
 	X(UISizeNode,      semantic_width,         UISize,      {0}) \
 	X(UIAlignNode,     alignment_y,            UIAlign,     0) \
@@ -459,7 +459,7 @@ read_only UINode ui_node_nil = {
 	.next_sibling     = (UINode *)&ui_node_nil,
 };
 
-#define X(type, name, impl_type, impl) read_only type ui_##name##_node_nil = {.v = (impl_type)impl};
+#define X(type, name, _t, impl) read_only type ui_##name##_node_nil = {.v = impl};
 UI_STACK_LIST
 #undef X
 
