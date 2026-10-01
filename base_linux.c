@@ -182,19 +182,6 @@ os_memory_commit(void *base, u64 size)
 	return 1;
 }
 
-BASE_EXPORT void
-os_memory_uncommit(void *base, u64 size)
-{
-	madvise(base, size, MADV_DONTNEED);
-	mprotect(base, size, PROT_NONE);
-}
-
-BASE_EXPORT void
-os_memory_seal(void *base, u64 size)
-{
-	mprotect(base, size, PROT_READ);
-}
-
 BASE_EXPORT str8
 os_read_entire_file(Arena *arena, const char *file)
 {

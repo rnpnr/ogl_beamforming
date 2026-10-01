@@ -173,7 +173,7 @@ typedef struct {
 	i32               entity_lock;
 } VulkanContext;
 
-read_only global const char *vk_required_instance_extensions[] = {
+read_only global char *vk_required_instance_extensions[] = {
 };
 
 #if OS_WINDOWS
@@ -604,8 +604,8 @@ function VkSpecializationMapEntry *
 vk_specialization_map_from_struct_id(Arena *arena, i32 struct_id)
 {
 	assert(struct_id >= 0);
-	MetaStructInfo   *si = meta_struct_info_by_id + struct_id;
-	MetaStructMember *sm = meta_struct_members_by_id[struct_id];
+	const MetaStructInfo   *si = meta_struct_info_by_id + struct_id;
+	const MetaStructMember *sm = meta_struct_members_by_id[struct_id];
 	VkSpecializationMapEntry *result = push_array(arena, VkSpecializationMapEntry, si->member_count);
 	for EachIndex(si->member_count, it) {
 		result[it].constantID = it;
@@ -648,7 +648,7 @@ vk_compute_pipeline_from_info(Arena *arena, VulkanPipelineCreateInfo *info, u32 
 
 		VkSpecializationInfo specialization_info = {0};
 		if (info->specialization_data && info->specialization_struct_id >= 0) {
-			MetaStructInfo *si = meta_struct_info_by_id + info->specialization_struct_id;
+			const MetaStructInfo *si = meta_struct_info_by_id + info->specialization_struct_id;
 			pipeline_create_info.stage.pSpecializationInfo = &specialization_info;
 			specialization_info.pMapEntries   = vk_specialization_map_from_struct_id(arena, info->specialization_struct_id);
 			specialization_info.mapEntryCount = si->member_count;

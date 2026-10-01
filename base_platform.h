@@ -61,8 +61,6 @@ BASE_EXPORT void no_return os_exit(i32 code);
 BASE_EXPORT void *         os_memory_reserve(u64 size);
 BASE_EXPORT void           os_memory_release(void *base, u64 size);
 BASE_EXPORT u32            os_memory_commit(void *base, u64 size);
-BASE_EXPORT void           os_memory_uncommit(void *base, u64 size);
-BASE_EXPORT void           os_memory_seal(void *base, u64 size);
 
 BASE_EXPORT u64            os_timer_count(void);
 

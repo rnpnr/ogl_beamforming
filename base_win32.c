@@ -135,7 +135,6 @@ W32(i32)    WakeByAddressAll(void *);
 W32(b32)    WriteFile(iptr, u8 *, i32, i32 *, void *);
 W32(void *) VirtualAlloc(u8 *, i64, u32, u32);
 W32(b32)    VirtualFree(void *, u64, u32);
-W32(b32)    VirtualProtect(void *, u64, u32, u32 *);
 
 enum {OSW32_FileWatchDirectoryBufferSize = KB(4)};
 
@@ -287,19 +286,6 @@ os_memory_commit(void *base, u64 size)
 {
 	b32 result = VirtualAlloc(base, size, MEM_COMMIT, PAGE_READWRITE) != 0;
 	return result;
-}
-
-BASE_EXPORT void
-os_memory_uncommit(void *base, u64 size)
-{
-	VirtualFree(base, size, MEM_DECOMMIT);
-}
-
-BASE_EXPORT void
-os_memory_seal(void *base, u64 size)
-{
-	u32 w32_dummy;
-	VirtualProtect(base, size, PAGE_READONLY, &w32_dummy);
 }
 
 BASE_EXPORT OSW32Semaphore

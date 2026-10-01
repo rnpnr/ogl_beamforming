@@ -334,7 +334,7 @@ struct V4Node {V4Node *next; v4 v;};
 	X(F32Node,         border_thickness,       f32,         UI_BORDER_THICK) \
 	X(F32Node,         text_outline_thickness, f32,         0) \
 	X(UINodeFlagsNode, flags,                  UINodeFlags, 0) \
-	X(UIParentNode,    parent,                 UINode *,    (ui_context->nil_node)) \
+	X(UIParentNode,    parent,                 UINode *,    (&ui_node_nil)) \
 	X(UISizeNode,      semantic_height,        UISize,      {0}) \
 	X(UISizeNode,      semantic_width,         UISize,      {0}) \
 	X(UIAlignNode,     alignment_y,            UIAlign,     0) \
@@ -419,14 +419,6 @@ typedef struct {
 	UI_STACK_LIST
 	#undef X
 
-	Arena  *nil_arena;
-	UINode *nil_node;
-	struct {
-		#define X(type, name, ...) type *name;
-		UI_STACK_LIST
-		#undef X
-	} nil_nodes;
-
 	UINodeHashBucket node_hash_table[UI_HASH_TABLE_COUNT];
 
 	UITextInputState text_input_state;
@@ -459,7 +451,21 @@ typedef struct {
 global BeamformerUI    *ui_context;
 global BeamformerInput *beamformer_input;
 
-#define ui_node_is_nil(n) ((n) == 0 || (n) == ui_context->nil_node)
+read_only global UINode ui_node_nil = {
+	.parent           = (UINode *)&ui_node_nil,
+	.first_child      = (UINode *)&ui_node_nil,
+	.last_child       = (UINode *)&ui_node_nil,
+	.previous_sibling = (UINode *)&ui_node_nil,
+	.next_sibling     = (UINode *)&ui_node_nil,
+};
+
+#define X(type, name, impl_type, impl) read_only global type ui_##name##_node_nil = {.v = (impl_type)impl};
+UI_STACK_LIST
+#undef X
+
+#define ui_node_is_nil(n) ((n) == 0 || (n) == &ui_node_nil)
+
+//#define ui_node_is_nil(n) ((n) == 0 || (n) == ui_context->nil_node)
 #define ui_build_arena()  (ui_context->build_arenas[(ui_context->current_frame_index % countof(ui_context->build_arenas))])
 
 #define UIStackPushBody(name_upper, name_lower, type, new_value) \
@@ -474,7 +480,7 @@ global BeamformerInput *beamformer_input;
 #define UIStackPopBody(name_upper, name_lower, type) \
 	name_upper *node = ui_context->name_lower##_node_stack.top; \
 	type result = node->v; \
-	if (node != ui_context->nil_nodes.name_lower) { \
+	if (node != &ui_##name_lower##_node_nil) { \
 		node = SLLPop(ui_context->name_lower##_node_stack.top, next); \
 		SLLStackPush(ui_context->name_lower##_node_stack.free, node, next); \
 	} \
@@ -1393,7 +1399,7 @@ function UINode *
 ui_node_from_key(UINodeKey key)
 {
 	UINodeHashBucket *hb     = ui_context->node_hash_table + (key.value % UI_HASH_TABLE_COUNT);
-	UINode           *result = ui_context->nil_node;
+	UINode           *result = (UINode *)&ui_node_nil;
 
 	for (UINode *b = hb->first; !ui_node_is_nil(b); b = b->hash_next) {
 		if (ui_node_key_equal(b->key, key)) {
@@ -1974,14 +1980,14 @@ ui_build_node_from_key(UINodeFlags flags, UINodeKey key)
 
 	// NOTE(rnp): reassigned per frame
 	{
-		result->parent = result->first_child = result->last_child = ui_context->nil_node;
-		result->next_sibling = result->previous_sibling = ui_context->nil_node;
+		result->parent = result->first_child = result->last_child = (UINode *)&ui_node_nil;
+		result->next_sibling = result->previous_sibling = (UINode *)&ui_node_nil;
 		result->child_count = 0;
 	}
 
 	if (first_frame && !transient) {
 		UINodeHashBucket *hb = ui_context->node_hash_table + (key.value % UI_HASH_TABLE_COUNT);
-		DLLInsert(ui_context->nil_node, hb->first, hb->last, result, hash_next, hash_prev);
+		DLLInsert((UINode *)&ui_node_nil, hb->first, hb->last, result, hash_next, hash_prev);
 		result->first_frame_active_index = ui_context->current_frame_index;
 	}
 
@@ -1994,7 +2000,7 @@ ui_build_node_from_key(UINodeFlags flags, UINodeKey key)
 	result->flags |= flags;
 
 	if (!ui_node_is_nil(result->parent)) {
-		DLLInsertLast(ui_context->nil_node, result->parent->first_child, result->parent->last_child,
+		DLLInsertLast((UINode *)&ui_node_nil, result->parent->first_child, result->parent->last_child,
 		              result, next_sibling, previous_sibling);
 		result->parent->child_count++;
 	}
@@ -3315,7 +3321,7 @@ ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t, Beamforme
 
 							if (beamformer_shader_compile_flag_counts[reloadable_index])
 							for EachIndex(beamformer_shader_compile_flag_counts[reloadable_index], bit) {
-								str8 *flags = beamformer_shader_compile_flag_names[reloadable_index];
+								str8 *flags = (str8 *)beamformer_shader_compile_flag_names[reloadable_index];
 								b32   set   = sd->compile_flags & (1u << bit);
 								UIParent(left)  ui_label(flags[bit]);
 								UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
@@ -3325,9 +3331,9 @@ ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t, Beamforme
 
 							i32 struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];
 							if (struct_id != -1) {
-								str8             *names = meta_struct_member_names_by_id[struct_id];
-								MetaStructInfo   *si    = meta_struct_info_by_id + struct_id;
-								MetaStructMember *sm    = meta_struct_members_by_id[struct_id];
+								const str8             *names = meta_struct_member_names_by_id[struct_id];
+								const MetaStructInfo   *si    = meta_struct_info_by_id + struct_id;
+								const MetaStructMember *sm    = meta_struct_members_by_id[struct_id];
 								for EachIndex(si->member_count, member) {
 									Stream sb = arena_stream(ui_build_arena());
 									stream_append_struct_member(&sb, sm + member, &sd->bake);
@@ -3493,7 +3499,7 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 							{str8_comp("  X:"),   str8_comp("  Y:"),   str8_comp("  Z:")},
 							{str8_comp("  Min:"), str8_comp("  Max:"),                  },
 						};
-						str8 *strs  = dimension == 2 ? axis_strings[1] : axis_strings[0];
+						const str8 *strs  = dimension == 2 ? axis_strings[1] : axis_strings[0];
 						for EachIndex(value_count, it) {
 							UIParent(label_column) ui_labelf("  %.*s##label%u_%u",
 							                                 (i32)strs[it].length, strs[it].data,
@@ -4043,7 +4049,7 @@ ui_panel_group_equip(UINode *node, BeamformerUIPanel *group)
 				UIPrefWidth(ui_children_sum(1.f))
 				for EachElement(beamformer_panel_infos, it)
 				{
-					BeamformerPanelInfo *info = beamformer_panel_infos + it;
+					const BeamformerPanelInfo *info = beamformer_panel_infos + it;
 					b32 list        = (info->flags & BeamformerPanelFlags_List) != 0;
 					b32 needs_frame = (info->flags & BeamformerPanelFlags_NeedsFrame) != 0;
 					if (list && (!needs_frame || beamformer_frame_valid(beamformer_registers()->frame))) {
@@ -4233,7 +4239,7 @@ ui_build_regions(UINode *root_node, BeamformerUIPanel *tree_root)
 		case BeamformerPanelKind_ComputeStats:{
 			u32 selected_plan = ui->selected_parameter_block % BeamformerMaxParameterBlocks;
 			BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[selected_plan];
-			if (!cp) cp = &beamformer_nil_compute_plan;
+			if (!cp) cp = (BeamformerComputePlan *)&beamformer_nil_compute_plan;
 			f32 t = beamformer_ui_blinker_update(&panel->u.compute_stats_broken_shader_blinker, BLINK_SPEED);
 			ui_build_compute_stats(cp, t, panel);
 		}break;
@@ -5074,27 +5080,9 @@ ui_init(BeamformerCtx *ctx, Arena *store)
 		ui = ui_context = ctx->ui = push_struct(store, typeof(*ui));
 		ui->arena = store;
 
-		ui->nil_arena = arena_create(.commit_size = KB(4), .reserve_size = KB(16), .name = "UI Nil Arena");
-		{
-			ui->nil_node = push_struct(ui->nil_arena, UINode);
-			*ui->nil_node = (UINode){
-				.parent           = ui->nil_node,
-				.first_child      = ui->nil_node,
-				.last_child       = ui->nil_node,
-				.previous_sibling = ui->nil_node,
-				.next_sibling     = ui->nil_node,
-			};
-			#define X(type, name, value_type, impl, ...) \
-				ui->nil_nodes.name = push_struct(ui->nil_arena, type);\
-				ui->nil_nodes.name->v = (value_type)impl;
-			UI_STACK_LIST
-			#undef X
-		}
-		arena_seal(ui->nil_arena);
-
 		for EachElement(ui->build_arenas, it)
 			ui->build_arenas[it] = arena_create();
-		ui->node_freelist = ui->nil_node;
+		ui->node_freelist = (UINode *)&ui_node_nil;
 
 		/* TODO(rnp): better font, this one is jank at small sizes */
 		ui->font       = LoadFontFromMemory(".ttf", beamformer_base_font, sizeof(beamformer_base_font), 28, 0, 0);
@@ -5389,7 +5377,7 @@ beamformer_ui_frame(void)
 		// NOTE(rnp): reset last frame's build stacks
 		{
 			#define X(type, name, ...) \
-				ui->name##_node_stack.top   = ui_context->nil_nodes.name; \
+				ui->name##_node_stack.top   = (type *)&ui_##name##_node_nil; \
 				ui->name##_node_stack.free  = 0; \
 				ui->name##_node_stack.count = 0;
 			UI_STACK_LIST
@@ -5478,7 +5466,7 @@ beamformer_ui_frame(void)
 						if (ui_node_key_equal(ui->active_node_key[k], b->key))
 							ui->active_node_key[k] = ui_node_key_zero();
 
-					DLLRemove(ui_context->nil_node, hb->first, hb->last, b, hash_next, hash_prev);
+					DLLRemove(&ui_node_nil, hb->first, hb->last, b, hash_next, hash_prev);
 					SLLStackPush(ui->node_freelist, b, next_sibling);
 				}
 			}

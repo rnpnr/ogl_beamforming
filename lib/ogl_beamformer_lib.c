@@ -534,7 +534,7 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 						};
 						static_assert(BeamformerDataKind_Float16Complex == (BeamformerDataKind_Count - 1), "");
 
-						read_only local_persist beamformer_reduce_a1s2_contrast_fn *reduce_a1s2_fn_table[] = {
+						local_persist beamformer_reduce_a1s2_contrast_fn *reduce_a1s2_fn_table[] = {
 							#define X(type, ...) beamformer_reduce_a1s2_contrast_##type,
 							BEAMFORMER_REDUCE_A1S2_CONTRAST_LIST
 							#undef X

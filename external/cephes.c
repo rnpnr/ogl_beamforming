@@ -7,9 +7,9 @@ Copyright 1984, 1987, 2000 by Stephen L. Moshier
  * and so that it doesn't use pre-ANSI C declarations */
 
 function f64
-cephes_chbevl(f64 x, f64 *coefficients, i32 n)
+cephes_chbevl(f64 x, const f64 *coefficients, i32 n)
 {
-	f64 *p = coefficients;
+	const f64 *p = coefficients;
 	f64 b0 = *p++, b1 = 0.0, b2;
 
 	for (i32 i = n - 1; i > 0; i--) {

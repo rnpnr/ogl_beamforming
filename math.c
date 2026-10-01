@@ -2,7 +2,7 @@
 #include "external/cephes.c"
 
 function void
-fill_kronecker_sub_matrix_f16(f16 *out, i32 out_stride, f16 scale, f16 *b, iv2 b_dim)
+fill_kronecker_sub_matrix_f16(f16 *out, i32 out_stride, f16 scale, const f16 *b, iv2 b_dim)
 {
 	for (i32 i = 0; i < b_dim.y; i++) {
 		for (i32 j = 0; j < b_dim.x; j += 4, b += 4) {
@@ -17,7 +17,7 @@ fill_kronecker_sub_matrix_f16(f16 *out, i32 out_stride, f16 scale, f16 *b, iv2 b
 
 /* NOTE: this won't check for valid space/etc and assumes row major order */
 function void
-kronecker_product_f16(f16 *out, f16 *a, iv2 a_dim, f16 *b, iv2 b_dim)
+kronecker_product_f16(f16 *out, const f16 *a, iv2 a_dim, const f16 *b, iv2 b_dim)
 {
 	iv2 out_dim = {{a_dim.x * b_dim.x, a_dim.y * b_dim.y}};
 	assert(out_dim.y % 4 == 0);
@@ -73,7 +73,6 @@ make_hadamard_transpose(Arena *arena, i32 dim, b32 row_major)
 		1,  1, -1, -1,  1,  1, -1, -1, -1, -1,  1, -1,  1, -1,  1,  1,  1,  1, -1, -1,
 	};
 
-
 	f16 *result = 0;
 
 	i32 order          = dim;
@@ -113,7 +112,7 @@ make_hadamard_transpose(Arena *arena, i32 dim, b32 row_major)
 		}
 		#undef IND
 
-		f16 *m2 = 0;
+		const f16 *m2 = 0;
 		iv2 m2_dim;
 		switch (base_dim) {
 		case 12:{ m2 = hadamard_12_12_transpose; m2_dim = (iv2){{12, 12}}; }break;

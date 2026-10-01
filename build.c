@@ -1274,7 +1274,7 @@ meta_error(void)
 function void
 meta_entry_print(MetaEntry *e, i32 indent, i32 caret)
 {
-	char *kind = meta_entry_kind_strings[e->kind];
+	const char *kind = meta_entry_kind_strings[e->kind];
 	if (e->kind == MetaEntryKind_BeginScope) kind = "{";
 	if (e->kind == MetaEntryKind_EndScope)   kind = "}";
 
@@ -1306,7 +1306,7 @@ meta_entry_print(MetaEntry *e, i32 indent, i32 caret)
 }
 
 function i64
-meta_lookup_string_slow(str8 *strings, i64 string_count, str8 s)
+meta_lookup_string_slow(const str8 *strings, i64 string_count, str8 s)
 {
 	// TODO(rnp): obviously this is slow
 	i64 result = -1;
@@ -2538,7 +2538,7 @@ meta_pack_table_begin(MetaEntry *e, MetaTable *t)
 	case MetaEntryKind_Flags:
 	{
 		read_only local_persist str8 enumeration_fields[] = {str8_comp("name")};
-		t->fields      = enumeration_fields;
+		t->fields      = (str8 *)enumeration_fields;
 		t->field_count = countof(enumeration_fields);
 	}break;
 
@@ -2551,7 +2551,7 @@ meta_pack_table_begin(MetaEntry *e, MetaTable *t)
 		#define X(_i, name, ...) str8_comp(#name),
 		read_only local_persist str8 struct_fields[] = {META_STRUCT_FIELDS};
 		#undef X
-		t->fields      = struct_fields;
+		t->fields      = (str8 *)struct_fields;
 		t->field_count = countof(struct_fields);
 	}break;
 
@@ -3216,7 +3216,7 @@ meta_expansion_part_conditional(MetaExpansionPart *p, u32 entry, str8 table_name
 }
 
 function void
-metagen_run_emit(MetaprogramContext *m, MetaContext *ctx, MetaEmitOperationList *ops, str8 *evaluation_table)
+metagen_run_emit(MetaprogramContext *m, MetaContext *ctx, MetaEmitOperationList *ops, const str8 *evaluation_table)
 {
 	for (i64 opcode = 0; opcode < ops->count; opcode++) {
 		MetaEmitOperation *op = ops->data + opcode;
@@ -3319,7 +3319,7 @@ metagen_run_emit(MetaprogramContext *m, MetaContext *ctx, MetaEmitOperationList 
 
 function void
 metagen_run_emit_set(MetaprogramContext *m, MetaContext *ctx, MetaEmitOperationListSet *emit_set,
-                     str8 *evaluation_table)
+                     const str8 *evaluation_table)
 {
 	for (i64 set = 0; set < emit_set->count; set++) {
 		MetaEmitOperationList *ops = emit_set->data + set;
@@ -3601,10 +3601,10 @@ meta_push_matlab_properties(MetaprogramContext *m, MetaContext *ctx, MetaStruct 
 			.layout_style        = MetaPushStructStyle_MATLAB,
 			.union_style         = MetaPushStructStyle_MATLAB,
 			.element_count_style = MetaPushStructStyle_MATLAB,
-			.base_types          = meta_kind_matlab_types,
+			.base_types          = (str8 *)meta_kind_matlab_types,
 			.suffix              = str8(""),
 			.str_element_prefix  = str8(MATLAB_NAMESPACE META_NAMESPACE_UPPER),
-			.base_type_element_count_scales = meta_kind_elements,
+			.base_type_element_count_scales = (u8 *)meta_kind_elements,
 		});
 	}
 }
@@ -3709,7 +3709,7 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 					.layout_style        = MetaPushStructStyle_C,
 					.union_style         = MetaPushStructStyle_C,
 					.element_count_style = MetaPushStructStyle_C,
-					.base_types          = meta_kind_glsl_types,
+					.base_types          = (str8 *)meta_kind_glsl_types,
 					.prefix              = str8("\"  "),
 					.suffix              = str8(";\\n\""),
 				});
@@ -3719,7 +3719,7 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 					.layout_style        = MetaPushStructStyle_C,
 					.union_style         = MetaPushStructStyle_C,
 					.element_count_style = MetaPushStructStyle_C,
-					.base_types          = meta_kind_glsl_types,
+					.base_types          = (str8 *)meta_kind_glsl_types,
 					.prefix              = str8("\"  "),
 					.suffix              = str8(";\\n\""),
 				});
@@ -3734,7 +3734,7 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 					.layout_style        = MetaPushStructStyle_C,
 					.union_style         = MetaPushStructStyle_C,
 					.element_count_style = MetaPushStructStyle_C,
-					.base_types          = meta_kind_glsl_types,
+					.base_types          = (str8 *)meta_kind_glsl_types,
 					.prefix              = str8("\"  "),
 					.suffix              = str8(";\\n\""),
 				});
@@ -3820,7 +3820,7 @@ meta_push_shader_bake(MetaprogramContext *m, MetaContext *ctx)
 				meta_begin_line(m,  str8("(str8 []){"));
 			}
 
-			meta_push(m, str8("{.data = " META_NAMESPACE_LOWER "_shader_"));
+			meta_push(m, str8("{.data = (u8 *)" META_NAMESPACE_LOWER "_shader_"));
 			for (i64 i = 0; i < shader_name.length; i++)
 				stream_append_byte(&m->stream, ToLower(shader_name.data[i]));
 
@@ -3837,7 +3837,7 @@ meta_push_shader_bake(MetaprogramContext *m, MetaContext *ctx)
 
 			if (s->kind == MetaShaderKind_Render) {
 				meta_end_line(m, str8(","));
-				meta_begin_line(m, str8("{.data = " META_NAMESPACE_LOWER "_shader_"));
+				meta_begin_line(m, str8("{.data = (u8 *)" META_NAMESPACE_LOWER "_shader_"));
 				for (i64 i = 0; i < shader_name.length; i++)
 					stream_append_byte(&m->stream, ToLower(shader_name.data[i]));
 
@@ -4072,7 +4072,7 @@ metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 							.layout_style        = MetaPushStructStyle_C,
 							.union_style         = MetaPushStructStyle_C,
 							.element_count_style = MetaPushStructStyle_C,
-							.base_types          = meta_kind_c_types,
+							.base_types          = (str8 *)meta_kind_c_types,
 							.suffix              = str8(";"),
 							.str_element_prefix  = str8(META_NAMESPACE_UPPER),
 						});
@@ -4727,10 +4727,10 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena *arena)
 						.layout_style        = MetaPushStructStyle_C,
 						.union_style         = MetaPushStructStyle_C,
 						.element_count_style = MetaPushStructStyle_C,
-						.base_types          = meta_kind_base_c_types,
+						.base_types          = (str8 *)meta_kind_base_c_types,
 						.suffix              = str8(";"),
 						.str_element_prefix  = str8(META_NAMESPACE_UPPER),
-						.base_type_element_count_scales = meta_kind_elements,
+						.base_type_element_count_scales = (u8 *)meta_kind_elements,
 					});
 				} meta_end_scope(m, str8("} " META_NAMESPACE_UPPER), ctx->entity_names.data[ids[it]], str8(";\n"));
 			}break;
@@ -4773,10 +4773,10 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena *arena)
 							.layout_style        = MetaPushStructStyle_C,
 							.union_style         = MetaPushStructStyle_MATLAB,
 							.element_count_style = MetaPushStructStyle_C,
-							.base_types          = meta_kind_base_c_types,
+							.base_types          = (str8 *)meta_kind_base_c_types,
 							.suffix              = str8(";"),
 							.str_element_prefix  = str8(META_NAMESPACE_UPPER),
-							.base_type_element_count_scales = meta_kind_elements,
+							.base_type_element_count_scales = (u8 *)meta_kind_elements,
 						});
 					} meta_end_scope(m, str8("} " META_NAMESPACE_UPPER), ctx->entity_names.data[ids[it]], str8(";\n"));
 				}break;

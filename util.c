@@ -187,22 +187,6 @@ arena_destroy(Arena *arena)
 	}
 }
 
-function void
-arena_seal(Arena *arena)
-{
-	assert(arena == arena->current);
-	u64 position = round_up_to(arena->position, os_system_info()->page_size);
-	if (arena->committed > position) {
-		os_memory_uncommit((u8 *)arena + position, arena->committed - position);
-		arena->committed = position;
-	}
-	if (arena->reserved > arena->committed) {
-		os_memory_release((u8 *)arena + arena->committed, arena->reserved - arena->committed);
-		arena->reserved = arena->committed;
-	}
-	os_memory_seal(arena, arena->reserved);
-}
-
 #define arena_alloc(a, ...)              arena_alloc_(a, (ArenaAllocateInfo){.align = 8, .count = 1, __VA_ARGS__})
 #define push_array(a, t, n, ...)         (t *)arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n, __VA_ARGS__)
 #define push_array_no_zero(a, t, n, ...) (t *)arena_alloc(a, .size = sizeof(t), .align = alignof(t), .count = n, .flags = ArenaAllocateFlags_NoZero, __VA_ARGS__)
@@ -649,7 +633,7 @@ stream_append_f64_e(Stream *s, f64 f)
 }
 
 function void
-stream_append_struct_member(Stream *s, MetaStructMember *m, void *struct_base)
+stream_append_struct_member(Stream *s, const MetaStructMember *m, const void *struct_base)
 {
 	switch (m->type_id) {
 	InvalidDefaultCase;

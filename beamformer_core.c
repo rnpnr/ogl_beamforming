@@ -169,7 +169,7 @@ beamformer_panel_kind_from_string(str8 s)
 function BeamformerFrame *
 beamformer_frame_from_index(u64 index)
 {
-	BeamformerFrame *result = &beamformer_nil_frame;
+	BeamformerFrame *result = (BeamformerFrame *)&beamformer_nil_frame;
 	if (index < countof(beamformer_context->compute_context.backlog.frames)) {
 		BeamformerFrame *frame = beamformer_context->compute_context.backlog.frames + index;
 		if (frame->timeline_valid_value != 0)
@@ -1120,7 +1120,7 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, u64 gpu_heap_pointe
 	"\n"));
 
 	i32  header_vector_length = beamformer_shader_header_vector_lengths[reloadable_index];
-	i32 *header_vector        = beamformer_shader_header_vectors[reloadable_index];
+	i32 *header_vector        = (i32 *)beamformer_shader_header_vectors[reloadable_index];
 	for (i32 index = 0; index < header_vector_length; index++)
 		stream_append_str8(s, beamformer_shader_global_header_strings[header_vector[index]]);
 
@@ -1176,9 +1176,9 @@ stream_append_shader_header(Stream *s, i32 reloadable_index, u64 gpu_heap_pointe
 
 		i32 struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];
 		if (struct_id != -1) {
-			str8             *names = meta_struct_member_names_by_id[struct_id];
-			MetaStructInfo   *si    = meta_struct_info_by_id + struct_id;
-			MetaStructMember *sm    = meta_struct_members_by_id[struct_id];
+			const str8             *names = meta_struct_member_names_by_id[struct_id];
+			const MetaStructInfo   *si    = meta_struct_info_by_id + struct_id;
+			const MetaStructMember *sm    = meta_struct_members_by_id[struct_id];
 			for (u32 index = 0; index < si->member_count; index++) {
 				str8 type = meta_kind_glsl_types[sm[index].type_id];
 				stream_append_str8(s, str8("layout(constant_id = "));

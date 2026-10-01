@@ -23,6 +23,9 @@
   #define force_inline __forceinline
 #endif
 
+// NOTE(rnp): const is all that is needed for C and is compatible
+// with all major compilers. Only C++ needs extra care.
+#if 0
 #if COMPILER_MSVC || (COMPILER_CLANG && OS_WINDOWS)
   #pragma section(".rdata$", read)
   #define read_only __declspec(allocate(".rdata$"))
@@ -33,6 +36,8 @@
    * it doesn't cause a fault */
   #define read_only
 #endif
+#endif
+#define read_only const
 
 #if !defined(countof)
   #define countof(a)     (i64)(sizeof(a) / sizeof(*a))
