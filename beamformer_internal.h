@@ -331,7 +331,7 @@ typedef struct {
 
 	GPUBuffer buffer;
 
-	u32 active_rf_size;
+	u64 active_rf_size;
 
 	u64 timestamp;
 

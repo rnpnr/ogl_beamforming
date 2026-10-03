@@ -1,9 +1,9 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (35UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (36UL)
 
 typedef enum {
 	BeamformerWorkKind_Compute,
-	BeamformerWorkKind_ComputeIndirect,
+	BeamformerWorkKind_WaitThenCompute,
 	BeamformerWorkKind_CreateFilter,
 	BeamformerWorkKind_ExportBuffer,
 } BeamformerWorkKind;
@@ -40,6 +40,7 @@ typedef enum {BEAMFORMER_SHARED_MEMORY_LOCKS BeamformerSharedMemoryLockKind_Coun
 typedef struct {
 	BeamformerViewPlaneTag view_plane;
 	u32                    parameter_block;
+	u64                    rf_offset;
 } BeamformerComputeWorkContext;
 
 /* NOTE: discriminated union based on type */
@@ -143,6 +144,8 @@ typedef struct {
 
 	/* TODO(rnp): this is really sucky. we need a better way to communicate this */
 	u64 rf_block_rf_size;
+
+	b64 new_rf_upload;
 
 	// NOTE(rnp): currently this cannot be directly user readable. its interpretation
 	// requires beamformer implementation details

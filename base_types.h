@@ -38,6 +38,7 @@ typedef char     c8;
 typedef u8       b8;
 typedef u16      b16;
 typedef u32      b32;
+typedef u64      b64;
 typedef _Float16 f16;
 typedef float    f32;
 typedef double   f64;

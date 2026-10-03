@@ -1,5 +1,8 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: refactor: make better use Transfer timeline semaphore to not stall compute thread
+ *      while upload is occuring. rf thread should do: get next timeline semaphore value, insert
+ *      into wait values array, atomic_inc insertion index, start upload, signal timeline semaphore
  * [ ]: backtrace dumping on SIGSEGV
  * [ ]: cooperative shared memory loading in decode shader
  * [ ]: refactor: save filter parameters with rest of parameters, whole slot thing is dumb
@@ -1508,7 +1511,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			cp->filter_parameters[slot] = fctx->parameters;
 		}break;
 
-		case BeamformerWorkKind_ComputeIndirect:
+		case BeamformerWorkKind_WaitThenCompute:
 		case BeamformerWorkKind_Compute:
 		{
 			push_compute_timing_info(ctx->compute_timing_table,
@@ -1588,10 +1591,13 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			}
 
 			BeamformerRFBuffer *rf = &cs->rf_buffer;
-			u32 compute_index = rf->compute_index;
-			u32 slot = compute_index % countof(rf->upload_complete_values);
+			u64 compute_index = rf->compute_index;
+			u64 slot = compute_index % countof(rf->upload_complete_values);
 
-			if (work->kind == BeamformerWorkKind_ComputeIndirect) {
+			// NOTE(rnp): the library/ui will ensure that any time a new dataset is uploaded
+			// the next time beamforming is issued it will be tagged as WaitThenCompute.
+			// In this case we need to stall until the rf thread has finished its upload.
+			if (work->kind == BeamformerWorkKind_WaitThenCompute) {
 				// TODO(rnp): this shouldn't be necessary, there should be a way of communicating
 				// what the value will be so that the only the command wait is needed.
 				spin_wait(atomic_load_u64(&rf->insertion_index) <= compute_index);
@@ -1601,7 +1607,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				if (vk_buffer_needs_sync(&rf->buffer))
 					gpu_command_wait_timeline(cmd, GPUTimeline_Transfer, rf->upload_complete_values[slot]);
 			} else {
-				slot = (rf->compute_index - 1) % countof(rf->upload_complete_values);
+				slot = (compute_index - 1) % countof(rf->upload_complete_values);
 			}
 
 			// NOTE(rnp): nvidia needs a memory barrier between pipeline stages
@@ -1660,10 +1666,10 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				gpu_command_timestamp(cmd);
 			}
 			u64 end_timeline_value = gpu_command_list_end(cmd, (VulkanHandle){0}, (VulkanHandle){0});
-			if (work->kind == BeamformerWorkKind_ComputeIndirect) {
-				atomic_store_u64(rf->compute_complete_values + slot, end_timeline_value);
+			atomic_store_u64(rf->compute_complete_values + slot, end_timeline_value);
+
+			if (work->kind == BeamformerWorkKind_WaitThenCompute)
 				atomic_add_u64(&rf->compute_index, 1);
-			}
 
 			atomic_store_u64(&frame->timeline_valid_value, end_timeline_value);
 
@@ -1809,8 +1815,8 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 
 		BeamformerRFBuffer *rf = ctx->rf_buffer;
 
-		rf->active_rf_size = gpu_round_up_to_sync_size(rf_block_rf_size & 0xFFFFFFFFULL, 64);
-		if unlikely(rf->buffer.size < countof(rf->upload_complete_values) * rf->active_rf_size) {
+		rf->active_rf_size = gpu_round_up_to_sync_size(rf_block_rf_size & 0x00FFFFFFFFFFFFFFull, 64);
+		if unlikely((u64)rf->buffer.size < countof(rf->upload_complete_values) * rf->active_rf_size) {
 			gpu_buffer_allocate(&rf->buffer, (GPUBufferAllocateInfo){
 				.size  = countof(rf->upload_complete_values) * rf->active_rf_size,
 				.flags = GPUUsageFlag_HostWrite,

@@ -484,7 +484,7 @@ BEAMFORMER_REDUCE_A1S2_CONTRAST_LIST
 #undef X
 
 function b32
-beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
+beamformer_push_data_base(void *data, u64 data_size, i32 timeout_ms, u32 block)
 {
 	b32 result = 0;
 	Arena *scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
@@ -553,8 +553,9 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 
 				lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
 				/* TODO(rnp): need a better way to communicate this */
-				u64 rf_block_rf_size = (u64)block << 32ULL | (u64)rf_size;
+				u64 rf_block_rf_size = ((u64)block << 56ull) | (rf_size & 0x00FFFFFFFFFFFFFFull);
 				atomic_store_u64(&g_beamformer_library_context.bp->rf_block_rf_size, rf_block_rf_size);
+				atomic_store_u64(&g_beamformer_library_context.bp->new_rf_upload, 1ull);
 				result = 1;
 			}
 		}
@@ -562,27 +563,48 @@ beamformer_push_data_base(void *data, u32 data_size, i32 timeout_ms, u32 block)
 	return result;
 }
 
-b32
-beamformer_push_data_with_compute(void *data, u32 data_size, u32 image_plane_tag, u32 parameter_slot)
+function b32
+beamformer_start_compute(u64 offset, u32 image_plane_tag, u32 parameter_slot)
 {
 	b32 result = 0;
 	if (check_shared_memory()) {
 		u32 reserved_blocks = g_beamformer_library_context.bp->reserved_parameter_blocks;
-		if (lib_error_check(image_plane_tag < BeamformerViewPlaneTag_Count, InvalidImagePlane) &&
-		    lib_error_check(parameter_slot < reserved_blocks, ParameterBlockUnallocated) &&
-		    beamformer_push_data_base(data, data_size, g_beamformer_library_context.timeout_ms, parameter_slot))
+		if (lib_error_check(parameter_slot < reserved_blocks, ParameterBlockUnallocated) &&
+		    lib_error_check(image_plane_tag < BeamformerViewPlaneTag_Count, InvalidImagePlane))
 		{
 			BeamformWork *work = try_push_work_queue();
 			if (work) {
-				work->kind = BeamformerWorkKind_ComputeIndirect;
+				b64 new_rf = atomic_swap_u64(&g_beamformer_library_context.bp->new_rf_upload, 0ull);
+				work->kind = new_rf ? BeamformerWorkKind_WaitThenCompute : BeamformerWorkKind_Compute;
 				work->compute_context.view_plane      = image_plane_tag;
 				work->compute_context.parameter_block = parameter_slot;
+				work->compute_context.rf_offset       = offset;
 				beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
 				beamformer_flush_commands();
 				result = 1;
 			}
 		}
 	}
+	return result;
+}
+
+function b32
+beamformer_push_data(void *data, u64 data_size, u32 parameter_slot)
+{
+	b32 result = 0;
+	if (check_shared_memory()) {
+		u32 reserved_blocks = g_beamformer_library_context.bp->reserved_parameter_blocks;
+		result = lib_error_check(parameter_slot < reserved_blocks, ParameterBlockUnallocated) &&
+		         beamformer_push_data_base(data, data_size, g_beamformer_library_context.timeout_ms, parameter_slot);
+	}
+	return result;
+}
+
+b32
+beamformer_push_data_with_compute(void *data, u32 data_size, u32 image_plane_tag, u32 parameter_slot)
+{
+	b32 result = beamformer_push_data(data, data_size, parameter_slot) &&
+	             beamformer_start_compute(0, image_plane_tag, parameter_slot);
 	return result;
 }
 
@@ -729,7 +751,7 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 	return result;
 }
 
-BEAMFORMER_LIB_EXPORT b32
+function b32
 beamformer_compute_timings(BeamformerComputeStatsTable *output, i32 timeout_ms)
 {
 	b32 result = 0;
