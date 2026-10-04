@@ -111,7 +111,7 @@ SAMPLE_TYPE cubic(const u64 rf_pointer, const f32 t)
 	#endif
 
 	SAMPLE_TYPE result;
-	if (C_SPLINE == 0.5f) {
+	if (C_SPLINE == 0.5f && InputDataKind != DataKind_Float16Complex) {
 		// NOTE(rnp): expanded Catmull-Rom spline
 		// (mathematically equivalent but easier on the compiler)
 		SAMPLE_TYPE P0 = samples[0];
