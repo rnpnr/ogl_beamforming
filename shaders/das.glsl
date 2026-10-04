@@ -336,14 +336,11 @@ RESULT_TYPE FORCES(const vec3 world_point)
 
 	#define AcquisitionChunkSize 16
 	const u32 AcquisitionChunkCount = (AcquisitionCount + (AcquisitionChunkSize - 1)) / AcquisitionChunkSize;
-	for (u32 acquisition_chunk = 0; acquisition_chunk < AcquisitionChunkCount; acquisition_chunk++) {
-		u32 acquisition = acquisition_chunk * AcquisitionChunkSize;
-		if (Sparse && acquisition_chunk == 0) acquisition++;
-
+	for (u32 acquisition = u32(Sparse); acquisition < AcquisitionCount; acquisition += AcquisitionChunkSize) {
 		f32 transmit_indices[AcquisitionChunkSize];
 		for (u32 transmit = 0; transmit < AcquisitionChunkSize; transmit++) {
 			u32 index = acquisition + transmit;
-			if ((AcquisitionCount % AcquisitionChunkSize) != 0 && (index >= AcquisitionCount))
+			if (((AcquisitionCount + u32(Sparse)) % AcquisitionChunkSize) != 0 && (index >= AcquisitionCount))
 				break;
 			f32 tx_channel = Sparse ? f32(S16(HeapBase + SparseElements - 2 * u32(Sparse)).x[index]) : f32(index);
 			f32 transmit_x_delta = xdc_world_point.x - xdc_element_pitch.x * tx_channel;
@@ -360,7 +357,7 @@ RESULT_TYPE FORCES(const vec3 world_point)
 				f32 receive_index = sqrt(receive_x_delta * receive_x_delta + z_delta_squared) * SamplingFrequency / SpeedOfSound;
 				f32 apodization   = apodize(a_arg);
 				for (u32 transmit = 0; transmit < AcquisitionChunkSize; transmit += 1u, rf_pointer += AcquisitionByteStride) {
-					if ((AcquisitionCount % AcquisitionChunkSize) != 0 &&
+					if (((AcquisitionCount + u32(Sparse)) % AcquisitionChunkSize) != 0 &&
 					    (acquisition + transmit >= AcquisitionCount))
 						break;
 
