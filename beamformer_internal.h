@@ -20,6 +20,7 @@
 
 typedef struct { u64 value; } GPUHandle;
 typedef struct { u64 value; } GPUCommandList;
+typedef struct { u64 value; } GPUSemaphore;
 typedef struct { u64 value; } GPUSplitBarrier;
 
 typedef struct { u64 value[1]; } VulkanHandle;
@@ -128,6 +129,12 @@ typedef struct {
 } GPUBufferAllocateInfo;
 
 typedef struct {
+	GPUSemaphore semaphore;
+	// NOTE(rnp): ignored if semaphore was exported
+	u64          value;
+} GPUSemaphoreSignalInfo;
+
+typedef struct {
 	GPUBuffer model;
 	u32       vertex_count;
 	u32       normals_offset;
@@ -163,16 +170,19 @@ DEBUG_IMPORT VulkanHandle vk_pipeline(VulkanPipelineCreateInfo *infos, u32 count
 DEBUG_IMPORT b32          vk_pipeline_valid(VulkanHandle);
 DEBUG_IMPORT void         vk_pipeline_release(VulkanHandle);
 
-DEBUG_IMPORT b32 vk_buffer_needs_sync(GPUBuffer *);
+DEBUG_IMPORT GPUSemaphore    gpu_semaphore_create(OSHandle *export);
+DEBUG_IMPORT u64             gpu_semaphore_value(GPUSemaphore);
+DEBUG_IMPORT void            gpu_host_signal_semaphore(GPUSemaphore semaphore, u64 value);
 
-DEBUG_IMPORT VulkanHandle vk_create_semaphore(OSHandle *export);
+DEBUG_IMPORT b32             gpu_buffer_needs_sync(GPUBuffer *);
 
 DEBUG_IMPORT b32             gpu_host_wait_timeline(GPUTimeline timeline, u64 value, u64 timeout_ns);
 DEBUG_IMPORT u64             gpu_host_signal_timeline(GPUTimeline timeline);
 
 DEBUG_IMPORT GPUCommandList  gpu_command_list_begin(GPUTimeline timeline);
-// NOTE: extra semaphores only exist for synchronization with OpenGL and will be removed in the future
-DEBUG_IMPORT u64             gpu_command_list_end(GPUCommandList command, VulkanHandle wait_semaphore, VulkanHandle finished_semaphore);
+DEBUG_IMPORT u64             gpu_command_list_end(GPUCommandList command,
+                                                  GPUSemaphoreSignalInfo *wait_infos,   u64 wait_info_count,
+                                                  GPUSemaphoreSignalInfo *signal_infos, u64 signal_info_count);
 
 DEBUG_IMPORT void            gpu_command_bind_pipeline(GPUCommandList command, VulkanHandle pipeline);
 DEBUG_IMPORT void            gpu_command_pipeline_barrier(GPUCommandList command, b32 memory);
@@ -195,6 +205,22 @@ DEBUG_IMPORT void            gpu_command_copy_buffer(GPUCommandList command,
 
 // NOTE: returns array of valid timestamps. Calling thread may stall until results available.
 DEBUG_IMPORT u64 *           gpu_read_timestamps(GPUTimeline timeline, u64 *count, Arena *arena);
+
+/////////////////////////
+// NOTE(rnp): advanced buffer manipulation
+
+// IMPORTANT: there is no guarantee that the GPU can see writes through these
+// these APIs unless you call gpu_buffer_make_visible with the memory range
+// that was written
+// NOTE(rnp): caller is responsible for passing a buffer that was created with
+// the required access (read, write, or both).
+DEBUG_IMPORT void *          gpu_buffer_host_pointer(GPUBuffer *);
+// NOTE(rnp): returns a value to wait on from the Transfer timeline if it
+// was used (a wait value is never 0). Any passed in semaphores are always
+// signaled (possibly via a host signal operation).
+DEBUG_IMPORT u64             gpu_buffer_make_visible(GPUBuffer *, u64 offset, u64 size,
+                                                     GPUSemaphoreSignalInfo *signal_infos,
+                                                     u64 signal_info_count);
 
 #if BEAMFORMER_RENDERDOC_HOOKS
 DEBUG_IMPORT void *       vk_renderdoc_instance_handle(void);
@@ -329,7 +355,8 @@ typedef struct {
 	u64 upload_complete_values[BeamformerMaxRawDataFramesInFlight];
 	u64 compute_complete_values[BeamformerMaxRawDataFramesInFlight];
 
-	GPUBuffer buffer;
+	GPUBuffer    buffer;
+	GPUSemaphore upload_semaphore;
 
 	u64 active_rf_size;
 

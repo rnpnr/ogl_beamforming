@@ -121,6 +121,9 @@ typedef alignas(64) struct {
 	i32             lock;
 	u32             next_command_buffer_index;
 
+	// NOTE(rnp): small arena for storing temporary data during submission
+	Arena          *arena;
+
 	VulkanPipeline *bound_pipeline;
 
 	u64             last_submission_values[MaxCommandBuffersInFlight];
@@ -1828,6 +1831,8 @@ vk_load_queues(Arena *arena, Stream *err)
 	for EachElement(vk->command_pools, it) {
 		VulkanCommandPool *vcp = vk->command_pools[it];
 
+		vcp->arena = arena_create(.reserve_size = KB(64));
+
 		VkCommandPoolCreateInfo command_pool_create_info = {
 			.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
 			.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
@@ -2025,25 +2030,6 @@ gpu_buffer_allocate(GPUBuffer *b, GPUBufferAllocateInfo info)
 	}
 }
 
-DEBUG_IMPORT b32
-vk_buffer_needs_sync(GPUBuffer *b)
-{
-	b32 result = 0;
-	if (b->handle.value) {
-		VulkanBuffer *vb = vk_entity_data(b->handle.value, VulkanEntityKind_Buffer);
-		result = vb->next != 0;
-	}
-	return result;
-}
-
-DEBUG_IMPORT u64
-gpu_round_up_to_sync_size(u64 size, u64 min)
-{
-	i64 round  = (i64)Max(min, vulkan_context->memory_info.non_coherent_atom_size);
-	u64 result = (u64)round_up_to((i64)size, round);
-	return result;
-}
-
 function void
 vk_command_copy_buffer(VkCommandBuffer cb, VkBuffer db, u64 destination_offset, VkBuffer sb, u64 source_offset, u64 size)
 {
@@ -2063,6 +2049,77 @@ vk_command_copy_buffer(VkCommandBuffer cb, VkBuffer db, u64 destination_offset, 
 	};
 
 	vkCmdCopyBuffer2(cb, &copy_buffer_info);
+}
+
+DEBUG_IMPORT u64
+gpu_semaphore_value(GPUSemaphore semaphore)
+{
+	VulkanSemaphore *fs = vk_entity_data(semaphore.value, VulkanEntityKind_Semaphore);
+	u64 result = fs->value;
+	return result;
+}
+
+DEBUG_IMPORT void
+gpu_host_signal_semaphore(GPUSemaphore semaphore, u64 value)
+{
+	VulkanSemaphore *vs = vk_entity_data(semaphore.value, VulkanEntityKind_Semaphore);
+	assert(vs->value < value);
+	VkSemaphoreSignalInfo ssi = {
+		.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO,
+		.semaphore = vs->semaphore,
+		.value     = value,
+	};
+	vs->value = value;
+	vkSignalSemaphore(vulkan_context->device, &ssi);
+}
+
+DEBUG_IMPORT void *
+gpu_buffer_host_pointer(GPUBuffer *b)
+{
+	void *result = 0;
+	if (b->handle.value) {
+		VulkanBuffer *vb = vk_entity_data(b->handle.value, VulkanEntityKind_Buffer);
+		result = vb->next ? vb->next->as.buffer.host_pointer : vb->host_pointer;
+	}
+	return result;
+}
+
+DEBUG_IMPORT u64
+gpu_buffer_make_visible(GPUBuffer *b, u64 offset, u64 size,
+                        GPUSemaphoreSignalInfo *signal_infos, u64 signal_info_count)
+{
+	u64 result = 0;
+	if (b->handle.value) {
+		VulkanBuffer *vb = vk_entity_data(b->handle.value, VulkanEntityKind_Buffer);
+		if (vb->memory_kind == VulkanMemoryKind_Device && vb->next) {
+			GPUCommandList cb = gpu_command_list_begin(GPUTimeline_Transfer);
+			vk_command_copy_buffer(vk_command_buffer(cb), vb->buffer, offset, vb->next->as.buffer.buffer, offset, size);
+			result = gpu_command_list_end(cb, 0, 0, signal_infos, signal_info_count);
+		} else {
+			for EachIndex(signal_info_count, index)
+				gpu_host_signal_semaphore(signal_infos[index].semaphore, signal_infos[index].value);
+		}
+	}
+	return result;
+}
+
+DEBUG_IMPORT b32
+gpu_buffer_needs_sync(GPUBuffer *b)
+{
+	b32 result = 0;
+	if (b->handle.value) {
+		VulkanBuffer *vb = vk_entity_data(b->handle.value, VulkanEntityKind_Buffer);
+		result = vb->next != 0;
+	}
+	return result;
+}
+
+DEBUG_IMPORT u64
+gpu_round_up_to_sync_size(u64 size, u64 min)
+{
+	i64 round  = (i64)Max(min, vulkan_context->memory_info.non_coherent_atom_size);
+	u64 result = (u64)round_up_to((i64)size, round);
+	return result;
 }
 
 function force_inline u64
@@ -2155,7 +2212,7 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 
 			GPUCommandList cb = gpu_command_list_begin(GPUTimeline_Transfer);
 			vk_command_copy_buffer(vk_command_buffer(cb), destination->buffer, destination_offset, db->buffer, destination_offset, size);
-			result = gpu_command_list_end(cb, (VulkanHandle){0}, (VulkanHandle){0});
+			result = gpu_command_list_end(cb, 0, 0, 0, 0);
 		}break;
 
 		InvalidDefaultCase;
@@ -2174,7 +2231,7 @@ vk_buffer_buffer_copy(VulkanBuffer *destination, VulkanBuffer *source, u64 desti
 
 			GPUCommandList cb = gpu_command_list_begin(GPUTimeline_Transfer);
 			vk_command_copy_buffer(vk_command_buffer(cb), sb->buffer, 0, source->buffer, source_offset, size);
-			u64 wait_value = gpu_command_list_end(cb, (VulkanHandle){0}, (VulkanHandle){0});
+			u64 wait_value = gpu_command_list_end(cb, 0, 0, 0, 0);
 			// TODO(rnp): asynchronous transfers
 			gpu_host_wait_timeline(GPUTimeline_Transfer, wait_value, -1ULL);
 
@@ -2409,12 +2466,12 @@ vk_image_allocate(GPUImage *image, u32 width, u32 height, u32 mips, u32 samples,
 	}
 }
 
-DEBUG_IMPORT VulkanHandle
-vk_create_semaphore(OSHandle *export)
+DEBUG_IMPORT GPUSemaphore
+gpu_semaphore_create(OSHandle *export)
 {
 	VulkanEntity *e = vk_entity_allocate(VulkanEntityKind_Semaphore);
 	e->as.semaphore = vk_make_semaphore(export);
-	VulkanHandle result = {(u64)e};
+	GPUSemaphore result = {(u64)e};
 	return result;
 }
 
@@ -2692,7 +2749,8 @@ gpu_command_wait_timeline(GPUCommandList command, GPUTimeline timeline, u64 valu
 }
 
 DEBUG_IMPORT u64
-gpu_command_list_end(GPUCommandList command, VulkanHandle wait_semaphore, VulkanHandle finished_semaphore)
+gpu_command_list_end(GPUCommandList command, GPUSemaphoreSignalInfo *wait_infos, u64 wait_info_count,
+                     GPUSemaphoreSignalInfo *signal_infos, u64 signal_info_count)
 {
 	u64 result = -1;
 	if (command.value) {
@@ -2704,6 +2762,8 @@ gpu_command_list_end(GPUCommandList command, VulkanHandle wait_semaphore, Vulkan
 
 		vkEndCommandBuffer(vcp->buffers[vcb->buffer_index]);
 
+		arena_clear(vcp->arena);
+
 		DeferLoop(take_lock(&vq->lock, -1), release_lock(&vq->lock)) {
 			VkCommandBufferSubmitInfo command_buffer_submit_info = {
 				.sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
@@ -2712,27 +2772,30 @@ gpu_command_list_end(GPUCommandList command, VulkanHandle wait_semaphore, Vulkan
 
 			result = ++vs->value;
 
-			u32 signal_submit_info_count = 1;
-			VkSemaphoreSubmitInfo signal_submit_infos[2] = {{
+			VkSemaphoreSubmitInfo *signal_submit_infos = push_array(vcp->arena, VkSemaphoreSubmitInfo, signal_info_count + 1);
+			signal_submit_infos[0] = (VkSemaphoreSubmitInfo){
 				.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
 				.semaphore = vs->semaphore,
 				.value     = result,
 				.stageMask = vq->pipeline_stage_flags,
-			}};
+			};
 
-			if ValidVulkanHandle(finished_semaphore) {
-				VulkanSemaphore *fs = vk_entity_data(finished_semaphore.value[0], VulkanEntityKind_Semaphore);
-				signal_submit_infos[signal_submit_info_count++] = (VkSemaphoreSubmitInfo){
+			for EachIndex(signal_info_count, index) {
+				VulkanSemaphore *fs = vk_entity_data(signal_infos[index].semaphore.value, VulkanEntityKind_Semaphore);
+				signal_submit_infos[index + 1] = (VkSemaphoreSubmitInfo){
 					.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
 					.semaphore = fs->semaphore,
+					.value     = signal_infos[index].value,
 					.stageMask = vq->pipeline_stage_flags,
 				};
+				fs->value = signal_infos[index].value;
 			}
 
 			u32 wait_submit_info_count = 0;
-			VkSemaphoreSubmitInfo wait_submit_infos[VulkanQueueKind_Count + 1];
-			for (u32 i = 0; i < vk->unique_queues; i++) {
-				u32 queue_index = vk->queue_indices[i];
+			VkSemaphoreSubmitInfo *wait_submit_infos = push_array(vcp->arena, VkSemaphoreSubmitInfo,
+			                                                      wait_info_count + VulkanQueueKind_Count + 1);
+			for EachIndex(vk->unique_queues, index) {
+				u32 queue_index = vk->queue_indices[index];
 				if (vcb->in_flight_wait_values[queue_index] > 0) {
 					VulkanQueue *q = vk->queues[queue_index];
 					VkSemaphoreSubmitInfo wait_ssi = {
@@ -2745,11 +2808,12 @@ gpu_command_list_end(GPUCommandList command, VulkanHandle wait_semaphore, Vulkan
 				}
 			}
 
-			if ValidVulkanHandle(wait_semaphore) {
-				VulkanSemaphore *ws = vk_entity_data(wait_semaphore.value[0], VulkanEntityKind_Semaphore);
+			for EachIndex(wait_info_count, index) {
+				VulkanSemaphore *fs = vk_entity_data(wait_infos[index].semaphore.value, VulkanEntityKind_Semaphore);
 				wait_submit_infos[wait_submit_info_count++] = (VkSemaphoreSubmitInfo){
 					.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-					.semaphore = ws->semaphore,
+					.semaphore = fs->semaphore,
+					.value     = wait_infos[index].value,
 					.stageMask = vq->pipeline_stage_flags,
 				};
 			}
@@ -2760,7 +2824,7 @@ gpu_command_list_end(GPUCommandList command, VulkanHandle wait_semaphore, Vulkan
 				.pCommandBufferInfos      = &command_buffer_submit_info,
 				.waitSemaphoreInfoCount   = wait_submit_info_count,
 				.pWaitSemaphoreInfos      = wait_submit_infos,
-				.signalSemaphoreInfoCount = signal_submit_info_count,
+				.signalSemaphoreInfoCount = signal_info_count + 1,
 				.pSignalSemaphoreInfos    = signal_submit_infos,
 			};
 

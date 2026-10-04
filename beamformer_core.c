@@ -1,8 +1,5 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
- * [ ]: refactor: make better use Transfer timeline semaphore to not stall compute thread
- *      while upload is occuring. rf thread should do: get next timeline semaphore value, insert
- *      into wait values array, atomic_inc insertion index, start upload, signal timeline semaphore
  * [ ]: backtrace dumping on SIGSEGV
  * [ ]: cooperative shared memory loading in decode shader
  * [ ]: refactor: save filter parameters with rest of parameters, whole slot thing is dumb
@@ -288,7 +285,7 @@ gpu_resource_build_end(GPUResourceBuilder *rb, GPUBuffer *buffer)
 			last_wait_value = gpu_buffer_range_upload(buffer, r->data, r->offset, r->size, 0);
 
 	// TODO(rnp): cleanup this pointless stall
-	if (vk_buffer_needs_sync(buffer))
+	if (gpu_buffer_needs_sync(buffer))
 		gpu_host_wait_timeline(GPUTimeline_Transfer, last_wait_value, -1ULL);
 }
 
@@ -1596,19 +1593,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 
 			// NOTE(rnp): the library/ui will ensure that any time a new dataset is uploaded
 			// the next time beamforming is issued it will be tagged as WaitThenCompute.
-			// In this case we need to stall until the rf thread has finished its upload.
-			if (work->kind == BeamformerWorkKind_WaitThenCompute) {
-				// TODO(rnp): this shouldn't be necessary, there should be a way of communicating
-				// what the value will be so that the only the command wait is needed.
-				spin_wait(atomic_load_u64(&rf->insertion_index) <= compute_index);
-
-				/* NOTE(rnp): if the GPU supports BAR there may be no need to synchronize
-				 * other than the above spin */
-				if (vk_buffer_needs_sync(&rf->buffer))
-					gpu_command_wait_timeline(cmd, GPUTimeline_Transfer, rf->upload_complete_values[slot]);
-			} else {
+			if (work->kind != BeamformerWorkKind_WaitThenCompute)
 				slot = (compute_index - 1) % countof(rf->upload_complete_values);
-			}
 
 			// NOTE(rnp): nvidia needs a memory barrier between pipeline stages
 			// for correct output. It doesn't seem to effect performance on nvidia cards.
@@ -1665,7 +1651,16 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				do_compute_shader(cmd, cp, frame, 0, 0, i, 0);
 				gpu_command_timestamp(cmd);
 			}
-			u64 end_timeline_value = gpu_command_list_end(cmd, (VulkanHandle){0}, (VulkanHandle){0});
+
+			u32 wait_info_count = 0;
+			GPUSemaphoreSignalInfo wait_info = {.semaphore = rf->upload_semaphore};
+			if (work->kind == BeamformerWorkKind_WaitThenCompute) {
+				spin_wait(atomic_load_u64(&rf->insertion_index) <= compute_index);
+				wait_info.value = atomic_load_u64(rf->upload_complete_values + slot);
+				wait_info_count = 1;
+			}
+
+			u64 end_timeline_value = gpu_command_list_end(cmd, &wait_info, wait_info_count, 0, 0);
 			atomic_store_u64(rf->compute_complete_values + slot, end_timeline_value);
 
 			if (work->kind == BeamformerWorkKind_WaitThenCompute)
@@ -1829,21 +1824,27 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		u64 slot = rf->insertion_index % countof(rf->upload_complete_values);
 
 		/* NOTE(rnp): don't overwrite slot if the compute thread hasn't processed it */
-		spin_wait(atomic_load_u64(&rf->compute_index) < rf->insertion_index);
+		spin_wait(rf->insertion_index - atomic_load_u64(&rf->compute_index) >= countof(rf->upload_complete_values));
 		gpu_host_wait_timeline(GPUTimeline_Compute, rf->compute_complete_values[slot], -1ULL);
 
 		assert((ctx->shared_memory_size % os_system_info()->page_size) == 0 &&
 		       (os_system_info()->page_size % gpu_round_up_to_sync_size(1, 64)) == 0);
-		u64 wait_value = gpu_buffer_range_upload(&rf->buffer, beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size),
-		                                         slot * rf->active_rf_size, rf->active_rf_size, 1);
-		store_fence();
 
-		beamformer_shared_memory_release_lock(ctx->shared_memory, (i32)scratch_lock);
-		post_sync_barrier(ctx->shared_memory, upload_lock);
-
+		u64 wait_value = gpu_semaphore_value(rf->upload_semaphore) + 1;
 		atomic_store_u64(rf->upload_complete_values + slot, wait_value);
 		atomic_add_u64(&rf->insertion_index, 1);
 
+		void *host_pointer = gpu_buffer_host_pointer(&rf->buffer);
+		memory_copy_non_temporal((u8 *)host_pointer + slot * rf->active_rf_size,
+		                         beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size),
+		                         rf->active_rf_size);
+		store_fence();
+
+		GPUSemaphoreSignalInfo signal_info = {.semaphore = rf->upload_semaphore, .value = wait_value};
+		gpu_buffer_make_visible(&rf->buffer, slot * rf->active_rf_size, rf->active_rf_size, &signal_info, 1);
+
+		beamformer_shared_memory_release_lock(ctx->shared_memory, (i32)scratch_lock);
+		post_sync_barrier(ctx->shared_memory, upload_lock);
 		os_wake_all_waiters(ctx->compute_worker_sync);
 
 		u64 current_time = os_timer_count();

@@ -365,7 +365,7 @@ typedef struct {
 	VulkanHandle    pipelines[BeamformerShaderKind_RenderCount];
 
 	OSHandle        render_semaphores_export[2];
-	VulkanHandle    render_semaphores[2];
+	GPUSemaphore    render_semaphores[2];
 	u32             render_semaphores_gl[2];
 
 	GPUImage        render_3d_image;
@@ -866,7 +866,7 @@ beamformer_ui_frame_view_copy_frame(BeamformerFrameView *new, BeamformerFrameVie
 	gpu_command_wait_timeline(cmd, GPUTimeline_Compute, old->frame.timeline_valid_value);
 	u64 offset = old->frame.gpu_pointer - buffer->gpu_pointer;
 	gpu_command_copy_buffer(cmd, &new->copy_buffer, 0, buffer, offset, frame_size);
-	new->frame.timeline_valid_value = gpu_command_list_end(cmd, (VulkanHandle){0}, (VulkanHandle){0});
+	new->frame.timeline_valid_value = gpu_command_list_end(cmd, 0, 0, 0, 0);
 }
 
 function BeamformerFrameView *
@@ -1146,7 +1146,9 @@ update_frame_views(BeamformerUI *ui, Rect window)
 				render_2d_plane(view, cmd, &pc);
 			}
 			gpu_command_end_rendering(cmd);
-			gpu_command_list_end(cmd, ui->render_semaphores[0], ui->render_semaphores[1]);
+			GPUSemaphoreSignalInfo wait_info   = {.semaphore = ui->render_semaphores[0]};
+			GPUSemaphoreSignalInfo signal_info = {.semaphore = ui->render_semaphores[1]};
+			gpu_command_list_end(cmd, &wait_info, 1, &signal_info, 1);
 
 			glWaitSemaphoreEXT(ui->render_semaphores_gl[1], 0, 0, 1, &view->texture, (GLenum[]){GL_LAYOUT_COLOR_ATTACHMENT_EXT});
 
@@ -5119,7 +5121,7 @@ ui_init(BeamformerCtx *ctx, Arena *store)
 
 		glGenSemaphoresEXT(countof(ui->render_semaphores_gl), ui->render_semaphores_gl);
 		for EachElement(ui->render_semaphores, it)
-			ui->render_semaphores[it] = vk_create_semaphore(ui->render_semaphores_export + it);
+			ui->render_semaphores[it] = gpu_semaphore_create(ui->render_semaphores_export + it);
 
 		if (OS_WINDOWS) {
 			glImportSemaphoreWin32HandleEXT(ui->render_semaphores_gl[0], GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, (void *)ui->render_semaphores_export[0].value[0]);

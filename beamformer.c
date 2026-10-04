@@ -152,6 +152,8 @@ function OS_THREAD_ENTRY_POINT_FN(beamformer_upload_entry_point)
 	GLWorkerThreadContext         *ctx = user_context;
 	BeamformerUploadThreadContext *up  = (typeof(up))ctx->user_context;
 
+	up->rf_buffer->upload_semaphore = gpu_semaphore_create(0);
+
 	for (;;) {
 		worker_thread_sleep(ctx, up->shared_memory);
 		beamformer_rf_upload(up);
