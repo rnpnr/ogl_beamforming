@@ -55,7 +55,7 @@ layout(std430, buffer_reference) readonly buffer F16V4 { f16vec4 x[]; };
 #define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
 #define TX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 4, 4)
 
-#define C_SPLINE 0.5
+const f32 C_SPLINE = 0.5f;
 
 #if InputDataKind == DataKind_Float32Complex || InputDataKind == DataKind_Float16Complex
 vec2 rotate_iq(const vec2 iq, const float time)
@@ -89,13 +89,6 @@ u64 rf_data_pointer(const u32 channel, const u32 acquisition)
 /* NOTE: See: https://cubic.org/docs/hermite.htm */
 SAMPLE_TYPE cubic(const u64 rf_pointer, const f32 t)
 {
-	const mat4 h = mat4(
-		 2, -3,  0, 1,
-		-2,  3,  0, 0,
-		 1, -2,  1, 0,
-		 1, -1,  0, 0
-	);
-
 	#if InputDataKind == DataKind_Float32
 		f32vec4 samples = F32V4(rf_pointer).x[0];
 	#elif InputDataKind == DataKind_Float16
@@ -117,18 +110,42 @@ SAMPLE_TYPE cubic(const u64 rf_pointer, const f32 t)
 		samples[3] = load2.zw;
 	#endif
 
-	vec4        Sh = vec4(t * t * t, t * t, t, 1) * h;
-	SAMPLE_TYPE P1 = samples[1];
-	SAMPLE_TYPE P2 = samples[2];
-	SAMPLE_TYPE T1 = C_SPLINE * (P2 - samples[0]);
-	SAMPLE_TYPE T2 = C_SPLINE * (samples[3] - P1);
+	SAMPLE_TYPE result;
+	if (C_SPLINE == 0.5f) {
+		// NOTE(rnp): expanded Catmull-Rom spline
+		// (mathematically equivalent but easier on the compiler)
+		SAMPLE_TYPE P0 = samples[0];
+		SAMPLE_TYPE P1 = samples[1];
+		SAMPLE_TYPE P2 = samples[2];
+		SAMPLE_TYPE P3 = samples[3];
 
-	#if   InputDataKind == DataKind_Float32 || InputDataKind == DataKind_Float16
-		SAMPLE_TYPE result = dot(Sh, vec4(P1, P2, T1, T2));
-	#else
-		mat2x4 C = mat2x4(vec4(P1.x, P2.x, T1.x, T2.x), vec4(P1.y, P2.y, T1.y, T2.y));
-		SAMPLE_TYPE result = Sh * C;
-	#endif
+		SAMPLE_TYPE a = 0.5f * (-P0 + 3.f * (P1 - P2) + P3);
+		SAMPLE_TYPE b = P0 - 2.5f * P1 + 2.f * P2 - 0.5f * P3;
+		SAMPLE_TYPE c = 0.5f * (P2 - P0);
+
+		result = ((a * t + b) * t + c) * t + P1;
+	} else {
+		const mat4 h = mat4(
+			 2, -3,  0, 1,
+			-2,  3,  0, 0,
+			 1, -2,  1, 0,
+			 1, -1,  0, 0
+		);
+
+		vec4        Sh = vec4(t * t * t, t * t, t, 1) * h;
+		SAMPLE_TYPE P1 = samples[1];
+		SAMPLE_TYPE P2 = samples[2];
+		SAMPLE_TYPE T1 = C_SPLINE * (P2 - samples[0]);
+		SAMPLE_TYPE T2 = C_SPLINE * (samples[3] - P1);
+
+		#if   InputDataKind == DataKind_Float32 || InputDataKind == DataKind_Float16
+			result = dot(Sh, vec4(P1, P2, T1, T2));
+		#else
+			mat2x4 C = mat2x4(vec4(P1.x, P2.x, T1.x, T2.x), vec4(P1.y, P2.y, T1.y, T2.y));
+			result = Sh * C;
+		#endif
+	}
+
 	return result;
 }
 
