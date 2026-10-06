@@ -3581,7 +3581,7 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 			}
 
 			UIParent(label_column) ui_label(str8("Interpolation"));
-			UIParent(unit_column)  ui_build_node_from_key(0, ui_node_key_zero());
+			UIParent(unit_column)  UIPrefHeight(ui_em(1.f, 1.f)) ui_spacer(0);
 			UIParent(value_column)
 			UIFlags(UINodeFlag_Scroll)
 			{
@@ -3984,6 +3984,9 @@ ui_panel_group_equip(UINode *node, BeamformerUIPanel *group)
 
 				UISignal signal = {0};
 				UIParent(tab_node)
+				UIPrefWidth(ui_text_dim(2.f, 1.f))
+				UIPrefHeight(ui_pct(1.f, 1.f))
+				UITextAlign(Center)
 				{
 					ui_padw(UI_BORDER_THICK + tab_pad);
 
@@ -3994,12 +3997,9 @@ ui_panel_group_equip(UINode *node, BeamformerUIPanel *group)
 
 					b32 has_settings = (beamformer_panel_infos[tab->kind].flags & BeamformerPanelFlags_HasSettings) != 0;
 					if (tab == focus && has_settings)
-					UIPrefWidth(ui_text_dim(2.f, 1.f))
-					UIPrefHeight(ui_pct(1.f, 1.f))
-					UITextAlign(Right)
 					UIFlags(UINodeFlag_IconText)
 					{
-						ui_padw(0.5f * UI_NODE_PAD);
+						ui_padw(UI_NODE_PAD);
 
 						signal = ui_label_button(str8("+"));
 						if ui_pressed(signal)
@@ -4008,9 +4008,6 @@ ui_panel_group_equip(UINode *node, BeamformerUIPanel *group)
 
 					ui_padw(0.5f * UI_NODE_PAD);
 
-					UIPrefWidth(ui_text_dim(2.f, 1.f))
-					UIPrefHeight(ui_pct(1.f, 1.f))
-					UITextAlign(Center)
 					UIFlags(UINodeFlag_IconText)
 					signal = ui_label_button(str8("x"));
 					if (ui_pressed(signal) || signal.flags & UISignalFlag_MiddlePressed)
@@ -4837,7 +4834,6 @@ ui_draw_nodes(UINode *root, Rect window_rect)
 	} stack = {init, 0, countof(init)};
 
 	u32 colour_index = 0;
-	(void)colour_index;
 
 	da_push(ui_build_arena(), &stack)->node = root;
 	while (stack.count) {
@@ -4857,8 +4853,11 @@ ui_draw_nodes(UINode *root, Rect window_rect)
 				rlTranslatef(-view_off.x, -view_off.y, 0);
 			}
 
-			//v4 colour = g_colour_palette[(colour_index++) % countof(g_colour_palette)];
-			//DrawRectangleLinesEx(rl_rect(r), 4.0f, colour_from_normalized(colour));
+			// NOTE(rnp): debug node bounds drawing
+			if (0) {
+				v4 colour = g_colour_palette[(colour_index++) % countof(g_colour_palette)];
+				DrawRectangleLinesEx(rl_rect(r), 4.0f, colour_from_normalized(colour));
+			}
 
 			v4 bg_colour = node->bg_colour;
 			if (node->flags & UINodeFlag_DrawHotEffects)
