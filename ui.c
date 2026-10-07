@@ -2228,6 +2228,54 @@ ui_text_boxf(const char *format, ...)
 	return result;
 }
 
+#define ui_table_begin(columns, spacing, ...) 	ui_table_begin_(columns, spacing, arg_list(UIAlign, __VA_ARGS__))
+function void
+ui_table_begin_(UINode **columns, f32 spacing, UIAlign *align, u64 column_count)
+{
+	UIChildLayoutAxis(Axis2_Y)
+	UIPrefWidth(ui_children_sum(1.f))
+	UIPrefHeight(ui_children_sum(1.f))
+	for EachIndex(column_count, c) {
+		if (c != 0) ui_padw(spacing);
+		DeferLoop(ui_push_axis_alignment(Axis2_X, align[c]), ui_pop_axis_alignment(Axis2_X))
+			columns[c] = ui_node_from_stringf(0, "###c%u", (u32)c);
+	}
+}
+
+#define ui_context_menu_default_equip(left_column, right_column, spacing, ...)\
+	ui_context_menu_default_equip_(left_column, right_column, spacing, arg_list(UIAlign, __VA_ARGS__))
+
+function UINode *
+ui_context_menu_default_equip_(UINode **left_column, UINode **right_column, f32 spacing, UIAlign *align, u64 column_count)
+{
+	assert(column_count == 0 || column_count == 2);
+	UIAlign default_align[2] = {UIAlign_Left, UIAlign_Center};
+	if (column_count == 0) {
+		align = default_align;
+		column_count = 2;
+	}
+
+	UINode *columns[2] = {0};
+	UIParent(ui_context->context_menu_root)
+	UIChildLayoutAxis(Axis2_X)
+	UIPrefHeight(ui_children_sum(1.f))
+	UIPrefWidth(ui_children_sum(1.f))
+	UIParent(ui_spacer(0))
+	{
+		ui_padw(UI_NODE_PAD);
+		if (left_column == 0 && right_column == 0) {
+			columns[0] = ui_spacer(0);
+			columns[0]->child_layout_axis = Axis2_Y;
+		} else {
+			ui_table_begin_(columns, spacing, align, column_count);
+		}
+		ui_padw(UI_NODE_PAD);
+	}
+	if (left_column)  *left_column  = columns[0];
+	if (right_column) *right_column = columns[1];
+	return columns[0];
+}
+
 function b32
 ui_tweak_f32_compute_variable(UISignal signal, f32 *value, f32 text_scale, f32 scroll_scale, v2 limits)
 {
@@ -2604,19 +2652,16 @@ ui_build_frame_view_overlay(UINode *frame_view, BeamformerFrameView *view, v2 mi
 		{
 			ui_padw(2.f * UI_NODE_PAD);
 
-			UINode *label_column, *value_column, *unit_column;
+			UINode *columns[3];
 			UIAxisAlign(Axis2_X, Left)
 			UIAxisAlign(Axis2_Y, Left)
 			UIPrefWidth(ui_children_sum(1.f))
 			UIParent(ui_spacer(0))
-			UIChildLayoutAxis(Axis2_Y)
-			{
-				label_column = ui_node_from_string(0, str8("###labels"));
-				ui_padw(UI_NODE_PAD);
-				value_column = ui_node_from_string(0, str8("###values"));
-				ui_padw(UI_NODE_PAD);
-				unit_column  = ui_node_from_string(0, str8("###units"));
-			}
+			ui_table_begin(columns, UI_NODE_PAD, UIAlign_Left, UIAlign_Left, UIAlign_Left);
+
+			UINode *label_column = columns[0];
+			UINode *value_column = columns[1];
+			UINode *unit_column  = columns[2];
 
 			UIPrefWidth(ui_text_dim(1.f, 1.f))
 			UIPrefHeight(ui_text_dim(1.f, 1.f))
@@ -2679,20 +2724,7 @@ function void
 ui_build_3d_xplane_context_menu(BeamformerFrameView *view)
 {
 	UINode *label_column, *button_column;
-	UIParent(ui_context->context_menu_root)
-	UIChildLayoutAxis(Axis2_X)
-	UIPrefHeight(ui_children_sum(1.f))
-	UIPrefWidth(ui_children_sum(1.f))
-	UIParent(ui_spacer(0))
-	UIChildLayoutAxis(Axis2_Y)
-	{
-		ui_padw(UI_NODE_PAD);
-		UIAxisAlign(Axis2_X, Left)   label_column  = ui_node_from_string(0, str8("###labels"));
-		ui_padw(UI_NODE_PAD * 2.f);
-		UIAxisAlign(Axis2_X, Center)
-			button_column = ui_node_from_string(0, str8("###buttons"));
-		ui_padw(UI_NODE_PAD);
-	}
+	ui_context_menu_default_equip(&label_column, &button_column, UI_NODE_PAD);
 
 	UIPrefHeight(ui_text_dim(1.1f, 1.f))
 	UIPrefWidth(ui_text_dim(1.f, 1.f))
@@ -2901,20 +2933,7 @@ function void
 ui_build_frame_view_context_menu(BeamformerUIPanel *panel, BeamformerFrameView *view)
 {
 	UINode *label_column, *button_column;
-	UIParent(ui_context->context_menu_root)
-	UIChildLayoutAxis(Axis2_X)
-	UIPrefHeight(ui_children_sum(1.f))
-	UIPrefWidth(ui_children_sum(1.f))
-	UIParent(ui_spacer(0))
-	UIChildLayoutAxis(Axis2_Y)
-	{
-		ui_padw(UI_NODE_PAD);
-		UIAxisAlign(Axis2_X, Left)   label_column  = ui_node_from_string(0, str8("###labels"));
-		ui_padw(UI_NODE_PAD * 2.f);
-		UIAxisAlign(Axis2_X, Center)
-			button_column = ui_node_from_string(0, str8("###buttons"));
-		ui_padw(UI_NODE_PAD);
-	}
+	ui_context_menu_default_equip(&label_column, &button_column, UI_NODE_PAD);
 
 	UIPrefHeight(ui_text_dim(1.1f, 1.f))
 	UIPrefWidth(ui_text_dim(1.f, 1.f))
@@ -3235,18 +3254,12 @@ ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t, Beamforme
 	{
 		ui_top_parent()->child_layout_axis = Axis2_X;
 
-		UINode *label_column, *value_column, *unit_column;
-		UIAxisAlign(Axis2_X, Left)
-		UIChildLayoutAxis(Axis2_Y)
-		UIPrefWidth(ui_children_sum(1.0f))
-		UIPrefHeight(ui_children_sum(1.0f))
-		{
-			label_column = ui_node_from_string(0, str8("###labels"));
-			ui_padw(UI_NODE_PAD);
-			value_column = ui_node_from_string(0, str8("###values"));
-			ui_padw(UI_NODE_PAD);
-			unit_column  = ui_node_from_string(0, str8("###units"));
-		}
+		UINode *columns[3];
+		ui_table_begin(columns, UI_NODE_PAD, UIAlign_Left, UIAlign_Left, UIAlign_Left);
+
+		UINode *label_column = columns[0];
+		UINode *value_column = columns[1];
+		UINode *unit_column  = columns[2];
 
 		UIPrefWidth(ui_text_dim(1.0f, 1.0f))
 		UIPrefHeight(ui_text_dim(1.05f, 1.0f))
@@ -3277,72 +3290,54 @@ ui_build_compute_stats(BeamformerComputePlan *cp, f32 broken_shader_t, Beamforme
 				}
 
 				if (ui_node_key_equal(ui_context->context_menu_anchor_key, signal.node->key)) {
-					UIParent(ui_context->context_menu_root)
-					UIChildLayoutAxis(Axis2_X)
-					UIPrefHeight(ui_children_sum(1.f))
-					UIPrefWidth(ui_children_sum(1.f))
-					UIParent(ui_spacer(0))
+					UIParent(ui_context_menu_default_equip(0, 0, 0))
 					{
-						ui_padw(UI_NODE_PAD);
 						UIPrefHeight(ui_text_dim(1.1f, 1.f))
-						UIPrefWidth(ui_text_dim(1.f, 1.f))
 						ui_label(push_str8_from_parts(ui_build_arena(), str8(""), shader, str8(" Configuration")));
 					}
 
-					UIParent(ui_context->context_menu_root)
-					UIChildLayoutAxis(Axis2_X)
-					UIPrefHeight(ui_children_sum(1.f))
-					UIPrefWidth(ui_children_sum(1.f))
-					UIParent(ui_spacer(0))
-					UIChildLayoutAxis(Axis2_Y)
+					UINode *left, *right;
+					ui_context_menu_default_equip(&left, &right, 2 * UI_NODE_PAD, UIAlign_Left, UIAlign_Left);
+
+					UIPrefHeight(ui_text_dim(1.1f, 1.f))
+					UIPrefWidth(ui_text_dim(1.f, 1.f))
+					UIFontSize(24.f)
 					{
-						UINode *left, *right;
-						ui_padw(UI_NODE_PAD);
-						left = ui_node_from_string(0, str8("###left"));
-						ui_padw(UI_NODE_PAD * 2.f);
-						right = ui_node_from_string(0, str8("###right"));
-						ui_padw(UI_NODE_PAD);
+						BeamformerShaderDescriptor *sd = cp->shader_descriptors + it;
+						UIParent(left)  ui_label(str8("Layout"));
+						UIParent(right) ui_labelf("{%u, %u, %u}###layout", sd->layout.x, sd->layout.y, sd->layout.z);
+						UIParent(left)  ui_label(str8("Dispatch"));
+						UIParent(right) ui_labelf("{%u, %u, %u}###dispatch", sd->dispatch.x, sd->dispatch.y, sd->dispatch.z);
+						UIParent(left)  ui_label(str8("Input"));
+						UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
+						                                              beamformer_data_kind_str8[sd->input_data_kind],
+						                                              str8("##input_kind")));
+						UIParent(left)  ui_label(str8("Output"));
+						UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
+						                                              beamformer_data_kind_str8[sd->output_data_kind],
+						                                              str8("##output_kind")));
 
-						UIPrefHeight(ui_text_dim(1.1f, 1.f))
-						UIPrefWidth(ui_text_dim(1.f, 1.f))
-						UIFontSize(24.f)
-						{
-							BeamformerShaderDescriptor *sd = cp->shader_descriptors + it;
-							UIParent(left)  ui_label(str8("Layout"));
-							UIParent(right) ui_labelf("{%u, %u, %u}###layout", sd->layout.x, sd->layout.y, sd->layout.z);
-							UIParent(left)  ui_label(str8("Dispatch"));
-							UIParent(right) ui_labelf("{%u, %u, %u}###dispatch", sd->dispatch.x, sd->dispatch.y, sd->dispatch.z);
-							UIParent(left)  ui_label(str8("Input"));
+						if (beamformer_shader_compile_flag_counts[reloadable_index])
+						for EachIndex(beamformer_shader_compile_flag_counts[reloadable_index], bit) {
+							str8 *flags = (str8 *)beamformer_shader_compile_flag_names[reloadable_index];
+							b32   set   = sd->compile_flags & (1u << bit);
+							UIParent(left)  ui_label(flags[bit]);
 							UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
-							                                              beamformer_data_kind_str8[sd->input_data_kind],
-							                                              str8("##input_kind")));
-							UIParent(left)  ui_label(str8("Output"));
-							UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
-							                                              beamformer_data_kind_str8[sd->output_data_kind],
-							                                              str8("##output_kind")));
+							                                              set ? str8("True") : str8("False"),
+							                                              str8("##"), flags[bit]));
+						}
 
-							if (beamformer_shader_compile_flag_counts[reloadable_index])
-							for EachIndex(beamformer_shader_compile_flag_counts[reloadable_index], bit) {
-								str8 *flags = (str8 *)beamformer_shader_compile_flag_names[reloadable_index];
-								b32   set   = sd->compile_flags & (1u << bit);
-								UIParent(left)  ui_label(flags[bit]);
-								UIParent(right) ui_label(push_str8_from_parts(ui_build_arena(), str8(""),
-								                                              set ? str8("True") : str8("False"),
-								                                              str8("##"), flags[bit]));
-							}
-
-							i32 struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];
-							if (struct_id != -1) {
-								const str8             *names = meta_struct_member_names_by_id[struct_id];
-								const MetaStructInfo   *si    = meta_struct_info_by_id + struct_id;
-								const MetaStructMember *sm    = meta_struct_members_by_id[struct_id];
-								for EachIndex(si->member_count, member) {
-									Stream sb = arena_stream(ui_build_arena());
-									stream_append_struct_member(&sb, sm + member, &sd->bake);
-									stream_append_str8s(&sb, str8("##"), names[member]);
-									UIParent(left)  ui_label(names[member]);
-									UIParent(right) ui_label(arena_stream_commit(ui_build_arena(), &sb));
-								}
+						i32 struct_id = beamformer_base_shader_to_bake_struct_id[reloadable_index];
+						if (struct_id != -1) {
+							const str8             *names = meta_struct_member_names_by_id[struct_id];
+							const MetaStructInfo   *si    = meta_struct_info_by_id + struct_id;
+							const MetaStructMember *sm    = meta_struct_members_by_id[struct_id];
+							for EachIndex(si->member_count, member) {
+								Stream sb = arena_stream(ui_build_arena());
+								stream_append_struct_member(&sb, sm + member, &sd->bake);
+								stream_append_str8s(&sb, str8("##"), names[member]);
+								UIParent(left)  ui_label(names[member]);
+								UIParent(right) ui_label(arena_stream_commit(ui_build_arena(), &sb));
 							}
 						}
 					}
@@ -3379,20 +3374,7 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 
 	if ui_context_menu(panel) {
 		UINode *label_column, *button_column;
-		UIParent(ui->context_menu_root)
-		UIChildLayoutAxis(Axis2_X)
-		UIPrefHeight(ui_children_sum(1.f))
-		UIPrefWidth(ui_children_sum(1.f))
-		UIParent(ui_spacer(0))
-		UIChildLayoutAxis(Axis2_Y)
-		{
-			ui_padw(UI_NODE_PAD);
-			UIAxisAlign(Axis2_X, Left)   label_column  = ui_node_from_string(0, str8("###labels"));
-			ui_padw(UI_NODE_PAD * 2.f);
-			UIAxisAlign(Axis2_X, Center)
-				button_column = ui_node_from_string(0, str8("###buttons"));
-			ui_padw(UI_NODE_PAD);
-		}
+		ui_context_menu_default_equip(&label_column, &button_column, UI_NODE_PAD);
 
 		UIPrefHeight(ui_text_dim(1.1f, 1.f))
 		UIPrefWidth(ui_text_dim(1.f, 1.f))
@@ -3418,17 +3400,12 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 	{
 		ui_top_parent()->child_layout_axis = Axis2_X;
 
-		UINode *label_column, *value_column, *unit_column;
-		UIChildLayoutAxis(Axis2_Y)
-		UIPrefWidth(ui_children_sum(1.0f))
-		UIPrefHeight(ui_children_sum(1.0f))
-		{
-			UIAxisAlign(Axis2_X, Left)   label_column = ui_node_from_string(0, str8("###labels"));
-			ui_padw(UI_NODE_PAD);
-			UIAxisAlign(Axis2_X, Center) value_column = ui_node_from_string(0, str8("###values"));
-			ui_padw(UI_NODE_PAD);
-			UIAxisAlign(Axis2_X, Right)  unit_column  = ui_node_from_string(0, str8("###units"));
-		}
+		UINode *columns[3];
+		ui_table_begin(columns, UI_NODE_PAD, UIAlign_Left, UIAlign_Center, UIAlign_Right);
+
+		UINode *label_column = columns[0];
+		UINode *value_column = columns[1];
+		UINode *unit_column  = columns[2];
 
 		f32 line_pad_pct = 1.05f;
 		UIPrefWidth(ui_text_dim(1.f, 1.f))
@@ -3659,20 +3636,14 @@ ui_build_live_imaging_controls(BeamformerUIPanel *panel)
 
 			if ui_context_menu(panel) {
 				u64 enabled_kinds = atomic_load_u64(&lip->acquisition_kind_enabled_flags);
-
-				UIParent(ui_context->context_menu_root)
+				if (enabled_kinds)
 				UIFontSize(24.f)
-				UIChildLayoutAxis(Axis2_X)
-				UIPrefHeight(ui_children_sum(1.f))
-				UIPrefWidth(ui_children_sum(1.f))
+				UIParent(ui_context_menu_default_equip(0, 0, 0))
 				for EachBit(enabled_kinds, kind)
-				UIParent(ui_spacer(0))
 				{
-					ui_padw(UI_NODE_PAD);
 					UIPrefHeight(ui_text_dim(1.1f, 1.f))
 					UIPrefWidth(ui_text_dim(1.f, 1.f))
 						signal = ui_label_button(beamformer_acquisition_kind_strings[kind]);
-					ui_padw(UI_NODE_PAD);
 
 					if ui_pressed(signal) {
 						ui_context_menu_close();
@@ -3778,7 +3749,6 @@ ui_build_live_imaging_controls(BeamformerUIPanel *panel)
 				UIChildLayoutAxis(Axis2_X)
 				UIAxisAlign(Axis2_X, Center)
 				spacer = ui_spacer(0);
-				UIParent(spacer)
 
 				UIParent(spacer)
 				UITextAlign(Center)
@@ -4042,30 +4012,22 @@ ui_panel_group_equip(UINode *node, BeamformerUIPanel *group)
 				ui_context_menu_open(signal.node->key, group);
 
 			if ui_context_menu(group) {
-				UIParent(ui_context->context_menu_root)
-				UIChildLayoutAxis(Axis2_X)
-				UIPrefHeight(ui_children_sum(1.f))
-				UIPrefWidth(ui_children_sum(1.f))
+				UIParent(ui_context_menu_default_equip(0, 0, 0))
 				for EachElement(beamformer_panel_infos, it)
 				{
 					const BeamformerPanelInfo *info = beamformer_panel_infos + it;
 					b32 list        = (info->flags & BeamformerPanelFlags_List) != 0;
 					b32 needs_frame = (info->flags & BeamformerPanelFlags_NeedsFrame) != 0;
 					if (list && (!needs_frame || beamformer_frame_valid(beamformer_registers()->frame))) {
-						UIParent(ui_spacer(0))
-						{
-							ui_padw(UI_NODE_PAD);
-							UIPrefHeight(ui_text_dim(1.1f, 1.f))
-							UIPrefWidth(ui_text_dim(1.f, 1.f))
-								signal = ui_label_button(info->display);
-							ui_padw(UI_NODE_PAD);
+						UIPrefHeight(ui_text_dim(1.1f, 1.f))
+						UIPrefWidth(ui_text_dim(1.f, 1.f))
+							signal = ui_label_button(info->display);
 
-							if ui_pressed(signal) {
-								ui_context_menu_close();
-								beamformer_command(beamformer_command_infos[BeamformerCommandKind_OpenTab].string,
-								                   .tree_node = (u64)group,
-								                   .string    = info->string);
-							}
+						if ui_pressed(signal) {
+							ui_context_menu_close();
+							beamformer_command(beamformer_command_infos[BeamformerCommandKind_OpenTab].string,
+							                   .tree_node = (u64)group,
+							                   .string    = info->string);
 						}
 					}
 				}
