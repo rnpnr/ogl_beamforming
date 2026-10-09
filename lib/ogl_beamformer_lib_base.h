@@ -7,6 +7,8 @@
   #endif
 #endif
 
+#define BEAMFORMER_LIB_HANDLE(kind) struct kind##_T; typedef struct kind##_T *kind;
+
 #define BEAMFORMER_LIB_ERRORS \
 	X(None,                          0, "None") \
 	X(VersionMismatch,               1, "host-library version mismatch")                     \
@@ -29,10 +31,14 @@
 	X(SyncVariable,                 18, "failed to acquire lock within timeout period")      \
 	X(FrameSizeOverflow,            19, "maximum frame size exceeded")                       \
 	X(RFDataSizeOverflow,           20, "raw rf size exceeds available GPU space")           \
+	X(ParameterSetHandlesExhausted, 21, "all parameter set handles are in use")              \
+	X(ParameterSetOutOfMemory,      22, "no memory avaiable for parameter set storage")      \
 
 #define X(type, num, string) BeamformerLibErrorKind_##type = num,
 typedef enum {BEAMFORMER_LIB_ERRORS} BeamformerLibErrorKind;
 #undef X
+
+BEAMFORMER_LIB_HANDLE(BeamformerParameterSetHandle);
 
 BEAMFORMER_LIB_EXPORT uint32_t beamformer_get_api_version(void);
 

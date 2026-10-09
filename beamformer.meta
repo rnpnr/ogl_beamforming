@@ -6,6 +6,7 @@
 @Constant(16)     MaxComputeShaderStages
 @Constant(16)     MaxParameterBlocks
 @Constant(3)      MaxRawDataFramesInFlight
+@Constant(256)    MaxParameterSets
 
 @Enumeration DecodeMode
 {
@@ -186,6 +187,15 @@
 @Library        @Struct FilterParameters
 @MATLAB(Filter) @Struct FilterParameters
 
+@Table ([name counted_by type]) DynamicParameterFields
+{
+	[sparse_elements               Events   U16]
+	[tilting_angles                Events   F32]
+	[focal_depths                  Events   F32]
+	[origin_offsets                Events   F32]
+	[transmit_receive_orientations Events   U8 ]
+}
+
 @Struct Parameters
 {
 	[das_voxel_transform          M4                ]
@@ -218,6 +228,23 @@
 }
 @Library @Struct Parameters
 @MATLAB  @Struct Parameters
+
+@Struct ParameterSet
+{
+	@Expand(Parameters)             [`$(name)` `$(type)` `$(elements)`]
+	@Expand(DynamicParameterFields) [`$(name)` `$(type)` 0]
+
+	[channel_mapping U16 0]
+}
+@Library @Struct ParameterSet
+@MATLAB  @Struct ParameterSet
+
+@Struct DataDescriptor
+{
+	[kind                DataKind  ]
+	[layout              DataLayout]
+	[dimensions          UV4       ]
+}
 
 @Struct SimpleParameters
 {
@@ -549,4 +576,15 @@
 			[data_kind             U32]
 		}
 	}
+}
+
+@Emit
+{
+	`function u64`
+	`beamformer_parameter_set_dynamic_byte_count(BeamformerParameterSet *ps, BeamformerDataDescriptor *dd)`
+	`{`
+	`	u64 result = 0;`
+	@Expand(DynamicParameterFields) `	result += ps->$(name)$(|)? dd->dimensions.E[BeamformerRFDimension_$(counted_by)]$(|)* sizeof(*ps->$(name))$(|): 0;`
+	`	return result;`
+	`}`
 }

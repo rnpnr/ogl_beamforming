@@ -11,6 +11,7 @@
 #define BeamformerMaxComputeShaderStages   (16)
 #define BeamformerMaxParameterBlocks       (16)
 #define BeamformerMaxRawDataFramesInFlight (3)
+#define BeamformerMaxParameterSets         (256)
 
 typedef enum {
 	BeamformerDecodeMode_None     = 0,
@@ -382,6 +383,48 @@ typedef struct {
 	u32                          readi_group_count;
 	u32                          readi_group;
 } BeamformerParameters;
+
+typedef struct {
+	m4                            das_voxel_transform;
+	m4                            xdc_transform;
+	v2                            xdc_element_pitch;
+	uv2                           raw_data_dimensions;
+	v2                            focal_vector;
+	u32                           transmit_receive_orientation;
+	u32                           sample_count;
+	u32                           channel_count;
+	u32                           acquisition_count;
+	BeamformerAcquisitionKind     acquisition_kind;
+	BeamformerDecodeMode          decode_mode;
+	BeamformerSamplingMode        sampling_mode;
+	f32                           time_offset;
+	b32                           single_focus;
+	b32                           single_orientation;
+	iv4                           output_points;
+	f32                           sampling_frequency;
+	f32                           demodulation_frequency;
+	f32                           speed_of_sound;
+	f32                           f_number;
+	BeamformerInterpolationMode   interpolation_mode;
+	b32                           coherency_weighting;
+	u32                           decimation_rate;
+	BeamformerContrastMode        contrast_mode;
+	BeamformerEmissionParameters  emission_parameters;
+	u32                           readi_group_count;
+	u32                           readi_group;
+	u16                          *sparse_elements;
+	f32                          *tilting_angles;
+	f32                          *focal_depths;
+	f32                          *origin_offsets;
+	u8                           *transmit_receive_orientations;
+	u16                          *channel_mapping;
+} BeamformerParameterSet;
+
+typedef struct {
+	BeamformerDataKind   kind;
+	BeamformerDataLayout layout;
+	uv4                  dimensions;
+} BeamformerDataDescriptor;
 
 typedef struct {
 	m4                           das_voxel_transform;
@@ -1012,4 +1055,16 @@ read_only u8 beamformer_data_stride_indices[BeamformerDataLayout_Count][3] = {
 	[BeamformerDataLayout_EventChannelSample] = {BeamformerRFDimension_Events,   BeamformerRFDimension_Channels, BeamformerRFDimension_Samples},
 	[BeamformerDataLayout_SampleChannelEvent] = {BeamformerRFDimension_Samples,  BeamformerRFDimension_Channels, BeamformerRFDimension_Events},
 };
+
+function u64
+beamformer_parameter_set_dynamic_byte_count(BeamformerParameterSet *ps, BeamformerDataDescriptor *dd)
+{
+	u64 result = 0;
+	result += ps->sparse_elements               ? dd->dimensions.E[BeamformerRFDimension_Events] * sizeof(*ps->sparse_elements)               : 0;
+	result += ps->tilting_angles                ? dd->dimensions.E[BeamformerRFDimension_Events] * sizeof(*ps->tilting_angles)                : 0;
+	result += ps->focal_depths                  ? dd->dimensions.E[BeamformerRFDimension_Events] * sizeof(*ps->focal_depths)                  : 0;
+	result += ps->origin_offsets                ? dd->dimensions.E[BeamformerRFDimension_Events] * sizeof(*ps->origin_offsets)                : 0;
+	result += ps->transmit_receive_orientations ? dd->dimensions.E[BeamformerRFDimension_Events] * sizeof(*ps->transmit_receive_orientations) : 0;
+	return result;
+}
 
