@@ -6,6 +6,7 @@
 @Constant(16)     MaxComputeShaderStages
 @Constant(16)     MaxParameterBlocks
 @Constant(3)      MaxRawDataFramesInFlight
+@Constant(256)    MaxParameterSets
 
 @Enumeration DecodeMode
 {
@@ -156,6 +157,16 @@
 }
 @Library        @Struct FilterParameters
 @MATLAB(Filter) @Struct FilterParameters
+
+@Table ([field counted_by type]) DynamicParameterFields
+{
+	[channel_mapping               channel_count     U16]
+	[sparse_elements               acquisition_count U16]
+	[tilting_angles                acquisition_count F32]
+	[focal_depths                  acquisition_count F32]
+	[origin_offsets                acquisition_count F32]
+	[transmit_receive_orientations acquisition_count U8 ]
+}
 
 @Struct ParametersHead
 {

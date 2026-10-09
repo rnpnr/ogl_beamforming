@@ -11,6 +11,7 @@
 #define BeamformerMaxComputeShaderStages   (16)
 #define BeamformerMaxParameterBlocks       (16)
 #define BeamformerMaxRawDataFramesInFlight (3)
+#define BeamformerMaxParameterSets         (256)
 
 typedef enum {
 	BeamformerDecodeMode_None     = 0,

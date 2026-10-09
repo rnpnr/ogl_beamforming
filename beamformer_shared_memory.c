@@ -1,6 +1,26 @@
 /* See LICENSE for license details. */
 #define BEAMFORMER_SHARED_MEMORY_VERSION (36UL)
 
+#define BEAMFORMER_SHARED_MEMORY_PARAMETER_PAGE_SIZE (1024UL)
+
+#define BEAMFORMER_HANDLE(kind) struct kind##_T; typedef struct kind##_T *kind;
+
+typedef struct {
+	u32 generation;
+
+	u32 first_page;
+	u32 page_count;
+
+	b32 release_requested;
+	u64 last_use_counter;
+} BeamformerParameterSetMetadata;
+
+typedef struct {
+	u32 page_count;
+	u32 prev_page;
+	u32 next_page;
+} BeamformerSharedMemoryFreePageRun;
+
 typedef enum {
 	BeamformerWorkKind_Compute,
 	BeamformerWorkKind_WaitThenCompute,
@@ -159,6 +179,17 @@ typedef struct {
 
 	BeamformerLiveImagingParameters live_imaging_parameters;
 	BeamformerLiveImagingDirtyFlags live_imaging_dirty_flags;
+
+	u32 parameter_set_first_free_page;
+	u64 parameter_set_base_offset;
+
+	u64 arena_base_offset;
+	u64 arena_insertion_offset;
+	u64 arena_consumption_offset;
+
+	u64 parameter_sets_used_masks[(BeamformerMaxParameterSets + 63) / 64];
+
+	BeamformerParameterSetMetadata parameter_sets[BeamformerMaxParameterSets];
 
 	BeamformWorkQueue external_work_queue;
 } BeamformerSharedMemory;

@@ -169,6 +169,29 @@ check_shared_memory(void)
 	return result;
 }
 
+function u64
+beamformer_shared_memory_first_free_parameter_set(BeamformerSharedMemory *sm)
+{
+	u64 result = bitset_first_clear(sm->parameter_sets_used_masks, countof(sm->parameter_sets_used_masks));
+	if (result >= BeamformerMaxParameterSets)
+		result = ~0ULL;
+	return result;
+}
+
+b32
+beamformer_shared_memory_register_parameters(BeamformerParameterSet *ps, BeamformerParameterSetHandle *out_handle)
+{
+	b32 result = check_shared_memory();
+	if (result) {
+		u64 set_index = beamformer_shared_memory_first_free_parameter_set(g_beamformer_library_context.bp);
+		result = lib_error_check(set_index != ~0ULL, ParameterSetHandlesExhausted);
+		if (result) {
+			// TODO(rnp): count up needed page count and try to find space
+		}
+	}
+	return result;
+}
+
 function b32
 valid_parameter_block(u32 block)
 {

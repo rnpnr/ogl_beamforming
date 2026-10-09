@@ -2,6 +2,7 @@
 /* NOTE: inspired by nob: https://github.com/tsoding/nob.h */
 
 /* TODO(rnp):
+ * [ ]: refactor: drop `` struct splat syntax, replace with @Expand(...) [$(...) $(...)]
  * [ ]: refactor: allow @Expand to come before the table definition
  * [ ]: cross compile/override baked compiler
  * [ ]: msvc build doesn't detect out of date files correctly

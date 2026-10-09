@@ -1077,6 +1077,18 @@ number_from_str8(str8 s)
 	return result;
 }
 
+function u64
+bitset_first_clear(u64 *bitset, u64 count)
+{
+	u64 result = 0;
+	for EachIndex(count, it) {
+		u64 v = ~bitset[it];
+		result += clz_u64(v);
+		if (v) break;
+	}
+	return result;
+}
+
 function b32
 take_lock(i32 *lock, i32 timeout_ms)
 {
