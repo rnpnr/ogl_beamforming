@@ -151,7 +151,7 @@
 
 #if COMPILER_MSVC
 
-function force_inline u64
+function force_inline u32
 clz_u64(u64 a)
 {
 	u64 result = 64, index;
@@ -162,7 +162,7 @@ clz_u64(u64 a)
 	return result;
 }
 
-function force_inline u64
+function force_inline u32
 ctz_u64(u64 a)
 {
 	u64 result = 64, index;
@@ -175,19 +175,17 @@ ctz_u64(u64 a)
 
 #else /* !COMPILER_MSVC */
 
-function force_inline u64
-clz_u64(u32 a)
+function force_inline u32
+clz_u64(u64 a)
 {
-	u64 result = 64;
-	if (a) result = (u64)__builtin_clzll(a);
+	u32 result = a ? __builtin_clzll(a) : 64;
 	return result;
 }
 
-function force_inline u64
+function force_inline u32
 ctz_u64(u64 a)
 {
-	u64 result = 64;
-	if (a) result = (u64)__builtin_ctzll(a);
+	u32 result = a ? __builtin_ctzll(a) : 64;
 	return result;
 }
 
