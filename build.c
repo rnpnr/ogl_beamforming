@@ -2614,9 +2614,11 @@ meta_pack_table_entity(MetaContext *ctx, MetaEntry *e, i64 entry_count, str8 nam
 
 		table_id_index = 0;
 		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++) {
-			if (row->kind != MetaEntryKind_Array &&
-			    row->kind != MetaEntryKind_Expand &&
-			    row->kind != MetaEntryKind_String)
+			if ((row->kind != MetaEntryKind_Array &&
+			     row->kind != MetaEntryKind_Expand &&
+			     row->kind != MetaEntryKind_Union &&
+			     row->kind != MetaEntryKind_String) ||
+			    (row->kind == MetaEntryKind_Union && !structure))
 			{
 				meta_entry_nesting_error(row, e->kind);
 			}
@@ -2633,6 +2635,18 @@ meta_pack_table_entity(MetaContext *ctx, MetaEntry *e, i64 entry_count, str8 nam
 
 				if (row[1].kind == MetaEntryKind_Array)
 					entries.count = meta_entry_argument_expect(row + 1, 0, MetaEntryArgumentKind_Array).count;
+			}
+
+			if (row->kind == MetaEntryKind_Union) {
+				if (row->argument_count > 1) {
+					const char *name = meta_entry_kind_strings[row->kind];
+					meta_compiler_error_message(row->location, "invalid nested @%s: got: ", name);
+					meta_entry_print(row, 0, -1);
+					fprintf(stderr, "  expected: '@%s %.*s' or '@%s(array_count) %.*s'\n",
+					        name, (i32)row->name.length, row->name.data, name, (i32)row->name.length, row->name.data);
+					meta_error();
+				}
+				entries.count = 2;
 			}
 
 			if (row->kind == MetaEntryKind_Array)
@@ -2670,10 +2684,10 @@ meta_pack_table_entity(MetaContext *ctx, MetaEntry *e, i64 entry_count, str8 nam
 		u32 row_index = 0;
 		table_id_index = 0;
 		for (MetaEntry *row = scope.start; row != scope.one_past_last; row++) {
-			u64 argument_count = row->arguments ? row->arguments->count : 1;
-			if (row->kind == MetaEntryKind_Expand) {
+			switch (row->kind) {
+			case MetaEntryKind_Expand:{
 				row++;
-				argument_count = row->arguments ? row->arguments->count : 1;
+				u64 argument_count = row->arguments ? row->arguments->count : 1;
 
 				MetaEntity *table = ctx->entities.data + table_ids[table_id_index++];
 
@@ -2688,10 +2702,21 @@ meta_pack_table_entity(MetaContext *ctx, MetaEntry *e, i64 entry_count, str8 nam
 
 				for (; row_index < working_row_index; row_index++)
 					if (structure && argument_count == 2)
-						t->entries[2][row_index] = str8("1");
+						t->entries[MetaStructField_Elements][row_index] = str8("1");
 
-			} else {
+			}break;
+
+			case MetaEntryKind_Union:{
+				// NOTE(rnp): anonymous union (named union already covered by standard table syntax)
+				t->entries[MetaStructField_Name][row_index]     = str8("");
+				t->entries[MetaStructField_Type][row_index]     = row->name;
+				t->entries[MetaStructField_Elements][row_index] = row->argument_count ? row->arguments->string
+				                                                                      : str8("1");
+			}break;
+
+			default:{
 				str8 *fs = &row->name;
+				u64 argument_count = row->arguments ? row->arguments->count : 1;
 				if (row->arguments)
 					fs = row->arguments->strings;
 
@@ -2701,8 +2726,9 @@ meta_pack_table_entity(MetaContext *ctx, MetaEntry *e, i64 entry_count, str8 nam
 				// NOTE(rnp): if we are filling out a struct the array element count is optional
 				// and defaults to 1. fill this out here for uniformity elsewhere in the code
 				if (structure && argument_count == 2)
-					t->entries[2][row_index] = str8("1");
+					t->entries[MetaStructField_Elements][row_index] = str8("1");
 				row_index++;
+			}break;
 			}
 		}
 	}
@@ -3413,36 +3439,29 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 
 	Temp scratch = temp_begin(m->scratch);
 
-	u32 flattened_member_count = 0;
-
+	u32 max_member_count = 0;
 	*da_push(m->scratch, &stack) = (struct stack_item){struct_entity, 0};
 	while (stack.count > 0) {
 		stack.count--;
 		MetaEntity *se = stack.data[stack.count].se;
 		MetaStruct *s  = ctx->struct_infos + se->table.struct_info_id;
-		u32 member     = stack.data[stack.count].member_offset;
+		max_member_count = Max(s->info.member_count, max_member_count);
+
+		u32 member = stack.data[stack.count].member_offset;
 		while (member < s->info.member_count) {
 			if (s->members[member].length == 0) {
 				assert(s->member_flags[member] & MetaStructMemberFlag_ReferenceType);
-				MetaStruct *ss = ctx->struct_infos + ctx->entities.data[s->type_ids[member]].table.struct_info_id;
-				if (ss->info.flags & MetaStructFlag_Union) {
-					member++;
-					flattened_member_count++;
-				} else {
-					*da_push(ctx->scratch, &stack) = (struct stack_item){se, member + 1};
-					*da_push(ctx->scratch, &stack) = (struct stack_item){ctx->entities.data + s->type_ids[member], 0};
-					break;
-				}
-			} else {
-				member++;
-				flattened_member_count++;
+				*da_push(ctx->scratch, &stack) = (struct stack_item){se, member + 1};
+				*da_push(ctx->scratch, &stack) = (struct stack_item){ctx->entities.data + s->type_ids[member], 0};
+				break;
 			}
+			member++;
 		}
 	}
 
 	str8 *columns[2];
-	columns[0] = push_array(m->scratch, str8, flattened_member_count);
-	columns[1] = push_array(m->scratch, str8, flattened_member_count);
+	columns[0] = push_array(m->scratch, str8, max_member_count);
+	columns[1] = push_array(m->scratch, str8, max_member_count);
 
 	u32 row = 0, scope = 0;
 	*da_push(m->scratch, &stack) = (struct stack_item){struct_entity, 0};
@@ -4735,8 +4754,7 @@ metagen_emit_helper_library_header(MetaContext *ctx, Arena *arena)
 				} meta_end_scope(m, str8("} " META_NAMESPACE_UPPER), ctx->entity_names.data[ids[it]], str8(";\n"));
 			}break;
 
-			case MetaEntityKind_Union:{
-			}break;
+			case MetaEntityKind_Union:{}break;
 
 			}
 		}

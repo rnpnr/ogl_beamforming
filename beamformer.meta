@@ -109,8 +109,8 @@
 
 @Struct EmissionParameters
 {
-	[kind EmissionKind           ]
-	[``   EmissionParametersUnion]
+	[kind EmissionKind]
+	@Union EmissionParametersUnion
 }
 @Library          @Struct EmissionParameters
 @MATLAB(Emission) @Struct EmissionParameters
@@ -152,7 +152,8 @@
 	[kind               FilterKind           ]
 	[sampling_frequency F32                  ]
 	[complex            B32                  ]
-	[``                 FilterParametersUnion]
+
+	@Union FilterParametersUnion
 }
 @Library        @Struct FilterParameters
 @MATLAB(Filter) @Struct FilterParameters
@@ -198,17 +199,16 @@
 
 @Struct Parameters
 {
-	[`` ParametersHead ]
-	[`` UIParameters   ]
-	[`` ExtraParameters]
+	@Expand(ParametersHead)  [`$(name)` `$(type)`]
+	@Expand(UIParameters)    [`$(name)` `$(type)`]
+	@Expand(ExtraParameters) [`$(name)` `$(type)`]
 }
 @Library @Struct Parameters
 @MATLAB  @Struct Parameters
 
 @Struct SimpleParameters
 {
-
-	[``                            Parameters 1                     ]
+	@Expand(Parameters) [`$(name)` `$(type)` `$(elements)`]
 	[channel_mapping               S16        MaxChannelCount       ]
 	[sparse_elements               S16        MaxEmissionsCount     ]
 	[transmit_receive_orientations U8         MaxEmissionsCount     ]
