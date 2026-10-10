@@ -1064,6 +1064,7 @@ number_from_str8(str8 s)
 				u64 divisor = (u64)(fractional.unparsed.data - s.data);
 				while (divisor > 0) { result.F64 /= 10.0; divisor--; }
 
+				result.F64 *= Sign(integer.S64);
 				result.F64 += (f64)integer.S64;
 
 				result.result   = NumberConversionResult_Success;
