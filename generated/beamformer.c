@@ -1027,18 +1027,10 @@ read_only str8 beamformer_interpolation_mode_strings[] = {
 	str8_comp("Cubic"),
 };
 
-function uv3
-beamformer_data_strides(BeamformerDataLayout layout, uv3 rf_dimensions)
-{
-	uv3 result = {0};
-	switch (layout) {
-	InvalidDefaultCase;
-	case BeamformerDataLayout_Image:{}break;
-	case BeamformerDataLayout_ChannelEventSample:{ result.E[BeamformerRFDimension_Samples] = 1; result.E[BeamformerRFDimension_Events]   = rf_dimensions.E[BeamformerRFDimension_Samples]; result.E[BeamformerRFDimension_Channels] = rf_dimensions.E[BeamformerRFDimension_Samples] * rf_dimensions.E[BeamformerRFDimension_Events];   }break;
-	case BeamformerDataLayout_ChannelSampleEvent:{ result.E[BeamformerRFDimension_Events]  = 1; result.E[BeamformerRFDimension_Samples]  = rf_dimensions.E[BeamformerRFDimension_Events];  result.E[BeamformerRFDimension_Channels] = rf_dimensions.E[BeamformerRFDimension_Events]  * rf_dimensions.E[BeamformerRFDimension_Samples];  }break;
-	case BeamformerDataLayout_EventChannelSample:{ result.E[BeamformerRFDimension_Samples] = 1; result.E[BeamformerRFDimension_Channels] = rf_dimensions.E[BeamformerRFDimension_Samples]; result.E[BeamformerRFDimension_Events]   = rf_dimensions.E[BeamformerRFDimension_Samples] * rf_dimensions.E[BeamformerRFDimension_Channels]; }break;
-	case BeamformerDataLayout_SampleChannelEvent:{ result.E[BeamformerRFDimension_Events]  = 1; result.E[BeamformerRFDimension_Channels] = rf_dimensions.E[BeamformerRFDimension_Events];  result.E[BeamformerRFDimension_Samples]  = rf_dimensions.E[BeamformerRFDimension_Events]  * rf_dimensions.E[BeamformerRFDimension_Channels]; }break;
-	}
-	return result;
-}
+read_only u8 beamformer_data_stride_indices[BeamformerDataLayout_Count][3] = {
+	[BeamformerDataLayout_ChannelEventSample] = {BeamformerRFDimension_Channels, BeamformerRFDimension_Events,   BeamformerRFDimension_Samples},
+	[BeamformerDataLayout_ChannelSampleEvent] = {BeamformerRFDimension_Channels, BeamformerRFDimension_Samples,  BeamformerRFDimension_Events},
+	[BeamformerDataLayout_EventChannelSample] = {BeamformerRFDimension_Events,   BeamformerRFDimension_Channels, BeamformerRFDimension_Samples},
+	[BeamformerDataLayout_SampleChannelEvent] = {BeamformerRFDimension_Samples,  BeamformerRFDimension_Channels, BeamformerRFDimension_Events},
+};
 

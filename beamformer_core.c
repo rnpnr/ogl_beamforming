@@ -526,6 +526,20 @@ push_compute_graph_node(BeamformerComputeGraph *graph, BeamformerShaderKind kind
 	return result;
 }
 
+function uv3
+beamformer_data_strides(BeamformerDataLayout layout, uv3 rf_dimensions)
+{
+	assert(layout >= 0 && layout < BeamformerDataLayout_Count);
+	uv3 result = {0};
+	BeamformerRFDimension x = beamformer_data_stride_indices[layout][0];
+	BeamformerRFDimension y = beamformer_data_stride_indices[layout][1];
+	BeamformerRFDimension z = beamformer_data_stride_indices[layout][2];
+	result.E[z] = 1;
+	result.E[y] = rf_dimensions.E[z];
+	result.E[x] = rf_dimensions.E[z] * rf_dimensions.E[y];
+	return result;
+}
+
 function void
 plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, Arena *scratch)
 {

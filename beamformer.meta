@@ -330,6 +330,10 @@
 	`read_only str8 beamformer_interpolation_mode_strings[] = {`
 	@Expand(InterpolationMode) `	str8_comp("$(name)"),`
 	`};`
+	``
+	`read_only u8 beamformer_data_stride_indices[BeamformerDataLayout_Count][3] = {`
+	@Expand(DataLayoutTable) `	[BeamformerDataLayout_$(name)]$(|)= {BeamformerRFDimension_$(dim1),$(|)BeamformerRFDimension_$(dim2),$(|)BeamformerRFDimension_$(dim3)},`
+	`};`
 }
 
 @ShaderGroup Compute
@@ -550,19 +554,4 @@
 			[data_kind             U32]
 		}
 	}
-}
-
-@Emit
-{
-	`function uv3`
-	`beamformer_data_strides(BeamformerDataLayout layout, uv3 rf_dimensions)`
-	`{`
-	`	uv3 result = {0};`
-	`	switch (layout) {`
-	`	InvalidDefaultCase;`
-	`	case BeamformerDataLayout_Image:{}break;`
-	@Expand(DataLayoutTable) `	case BeamformerDataLayout_$(name):{$(|)result.E[BeamformerRFDimension_$(dim3)]$(|)= 1;$(|)result.E[BeamformerRFDimension_$(dim2)]$(|)= rf_dimensions.E[BeamformerRFDimension_$(dim3)];$(|)result.E[BeamformerRFDimension_$(dim1)]$(|)= rf_dimensions.E[BeamformerRFDimension_$(dim3)]$(|)* rf_dimensions.E[BeamformerRFDimension_$(dim2)];$(|)}break;`
-	`	}`
-	`	return result;`
-	`}`
 }
