@@ -47,8 +47,9 @@ typedef enum {
 } MetaStructMemberFlags;
 
 typedef enum {
-	MetaStructFlag_Union         = 1 << 0,
-	MetaStructFlag_ContainsUnion = 1 << 1,
+	MetaStructFlag_Union           = 1 << 0,
+	MetaStructFlag_ContainsUnion   = 1 << 1,
+	MetaStructFlag_ContainsPointer = 1 << 2,
 } MetaStructFlags;
 
 typedef struct {

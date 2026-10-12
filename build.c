@@ -2523,7 +2523,7 @@ meta_expand_parts_to_str8_at_index(MetaContext *ctx, u64 table_index, MetaExpans
 		MetaExpansionPart *p = parts.data + part;
 		u32 index = 0;
 		if (p->kind == MetaExpansionPartKind_Reference) index = table_index;
-		stream_append_str8(&sb, p->strings[index]);
+		stream_append_str8(&sb, p->kind == MetaExpansionPartKind_String ? p->string : p->strings[index]);
 	}
 	str8 result = arena_stream_commit(ctx->arena, &sb);
 	return result;
@@ -3476,6 +3476,10 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 			i32  type_id        = s->type_ids[member];
 			str8 member_name    = s->members[member];
 
+			// TODO(rnp): this should get refeactored to build a MetaStructMember then use
+			// some common function for printing that instead. If we need another print style
+			// this is going to be quite a mess
+
 			assert(member_name.length != 0 || type_reference);
 
 			if (s->members[member].length == 0 &&
@@ -3498,6 +3502,9 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 
 				b32 enum_count         = (s->member_flags[member] & MetaBuildStructMemberFlag_EnumerationCount) != 0;
 				b32 elements_reference = enum_count || (s->member_flags[member] & MetaBuildStructMemberFlag_ReferenceElements) != 0;
+
+				u32 resolved_element_count = meta_struct_member_elements(ctx, s, member);
+
 				// NOTE(rnp): member name column
 				{
 					read_only str8 elements_count_open[MetaPushStructStyle_Count] = {
@@ -3513,8 +3520,6 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 						[MetaPushStructStyle_MATLAB] = 0,
 					};
 
-					u32 resolved_element_count = meta_struct_member_elements(ctx, s, member);
-
 					if (type_reference && p.union_style == MetaPushStructStyle_MATLAB) {
 						MetaEntity *re = ctx->entities.data + type_id;
 						MetaStruct *rs = ctx->struct_infos + re->table.struct_info_id;
@@ -3529,20 +3534,26 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 					}
 
 					if (resolved_element_count > 1 || p.element_count_style == MetaPushStructStyle_MATLAB) {
+						if ((s->info.flags & MetaStructFlag_ContainsPointer) && p.layout_style == MetaPushStructStyle_C)
+							stream_append_str8(&sb, resolved_element_count == 0 ? str8("*") : str8(" "));
+
 						stream_append_str8s(&sb, member_name, elements_count_open[p.layout_style]);
 						if (elements_reference && p.element_count_style != MetaPushStructStyle_MATLAB) {
 							stream_append_str8s(&sb, p.str_element_prefix, ctx->entity_names.data[s->elements[member]]);
 							if (enum_count) stream_append_str8(&sb, str8("_Count"));
 						} else {
 							if (p.element_count_style == MetaPushStructStyle_MATLAB)
-								stream_append_str8(&sb, str8("1, "));
-							stream_append_u64(&sb, resolved_element_count);
+								stream_append_str8(&sb, resolved_element_count ? str8("1, ") : str8("1, :"));
+							if (resolved_element_count) stream_append_u64(&sb, resolved_element_count);
 						}
 						stream_append_str8(&sb, elements_count_close[p.layout_style]);
-						columns[name_column[p.layout_style]][row] = arena_stream_commit_and_reset(m->scratch, &sb);
 					} else {
-						columns[name_column[p.layout_style]][row] = member_name;
+						if ((s->info.flags & MetaStructFlag_ContainsPointer) && p.layout_style == MetaPushStructStyle_C)
+							stream_append_str8(&sb, resolved_element_count == 0 ? str8("*") : str8(" "));
+						stream_append_str8(&sb, member_name);
 					}
+
+					columns[name_column[p.layout_style]][row] = arena_stream_commit_and_reset(m->scratch, &sb);
 				}
 
 				// NOTE(rnp): type column
@@ -3559,7 +3570,7 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 						if (meta_entity_kind_is_struct[re->kind])
 							rs = ctx->struct_infos + re->table.struct_info_id;
 
-						if (rs && rs->info.flags & MetaStructFlag_Union && p.union_style == MetaPushStructStyle_MATLAB) {
+						if (rs && (rs->info.flags & MetaStructFlag_Union) && p.union_style == MetaPushStructStyle_MATLAB) {
 							stream_append_str8(&sb, p.base_types[MetaKind_U8]);
 							if (p.layout_style == MetaPushStructStyle_MATLAB)
 								stream_append_str8(&sb, str8("  % +"));
@@ -3584,11 +3595,11 @@ meta_push_struct_body(MetaContext *ctx, MetaprogramContext *m, MetaEntity *struc
 							stream_append_str8s(&sb, p.str_element_prefix,
 							                    rs ? rs->info.name : ctx->entity_names.data[type_id]);
 						}
-
-						columns[type_column[p.layout_style]][row] = arena_stream_commit_and_reset(m->scratch, &sb);
 					} else {
-						columns[type_column[p.layout_style]][row] = p.base_types[type_id];
+						stream_append_str8(&sb, p.base_types[type_id]);
 					}
+
+					columns[type_column[p.layout_style]][row] = arena_stream_commit_and_reset(m->scratch, &sb);
 				}
 
 				row++;
@@ -5074,6 +5085,9 @@ metagen_load_context(Arena *arena, char *filename)
 						}
 					}
 
+					if (s->elements[member] == 0)
+						s->info.flags |= MetaStructFlag_ContainsPointer;
+
 					if (s->elements[member] == -1) {
 						meta_compiler_error(e->location, "struct '%.*s': element count for field '%.*s' could not be determined\n",
 						                    (i32)s->info.name.length, s->info.name.data,
@@ -5105,14 +5119,14 @@ metagen_load_context(Arena *arena, char *filename)
 						} else {
 							MetaStruct *sub_struct = ctx->struct_infos + ref->table.struct_info_id;
 							if (sub_struct->info.size != (u32)-1) {
-								member_size = sub_struct->info.size * elements;
+								member_size = elements ? sub_struct->info.size * elements : 8;
 							} else {
 								size = (u32)-1;
 								break;
 							}
 						}
 					} else {
-						member_size = meta_kind_byte_sizes[s->type_ids[member]] * elements;
+						member_size = elements ? meta_kind_byte_sizes[s->type_ids[member]] * elements : 8;
 					}
 					size = is_union ? Max(size, member_size) : size + member_size;
 				}
