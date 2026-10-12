@@ -42,6 +42,23 @@ typedef enum {
 } BeamformerDataKind;
 
 typedef enum {
+	BeamformerRFDimension_Channels = 0,
+	BeamformerRFDimension_Events   = 1,
+	BeamformerRFDimension_Samples  = 2,
+	BeamformerRFDimension_Frames   = 3,
+	BeamformerRFDimension_Count,
+} BeamformerRFDimension;
+
+typedef enum {
+	BeamformerDataLayout_ChannelEventSample = 0,
+	BeamformerDataLayout_ChannelSampleEvent = 1,
+	BeamformerDataLayout_EventChannelSample = 2,
+	BeamformerDataLayout_SampleChannelEvent = 3,
+	BeamformerDataLayout_Image              = 4,
+	BeamformerDataLayout_Count,
+} BeamformerDataLayout;
+
+typedef enum {
 	BeamformerContrastMode_None = 0,
 	BeamformerContrastMode_A1S2 = 1,
 	BeamformerContrastMode_Count,
@@ -453,120 +470,6 @@ typedef union {
 	BeamformerCoherencyWeightingBakeParameters CoherencyWeighting;
 	BeamformerReshapeBakeParameters            Reshape;
 } BeamformerShaderBakeParameters;
-
-read_only u8 beamformer_data_kind_element_size[] = {
-	2,
-	2,
-	4,
-	4,
-	2,
-	2,
-};
-
-read_only u8 beamformer_data_kind_element_count[] = {
-	1,
-	2,
-	1,
-	2,
-	1,
-	2,
-};
-
-read_only u8 beamformer_data_kind_byte_size[] = {
-	2 * 1,
-	2 * 2,
-	4 * 1,
-	4 * 2,
-	2 * 1,
-	2 * 2,
-};
-
-read_only b8 beamformer_data_kind_complex[] = {
-	0,
-	1,
-	0,
-	1,
-	0,
-	1,
-};
-
-read_only str8 beamformer_data_kind_glsl_type[] = {
-	str8_comp("int16_t"),
-	str8_comp("i16vec2"),
-	str8_comp("float32_t"),
-	str8_comp("f32vec2"),
-	str8_comp("float16_t"),
-	str8_comp("f16vec2"),
-};
-
-read_only str8 beamformer_data_kind_str8[] = {
-	str8_comp("Int16"),
-	str8_comp("Int16Complex"),
-	str8_comp("Float32"),
-	str8_comp("Float32Complex"),
-	str8_comp("Float16"),
-	str8_comp("Float16Complex"),
-};
-
-read_only u8 beamformer_contrast_mode_samples[] = {
-	1,
-	3,
-};
-
-read_only str8 beamformer_contrast_mode_strings[] = {
-	str8_comp("None"),
-	str8_comp("A1S2"),
-};
-
-read_only str8 beamformer_view_plane_tag_strings[] = {
-	str8_comp("XZ"),
-	str8_comp("YZ"),
-	str8_comp("XY"),
-	str8_comp("Arbitrary"),
-};
-
-read_only u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
-	1,
-	0,
-	1,
-	0,
-	0,
-	0,
-	1,
-	1,
-	0,
-	0,
-	0,
-	0,
-	0,
-};
-
-read_only str8 beamformer_acquisition_kind_strings[] = {
-	str8_comp("FORCES"),
-	str8_comp("UFORCES"),
-	str8_comp("HERCULES"),
-	str8_comp("VLS"),
-	str8_comp("TPW"),
-	str8_comp("UHERCULES"),
-	str8_comp("RACES"),
-	str8_comp("EPIC-FORCES"),
-	str8_comp("EPIC-UFORCES"),
-	str8_comp("EPIC-UHERCULES"),
-	str8_comp("Flash"),
-	str8_comp("HERO-PA"),
-	str8_comp("ULM"),
-};
-
-read_only str8 beamformer_filter_kind_strings[] = {
-	str8_comp("Kaiser"),
-	str8_comp("MatchedChirp"),
-};
-
-read_only str8 beamformer_interpolation_mode_strings[] = {
-	str8_comp("Nearest"),
-	str8_comp("Linear"),
-	str8_comp("Cubic"),
-};
 
 typedef enum {
 	BeamformerStructKind_DecodeBakeParameters             = 0,
@@ -1009,4 +912,133 @@ read_only u8 beamformer_shader_push_constant_sizes[] = {
 	sizeof(BeamformerSumPushConstants),
 	sizeof(BeamformerRenderBeamformedPushConstants),
 };
+
+read_only u8 beamformer_data_kind_element_size[] = {
+	2,
+	2,
+	4,
+	4,
+	2,
+	2,
+};
+
+read_only u8 beamformer_data_kind_element_count[] = {
+	1,
+	2,
+	1,
+	2,
+	1,
+	2,
+};
+
+read_only u8 beamformer_data_kind_byte_size[] = {
+	2 * 1,
+	2 * 2,
+	4 * 1,
+	4 * 2,
+	2 * 1,
+	2 * 2,
+};
+
+read_only b8 beamformer_data_kind_complex[] = {
+	0,
+	1,
+	0,
+	1,
+	0,
+	1,
+};
+
+read_only str8 beamformer_data_kind_glsl_type[] = {
+	str8_comp("int16_t"),
+	str8_comp("i16vec2"),
+	str8_comp("float32_t"),
+	str8_comp("f32vec2"),
+	str8_comp("float16_t"),
+	str8_comp("f16vec2"),
+};
+
+read_only str8 beamformer_data_kind_str8[] = {
+	str8_comp("Int16"),
+	str8_comp("Int16Complex"),
+	str8_comp("Float32"),
+	str8_comp("Float32Complex"),
+	str8_comp("Float16"),
+	str8_comp("Float16Complex"),
+};
+
+read_only u8 beamformer_contrast_mode_samples[] = {
+	1,
+	3,
+};
+
+read_only str8 beamformer_contrast_mode_strings[] = {
+	str8_comp("None"),
+	str8_comp("A1S2"),
+};
+
+read_only str8 beamformer_view_plane_tag_strings[] = {
+	str8_comp("XZ"),
+	str8_comp("YZ"),
+	str8_comp("XY"),
+	str8_comp("Arbitrary"),
+};
+
+read_only u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
+	1,
+	0,
+	1,
+	0,
+	0,
+	0,
+	1,
+	1,
+	0,
+	0,
+	0,
+	0,
+	0,
+};
+
+read_only str8 beamformer_acquisition_kind_strings[] = {
+	str8_comp("FORCES"),
+	str8_comp("UFORCES"),
+	str8_comp("HERCULES"),
+	str8_comp("VLS"),
+	str8_comp("TPW"),
+	str8_comp("UHERCULES"),
+	str8_comp("RACES"),
+	str8_comp("EPIC-FORCES"),
+	str8_comp("EPIC-UFORCES"),
+	str8_comp("EPIC-UHERCULES"),
+	str8_comp("Flash"),
+	str8_comp("HERO-PA"),
+	str8_comp("ULM"),
+};
+
+read_only str8 beamformer_filter_kind_strings[] = {
+	str8_comp("Kaiser"),
+	str8_comp("MatchedChirp"),
+};
+
+read_only str8 beamformer_interpolation_mode_strings[] = {
+	str8_comp("Nearest"),
+	str8_comp("Linear"),
+	str8_comp("Cubic"),
+};
+
+function uv3
+beamformer_data_strides(BeamformerDataLayout layout, uv3 rf_dimensions)
+{
+	uv3 result = {0};
+	switch (layout) {
+	InvalidDefaultCase;
+	case BeamformerDataLayout_Image:{}break;
+	case BeamformerDataLayout_ChannelEventSample:{ result.E[BeamformerRFDimension_Samples] = 1; result.E[BeamformerRFDimension_Events]   = rf_dimensions.E[BeamformerRFDimension_Samples]; result.E[BeamformerRFDimension_Channels] = rf_dimensions.E[BeamformerRFDimension_Samples] * rf_dimensions.E[BeamformerRFDimension_Events];   }break;
+	case BeamformerDataLayout_ChannelSampleEvent:{ result.E[BeamformerRFDimension_Events]  = 1; result.E[BeamformerRFDimension_Samples]  = rf_dimensions.E[BeamformerRFDimension_Events];  result.E[BeamformerRFDimension_Channels] = rf_dimensions.E[BeamformerRFDimension_Events]  * rf_dimensions.E[BeamformerRFDimension_Samples];  }break;
+	case BeamformerDataLayout_EventChannelSample:{ result.E[BeamformerRFDimension_Samples] = 1; result.E[BeamformerRFDimension_Channels] = rf_dimensions.E[BeamformerRFDimension_Samples]; result.E[BeamformerRFDimension_Events]   = rf_dimensions.E[BeamformerRFDimension_Samples] * rf_dimensions.E[BeamformerRFDimension_Channels]; }break;
+	case BeamformerDataLayout_SampleChannelEvent:{ result.E[BeamformerRFDimension_Events]  = 1; result.E[BeamformerRFDimension_Channels] = rf_dimensions.E[BeamformerRFDimension_Events];  result.E[BeamformerRFDimension_Samples]  = rf_dimensions.E[BeamformerRFDimension_Events]  * rf_dimensions.E[BeamformerRFDimension_Channels]; }break;
+	}
+	return result;
+}
 

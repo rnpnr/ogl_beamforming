@@ -4137,8 +4137,6 @@ metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 		arena_clear(m->scratch);
 	}
 
-	metagen_run_emit_set(m, ctx, ctx->emit_sets + MetaEmitLang_C, meta_kind_c_types);
-
 	// TODO(rnp): we may want this to include more than just the bake structs
 	if (ctx->base_shader_count)
 	DeferLoop(meta_begin_scope(m, str8("typedef enum {")),
@@ -4349,6 +4347,8 @@ metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 			}
 		}
 	}
+
+	metagen_run_emit_set(m, ctx, ctx->emit_sets + MetaEmitLang_C, meta_kind_c_types);
 
 	result = meta_write_and_reset(m, out);
 

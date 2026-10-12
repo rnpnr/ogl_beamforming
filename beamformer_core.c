@@ -526,48 +526,6 @@ push_compute_graph_node(BeamformerComputeGraph *graph, BeamformerShaderKind kind
 	return result;
 }
 
-function uv3
-beamformer_data_strides(BeamformerDataLayout layout, uv3 rf_dimensions)
-{
-	u32 channel_count = rf_dimensions.E[BeamformerRFDimension_Channels];
-	u32 event_count   = rf_dimensions.E[BeamformerRFDimension_Events];
-	u32 sample_count  = rf_dimensions.E[BeamformerRFDimension_Samples];
-
-	uv3 result = {0};
-	switch (layout) {
-	InvalidDefaultCase;
-
-	case BeamformerDataLayout_Image:{}break;
-
-	case BeamformerDataLayout_ChannelEventSample:{
-		result.E[BeamformerRFDimension_Channels] = event_count * sample_count;
-		result.E[BeamformerRFDimension_Events]   = sample_count;
-		result.E[BeamformerRFDimension_Samples]  = 1;
-	}break;
-
-	case BeamformerDataLayout_ChannelSampleEvent:{
-		result.E[BeamformerRFDimension_Channels] = event_count * sample_count;
-		result.E[BeamformerRFDimension_Events]   = 1;
-		result.E[BeamformerRFDimension_Samples]  = event_count;
-	}break;
-
-	case BeamformerDataLayout_EventChannelSample:{
-		result.E[BeamformerRFDimension_Events]   = channel_count * sample_count;
-		result.E[BeamformerRFDimension_Channels] = sample_count;
-		result.E[BeamformerRFDimension_Samples]  = 1;
-	}break;
-
-	case BeamformerDataLayout_SampleChannelEvent:{
-		result.E[BeamformerRFDimension_Samples]  = channel_count * event_count;
-		result.E[BeamformerRFDimension_Channels] = event_count;
-		result.E[BeamformerRFDimension_Events]   = 1;
-	}break;
-
-	}
-
-	return result;
-}
-
 function void
 plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, Arena *scratch)
 {
