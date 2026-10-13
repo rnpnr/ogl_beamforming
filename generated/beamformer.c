@@ -1016,9 +1016,9 @@ read_only str8 beamformer_acquisition_kind_strings[] = {
 	str8_comp("ULM"),
 };
 
-read_only str8 beamformer_filter_kind_strings[] = {
-	str8_comp("Kaiser"),
-	str8_comp("MatchedChirp"),
+read_only str8 beamformer_emission_kind_strings[] = {
+	str8_comp("Sine"),
+	str8_comp("Chirp"),
 };
 
 read_only str8 beamformer_interpolation_mode_strings[] = {

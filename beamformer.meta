@@ -323,8 +323,8 @@
 	@Expand(AcquisitionKindTable) `	str8_comp("$(pretty_name)"),`
 	`};`
 	``
-	`read_only str8 beamformer_filter_kind_strings[] = {`
-	@Expand(FilterKindTable) `	str8_comp("$(name)"),`
+	`read_only str8 beamformer_emission_kind_strings[] = {`
+	@Expand(EmissionKind) `	str8_comp("$(name)"),`
 	`};`
 	``
 	`read_only str8 beamformer_interpolation_mode_strings[] = {`

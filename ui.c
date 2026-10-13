@@ -3420,6 +3420,77 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 			UIParent(value_column) ui_labelf("%0.2f###demod", bp->demodulation_frequency * 1e-6);
 			UIParent(unit_column)  ui_label(str8("[MHz]##demod"));
 
+			u32 parameter_block = panel->u.parameter_listing.parameter_block;
+
+			BeamformerParameterBlock *pb = beamformer_parameter_block(beamformer_context->shared_memory, parameter_block);
+			BeamformerComputePlan    *cp = beamformer_context->compute_context.compute_plans[parameter_block];
+
+			// NOTE(rnp): emission info
+			{
+				BeamformerEmissionParameters *ep = &pb->parameters.emission_parameters;
+				str8 kind  = str8("Unknown");
+				b32  valid = ep->kind <= BeamformerEmissionKind_Count;
+				if (valid) kind = beamformer_emission_kind_strings[ep->kind];
+
+				UIFlags(ui_top_flags()|(!valid * UINodeFlag_Disabled))
+				UIParent(label_column)
+				{
+					UISignal signal = ui_label_button(str8("Emission"));
+					if ui_pressed(signal)
+						panel->u.parameter_listing.expand_emission ^= 1u;
+				}
+				UIParent(unit_column)  UIPrefHeight(ui_em(1.0f, 1.0f)) ui_spacer(0);
+				UIParent(value_column) ui_label(kind);
+				if (valid && panel->u.parameter_listing.expand_emission) {
+					switch (ep->kind) {
+					case BeamformerEmissionKind_Sine:{
+						UIParent(label_column)
+						{
+							ui_label(str8("    Cycles"));
+							ui_label(str8("    Frequency"));
+						}
+
+						UIParent(value_column)
+						{
+							ui_labelf("%0.2f###sine_cycles", ep->sine.cycles);
+							ui_labelf("%0.2f###sine_freq", ep->sine.frequency * 1e-6f);
+						}
+
+						UIParent(unit_column)
+						{
+							UIPrefHeight(ui_em(1.0f, 1.0f)) ui_spacer(0);
+							ui_label(str8("[MHz]###sine_freq"));
+						}
+					}break;
+
+					case BeamformerEmissionKind_Chirp:{
+						UIParent(label_column)
+						{
+							ui_label(str8("    Duration"));
+							ui_label(str8("    Min Frequency"));
+							ui_label(str8("    Max Frequency"));
+						}
+
+						UIParent(value_column)
+						{
+							ui_labelf("%0.2f###chirp_duration", ep->chirp.duration * 1e6f);
+							ui_labelf("%0.2f###chirp_min", ep->chirp.min_frequency * 1e-6f);
+							ui_labelf("%0.2f###chirp_max", ep->chirp.max_frequency * 1e-6f);
+						}
+
+						UIParent(unit_column)
+						{
+							ui_label(str8("[us]###chirp_duration"));
+							ui_label(str8("[MHz]###chirp_min"));
+							ui_label(str8("[MHz]###chirp_max"));
+						}
+					}break;
+
+					InvalidDefaultCase;
+					}
+				}
+			}
+
 			UIParent(label_column) ui_label(str8("Speed of Sound"));
 			UIParent(unit_column)  ui_label(str8("[m/s]"));
 			UIParent(value_column)
@@ -3430,11 +3501,7 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 					ui->flush_parameters = 1;
 			}
 
-			u32 parameter_block = panel->u.parameter_listing.parameter_block;
 			b32 rebuild_transform = 0;
-
-			BeamformerParameterBlock *pb = beamformer_parameter_block(beamformer_context->shared_memory, parameter_block);
-			BeamformerComputePlan    *cp = beamformer_context->compute_context.compute_plans[parameter_block];
 			m4 das_transform = pb->parameters.das_voxel_transform;
 			if (cp) das_transform = m4_mul(cp->ui_voxel_transform, das_transform);
 			v3 coordinates[2] = {
@@ -3453,8 +3520,7 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 				for (u32 index = 0; index < 2; index++) {
 					UIParent(label_column)
 					{
-						UISignal signal = ui_button(dimension_strings[dimension - 1][index]);
-						signal.node->flags &= ~(UINodeFlag_DrawBackground|UINodeFlag_DrawBorder);
+						UISignal signal = ui_label_button(dimension_strings[dimension - 1][index]);
 						if ui_pressed(signal)
 							panel->u.parameter_listing.expand_coordinate[index] ^= 1u;
 					}
