@@ -795,38 +795,6 @@ baseband_chirp(Arena *arena, f32 min_frequency, f32 max_frequency, f32 sampling_
 	return result;
 }
 
-function iv3
-das_output_dimension(iv3 points)
-{
-	iv3 result;
-	result.x = Max(points.x, 1);
-	result.y = Max(points.y, 1);
-	result.z = Max(points.z, 1);
-
-	switch (iv3_dimension(result)) {
-	case 1:{
-		if (result.y > 1) result.x = result.y;
-		if (result.z > 1) result.x = result.z;
-		result.y = result.z = 1;
-	}break;
-
-	case 2:{
-		if (result.x > 1) {
-			if (result.z > 1) result.y = result.z;
-		} else {
-			result.x = result.z;
-		}
-		result.z = 1;
-	}break;
-
-	case 3:{}break;
-
-	InvalidDefaultCase;
-	}
-
-	return result;
-}
-
 function m4
 das_transform_1d(v3 p1, v3 p2)
 {
@@ -899,22 +867,6 @@ das_transform_3d(v3 min_coordinate, v3 max_coordinate)
 	result.c[1] = (v4){{0.0f,             extent.y,         0.0f,             0.0f}};
 	result.c[2] = (v4){{0.0f,             0.0f,             extent.z,         0.0f}};
 	result.c[3] = (v4){{min_coordinate.x, min_coordinate.y, min_coordinate.z, 1.0f}};
-	return result;
-}
-
-function m4
-das_transform(v3 min_coordinate, v3 max_coordinate, iv3 *points)
-{
-	m4 result;
-
-	*points = das_output_dimension(*points);
-
-	switch (iv3_dimension(*points)) {
-	case 1:{result = das_transform_1d(      min_coordinate,     max_coordinate);    }break;
-	case 2:{result = das_transform_2d_xz(XY(min_coordinate), XY(max_coordinate), 0);}break;
-	case 3:{result = das_transform_3d(      min_coordinate,     max_coordinate);    }break;
-	}
-
 	return result;
 }
 

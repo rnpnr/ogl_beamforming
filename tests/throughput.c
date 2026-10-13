@@ -87,12 +87,17 @@ execute_study(Arena *arena, Stream path, Options *options)
 		die("failed to load parameters file: %s\n", (char *)path.data);
 	stream_reset(&path, path_work_index);
 
-	v3 min_coordinate = (v3){{g_lateral_extent.x, g_axial_extent.x, 0}};
-	v3 max_coordinate = (v3){{g_lateral_extent.y, g_axial_extent.y, 0}};
-	bp.das_voxel_transform = das_transform(min_coordinate, max_coordinate, &g_output_points);
+	v2 min_coordinate = (v2){{g_lateral_extent.x, g_axial_extent.x}};
+	v2 max_coordinate = (v2){{g_lateral_extent.y, g_axial_extent.y}};
+	if (RXOrientation(bp.transmit_receive_orientation) == ZBP_RCAOrientation_Rows)
+		bp.das_voxel_transform = das_transform_2d_yz(min_coordinate, max_coordinate, 0);
+	else
+		bp.das_voxel_transform = das_transform_2d_xz(min_coordinate, max_coordinate, 0);
 
-	bp.output_points.xyz = g_output_points;
-	bp.output_points.w   = 1;
+	bp.output_points.x = g_output_points.x;
+	bp.output_points.y = g_output_points.z;
+	bp.output_points.z = 1;
+	bp.output_points.w = 1;
 
 	bp.f_number           = g_f_number;
 	bp.interpolation_mode = BeamformerInterpolationMode_Cubic;

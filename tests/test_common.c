@@ -13,6 +13,9 @@
 
 #include "external/zemp_bp.h"
 
+#define RXOrientation(tx_rx) ((ZBP_RCAOrientation)((tx_rx) >> 0 & 0x0F))
+#define TXOrientation(tx_rx) ((ZBP_RCAOrientation)((tx_rx) >> 4 & 0x0F))
+
 typedef struct {
 	ZBP_DataKind            kind;
 	ZBP_DataCompressionKind compression_kind;

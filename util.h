@@ -183,10 +183,6 @@ typedef struct {
 	str8 unparsed;
 } NumberConversion;
 
-#define XZ(v) (v2){.x = v.x, .y = v.z}
-#define YZ(v) (v2){.x = v.y, .y = v.z}
-#define XY(v) (v2){.x = v.x, .y = v.y}
-
 /* TODO(rnp): delete raylib */
 typedef struct {
 	v3 origin;
