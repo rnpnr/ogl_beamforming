@@ -87,21 +87,27 @@
 	Arbitrary
 }
 
-@Table([name pretty_name fixed_transmits]) AcquisitionKindTable
+@Flags AcquisitionKindFlags
 {
-	[FORCES         FORCES         1]
-	[UFORCES        UFORCES        0]
-	[HERCULES       HERCULES       1]
-	[RCA_VLS        VLS            0]
-	[RCA_TPW        TPW            0]
-	[UHERCULES      UHERCULES      0]
-	[RACES          RACES          1]
-	[EPIC_FORCES    EPIC-FORCES    1]
-	[EPIC_UFORCES   EPIC-UFORCES   0]
-	[EPIC_UHERCULES EPIC-UHERCULES 0]
-	[Flash          Flash          0]
-	[HERO_PA        HERO-PA        0]
-	[ULM            ULM            0]
+	FixedTransmits
+	Sparse
+}
+
+@Table([name pretty_name fixed_transmits sparse]) AcquisitionKindTable
+{
+	[FORCES         FORCES         1 0]
+	[UFORCES        UFORCES        0 1]
+	[HERCULES       HERCULES       1 0]
+	[RCA_VLS        VLS            0 0]
+	[RCA_TPW        TPW            0 0]
+	[UHERCULES      UHERCULES      0 1]
+	[RACES          RACES          1 0]
+	[EPIC_FORCES    EPIC-FORCES    1 0]
+	[EPIC_UFORCES   EPIC-UFORCES   0 1]
+	[EPIC_UHERCULES EPIC-UHERCULES 0 1]
+	[Flash          Flash          0 0]
+	[HERO_PA        HERO-PA        0 0]
+	[ULM            ULM            0 0]
 }
 @Expand(AcquisitionKindTable) @Enumeration(`$(name)`) AcquisitionKind
 
@@ -303,6 +309,14 @@
 	@Expand(DataKindTable) `	str8_comp("$(name)"),`
 	`};`
 	``
+	`read_only u32 beamformer_acquisition_kind_flags[] = {`
+	@Expand(AcquisitionKindTable) `	($(fixed_transmits)*BeamformerAcquisitionKindFlags_FixedTransmits)|($(sparse)*BeamformerAcquisitionKindFlags_Sparse),`
+	`};`
+	``
+	`read_only str8 beamformer_acquisition_kind_strings[] = {`
+	@Expand(AcquisitionKindTable) `	str8_comp("$(pretty_name)"),`
+	`};`
+	``
 	`read_only u8 beamformer_contrast_mode_samples[] = {`
 	@Expand(ContrastModeTable) `	$(samples),`
 	`};`
@@ -313,14 +327,6 @@
 	``
 	`read_only str8 beamformer_view_plane_tag_strings[] = {`
 	@Expand(ViewPlaneTag) `	str8_comp("$(name)"),`
-	`};`
-	``
-	`read_only u8 beamformer_acquisition_kind_has_fixed_transmits[] = {`
-	@Expand(AcquisitionKindTable) `	$(fixed_transmits),`
-	`};`
-	``
-	`read_only str8 beamformer_acquisition_kind_strings[] = {`
-	@Expand(AcquisitionKindTable) `	str8_comp("$(pretty_name)"),`
 	`};`
 	``
 	`read_only str8 beamformer_emission_kind_strings[] = {`

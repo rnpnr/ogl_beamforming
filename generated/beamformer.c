@@ -120,6 +120,11 @@ typedef enum {
 } BeamformerLiveFeedbackFlags;
 
 typedef enum {
+	BeamformerAcquisitionKindFlags_FixedTransmits = 1 << 0,
+	BeamformerAcquisitionKindFlags_Sparse         = 1 << 1,
+} BeamformerAcquisitionKindFlags;
+
+typedef enum {
 	BeamformerLiveImagingDirtyFlags_ImagePlaneOffsets = 1 << 0,
 	BeamformerLiveImagingDirtyFlags_TransmitPower     = 1 << 1,
 	BeamformerLiveImagingDirtyFlags_TGCControlPoints  = 1 << 2,
@@ -967,37 +972,20 @@ read_only str8 beamformer_data_kind_str8[] = {
 	str8_comp("Float16Complex"),
 };
 
-read_only u8 beamformer_contrast_mode_samples[] = {
-	1,
-	3,
-};
-
-read_only str8 beamformer_contrast_mode_strings[] = {
-	str8_comp("None"),
-	str8_comp("A1S2"),
-};
-
-read_only str8 beamformer_view_plane_tag_strings[] = {
-	str8_comp("XZ"),
-	str8_comp("YZ"),
-	str8_comp("XY"),
-	str8_comp("Arbitrary"),
-};
-
-read_only u8 beamformer_acquisition_kind_has_fixed_transmits[] = {
-	1,
-	0,
-	1,
-	0,
-	0,
-	0,
-	1,
-	1,
-	0,
-	0,
-	0,
-	0,
-	0,
+read_only u32 beamformer_acquisition_kind_flags[] = {
+	(1*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(1*BeamformerAcquisitionKindFlags_Sparse),
+	(1*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(1*BeamformerAcquisitionKindFlags_Sparse),
+	(1*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
+	(1*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(1*BeamformerAcquisitionKindFlags_Sparse),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(1*BeamformerAcquisitionKindFlags_Sparse),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
 };
 
 read_only str8 beamformer_acquisition_kind_strings[] = {
@@ -1014,6 +1002,23 @@ read_only str8 beamformer_acquisition_kind_strings[] = {
 	str8_comp("Flash"),
 	str8_comp("HERO-PA"),
 	str8_comp("ULM"),
+};
+
+read_only u8 beamformer_contrast_mode_samples[] = {
+	1,
+	3,
+};
+
+read_only str8 beamformer_contrast_mode_strings[] = {
+	str8_comp("None"),
+	str8_comp("A1S2"),
+};
+
+read_only str8 beamformer_view_plane_tag_strings[] = {
+	str8_comp("XZ"),
+	str8_comp("YZ"),
+	str8_comp("XY"),
+	str8_comp("Arbitrary"),
 };
 
 read_only str8 beamformer_emission_kind_strings[] = {

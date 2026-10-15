@@ -769,7 +769,7 @@ push_acquisition_kind(Arena *arena, BeamformerAcquisitionKind kind, u32 transmit
 	b32 fixed_transmits = 0;
 	if Between(kind, 0, BeamformerAcquisitionKind_Count - 1) {
 		name            = beamformer_acquisition_kind_strings[kind];
-		fixed_transmits = beamformer_acquisition_kind_has_fixed_transmits[kind];
+		fixed_transmits = (beamformer_acquisition_kind_flags[kind] & BeamformerAcquisitionKindFlags_FixedTransmits) != 0;
 	}
 
 	Stream sb = arena_stream(arena);

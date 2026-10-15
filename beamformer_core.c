@@ -949,7 +949,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				memory_copy(cp->das_voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));
 
 				u32 id = pb->parameters.acquisition_kind;
-				b32 sparse = id == BeamformerAcquisitionKind_UFORCES || id == BeamformerAcquisitionKind_UHERCULES;
+
+				u32 acquisition_kind_flags = beamformer_acquisition_kind_flags[id];
+				b32 sparse             = (acquisition_kind_flags & BeamformerAcquisitionKindFlags_Sparse) != 0;
 				b32 single_focus       = pb->parameters.single_focus != 0;
 				b32 single_orientation = pb->parameters.single_orientation != 0;
 
@@ -961,14 +963,14 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				sd->layout   = layout_for_output(cp->output_points);
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
 
-				if (id != BeamformerAcquisitionKind_UFORCES && id != BeamformerAcquisitionKind_FORCES && !single_focus) {
+				if (!single_focus) {
 					db->FocalVectors = gpu_resource_push(resource_builder, v2, db->AcquisitionCount,
 					                                     .data = pb->focal_vectors,
 					                                     .name = str8("focal_vectors"));
 					sd->uses_heap = 1;
 				}
 
-				if (id != BeamformerAcquisitionKind_UFORCES && id != BeamformerAcquisitionKind_FORCES && !single_orientation) {
+				if (!single_orientation) {
 					db->TransmitReceiveOrientations = gpu_resource_push(resource_builder, u8, db->AcquisitionCount,
 					                                                    .data = pb->transmit_receive_orientations,
 					                                                    .name = str8("transmit_receive_orientations"));
