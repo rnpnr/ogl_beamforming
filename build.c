@@ -75,8 +75,6 @@ global char *g_argv0;
 
   #include "base_linux.c"
 
-  #define W32_DECL(x)
-
   #define OS_SHARED_LINK_LIB(s) "lib" s ".so"
   #define OS_SHARED_LIB(s)      s ".so"
   #define OS_STATIC_LIB(s)      s ".a"
@@ -87,8 +85,6 @@ global char *g_argv0;
   #include <string.h>
 
   #include "base_win32.c"
-
-  #define W32_DECL(x) x
 
   #define OS_SHARED_LINK_LIB(s) s ".dll"
   #define OS_SHARED_LIB(s)      s ".dll"
@@ -124,7 +120,7 @@ global char *g_argv0;
 #else
   #define LINK_LIB(name)             "-l" name
   #define OBJECT(name)               name ".o"
-  #define OUTPUT_DLL(name)           "-fPIC", "-shared", "-o", name
+  #define OUTPUT_DLL(name)           "-shared", "-o", name
   #define OUTPUT_LIB(name)           OUTPUT(name)
   #define OUTPUT_EXE(name)           "-o", name
   #define COMPILER_OUTPUT            "-o"
@@ -700,10 +696,10 @@ parse_config(i32 argc, char *argv[])
 
 /* NOTE(rnp): produce pdbs on w32 */
 function void
-cmd_pdb(Arena *a, CommandList *cmd, char *name)
+cmd_pdb(Arena *a, CommandList *cmd, const char *name)
 {
 	if (is_w32 && is_clang) {
-		cmd_append(a, cmd, "-fuse-ld=lld", "-g", "-gcodeview", "-Wl,--pdb=");
+		cmd_append(a, cmd, "-fuse-ld=lld", "-g", "-gcodeview");
 	} else if (is_msvc) {
 		Stream sb = arena_stream(a);
 		stream_append_str8s(&sb, str8("-PDB:"), str8_from_c_str(name), str8(".pdb"));
@@ -734,6 +730,7 @@ function b32
 build_shared_library(Arena *a, CommandList cc, char *name, char *output, char **libs, i64 libs_count, char **srcs, i64 srcs_count)
 {
 	cmd_append_count(a, &cc, srcs, srcs_count);
+	if (!is_w32) cmd_append(a, &cc, "-fPIC");
 	cmd_append(a, &cc, OUTPUT_DLL(output));
 	cmd_pdb(a, &cc, name);
 	cmd_append_count(a, &cc, libs, libs_count);
@@ -743,20 +740,13 @@ build_shared_library(Arena *a, CommandList cc, char *name, char *output, char **
 	return result;
 }
 
-function b32
-cc_single_file(Arena *a, CommandList cc, char *exe, char *src, char *dest, char **tail, i64 tail_count)
+function void
+cmd_append_single_output(Arena *a, CommandList *cc, const char *exe, const char *src, const char *dest)
 {
-	char *executable[] = {src, is_msvc? "/Fe:" : "-o", dest};
-	char *object[]     = {is_msvc? "/c" : "-c", src, is_msvc? "/Fo:" : "-o", dest};
-
-	cmd_append_count(a, &cc, exe? executable : object,
+	const char *executable[] = {src, is_msvc? "/Fe:" : "-o", dest};
+	const char *object[]     = {is_msvc? "/c" : "-c", src, is_msvc? "/Fo:" : "-o", dest};
+	cmd_append_count(a, cc, exe? executable : object,
 	                 exe? countof(executable) : countof(object));
-	if (exe) cmd_pdb(a, &cc, exe);
-	cmd_append_count(a, &cc, tail, tail_count);
-	cmd_append(a, &cc, (void *)0);
-	b32 result = run_synchronous(a, &cc);
-	if (!result) build_log_failure("%s", dest);
-	return result;
 }
 
 function b32
@@ -777,8 +767,15 @@ build_static_library(Arena *a, CommandList cc, char *name, char **deps, char **o
 {
 	/* TODO(rnp): refactor to not need outputs */
 	b32 result = 1;
-	for (i64 i = 0; i < count; i++)
-		result &= cc_single_file(a, cc, 0, deps[i], outputs[i], 0, 0);
+	i64 cc_count = cc.count;
+	for (i64 i = 0; i < count; i++) {
+		cc.count = cc_count;
+		cmd_append_single_output(a, &cc, 0, deps[i], outputs[i]);
+		cmd_append(a, &cc, (void *)0);
+		b32 this_result = run_synchronous(a, &cc);
+		if (!this_result) build_log_failure("%s", outputs[i]);
+		result &= this_result;
+	}
 	if (result) result = build_static_library_from_objects(a, name, 0, 0, outputs, count);
 	return result;
 }
@@ -793,9 +790,10 @@ build_raylib(Arena *a)
 
 		CommandList cc = {0};
 		cmd_base(a, &cc, 0, config.debug);
+		if (is_w32)  cmd_append(a, &cc, "-D_CRT_SECURE_NO_WARNINGS");
 		if (is_unix) cmd_append(a, &cc, "-D_GLFW_X11");
 		cmd_append(a, &cc, "-DPLATFORM_DESKTOP_GLFW");
-		if (!is_msvc) cmd_append(a, &cc, "-Wno-unused-but-set-variable");
+		if (!is_msvc) cmd_append(a, &cc, "-Wno-unused-but-set-variable", "-Wno-unused-function");
 		cmd_append(a, &cc, "-Iexternal/include", "-Iexternal/raylib/src", "-Iexternal/raylib/src/external/glfw/include");
 		#define RAYLIB_SOURCES \
 			X(rglfw)     \
@@ -911,10 +909,11 @@ build_beamformer_main(Arena *arena)
 		cmd_append(arena, &c, OUTPUT(OS_STATIC_LIB("raylib")));
 	}
 	// TODO(rnp): not sure how to do this with msvc. we don't want a runtime dependence on libc++
-	cmd_append(arena, &c, OUTPUT(OS_STATIC_LIB("glslang")), "-Wl,-Bstatic", "-lstdc++", "-Wl,-Bdynamic");
+	cmd_append(arena, &c, OUTPUT(OS_STATIC_LIB("glslang")));
+	if (!is_w32) cmd_append(arena, &c, "-Wl,-Bstatic", "-lstdc++", "-Wl,-Bdynamic");
 
-	if (!is_msvc) cmd_append(arena, &c, "-lm");
-	if (is_unix)  cmd_append(arena, &c, "-lGL");
+	if (!is_w32) cmd_append(arena, &c, "-lm");
+	if (is_unix) cmd_append(arena, &c, "-lGL");
 
 	if (is_w32) {
 		cmd_append(arena, &c, LINK_LIB("user32"), LINK_LIB("shell32"), LINK_LIB("gdi32"),
@@ -933,7 +932,7 @@ build_beamformer_as_library(Arena *arena)
 	CommandList cc = {0};
 	cmd_beamformer_base(arena, &cc);
 
-	if (is_msvc) {
+	if (is_w32) {
 		build_static_library_from_objects(arena, OUTPUT_LIB(OS_STATIC_LIB("main")),
 		                                  arg_list(char *, "/def", "/name:ogl.exe"),
 		                                  arg_list(char *, OUTPUT(OBJECT("main_w32"))));
@@ -953,13 +952,27 @@ build_beamformer_as_library(Arena *arena)
 function b32
 build_tests(Arena *arena)
 {
+	#define TEST_PROGRAMS \
+		X("throughput") \
+		X("decode") \
+
+	#define X(prog, ...) prog,
+	read_only char *test_names[] = {TEST_PROGRAMS};
+	#undef X
+	#define X(prog, ...) "tests" OS_PATH_SEPARATOR prog ".c",
+	read_only char *test_files[] = {TEST_PROGRAMS};
+	#undef X
+	#define X(prog, ...) OUTPUT("tests" OS_PATH_SEPARATOR prog),
+	read_only char *test_exes[] = {TEST_PROGRAMS};
+	#undef X
+
+	read_only char *unix_libs[]    = {LINK_LIB("m")};
+	read_only char *w32_libs[]     = {LINK_LIB("Synchronization")};
+	read_only char *common_libs[]  = {LINK_LIB("zstd")};
+
 	CommandList cc = {0};
 	cmd_base(arena, &cc, 0, config.debug);
 	cmd_append(arena, &cc, EXTRA_FLAGS);
-
-	#define TEST_PROGRAMS \
-		X("throughput", LINK_LIB("m"), LINK_LIB("zstd"), W32_DECL(LINK_LIB("Synchronization"))) \
-		X("decode", LINK_LIB("m"), W32_DECL(LINK_LIB("Synchronization"))) \
 
 	os_make_directory(OUTPUT("tests"));
 	if (!is_msvc) cmd_append(arena, &cc, "-Wno-unused-function");
@@ -967,13 +980,19 @@ build_tests(Arena *arena)
 
 	b32 result = 1;
 	i64 cc_count = cc.count;
-	#define X(prog, ...) \
-		result &= cc_single_file(arena, cc, prog, "tests" OS_PATH_SEPARATOR prog ".c", \
-		                         OUTPUT("tests" OS_PATH_SEPARATOR prog), \
-		                         arg_list(char *, ##__VA_ARGS__)); \
+	for EachElement(test_names, it) {
 		cc.count = cc_count;
-	TEST_PROGRAMS
-	#undef X
+		cmd_append_single_output(arena, &cc, test_names[it], test_files[it], test_exes[it]);
+		cmd_pdb(arena, &cc, test_names[it]);
+		cmd_append_count(arena, &cc, common_libs, countof(common_libs));
+		if (is_unix) cmd_append_count(arena, &cc, unix_libs, countof(unix_libs));
+		if (is_w32)  cmd_append_count(arena, &cc, w32_libs, countof(w32_libs));
+		cmd_append(arena, &cc, (void *)0);
+		b32 this_result = run_synchronous(arena, &cc);
+		if (!this_result) build_log_failure("%s", test_exes[it]);
+		result &= this_result;
+	}
+
 	return result;
 }
 

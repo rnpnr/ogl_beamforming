@@ -750,7 +750,7 @@ u64_hash_from_str8(str8 v)
 }
 
 function str8
-str8_from_c_str(char *cstr)
+str8_from_c_str(const char *cstr)
 {
 	str8 result = {.data = (u8 *)cstr};
 	if (cstr) while (*cstr) cstr++;

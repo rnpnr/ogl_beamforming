@@ -4790,7 +4790,7 @@ ui_layout_nodes(UINode *root)
 					     !ui_node_is_nil(child);
 					     child = child->next_sibling)
 					{
-						if (it == node->child_layout_axis) {
+						if (it == (u64)node->child_layout_axis) {
 							size_sum += child->computed_size[it];
 						} else {
 							size_sum = Max(size_sum, child->computed_size[it]);
