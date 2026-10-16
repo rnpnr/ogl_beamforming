@@ -96,14 +96,7 @@ typedef struct {
 } BeamformerComputePipeline;
 
 typedef struct {
-	alignas(16) union {
-		BeamformerParameters parameters;
-		struct {
-			BeamformerParametersHead  parameters_head;
-			BeamformerUIParameters    parameters_ui;
-			BeamformerExtraParameters parameters_extra;
-		};
-	};
+	alignas(16) BeamformerParameters parameters;
 
 	/* NOTE(rnp): signals to the beamformer that a subregion of a block has been updated */
 	u32 region_update_flags;

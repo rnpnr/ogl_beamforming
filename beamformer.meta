@@ -186,50 +186,35 @@
 @Library        @Struct FilterParameters
 @MATLAB(Filter) @Struct FilterParameters
 
-@Struct ParametersHead
-{
-	[das_voxel_transform          M4             ]
-	[xdc_transform                M4             ]
-	[xdc_element_pitch            V2             ]
-	[raw_data_dimensions          UV2            ]
-	[focal_vector                 V2             ]
-	[transmit_receive_orientation U32            ]
-	[sample_count                 U32            ]
-	[channel_count                U32            ]
-	[acquisition_count            U32            ]
-	[acquisition_kind             AcquisitionKind]
-	[decode_mode                  DecodeMode     ]
-	[sampling_mode                SamplingMode   ]
-	[time_offset                  F32            ]
-	[single_focus                 B32            ]
-	[single_orientation           B32            ]
-}
-
-@Struct UIParameters
-{
-	[output_points          SV4]
-	[sampling_frequency     F32]
-	[demodulation_frequency F32]
-	[speed_of_sound         F32]
-	[f_number               F32]
-	[interpolation_mode     InterpolationMode]
-	[coherency_weighting    B32]
-	[decimation_rate        U32]
-}
-
-@Struct ExtraParameters
-{
-	[contrast_mode       ContrastMode      ]
-	[emission_parameters EmissionParameters]
-	[readi_group_count   U32]
-	[readi_group         U32]
-}
-
 @Struct Parameters
 {
-	@Expand(ParametersHead)  [`$(name)` `$(type)`]
-	@Expand(UIParameters)    [`$(name)` `$(type)`]
-	@Expand(ExtraParameters) [`$(name)` `$(type)`]
+	[das_voxel_transform          M4                ]
+	[xdc_transform                M4                ]
+	[xdc_element_pitch            V2                ]
+	[raw_data_dimensions          UV2               ]
+	[focal_vector                 V2                ]
+	[transmit_receive_orientation U32               ]
+	[sample_count                 U32               ]
+	[channel_count                U32               ]
+	[acquisition_count            U32               ]
+	[acquisition_kind             AcquisitionKind   ]
+	[decode_mode                  DecodeMode        ]
+	[sampling_mode                SamplingMode      ]
+	[time_offset                  F32               ]
+	[single_focus                 B32               ]
+	[single_orientation           B32               ]
+	[output_points                SV4               ]
+	[sampling_frequency           F32               ]
+	[demodulation_frequency       F32               ]
+	[speed_of_sound               F32               ]
+	[f_number                     F32               ]
+	[interpolation_mode           InterpolationMode ]
+	[coherency_weighting          B32               ]
+	[decimation_rate              U32               ]
+	[contrast_mode                ContrastMode      ]
+	[emission_parameters          EmissionParameters]
+	[readi_group_count            U32               ]
+	[readi_group                  U32               ]
 }
 @Library @Struct Parameters
 @MATLAB  @Struct Parameters

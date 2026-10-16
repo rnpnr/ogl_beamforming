@@ -354,42 +354,6 @@ typedef struct {
 } BeamformerFilterParameters;
 
 typedef struct {
-	m4                        das_voxel_transform;
-	m4                        xdc_transform;
-	v2                        xdc_element_pitch;
-	uv2                       raw_data_dimensions;
-	v2                        focal_vector;
-	u32                       transmit_receive_orientation;
-	u32                       sample_count;
-	u32                       channel_count;
-	u32                       acquisition_count;
-	BeamformerAcquisitionKind acquisition_kind;
-	BeamformerDecodeMode      decode_mode;
-	BeamformerSamplingMode    sampling_mode;
-	f32                       time_offset;
-	b32                       single_focus;
-	b32                       single_orientation;
-} BeamformerParametersHead;
-
-typedef struct {
-	iv4                         output_points;
-	f32                         sampling_frequency;
-	f32                         demodulation_frequency;
-	f32                         speed_of_sound;
-	f32                         f_number;
-	BeamformerInterpolationMode interpolation_mode;
-	b32                         coherency_weighting;
-	u32                         decimation_rate;
-} BeamformerUIParameters;
-
-typedef struct {
-	BeamformerContrastMode       contrast_mode;
-	BeamformerEmissionParameters emission_parameters;
-	u32                          readi_group_count;
-	u32                          readi_group;
-} BeamformerExtraParameters;
-
-typedef struct {
 	m4                           das_voxel_transform;
 	m4                           xdc_transform;
 	v2                           xdc_element_pitch;

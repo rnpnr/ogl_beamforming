@@ -374,8 +374,7 @@ typedef struct {
 
 	BeamformerFrame latest_plane[BeamformerViewPlaneTag_Count];
 
-	BeamformerUIParameters parameters;
-	b32                    flush_parameters;
+	b32 flush_parameters;
 	u32 selected_parameter_block;
 
 	// TODO(rnp): this should be per parameter block
@@ -3411,7 +3410,11 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 		UIPrefWidth(ui_text_dim(1.f, 1.f))
 		UIPrefHeight(ui_text_dim(line_pad_pct, 1.f))
 		{
-			BeamformerUIParameters *bp = &ui_context->parameters;
+			u32 parameter_block = panel->u.parameter_listing.parameter_block;
+			BeamformerParameterBlock *pb = beamformer_parameter_block(beamformer_context->shared_memory, parameter_block);
+			BeamformerComputePlan    *cp = beamformer_context->compute_context.compute_plans[parameter_block];
+			BeamformerParameters     *bp = &pb->parameters;
+
 			UIParent(label_column) ui_label(str8("Sampling Frequency"));
 			UIParent(value_column) ui_labelf("%0.2f##sampling", bp->sampling_frequency * 1e-6);
 			UIParent(unit_column)  ui_label(str8("[MHz]##sampling"));
@@ -3419,11 +3422,6 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 			UIParent(label_column) ui_label(str8("Demodulation Frequency"));
 			UIParent(value_column) ui_labelf("%0.2f###demod", bp->demodulation_frequency * 1e-6);
 			UIParent(unit_column)  ui_label(str8("[MHz]##demod"));
-
-			u32 parameter_block = panel->u.parameter_listing.parameter_block;
-
-			BeamformerParameterBlock *pb = beamformer_parameter_block(beamformer_context->shared_memory, parameter_block);
-			BeamformerComputePlan    *cp = beamformer_context->compute_context.compute_plans[parameter_block];
 
 			// NOTE(rnp): emission info
 			{
@@ -5295,7 +5293,6 @@ beamformer_ui_frame(void)
 			ui->flush_parameters = 0;
 
 			m4 das_transform;
-			memory_copy(&ui->parameters, &pb->parameters_ui, sizeof(ui->parameters));
 			memory_copy(das_transform.E, pb->parameters.das_voxel_transform.E, sizeof(das_transform));
 
 			atomic_and_u32(&beamformer_context->ui_dirty_parameter_blocks, ~selected_mask);
@@ -5333,7 +5330,6 @@ beamformer_ui_frame(void)
 		BeamformerParameterBlock *pb = beamformer_parameter_block_lock(beamformer_context->shared_memory, selected_block, 0);
 		if (pb) {
 			ui->flush_parameters = 0;
-			memory_copy(&pb->parameters_ui, &ui->parameters, sizeof(ui->parameters));
 			beamformed_shared_memory_dirty_flag(beamformer_context->shared_memory, selected_block,
 			                                    BeamformerParameterDirtyFlag_Parameters);
 			beamformer_parameter_block_unlock(beamformer_context->shared_memory, selected_block);
