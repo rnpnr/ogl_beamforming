@@ -26,27 +26,13 @@ jobs:
 
   windows:
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { sys: ucrt64,  env: ucrt-x86_64,  cc: "gcc",   extra: "" }
-          - { sys: clang64, env: clang-x86_64, cc: "clang", extra: "-fms-extensions" }
-    defaults:
-      run:
-        shell: msys2 {0}
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: 'true'
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: ${{matrix.sys}}
-          update: true
-          install: git mingw-w64-${{matrix.env}}-${{matrix.cc}}
-
       - name: Build
+        shell: pwsh
         run: |
-          ${{matrix.cc}} -march=native -O3 ${{matrix.extra}} build.c -Iexternal/include -o build && \
-          ./build --tests && \
-          ./build --debug
+          clang -march=native -O3 -fms-extensions build.c -o build.exe
+          .\build.exe --tests
+          .\build.exe --debug
