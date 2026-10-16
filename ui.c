@@ -378,7 +378,6 @@ typedef struct {
 	u32 selected_parameter_block;
 
 	// TODO(rnp): this should be per parameter block
-	f32 off_axis_position;
 	f32 beamform_plane;
 
 	BeamformerUIPanel *tree;
@@ -2323,7 +2322,7 @@ function UI_CUSTOM_DRAW_FUNCTION(beamformer_custom_draw_frame_view)
 }
 
 function b32
-ui_rebuild_das_transform(u32 parameter_block, i32 dimension, v3 min, v3 max)
+ui_rebuild_das_transform(u32 parameter_block, i32 dimension, v3 min, v3 max, f32 off_axis_position)
 {
 	BeamformerUI *ui = ui_context;
 
@@ -2350,7 +2349,7 @@ ui_rebuild_das_transform(u32 parameter_block, i32 dimension, v3 min, v3 max)
 		v3 rotation_axis = cross(v3_normalize(new_transform.c[0].xyz), N);
 
 		m4 R = m4_rotation_about_axis(rotation_axis, ui->beamform_plane);
-		m4 T = m4_translation(v3_scale(m4_mul_v3(R, N), ui->off_axis_position));
+		m4 T = m4_translation(v3_scale(m4_mul_v3(R, N), off_axis_position));
 
 		new_transform = m4_mul(T, m4_mul(R, new_transform));
 	}break;
@@ -3168,8 +3167,12 @@ ui_build_frame_view(UINode *container, BeamformerFrameView *view)
 	if (rebuild_transform) {
 		min_coordinate.E[0] = min_2d.E[0]; min_coordinate.E[1] = min_2d.E[1];
 		max_coordinate.E[0] = max_2d.E[0]; max_coordinate.E[1] = max_2d.E[1];
-		if (ui_rebuild_das_transform(frame->parameter_block, iv3_dimension(frame->points), min_coordinate, max_coordinate))
+		if (ui_rebuild_das_transform(frame->parameter_block, iv3_dimension(frame->points),
+		                             min_coordinate, max_coordinate,
+		                             plane_offset_from_transform(frame->voxel_transform)))
+		{
 			ui->flush_parameters = 1;
+		}
 	}
 }
 
@@ -3502,6 +3505,9 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 			b32 rebuild_transform = 0;
 			m4 das_transform = pb->parameters.das_voxel_transform;
 			if (cp) das_transform = m4_mul(cp->ui_voxel_transform, das_transform);
+
+			f32 off_axis_position = plane_offset_from_transform(das_transform);
+
 			v3 coordinates[2] = {
 				m4_mul_v3(das_transform, (v3){{0.0f, 0.0f, 0.0f}}),
 				m4_mul_v3(das_transform, (v3){{1.0f, 1.0f, 1.0f}}),
@@ -3595,8 +3601,8 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 				UIParent(value_column)
 				UIFlags(UINodeFlag_Scroll|UINodeFlag_TextInputNumeric)
 				{
-					UISignal signal = ui_text_boxf("%0.2f###off_axis", plane_offset_from_transform(das_transform) * 1e3f);
-					rebuild_transform |= ui_tweak_f32_compute_variable(signal, &ui->off_axis_position,
+					UISignal signal = ui_text_boxf("%0.2f###off_axis", off_axis_position * 1e3f);
+					rebuild_transform |= ui_tweak_f32_compute_variable(signal, &off_axis_position,
 					                                                   1e-3f, 0.1e-3f, V2_INFINITY);
 				}
 
@@ -3651,7 +3657,7 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 			}
 
 			if (rebuild_transform) {
-				if (ui_rebuild_das_transform(parameter_block, dimension, coordinates[0], coordinates[1]))
+				if (ui_rebuild_das_transform(parameter_block, dimension, coordinates[0], coordinates[1], off_axis_position))
 					ui->flush_parameters = 1;
 			}
 		}
@@ -5311,8 +5317,7 @@ beamformer_ui_frame(void)
 				                         selected_block);
 			}
 
-			ui->off_axis_position = plane_offset_from_transform(das_transform);
-			ui->beamform_plane    = 0;
+			ui->beamform_plane = 0;
 		}
 	}
 
