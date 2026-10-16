@@ -215,27 +215,31 @@ typedef struct {
 	u32 Hadamard;
 	u32 IncoherentFrame;
 	u32 SparseElements;
+	u32 TransducerTransforms;
 	u32 TransmitReceiveOrientations;
 	u32 AcquisitionKind;
 	i32 AcquisitionCount;
-	i32 ReceiveChannelCount;
-	i32 ChunkChannelCount;
 	i32 SampleCount;
 	u32 AcquisitionByteStride;
 	u32 ChannelByteStride;
+	u16 ReceiveChannelCount;
+	u16 TransmitChannelCount;
+	u16 ReceiveTileCount;
+	u16 TransmitTileCount;
+	u16 ChunkChannelCount;
+	u16 TransmitReceiveOrientation;
+	u16 InterpolationMode;
+	u16 ReadiGroupCount;
 	f32 SamplingFrequency;
 	f32 DemodulationFrequency;
 	f32 SpeedOfSound;
 	f32 TimeOffset;
-	u32 InterpolationMode;
 	f32 FNumber;
-	u32 TransmitReceiveOrientation;
 	f32 FocusDepth;
 	f32 TransmitAngle;
 	u32 OutputSizeX;
 	u32 OutputSizeY;
 	u32 OutputSizeZ;
-	u32 ReadiGroupCount;
 } BeamformerDASBakeParameters;
 
 typedef struct {
@@ -267,12 +271,11 @@ typedef struct {
 } BeamformerFilterPushConstants;
 
 typedef struct {
-	m4  xdc_transform;
 	m4  voxel_transform;
 	v2  xdc_element_pitch;
 	u64 rf_data;
 	u64 output_frame;
-	i32 channel_offset;
+	u32 channel_offset;
 	u32 readi_group;
 } BeamformerDASPushConstants;
 
@@ -521,22 +524,26 @@ read_only MetaStructMember *meta_struct_members_by_id[] = {
 		{18, 12, 1, 0},
 		{18, 16, 1, 0},
 		{18, 20, 1, 0},
-		{10, 24, 1, 0},
+		{18, 24, 1, 0},
 		{10, 28, 1, 0},
 		{10, 32, 1, 0},
-		{10, 36, 1, 0},
+		{18, 36, 1, 0},
 		{18, 40, 1, 0},
-		{18, 44, 1, 0},
-		{8,  48, 1, 0},
-		{8,  52, 1, 0},
-		{8,  56, 1, 0},
+		{19, 44, 1, 0},
+		{19, 46, 1, 0},
+		{19, 48, 1, 0},
+		{19, 50, 1, 0},
+		{19, 52, 1, 0},
+		{19, 54, 1, 0},
+		{19, 56, 1, 0},
+		{19, 58, 1, 0},
 		{8,  60, 1, 0},
-		{18, 64, 1, 0},
+		{8,  64, 1, 0},
 		{8,  68, 1, 0},
-		{18, 72, 1, 0},
+		{8,  72, 1, 0},
 		{8,  76, 1, 0},
 		{8,  80, 1, 0},
-		{18, 84, 1, 0},
+		{8,  84, 1, 0},
 		{18, 88, 1, 0},
 		{18, 92, 1, 0},
 		{18, 96, 1, 0},
@@ -593,27 +600,31 @@ read_only str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("Hadamard"),
 		str8_comp("IncoherentFrame"),
 		str8_comp("SparseElements"),
+		str8_comp("TransducerTransforms"),
 		str8_comp("TransmitReceiveOrientations"),
 		str8_comp("AcquisitionKind"),
 		str8_comp("AcquisitionCount"),
-		str8_comp("ReceiveChannelCount"),
-		str8_comp("ChunkChannelCount"),
 		str8_comp("SampleCount"),
 		str8_comp("AcquisitionByteStride"),
 		str8_comp("ChannelByteStride"),
+		str8_comp("ReceiveChannelCount"),
+		str8_comp("TransmitChannelCount"),
+		str8_comp("ReceiveTileCount"),
+		str8_comp("TransmitTileCount"),
+		str8_comp("ChunkChannelCount"),
+		str8_comp("TransmitReceiveOrientation"),
+		str8_comp("InterpolationMode"),
+		str8_comp("ReadiGroupCount"),
 		str8_comp("SamplingFrequency"),
 		str8_comp("DemodulationFrequency"),
 		str8_comp("SpeedOfSound"),
 		str8_comp("TimeOffset"),
-		str8_comp("InterpolationMode"),
 		str8_comp("FNumber"),
-		str8_comp("TransmitReceiveOrientation"),
 		str8_comp("FocusDepth"),
 		str8_comp("TransmitAngle"),
 		str8_comp("OutputSizeX"),
 		str8_comp("OutputSizeY"),
 		str8_comp("OutputSizeZ"),
-		str8_comp("ReadiGroupCount"),
 	},
 	(str8 []){
 		str8_comp("IncoherentSum"),
@@ -636,7 +647,7 @@ read_only str8 *meta_struct_member_names_by_id[] = {
 read_only MetaStructInfo meta_struct_info_by_id[] = {
 	{str8_comp("DecodeBakeParameters"),             11, 44,  0},
 	{str8_comp("FilterBakeParameters"),             13, 52,  0},
-	{str8_comp("DASBakeParameters"),                25, 100, 0},
+	{str8_comp("DASBakeParameters"),                29, 100, 0},
 	{str8_comp("CoherencyWeightingBakeParameters"), 3,  12,  0},
 	{str8_comp("ReshapeBakeParameters"),            9,  36,  0},
 };
@@ -764,12 +775,11 @@ read_only str8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
-	"  f32mat4  xdc_transform;\n"
 	"  f32mat4  voxel_transform;\n"
 	"  f32vec2  xdc_element_pitch;\n"
 	"  uint64_t rf_data;\n"
 	"  uint64_t output_frame;\n"
-	"  int32_t  channel_offset;\n"
+	"  uint32_t channel_offset;\n"
 	"  uint32_t readi_group;\n"
 	"};\n"
 	"\n"),

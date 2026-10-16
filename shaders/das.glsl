@@ -31,12 +31,6 @@
   #define RESULT_STORE(a) (a)
 #endif
 
-// NOTE(rnp): we don't want das to get recompiled when it isn't actually using the Heap
-// but we also don't want to check everywhere in here for the existence of the Heap
-#ifndef HeapBase
-  #define HeapBase u64(0)
-#endif
-
 layout(std430, buffer_reference) readonly buffer Input  { InputDataType  x[]; };
 layout(std430, buffer_reference)          buffer Output { OutputDataType x[]; };
 
@@ -51,6 +45,9 @@ layout(std430, buffer_reference) readonly buffer F32V2 { f32vec2 x[]; };
 layout(std430, buffer_reference) readonly buffer F32V4 { f32vec4 x[]; };
 layout(std430, buffer_reference) readonly buffer F16V2 { f16vec2 x[]; };
 layout(std430, buffer_reference) readonly buffer F16V4 { f16vec4 x[]; };
+
+// NOTE(rnp): don't mark this readonly, scalar loads perform worse where we are using this
+layout(std430, buffer_reference)          buffer M4    { mat4    x[]; };
 
 #define RX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 0, 4)
 #define TX_ORIENTATION(tx_rx) bitfieldExtract((tx_rx), 4, 4)
@@ -153,7 +150,7 @@ SAMPLE_TYPE sample_rf(const u64 rf_pointer, const f32 index)
 {
 	SAMPLE_TYPE result = SAMPLE_TYPE(0);
 
-	switch (InterpolationMode) {
+	switch (u32(InterpolationMode)) {
 	case InterpolationMode_Nearest:{
 		if (index >= 0.f && index < (f32(SampleCount) - 0.5f))
 			result = rotate_iq(Input(rf_pointer + InputDataKindByteSize * u32(round(index))).x[0], index / SamplingFrequency);
@@ -261,9 +258,23 @@ f32 rca_transmit_distance(const vec3 world_point, const vec2 focal_vector, const
 	return result;
 }
 
+mat4 transducer_transform(const u32 acquisition)
+{
+	const u32 receive_tile_channels = ReceiveChannelCount / ReceiveTileCount;
+	const u32 receive_index = channel_offset / receive_tile_channels;
+
+	const u32 transmit_tile_channels = TransmitChannelCount / TransmitTileCount;
+	const u32 transmit_index = acquisition / transmit_tile_channels;
+
+	mat4 result = M4(HeapBase + TransducerTransforms).x[transmit_index * ReceiveTileCount + receive_index];
+	return result;
+}
+
 RESULT_TYPE RCA(const vec3 world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
+
+	const mat4 xdc_transform = transducer_transform(0);
 	for (s32 acquisition = 0; acquisition < s32(AcquisitionCount); acquisition++) {
 		const u8   tx_rx_orientation = tx_rx_orientation_for_acquisition(acquisition);
 		const bool rx_rows           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows;
@@ -292,6 +303,9 @@ RESULT_TYPE RCA(const vec3 world_point)
 
 RESULT_TYPE HERCULES(const vec3 world_point)
 {
+	// TODO(rnp): this whole thing needs have an outer loop over transmit tiles
+	const mat4 xdc_transform     = transducer_transform(0);
+
 	const u8   tx_rx_orientation = tx_rx_orientation_for_acquisition(0);
 	const bool rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
 	const vec2 focal_vector      = focal_vector_for_acquisition(0);
@@ -343,11 +357,12 @@ RESULT_TYPE FORCES(const vec3 world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
-	const u8  tx_rx_orientation = tx_rx_orientation_for_acquisition(0);
-	const s32 rx_axis           = s32(RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows);
-	const f32 element_pitch     = xdc_element_pitch[rx_axis];
+	const mat4 xdc_transform     = transducer_transform(0);
+	const u8   tx_rx_orientation = tx_rx_orientation_for_acquisition(0);
+	const u32  rx_axis           = u32(RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows);
+	const f32  element_pitch     = xdc_element_pitch[rx_axis];
 	// TODO(rnp): the sign of the origin offset might be flipped
-	const f32 origin_offset     = FocusDepth * tan(radians(TransmitAngle));
+	const f32  origin_offset     = FocusDepth * tan(radians(TransmitAngle));
 
 	vec3 xdc_world_point       = (xdc_transform * vec4(world_point, 1)).xyz;
 	f32  lateral_coord         = xdc_world_point[rx_axis];
@@ -396,11 +411,12 @@ RESULT_TYPE READI_FORCES(const vec3 world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
-	const u8  tx_rx_orientation = tx_rx_orientation_for_acquisition(0);
-	const s32 rx_axis           = s32(RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows);
-	const f32 element_pitch     = xdc_element_pitch[rx_axis];
+	const mat4 xdc_transform     = transducer_transform(0);
+	const u8   tx_rx_orientation = tx_rx_orientation_for_acquisition(0);
+	const u32  rx_axis           = u32(RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows);
+	const f32  element_pitch     = xdc_element_pitch[rx_axis];
 	// TODO(rnp): the sign of the origin offset might be flipped
-	const f32 origin_offset     = FocusDepth * tan(radians(TransmitAngle));
+	const f32  origin_offset     = FocusDepth * tan(radians(TransmitAngle));
 
 	vec3 xdc_world_point       = (xdc_transform * vec4(world_point, 1)).xyz;
 	f32  lateral_coord         = xdc_world_point[rx_axis];

@@ -430,42 +430,46 @@
 			[Hadamard                    U32]
 			[IncoherentFrame             U32]
 			[SparseElements              U32]
+			[TransducerTransforms        U32]
 			[TransmitReceiveOrientations U32]
 
 			[AcquisitionKind             U32]
 			[AcquisitionCount            S32]
-			[ReceiveChannelCount         S32]
-			[ChunkChannelCount           S32]
 			[SampleCount                 S32]
 			[AcquisitionByteStride       U32]
 			[ChannelByteStride           U32]
+			[ReceiveChannelCount         U16]
+			[TransmitChannelCount        U16]
+			[ReceiveTileCount            U16]
+			[TransmitTileCount           U16]
+			[ChunkChannelCount           U16]
+			[TransmitReceiveOrientation  U16]
+
+			[InterpolationMode           U16]
+
+			[ReadiGroupCount             U16]
 
 			[SamplingFrequency           F32]
 			[DemodulationFrequency       F32]
 			[SpeedOfSound                F32]
 			[TimeOffset                  F32]
-			[InterpolationMode           U32]
 			[FNumber                     F32]
 
-			[TransmitReceiveOrientation  U32]
 			[FocusDepth                  F32]
 			[TransmitAngle               F32]
 
 			[OutputSizeX                 U32]
 			[OutputSizeY                 U32]
 			[OutputSizeZ                 U32]
-
-			[ReadiGroupCount             U32]
 		}
 
 		@PushConstants
 		{
-			[xdc_transform      M4]
 			[voxel_transform    M4]
 			[xdc_element_pitch  V2]
 			[rf_data           U64]
 			[output_frame      U64]
-			[channel_offset    S32]
+			[channel_offset    U32]
 			[readi_group       U32]
 		}
 	}

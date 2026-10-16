@@ -924,13 +924,19 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->FNumber               = pb->parameters.f_number;
 				db->AcquisitionKind       = pb->parameters.acquisition_kind;
 				db->SampleCount           = node->rf_dimensions.E[BeamformerRFDimension_Samples];
-				db->ReceiveChannelCount   = pb->parameters.channel_count;
 				db->AcquisitionCount      = node->rf_dimensions.E[BeamformerRFDimension_Events];
 				db->ChunkChannelCount     = node->rf_dimensions.E[BeamformerRFDimension_Channels];
 				db->ChannelByteStride     = input_stride.E[BeamformerRFDimension_Channels]
 				                            * beamformer_data_kind_byte_size[node->input_data_kind];
 				db->AcquisitionByteStride = input_stride.E[BeamformerRFDimension_Events]
 				                            * beamformer_data_kind_byte_size[node->input_data_kind];
+
+				// TODO(rnp): pass these in
+				db->ReceiveChannelCount   = pb->parameters.channel_count;
+				db->TransmitChannelCount  = pb->parameters.channel_count;
+				db->ReceiveTileCount      = 1;
+				db->TransmitTileCount     = 1;
+
 				db->InterpolationMode     = pb->parameters.interpolation_mode;
 				db->TransmitAngle         = pb->parameters.focal_vector.E[0];
 				db->FocusDepth            = pb->parameters.focal_vector.E[1];
@@ -939,9 +945,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->OutputSizeY           = cp->output_points.y;
 				db->OutputSizeZ           = cp->output_points.z;
 				db->TransmitReceiveOrientation = pb->parameters.transmit_receive_orientation;
-
-				// NOTE(rnp): old gcc will miscompile an assignment
-				memory_copy(cp->xdc_transform.E, pb->parameters.xdc_transform.E, sizeof(cp->xdc_transform));
 
 				cp->voxel_transform   = m4_mul(cp->ui_voxel_transform, pb->parameters.das_voxel_transform);
 				cp->xdc_element_pitch = pb->parameters.xdc_element_pitch;
@@ -963,32 +966,33 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				sd->layout   = layout_for_output(cp->output_points);
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
 
+				sd->uses_heap = 1;
+				db->TransducerTransforms = gpu_resource_push(resource_builder, m4, db->TransmitTileCount * db->ReceiveTileCount,
+				                                             .data = &pb->parameters.xdc_transform,
+				                                             .name = str8("transducer_transforms"));
+
 				if (!single_focus) {
 					db->FocalVectors = gpu_resource_push(resource_builder, v2, db->AcquisitionCount,
 					                                     .data = pb->focal_vectors,
 					                                     .name = str8("focal_vectors"));
-					sd->uses_heap = 1;
 				}
 
 				if (!single_orientation) {
 					db->TransmitReceiveOrientations = gpu_resource_push(resource_builder, u8, db->AcquisitionCount,
 					                                                    .data = pb->transmit_receive_orientations,
 					                                                    .name = str8("transmit_receive_orientations"));
-					sd->uses_heap = 1;
 				}
 
 				if (sparse) {
 					db->SparseElements = gpu_resource_push(resource_builder, i16, db->AcquisitionCount,
 					                                       .data = pb->sparse_elements,
 					                                       .name = str8("sparse_elements"));
-					sd->uses_heap = 1;
 				}
 
 				if (pb->parameters.coherency_weighting) {
 					db->IncoherentFrame = gpu_resource_push(resource_builder, u32, 0,
 					                                        .size = beamformer_incoherent_frame_byte_size(cp->output_points, das_data_kind),
 					                                        .name = str8("incoherent_buffer"));
-					sd->uses_heap = 1;
 				}
 
 				cp->readi_group = pb->parameters.readi_group;
@@ -997,7 +1001,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 					db->Hadamard = gpu_resource_push(resource_builder, f16, order * order,
 					                                 .data = make_hadamard_transpose(scratch, order, 0),
 					                                 .name = str8("readi_hadamard"));
-					sd->uses_heap = 1;
 				}
 			}break;
 
@@ -1333,7 +1336,6 @@ do_compute_shader(GPUCommandList cmd, BeamformerComputePlan *cp, BeamformerFrame
 			.readi_group       = cp->readi_group,
 		};
 		memory_copy(pc.voxel_transform.E, cp->das_voxel_transform.E, sizeof(pc.voxel_transform));
-		memory_copy(pc.xdc_transform.E,   cp->xdc_transform.E,       sizeof(pc.xdc_transform));
 
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
