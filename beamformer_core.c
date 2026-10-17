@@ -452,9 +452,9 @@ function uv3
 dispatch_for_output(uv3 layout, iv3 points)
 {
 	uv3 result;
-	result.x = (u32)ceil_f32((f32)points.x / layout.x);
-	result.y = (u32)ceil_f32((f32)points.y / layout.y);
-	result.z = (u32)ceil_f32((f32)points.z / layout.z);
+	result.x = ceil_div_u32(points.x, layout.x);
+	result.y = ceil_div_u32(points.y, layout.y);
+	result.z = ceil_div_u32(points.z, layout.z);
 	return result;
 }
 
@@ -838,16 +838,16 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 					sd->layout.y = 4;
 					sd->layout.z = 1;
 
-					sd->dispatch.x = (u32)ceil_f32((f32)db->TransmitCount     / (f32)sd->layout.x / (f32)db->ToProcess);
-					sd->dispatch.y = (u32)ceil_f32((f32)db->ChunkChannelCount / (f32)sd->layout.y);
-					sd->dispatch.z = (u32)ceil_f32((f32)decode_sample_count   / (f32)sd->layout.z);
+					sd->dispatch.x = ceil_div_u32(db->TransmitCount / db->ToProcess, sd->layout.x);
+					sd->dispatch.y = ceil_div_u32(db->ChunkChannelCount,             sd->layout.y);
+					sd->dispatch.z = ceil_div_u32(decode_sample_count,               sd->layout.z);
 				} else {
 					/* NOTE(rnp): register caching. using more threads will cause the compiler to do
 					 * contortions to avoid spilling registers. using less gives higher performance */
 					sd->layout = (uv3){{subgroup_size / 2, 1, 1}};
 
-					sd->dispatch.x = (u32)ceil_f32((f32)decode_sample_count   / (f32)sd->layout.x);
-					sd->dispatch.y = (u32)ceil_f32((f32)db->ChunkChannelCount / (f32)sd->layout.y);
+					sd->dispatch.x = ceil_div_u32(decode_sample_count,   sd->layout.x);
+					sd->dispatch.y = ceil_div_u32(db->ChunkChannelCount, sd->layout.y);
 					sd->dispatch.z = 1;
 				}
 
@@ -908,9 +908,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				}
 
 				sd->layout     = (uv3){{subgroup_size, 1, 1}};
-				sd->dispatch.x = (u32)ceil_f32((f32)node->rf_dimensions.E[BeamformerRFDimension_Samples]  / (f32)sd->layout.x);
-				sd->dispatch.y = (u32)ceil_f32((f32)node->rf_dimensions.E[BeamformerRFDimension_Channels] / (f32)sd->layout.y);
-				sd->dispatch.z = (u32)ceil_f32((f32)node->rf_dimensions.E[BeamformerRFDimension_Events]   / (f32)sd->layout.z);
+				sd->dispatch.x = ceil_div_u32(node->rf_dimensions.E[BeamformerRFDimension_Samples],  sd->layout.x);
+				sd->dispatch.y = ceil_div_u32(node->rf_dimensions.E[BeamformerRFDimension_Channels], sd->layout.y);
+				sd->dispatch.z = ceil_div_u32(node->rf_dimensions.E[BeamformerRFDimension_Events],   sd->layout.z);
 			}break;
 
 			case BeamformerShaderKind_DAS:{
@@ -1045,9 +1045,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				sd->layout.z = Min(subgroup_size, rb->SizeZ);
 				sd->layout.y = subgroup_size / sd->layout.z;
 
-				sd->dispatch.x = (u32)(ceil_f32((f32)rb->SizeX / sd->layout.x));
-				sd->dispatch.y = (u32)(ceil_f32((f32)rb->SizeY / sd->layout.y));
-				sd->dispatch.z = (u32)(ceil_f32((f32)rb->SizeZ / sd->layout.z));
+				sd->dispatch.x = ceil_div_u32(rb->SizeX, sd->layout.x);
+				sd->dispatch.y = ceil_div_u32(rb->SizeY, sd->layout.y);
+				sd->dispatch.z = ceil_div_u32(rb->SizeZ, sd->layout.z);
 			}break;
 
 			default:{}break;

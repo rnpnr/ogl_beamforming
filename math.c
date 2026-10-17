@@ -132,6 +132,13 @@ make_hadamard_transpose(Arena *arena, i32 dim, b32 row_major)
 	return result;
 }
 
+function u32
+ceil_div_u32(u32 a, u32 b)
+{
+	u32 result = ((u64)a + b - 1) / b;
+	return result;
+}
+
 function b32
 u128_equal(u128 a, u128 b)
 {
