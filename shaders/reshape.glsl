@@ -1,62 +1,7 @@
 /* See LICENSE for license details. */
 
-#if   InputDataKind == DataKind_Float32Complex
-  #define Input Float32Complex
-#elif InputDataKind == DataKind_Float32
-  #define Input Float32
-#elif InputDataKind == DataKind_Float16Complex || InputDataKind == DataKind_Int16Complex
-  #define Input Int16Complex
-#elif InputDataKind == DataKind_Float16 || InputDataKind == DataKind_Int16
-  #define Input Int16
-#else
-  #error unsupported data kind for Reshape
-#endif
-
-#if   OutputDataKind == DataKind_Float32Complex
-  #define Output     Float32Complex
-  #define OutputKind f32vec2
-#elif OutputDataKind == DataKind_Float32
-  #define Output     Float32
-  #define OutputKind f32
-#elif OutputDataKind == DataKind_Float16Complex
-  #define Output     Float16Complex
-  #define OutputKind f16vec2
-#elif OutputDataKind == DataKind_Float16
-  #define Output     Float16
-  #define OutputKind f16
-#elif OutputDataKind == DataKind_Int16Complex
-  #define Output     Int16Complex
-  #define OutputKind s16vec2
-#elif OutputDataKind == DataKind_Int16
-  #define Output     Int16
-  #define OutputKind s16
-#else
-  #error unsupported data kind for Reshape
-#endif
-
-layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Int16 {
-	s16 x[];
-};
-
-layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Int16Complex {
-	s16vec2 x[];
-};
-
-layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Float16 {
-	f16 x[];
-};
-
-layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Float16Complex {
-	f16vec2 x[];
-};
-
-layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Float32 {
-	f32 x[];
-};
-
-layout(std430, buffer_reference, buffer_reference_align = 8) restrict buffer Float32Complex {
-	f32vec2 x[];
-};
+layout(std430, buffer_reference) readonly buffer Input  { InputDataType  x[]; };
+layout(std430, buffer_reference)          buffer Output { OutputDataType x[]; };
 
 void main(void)
 {
@@ -68,7 +13,7 @@ void main(void)
 		u32 input_index  = InputStrideX  * x + InputStrideY  * y + InputStrideZ  * z;
 		u32 output_index = OutputStrideX * x + OutputStrideY * y + OutputStrideZ * z;
 
-		OutputKind out_value = OutputKind(0);
+		OutputDataType out_value = OutputDataType(0);
 
 		#if Interleave
 		out_value[0] = Input(left_input_buffer).x[input_index];
