@@ -234,29 +234,41 @@ beamformer_init(BeamformerInput *input)
 
 	load_gl(&ctx->error_stream);
 
-	ctx->shared_memory      = input->shared_memory;
-	ctx->shared_memory_size = input->shared_memory_size;
-	if (ctx->shared_memory_size < (i64)sizeof(*ctx->shared_memory))
-		fatal(str8("Get more ram lol\n"));
-	zero_struct(ctx->shared_memory);
-
-	ctx->shared_memory->version = BEAMFORMER_SHARED_MEMORY_VERSION;
-	ctx->shared_memory->reserved_parameter_blocks = 1;
+	////////////////////////////
+	// NOTE(rnp): shared memory setup
 	{
-		BeamformerParameterBlock *pb = beamformer_parameter_block(ctx->shared_memory, 0);
-		zero_struct(pb);
+		BeamformerSharedMemory *sm = input->shared_memory;
+		ctx->shared_memory      = sm;
+		ctx->shared_memory_size = input->shared_memory_size;
+		if (ctx->shared_memory_size < (i64)sizeof(*ctx->shared_memory))
+			fatal(str8("Get more ram lol\n"));
+		zero_struct(sm);
+
+		sm->version = BEAMFORMER_SHARED_MEMORY_VERSION;
+		sm->reserved_parameter_blocks = 1;
+		{
+			BeamformerParameterBlock *pb = beamformer_parameter_block(sm, 0);
+			zero_struct(pb);
+		}
+
+		sm->beamformed_frame_buffer_size = cs->backlog.buffer->size;
+
+		// TODO(rnp): dynamic rf data buffer slot usage
+		// NOTE(rnp): will be same as the max size we were able to get for the frame buffer
+		sm->capabilities.max_rf_data_size = cs->backlog.buffer->size / BeamformerMaxRawDataFramesInFlight;
+
+		sm->capabilities.cuda    = cuda_supported();
+		// TODO(rnp): re-enable hilbert support, with and without cuda
+		sm->capabilities.hilbert = 0;
+
+		sm->transient.offset     = AlignUpPowerOfTwo(sizeof(*sm), BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE);
+		sm->transient.page_count = ceil_div_u64(ctx->shared_memory_size - sm->transient.offset,
+		                                        BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE);
+		sm->transient.first_free_page = sm->transient.offset / BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE;
+		BeamformerFreePageRun *pr = (void *)((u8 *)sm + sm->transient.offset);
+		pr->page_count = sm->transient.page_count;
+		pr->next_page = pr->prev_page = 0;
 	}
-
-	ctx->shared_memory->beamformed_frame_buffer_size = cs->backlog.buffer->size;
-
-	// TODO(rnp): dynamic rf data buffer slot usage
-	// NOTE(rnp): will be same as the max size we were able to get for the frame buffer
-	ctx->shared_memory->capabilities.max_rf_data_size = cs->backlog.buffer->size
-	                                                    / BeamformerMaxRawDataFramesInFlight;
-
-	ctx->shared_memory->capabilities.cuda    = cuda_supported();
-	// TODO(rnp): re-enable hilbert support, with and without cuda
-	ctx->shared_memory->capabilities.hilbert = 0;
 
 	/* TODO(rnp): I'm not sure if its a good idea to pre-reserve a bunch of semaphores
 	 * on w32 but thats what we are doing for now */

@@ -6,6 +6,7 @@
 @Constant(16)     MaxComputeShaderStages
 @Constant(16)     MaxParameterBlocks
 @Constant(3)      MaxRawDataFramesInFlight
+@Constant(256)    MaxParameterSets
 
 @Enumeration DecodeMode
 {
@@ -90,24 +91,27 @@
 @Flags AcquisitionKindFlags
 {
 	FixedTransmits
+	MultiOrientation
+	MultiDepth
+	MultiSteering
 	Sparse
 }
 
-@Table([name pretty_name fixed_transmits sparse]) AcquisitionKindTable
+@Table([name pretty_name fixed_transmits sparse multi_orientation multi_depth multi_steering]) AcquisitionKindTable
 {
-	[FORCES         FORCES         1 0]
-	[UFORCES        UFORCES        0 1]
-	[HERCULES       HERCULES       1 0]
-	[RCA_VLS        VLS            0 0]
-	[RCA_TPW        TPW            0 0]
-	[UHERCULES      UHERCULES      0 1]
-	[RACES          RACES          1 0]
-	[EPIC_FORCES    EPIC-FORCES    1 0]
-	[EPIC_UFORCES   EPIC-UFORCES   0 1]
-	[EPIC_UHERCULES EPIC-UHERCULES 0 1]
-	[Flash          Flash          0 0]
-	[HERO_PA        HERO-PA        0 0]
-	[ULM            ULM            0 0]
+	[FORCES         FORCES         1 0 0 0 0]
+	[UFORCES        UFORCES        0 1 0 0 0]
+	[HERCULES       HERCULES       1 0 0 0 0]
+	[RCA_VLS        VLS            0 0 1 1 1]
+	[RCA_TPW        TPW            0 0 1 0 1]
+	[UHERCULES      UHERCULES      0 1 0 0 0]
+	[RACES          RACES          1 0 0 0 0]
+	[EPIC_FORCES    EPIC-FORCES    1 0 0 0 0]
+	[EPIC_UFORCES   EPIC-UFORCES   0 1 0 0 0]
+	[EPIC_UHERCULES EPIC-UHERCULES 0 1 0 0 0]
+	[Flash          Flash          0 0 1 1 1]
+	[HERO_PA        HERO-PA        0 0 0 0 0]
+	[ULM            ULM            0 0 0 0 0]
 }
 @Expand(AcquisitionKindTable) @Enumeration(`$(name)`) AcquisitionKind
 
@@ -219,6 +223,67 @@
 @Library @Struct Parameters
 @MATLAB  @Struct Parameters
 
+@Struct DataDescriptor
+{
+	[kind                DataKind  ]
+	[layout              DataLayout]
+	[dimensions          UV4       ]
+}
+
+@Table ([name type]) DynamicParameterFields
+{
+	[transducer_transforms         M4 ]
+	[channel_mapping               U16]
+	[sparse_elements               U16]
+	[focus_depths                  F32]
+	[tilting_angles                F32]
+	[origin_offsets                F32]
+	[transmit_receive_orientations U8 ]
+}
+
+// NOTE(rnp): internal struct used when interning
+@Struct StaticParameterFields
+{
+	[data_description         DataDescriptor    ]
+	[raw_data_dimensions      UV4               ]
+
+	[transducer_channel_count U16              2]
+	[transducer_tile_count    U16              2]
+	[transducer_element_pitch V2                ]
+
+	[output_points            SV4               ]
+	[acquisition_kind         AcquisitionKind   ]
+	[decode_mode              DecodeMode        ]
+	[contrast_mode            ContrastMode      ]
+	[sampling_mode            SamplingMode      ]
+	[sampling_frequency       F32               ]
+	[demodulation_frequency   F32               ]
+	[decimation_rate          U32               ]
+	[speed_of_sound           F32               ]
+	[time_offset              F32               ]
+	[f_number                 F32               ]
+	[interpolation_mode       InterpolationMode ]
+	[coherency_weighting      B32               ]
+	[readi_group_count        U32               ]
+	[readi_group              U32               ]
+
+	[emission_parameters      EmissionParameters]
+}
+
+@Struct ParameterSet
+{
+	@Expand(StaticParameterFields)  [`$(name)` `$(type)` `$(elements)`]
+	@Expand(DynamicParameterFields) [`$(name)` `$(type)` 0]
+}
+@Library @Struct ParameterSet
+@MATLAB  @Struct ParameterSet
+
+@Struct ParameterSetFlat
+{
+	@Expand(StaticParameterFields)  [`$(name)` `$(type)` `$(elements)`]
+	@Expand(DynamicParameterFields) [`$(name)_offset` U32 1]
+}
+
 @Struct SimpleParameters
 {
 	@Expand(Parameters) [`$(name)` `$(type)` `$(elements)`]
@@ -295,7 +360,7 @@
 	`};`
 	``
 	`read_only u32 beamformer_acquisition_kind_flags[] = {`
-	@Expand(AcquisitionKindTable) `	($(fixed_transmits)*BeamformerAcquisitionKindFlags_FixedTransmits)|($(sparse)*BeamformerAcquisitionKindFlags_Sparse),`
+	@Expand(AcquisitionKindTable) `	($(fixed_transmits)*BeamformerAcquisitionKindFlags_FixedTransmits)|($(sparse)*BeamformerAcquisitionKindFlags_Sparse)|($(multi_orientation)*BeamformerAcquisitionKindFlags_MultiOrientation)|($(multi_depth)*BeamformerAcquisitionKindFlags_MultiDepth)|($(multi_steering)*BeamformerAcquisitionKindFlags_MultiSteering),`
 	`};`
 	``
 	`read_only str8 beamformer_acquisition_kind_strings[] = {`

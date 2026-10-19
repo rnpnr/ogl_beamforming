@@ -139,6 +139,14 @@ ceil_div_u32(u32 a, u32 b)
 	return result;
 }
 
+function u64
+ceil_div_u64(u64 a, u64 b)
+{
+	assert((U64_MAX - a + 1) >= b);
+	u64 result = (a + b - 1) / b;
+	return result;
+}
+
 function b32
 u128_equal(u128 a, u128 b)
 {
