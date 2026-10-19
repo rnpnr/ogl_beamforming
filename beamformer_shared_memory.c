@@ -46,7 +46,7 @@ typedef struct {
 	u16 parameter_set;
 	BeamformerViewPlaneTag view_plane;
 
-	static_assert(BeamformerMaxParameterSets <= U16_MAX, "");
+	static_assert(BeamformerMaxParameterBlocks <= U16_MAX, "");
 } BeamformerComputeWorkContext;
 
 /* NOTE: discriminated union based on type */
