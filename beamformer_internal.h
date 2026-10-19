@@ -325,11 +325,10 @@ struct BeamformerComputePlan {
 	u32 rf_size;
 	b32 iq_pipeline;
 
+	u64 ui_last_voxel_transform_expected_hash;
 	m4  ui_voxel_transform;
-	// NOTE(rnp): final voxel transform determining frame dimensions
-	m4  voxel_transform;
-	// NOTE(rnp): final voxel transform used for beamforming
-	m4  das_voxel_transform;
+	// NOTE(rnp): voxel transform passed in from work item
+	m4  last_voxel_transform;
 
 	iv3 output_points;
 	i32 average_frames;
@@ -428,7 +427,11 @@ typedef struct {
 
 	u32                       id;
 	u32                       compound_count;
-	u32                       parameter_block;
+	u16                       parameter_block;
+	u16                       transmit_receive_orientation;
+	f32                       focus_depth;
+	f32                       steering_angle;
+
 	BeamformerDataKind        data_kind;
 	BeamformerAcquisitionKind acquisition_kind;
 	BeamformerContrastMode    contrast_mode;

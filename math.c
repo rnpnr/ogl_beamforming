@@ -427,8 +427,18 @@ function b32
 m4_equal(m4 a, m4 b)
 {
 	b32 result = 1;
+	#ifdef __AVX512F__
+	__m512 one = _mm512_set1_ps(1.f);
+	__m512 eps = _mm512_set1_ps(F32_EPSILON);
+	__m512 av  = _mm512_loadu_ps(&a);
+	__m512 bv  = _mm512_loadu_ps(&b);
+	__m512 delta = _mm512_abs_ps(_mm512_sub_ps(av, bv));
+	__m512 test  = _mm512_mul_ps(eps, _mm512_max_ps(one, _mm512_max_ps(_mm512_abs_ps(av), _mm512_abs_ps(bv))));
+	result = _mm512_cmp_ps_mask(delta, test, _CMP_GT_OS) == 0;
+	#else
 	for EachElement(a.E, it)
 		result &= f32_equal(a.E[it], b.E[it]);
+	#endif
 	return result;
 }
 

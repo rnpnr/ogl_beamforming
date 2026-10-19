@@ -276,7 +276,10 @@ typedef struct {
 	u64 rf_data;
 	u64 output_frame;
 	u32 channel_offset;
-	u32 readi_group;
+	f32 focus_depth;
+	f32 steering_angle;
+	u16 tx_rx_orientation;
+	u16 readi_group;
 } BeamformerDASPushConstants;
 
 typedef struct {
@@ -739,12 +742,15 @@ read_only str8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
-	"  f32mat4  voxel_transform;\n"
-	"  f32vec2  xdc_element_pitch;\n"
-	"  uint64_t rf_data;\n"
-	"  uint64_t output_frame;\n"
-	"  uint32_t channel_offset;\n"
-	"  uint32_t readi_group;\n"
+	"  f32mat4   voxel_transform;\n"
+	"  f32vec2   xdc_element_pitch;\n"
+	"  uint64_t  rf_data;\n"
+	"  uint64_t  output_frame;\n"
+	"  uint32_t  channel_offset;\n"
+	"  float32_t focus_depth;\n"
+	"  float32_t steering_angle;\n"
+	"  uint16_t  tx_rx_orientation;\n"
+	"  uint16_t  readi_group;\n"
 	"};\n"
 	"\n"),
 	str8_comp(""

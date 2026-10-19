@@ -242,6 +242,10 @@ beamformer_init(BeamformerInput *input)
 
 	ctx->shared_memory->version = BEAMFORMER_SHARED_MEMORY_VERSION;
 	ctx->shared_memory->reserved_parameter_blocks = 1;
+	{
+		BeamformerParameterBlock *pb = beamformer_parameter_block(ctx->shared_memory, 0);
+		zero_struct(pb);
+	}
 
 	ctx->shared_memory->beamformed_frame_buffer_size = cs->backlog.buffer->size;
 

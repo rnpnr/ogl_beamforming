@@ -304,14 +304,12 @@ RESULT_TYPE RCA(const vec3 world_point)
 RESULT_TYPE HERCULES(const vec3 world_point)
 {
 	// TODO(rnp): this whole thing needs have an outer loop over transmit tiles
-	const mat4 xdc_transform     = transducer_transform(0);
+	const mat4 xdc_transform   = transducer_transform(0);
+	const bool rx_cols         = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
+	const vec2 focal_vector    = f32vec2(steering_angle, focus_depth);
+	const vec3 xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
 
-	const u8   tx_rx_orientation = tx_rx_orientation_for_acquisition(0);
-	const bool rx_cols           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
-	const vec2 focal_vector      = focal_vector_for_acquisition(0);
-	const vec3 xdc_world_point   = (xdc_transform * vec4(world_point, 1)).xyz;
-
-	const f32 transmit_index   = sample_index(rca_transmit_distance(world_point, focal_vector, tx_rx_orientation));
+	const f32 transmit_index   = sample_index(rca_transmit_distance(world_point, focal_vector, u8(tx_rx_orientation)));
 	const f32 z_delta_squared  = xdc_world_point.z * xdc_world_point.z;
 	const f32 f_number_over_z  = abs(FNumber / xdc_world_point.z);
 	const f32 apodization_test = 0.25f / (f_number_over_z * f_number_over_z);
@@ -357,12 +355,11 @@ RESULT_TYPE FORCES(const vec3 world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
-	const mat4 xdc_transform     = transducer_transform(0);
-	const u8   tx_rx_orientation = tx_rx_orientation_for_acquisition(0);
-	const u32  rx_axis           = u32(RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows);
-	const f32  element_pitch     = xdc_element_pitch[rx_axis];
+	const mat4 xdc_transform = transducer_transform(0);
+	const u32  rx_axis       = u32(RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows);
+	const f32  element_pitch = xdc_element_pitch[rx_axis];
 	// TODO(rnp): the sign of the origin offset might be flipped
-	const f32  origin_offset     = FocusDepth * tan(radians(TransmitAngle));
+	const f32  origin_offset = focus_depth * tan(radians(steering_angle));
 
 	vec3 xdc_world_point       = (xdc_transform * vec4(world_point, 1)).xyz;
 	f32  lateral_coord         = xdc_world_point[rx_axis];
@@ -411,12 +408,11 @@ RESULT_TYPE READI_FORCES(const vec3 world_point)
 {
 	RESULT_TYPE result = RESULT_TYPE(0);
 
-	const mat4 xdc_transform     = transducer_transform(0);
-	const u8   tx_rx_orientation = tx_rx_orientation_for_acquisition(0);
-	const u32  rx_axis           = u32(RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows);
-	const f32  element_pitch     = xdc_element_pitch[rx_axis];
+	const mat4 xdc_transform = transducer_transform(0);
+	const u32  rx_axis       = u32(RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows);
+	const f32  element_pitch = xdc_element_pitch[rx_axis];
 	// TODO(rnp): the sign of the origin offset might be flipped
-	const f32  origin_offset     = FocusDepth * tan(radians(TransmitAngle));
+	const f32  origin_offset = focus_depth * tan(radians(steering_angle));
 
 	vec3 xdc_world_point       = (xdc_transform * vec4(world_point, 1)).xyz;
 	f32  lateral_coord         = xdc_world_point[rx_axis];

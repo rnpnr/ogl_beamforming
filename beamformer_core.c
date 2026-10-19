@@ -946,10 +946,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->OutputSizeZ           = cp->output_points.z;
 				db->TransmitReceiveOrientation = pb->parameters.transmit_receive_orientation;
 
-				cp->voxel_transform   = m4_mul(cp->ui_voxel_transform, pb->parameters.das_voxel_transform);
 				cp->xdc_element_pitch = pb->parameters.xdc_element_pitch;
-
-				memory_copy(cp->das_voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));
 
 				u32 id = pb->parameters.acquisition_kind;
 
@@ -1255,6 +1252,7 @@ beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp,
 		switch (region) {
 		case BeamformerParameterDirtyFlag_NotifyUI:{
 			atomic_store_u32(&ctx->ui_dirty_parameter_blocks, 1u << block);
+			cp->ui_voxel_transform = m4_identity();
 		}break;
 
 		case BeamformerParameterDirtyFlag_Parameters:{
@@ -1333,9 +1331,12 @@ do_compute_shader(GPUCommandList cmd, BeamformerComputePlan *cp, BeamformerFrame
 			.rf_data           = input_pointer,
 			.output_frame      = frame->gpu_pointer,
 			.channel_offset    = channel_offset,
+			.focus_depth       = frame->focus_depth,
+			.steering_angle    = frame->steering_angle,
+			.tx_rx_orientation = frame->transmit_receive_orientation,
 			.readi_group       = cp->readi_group,
 		};
-		memory_copy(pc.voxel_transform.E, cp->das_voxel_transform.E, sizeof(pc.voxel_transform));
+		memory_copy(pc.voxel_transform.E, frame->voxel_transform.E, sizeof(pc.voxel_transform));
 
 		gpu_command_push_constants(cmd, 0, sizeof(pc), &pc);
 		gpu_command_dispatch_compute(cmd, dispatch);
@@ -1490,11 +1491,11 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			push_compute_timing_info(ctx->compute_timing_table,
 			                         (ComputeTimingInfo){.kind = ComputeTimingInfoKind_ComputeFrameBegin});
 
-			BeamformerComputePlan *cp = beamformer_compute_plan_for_block(cs, work->compute_context.parameter_block, arena);
-			if unlikely(beamformer_parameter_block_dirty(sm, work->compute_context.parameter_block)) {
-				u32 block = work->compute_context.parameter_block;
+			BeamformerComputePlan *cp = beamformer_compute_plan_for_block(cs, work->compute_context.parameter_set, arena);
+			if unlikely(beamformer_parameter_block_dirty(sm, work->compute_context.parameter_set)) {
+				u32 set = work->compute_context.parameter_set;
 				Temp scratch = temp_begin(arena);
-				beamformer_commit_parameter_block(ctx, cp, block, arena);
+				beamformer_commit_parameter_block(ctx, cp, set, arena);
 				temp_end(scratch);
 			}
 
@@ -1542,9 +1543,22 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			frame->acquisition_kind = cp->acquisition_kind;
 			frame->contrast_mode    = cp->contrast_mode;
 			frame->compound_count   = cp->acquisition_count;
-			frame->parameter_block  = work->compute_context.parameter_block;
+			frame->parameter_block  = work->compute_context.parameter_set;
 			frame->view_plane_tag   = work->compute_context.view_plane;
-			memory_copy(frame->voxel_transform.E, cp->voxel_transform.E, sizeof(cp->voxel_transform));
+			frame->focus_depth      = work->compute_context.focus_depth;
+			frame->steering_angle   = work->compute_context.steering_angle;
+			frame->transmit_receive_orientation = work->compute_context.tx_rx_orientation;
+
+			b32 transform_changed = !m4_equal(cp->last_voxel_transform, work->compute_context.voxel_transform);
+			memory_copy(&cp->last_voxel_transform, &work->compute_context.voxel_transform, sizeof(cp->last_voxel_transform));
+			memory_copy(&frame->voxel_transform, &cp->last_voxel_transform, sizeof(frame->voxel_transform));
+
+			if (transform_changed) {
+				atomic_store_u32(&beamformer_context->ui_dirty_parameter_blocks, 1u << work->compute_context.parameter_set);
+				cp->ui_voxel_transform = m4_identity();
+			} else if (u64_hash_from_str8(str8_struct(&cp->last_voxel_transform)) == cp->ui_last_voxel_transform_expected_hash) {
+				frame->voxel_transform = m4_mul(cp->ui_voxel_transform, frame->voxel_transform);
+			}
 
 			GPUCommandList cmd = gpu_command_list_begin(GPUTimeline_Compute);
 			gpu_command_timestamp(cmd);
@@ -1833,7 +1847,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 }
 
 function void
-beamformer_queue_compute(BeamformerCtx *ctx, BeamformerFrame *frame, u32 parameter_block)
+beamformer_queue_compute(BeamformerCtx *ctx, BeamformerComputeWorkContext cw)
 {
 	BeamformerSharedMemory *sm = ctx->shared_memory;
 	BeamformerSharedMemoryLockKind dispatch_lock = BeamformerSharedMemoryLockKind_DispatchCompute;
@@ -1842,8 +1856,7 @@ beamformer_queue_compute(BeamformerCtx *ctx, BeamformerFrame *frame, u32 paramet
 		BeamformWork *work = beamform_work_queue_push(ctx->beamform_work_queue);
 		if (work) {
 			work->kind = BeamformerWorkKind_Compute;
-			work->compute_context.view_plane      = frame ? frame->view_plane_tag : 0;
-			work->compute_context.parameter_block = parameter_block;
+			memory_copy(&work->compute_context, &cw, sizeof(cw));
 			beamform_work_queue_push_commit(ctx->beamform_work_queue);
 		}
 	}
@@ -1885,8 +1898,18 @@ beamformer_process_input_events(BeamformerCtx *ctx, BeamformerInput *input,
 				}
 
 				// TODO(rnp): track latest parameter block
-				if (ctx->latest_frame)
-					beamformer_queue_compute(ctx, ctx->latest_frame, 0);
+				if (ctx->latest_frame) {
+					BeamformerFrame *f = ctx->latest_frame;
+					beamformer_queue_compute(ctx, (BeamformerComputeWorkContext){
+						.voxel_transform   = f->voxel_transform,
+						.rf_offset         = 0,
+						.focus_depth       = f->focus_depth,
+						.steering_angle    = f->steering_angle,
+						.tx_rx_orientation = f->transmit_receive_orientation,
+						.parameter_set     = 0,
+						.view_plane        = f->view_plane_tag,
+					});
+				}
 			}break;
 
 			case BeamformerFileReloadKind_RenderShader:{

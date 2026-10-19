@@ -375,6 +375,7 @@ typedef struct {
 	BeamformerFrame latest_plane[BeamformerViewPlaneTag_Count];
 
 	b32 flush_parameters;
+	u32 flush_dirty_flags;
 	u32 selected_parameter_block;
 
 	// TODO(rnp): this should be per parameter block
@@ -2322,17 +2323,9 @@ function UI_CUSTOM_DRAW_FUNCTION(beamformer_custom_draw_frame_view)
 }
 
 function b32
-ui_rebuild_das_transform(u32 parameter_block, i32 dimension, v3 min, v3 max, f32 off_axis_position)
+ui_rebuild_das_transform(m4 das_transform, u32 parameter_block, i32 dimension, v3 min, v3 max, f32 off_axis_position)
 {
-	BeamformerUI *ui = ui_context;
-
-	b32 result = 0;
 	m4 new_transform = m4_identity();
-
-	BeamformerParameterBlock *pb = beamformer_parameter_block(beamformer_context->shared_memory, parameter_block);
-
-	m4 das_transform = pb->parameters.das_voxel_transform;
-
 	switch (dimension) {
 	case 1:{new_transform = das_transform_1d(min, max);}break;
 	case 3:{new_transform = das_transform_3d(min, max);}break;
@@ -2348,7 +2341,7 @@ ui_rebuild_das_transform(u32 parameter_block, i32 dimension, v3 min, v3 max, f32
 
 		v3 rotation_axis = cross(v3_normalize(new_transform.c[0].xyz), N);
 
-		m4 R = m4_rotation_about_axis(rotation_axis, ui->beamform_plane);
+		m4 R = m4_rotation_about_axis(rotation_axis, ui_context->beamform_plane);
 		m4 T = m4_translation(v3_scale(m4_mul_v3(R, N), off_axis_position));
 
 		new_transform = m4_mul(T, m4_mul(R, new_transform));
@@ -2358,16 +2351,12 @@ ui_rebuild_das_transform(u32 parameter_block, i32 dimension, v3 min, v3 max, f32
 	new_transform = m4_mul(new_transform, m4_inverse(das_transform));
 
 	BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[parameter_block];
+	b32 result = 0;
 	if (cp) {
 		result |= !m4_equal(new_transform, cp->ui_voxel_transform);
-		memory_copy(cp->ui_voxel_transform.E, new_transform.E, sizeof(new_transform));
+		memory_copy(&cp->ui_voxel_transform, &new_transform, sizeof(new_transform));
+		cp->ui_last_voxel_transform_expected_hash = u64_hash_from_str8(str8_struct(&das_transform));
 	}
-
-	if (result) {
-		beamformed_shared_memory_dirty_flag(beamformer_context->shared_memory, parameter_block,
-		                                    BeamformerParameterDirtyFlag_Parameters);
-	}
-
 	return result;
 }
 
@@ -3167,11 +3156,17 @@ ui_build_frame_view(UINode *container, BeamformerFrameView *view)
 	if (rebuild_transform) {
 		min_coordinate.E[0] = min_2d.E[0]; min_coordinate.E[1] = min_2d.E[1];
 		max_coordinate.E[0] = max_2d.E[0]; max_coordinate.E[1] = max_2d.E[1];
-		if (ui_rebuild_das_transform(frame->parameter_block, iv3_dimension(frame->points),
-		                             min_coordinate, max_coordinate,
+
+		BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[frame->parameter_block];
+		m4 last_transform = m4_identity();
+		if (cp) last_transform = cp->last_voxel_transform;
+
+		if (ui_rebuild_das_transform(last_transform, frame->parameter_block,
+		                             iv3_dimension(frame->points), min_coordinate, max_coordinate,
 		                             plane_offset_from_transform(frame->voxel_transform)))
 		{
 			ui->flush_parameters = 1;
+			ui->selected_parameter_block = frame->parameter_block;
 		}
 	}
 }
@@ -3498,14 +3493,20 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 			UIFlags(UINodeFlag_Scroll|UINodeFlag_TextInputNumeric)
 			{
 				UISignal signal = ui_text_boxf("%0.2f###sound", bp->speed_of_sound);
-				if (ui_tweak_f32_compute_variable(signal, &bp->speed_of_sound, 1.f, 10.f, (v2){{0, inf32()}}))
-					ui->flush_parameters = 1;
+				if (ui_tweak_f32_compute_variable(signal, &bp->speed_of_sound, 1.f, 10.f, (v2){{0, inf32()}})) {
+					ui->selected_parameter_block = parameter_block;
+					ui->flush_parameters   = 1;
+					ui->flush_dirty_flags |= 1 << BeamformerParameterDirtyFlag_Parameters;
+				}
 			}
 
 			b32 rebuild_transform = 0;
-			m4 das_transform = pb->parameters.das_voxel_transform;
-			if (cp) das_transform = m4_mul(cp->ui_voxel_transform, das_transform);
-
+			m4  das_transform  = m4_identity();
+			m4  last_transform = m4_identity();
+			if (cp) {
+				last_transform = cp->last_voxel_transform;
+				das_transform  = m4_mul(cp->ui_voxel_transform, last_transform);
+			}
 			f32 off_axis_position = plane_offset_from_transform(das_transform);
 
 			v3 coordinates[2] = {
@@ -3623,8 +3624,11 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 			UIFlags(UINodeFlag_Scroll|UINodeFlag_TextInputNumeric)
 			{
 				UISignal signal = ui_text_boxf("%0.2f###f_number", bp->f_number);
-				if (ui_tweak_f32_compute_variable(signal, &bp->f_number, 1.f, 0.05f, (v2){{0, inf32()}}))
-					ui->flush_parameters = 1;
+				if (ui_tweak_f32_compute_variable(signal, &bp->f_number, 1.f, 0.05f, (v2){{0, inf32()}})) {
+					ui->selected_parameter_block = parameter_block;
+					ui->flush_parameters   = 1;
+					ui->flush_dirty_flags |= 1 << BeamformerParameterDirtyFlag_Parameters;
+				}
 			}
 
 			UIParent(label_column) ui_label(str8("Interpolation"));
@@ -3638,7 +3642,9 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 					i32 delta = signal.scroll.y + ui_pressed(signal);
 					bp->interpolation_mode = circular_add(bp->interpolation_mode, delta,
 					                                      BeamformerInterpolationMode_Count);
-					ui->flush_parameters = 1;
+					ui->selected_parameter_block = parameter_block;
+					ui->flush_parameters   = 1;
+					ui->flush_dirty_flags |= 1 << BeamformerParameterDirtyFlag_Parameters;
 				}
 			}
 
@@ -3652,13 +3658,18 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 				                                  str8("False###coherency_weighting"));
 				if (signal.flags & (UISignalFlag_Pressed|UISignalFlag_Scrolled)) {
 					bp->coherency_weighting = !bp->coherency_weighting;
-					ui->flush_parameters = 1;
+					ui->selected_parameter_block = parameter_block;
+					ui->flush_parameters   = 1;
+					ui->flush_dirty_flags |= 1 << BeamformerParameterDirtyFlag_Parameters;
 				}
 			}
 
 			if (rebuild_transform) {
-				if (ui_rebuild_das_transform(parameter_block, dimension, coordinates[0], coordinates[1], off_axis_position))
+				if (ui_rebuild_das_transform(last_transform, parameter_block, dimension, coordinates[0], coordinates[1], off_axis_position))
+				{
 					ui->flush_parameters = 1;
+					ui->selected_parameter_block = parameter_block;
+				}
 			}
 		}
 	}
@@ -5293,32 +5304,11 @@ beamformer_ui_frame(void)
 
 	u32 selected_block = ui->selected_parameter_block % BeamformerMaxParameterBlocks;
 	u32 selected_mask  = 1 << selected_block;
-	if (beamformer_context->ui_dirty_parameter_blocks & selected_mask) {
-		BeamformerParameterBlock *pb = beamformer_parameter_block_lock(beamformer_context->shared_memory, selected_block, 0);
-		if (pb) {
-			ui->flush_parameters = 0;
-
-			m4 das_transform;
-			memory_copy(das_transform.E, pb->parameters.das_voxel_transform.E, sizeof(das_transform));
-
-			atomic_and_u32(&beamformer_context->ui_dirty_parameter_blocks, ~selected_mask);
-			beamformer_parameter_block_unlock(beamformer_context->shared_memory, selected_block);
-
-			BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[selected_block];
-			m4 identity = m4_identity();
-			b32 recompute = !m4_equal(identity, cp->ui_voxel_transform);
-			memory_copy(cp->ui_voxel_transform.E, identity.E, sizeof(identity));
-
-			if (recompute) {
-				beamformed_shared_memory_dirty_flag(beamformer_context->shared_memory, selected_block,
-				                                    BeamformerParameterDirtyFlag_Parameters);
-				beamformer_queue_compute(beamformer_context,
-				                         beamformer_frame_from_index(beamformer_registers()->frame),
-				                         selected_block);
-			}
-
-			ui->beamform_plane = 0;
-		}
+	if (atomic_load_u32(&beamformer_context->ui_dirty_parameter_blocks) & selected_mask) {
+		atomic_and_u32(&beamformer_context->ui_dirty_parameter_blocks, ~selected_mask);
+		ui->flush_parameters  = 0;
+		ui->flush_dirty_flags = 0;
+		ui->beamform_plane    = 0;
 	}
 
 	/* NOTE: process interactions first because the user interacted with
@@ -5334,13 +5324,23 @@ beamformer_ui_frame(void)
 	if (ui->flush_parameters && beamformer_frame_valid(beamformer_registers()->frame)) {
 		BeamformerParameterBlock *pb = beamformer_parameter_block_lock(beamformer_context->shared_memory, selected_block, 0);
 		if (pb) {
-			ui->flush_parameters = 0;
-			beamformed_shared_memory_dirty_flag(beamformer_context->shared_memory, selected_block,
-			                                    BeamformerParameterDirtyFlag_Parameters);
+			atomic_or_u32(&pb->region_update_flags, ui->flush_dirty_flags);
+			ui->flush_parameters  = 0;
+			ui->flush_dirty_flags = 0;
+
+			BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[selected_block];
+			BeamformerFrame       *f  = beamformer_frame_from_index(beamformer_registers()->frame);
+			beamformer_queue_compute(beamformer_context, (BeamformerComputeWorkContext){
+				.voxel_transform   = cp->last_voxel_transform,
+				.rf_offset         = 0,
+				.focus_depth       = f->focus_depth,
+				.steering_angle    = f->steering_angle,
+				.tx_rx_orientation = f->transmit_receive_orientation,
+				.parameter_set     = selected_block,
+				.view_plane        = f->view_plane_tag,
+			});
+
 			beamformer_parameter_block_unlock(beamformer_context->shared_memory, selected_block);
-			beamformer_queue_compute(beamformer_context,
-			                         beamformer_frame_from_index(beamformer_registers()->frame),
-			                         selected_block);
 		}
 	}
 

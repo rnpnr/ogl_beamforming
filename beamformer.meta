@@ -450,12 +450,15 @@
 
 		@PushConstants
 		{
-			[voxel_transform    M4]
-			[xdc_element_pitch  V2]
-			[rf_data           U64]
-			[output_frame      U64]
-			[channel_offset    U32]
-			[readi_group       U32]
+			[voxel_transform     M4]
+			[xdc_element_pitch   V2]
+			[rf_data            U64]
+			[output_frame       U64]
+			[channel_offset     U32]
+			[focus_depth        F32]
+			[steering_angle     F32]
+			[tx_rx_orientation  U16]
+			[readi_group        U16]
 		}
 	}
 

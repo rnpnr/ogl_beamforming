@@ -1,5 +1,5 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (36UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (37UL)
 
 typedef enum {
 	BeamformerWorkKind_Compute,
@@ -38,9 +38,15 @@ typedef enum {BEAMFORMER_SHARED_MEMORY_LOCKS BeamformerSharedMemoryLockKind_Coun
 #undef X
 
 typedef struct {
+	m4  voxel_transform;
+	u64 rf_offset;
+	f32 focus_depth;
+	f32 steering_angle;
+	u16 tx_rx_orientation;
+	u16 parameter_set;
 	BeamformerViewPlaneTag view_plane;
-	u32                    parameter_block;
-	u64                    rf_offset;
+
+	static_assert(BeamformerMaxParameterSets <= U16_MAX, "");
 } BeamformerComputeWorkContext;
 
 /* NOTE: discriminated union based on type */
