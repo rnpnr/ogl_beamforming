@@ -404,8 +404,6 @@
 		@Flags
 		{
 			CoherencyWeighting
-			SingleFocus
-			SingleOrientation
 			Sparse
 		}
 
@@ -439,9 +437,6 @@
 			[SpeedOfSound                F32]
 			[TimeOffset                  F32]
 			[FNumber                     F32]
-
-			[FocusDepth                  F32]
-			[TransmitAngle               F32]
 
 			[OutputSizeX                 U32]
 			[OutputSizeY                 U32]

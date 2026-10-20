@@ -146,9 +146,7 @@ typedef enum {
 
 typedef enum {
 	BeamformerDASCompileFlags_CoherencyWeighting = 1 << 0,
-	BeamformerDASCompileFlags_SingleFocus        = 1 << 1,
-	BeamformerDASCompileFlags_SingleOrientation  = 1 << 2,
-	BeamformerDASCompileFlags_Sparse             = 1 << 3,
+	BeamformerDASCompileFlags_Sparse             = 1 << 1,
 } BeamformerDASCompileFlags;
 
 typedef enum {
@@ -235,8 +233,6 @@ typedef struct {
 	f32 SpeedOfSound;
 	f32 TimeOffset;
 	f32 FNumber;
-	f32 FocusDepth;
-	f32 TransmitAngle;
 	u32 OutputSizeX;
 	u32 OutputSizeY;
 	u32 OutputSizeZ;
@@ -509,11 +505,9 @@ read_only MetaStructMember *meta_struct_members_by_id[] = {
 		{8,  68, 1, 0},
 		{8,  72, 1, 0},
 		{8,  76, 1, 0},
-		{8,  80, 1, 0},
-		{8,  84, 1, 0},
+		{18, 80, 1, 0},
+		{18, 84, 1, 0},
 		{18, 88, 1, 0},
-		{18, 92, 1, 0},
-		{18, 96, 1, 0},
 	},
 	(MetaStructMember []){
 		{18, 0, 1, 0},
@@ -587,8 +581,6 @@ read_only str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("SpeedOfSound"),
 		str8_comp("TimeOffset"),
 		str8_comp("FNumber"),
-		str8_comp("FocusDepth"),
-		str8_comp("TransmitAngle"),
 		str8_comp("OutputSizeX"),
 		str8_comp("OutputSizeY"),
 		str8_comp("OutputSizeZ"),
@@ -612,11 +604,11 @@ read_only str8 *meta_struct_member_names_by_id[] = {
 };
 
 read_only MetaStructInfo meta_struct_info_by_id[] = {
-	{str8_comp("DecodeBakeParameters"),             11, 44,  0},
-	{str8_comp("FilterBakeParameters"),             13, 52,  0},
-	{str8_comp("DASBakeParameters"),                29, 100, 0},
-	{str8_comp("CoherencyWeightingBakeParameters"), 3,  12,  0},
-	{str8_comp("ReshapeBakeParameters"),            9,  36,  0},
+	{str8_comp("DecodeBakeParameters"),             11, 44, 0},
+	{str8_comp("FilterBakeParameters"),             13, 52, 0},
+	{str8_comp("DASBakeParameters"),                27, 92, 0},
+	{str8_comp("CoherencyWeightingBakeParameters"), 3,  12, 0},
+	{str8_comp("ReshapeBakeParameters"),            9,  36, 0},
 };
 
 read_only str8 beamformer_shader_names[] = {
@@ -736,9 +728,7 @@ read_only str8 beamformer_shader_global_header_strings[] = {
 	"\n"),
 	str8_comp(""
 	"#define CoherencyWeighting ((CompileFlags & (1 << 0)) != 0)\n"
-	"#define SingleFocus        ((CompileFlags & (1 << 1)) != 0)\n"
-	"#define SingleOrientation  ((CompileFlags & (1 << 2)) != 0)\n"
-	"#define Sparse             ((CompileFlags & (1 << 3)) != 0)\n"
+	"#define Sparse             ((CompileFlags & (1 << 1)) != 0)\n"
 	"\n"),
 	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
@@ -851,8 +841,6 @@ read_only str8 *beamformer_shader_compile_flag_names[] = {
 	},
 	(str8 []){
 		str8_comp("CoherencyWeighting"),
-		str8_comp("SingleFocus"),
-		str8_comp("SingleOrientation"),
 		str8_comp("Sparse"),
 	},
 	0,
@@ -868,7 +856,7 @@ read_only str8 *beamformer_shader_compile_flag_names[] = {
 read_only u8 beamformer_shader_compile_flag_counts[] = {
 	2,
 	2,
-	4,
+	2,
 	0,
 	2,
 	0,

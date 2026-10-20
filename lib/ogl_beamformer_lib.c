@@ -573,7 +573,8 @@ beamformer_start_compute(u64 offset, u32 image_plane_tag, u32 parameter_slot)
 		    lib_error_check(image_plane_tag < BeamformerViewPlaneTag_Count, InvalidImagePlane))
 		{
 			// TODO(rnp): this stuff will be passed in rather than taken from the existing set
-			BeamformerParameters *bp = &beamformer_parameter_block(g_beamformer_library_context.bp, parameter_slot)->parameters;
+			BeamformerParameterBlock *pb = beamformer_parameter_block(g_beamformer_library_context.bp, parameter_slot);
+			BeamformerParameters     *bp = &pb->parameters;
 
 			BeamformWork *work = try_push_work_queue();
 			if (work) {
@@ -582,9 +583,10 @@ beamformer_start_compute(u64 offset, u32 image_plane_tag, u32 parameter_slot)
 				work->compute_context.view_plane        = image_plane_tag;
 				work->compute_context.parameter_set     = parameter_slot;
 				work->compute_context.rf_offset         = offset;
-				work->compute_context.steering_angle    = bp->focal_vector.x;
-				work->compute_context.focus_depth       = bp->focal_vector.y;
-				work->compute_context.tx_rx_orientation = bp->transmit_receive_orientation;
+				work->compute_context.steering_angle    = bp->single_focus ? bp->focal_vector.x : pb->focal_vectors[0].x;
+				work->compute_context.focus_depth       = bp->single_focus ? bp->focal_vector.y : pb->focal_vectors[0].y;
+				work->compute_context.tx_rx_orientation = bp->single_orientation ? bp->transmit_receive_orientation
+				                                                                 : pb->transmit_receive_orientations[0];
 				memory_copy(&work->compute_context.voxel_transform, &bp->das_voxel_transform, sizeof(bp->das_voxel_transform));
 				beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
 				beamformer_flush_commands();

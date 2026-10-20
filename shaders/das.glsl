@@ -228,19 +228,6 @@ float cylindrical_wave_transmit_distance(const vec3 point, const float focal_dep
 	return distance(rca_plane_projection(point, tx_rows), f);
 }
 
-u8 tx_rx_orientation_for_acquisition(const s32 acquisition)
-{
-	u8 result = u8(TransmitReceiveOrientation);
-	if (!SingleOrientation) result = U8(HeapBase + TransmitReceiveOrientations).x[acquisition];
-	return result;
-}
-
-f32vec2 focal_vector_for_acquisition(const s32 acquisition)
-{
-	f32vec2 result = SingleFocus ? f32vec2(TransmitAngle, FocusDepth) : F32V2(HeapBase + FocalVectors).x[acquisition];
-	return result;
-}
-
 f32 rca_transmit_distance(const vec3 world_point, const vec2 focal_vector, const u8 transmit_receive_orientation)
 {
 	float result = 0;
@@ -276,9 +263,10 @@ RESULT_TYPE RCA(const vec3 world_point)
 
 	const mat4 xdc_transform = transducer_transform(0);
 	for (s32 acquisition = 0; acquisition < s32(AcquisitionCount); acquisition++) {
-		const u8   tx_rx_orientation = tx_rx_orientation_for_acquisition(acquisition);
+		const u8   tx_rx_orientation = U8(HeapBase + TransmitReceiveOrientations).x[acquisition];
 		const bool rx_rows           = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows;
-		const vec2 focal_vector      = focal_vector_for_acquisition(acquisition);
+		const vec2 focal_vector      = F32V2(HeapBase + FocalVectors).x[acquisition];
+
 		vec2  xdc_world_point = rca_plane_projection((xdc_transform * vec4(world_point, 1)).xyz, rx_rows);
 		f32   transmit_index  = sample_index(rca_transmit_distance(world_point, focal_vector, tx_rx_orientation));
 

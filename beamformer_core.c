@@ -938,8 +938,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->TransmitTileCount     = 1;
 
 				db->InterpolationMode     = pb->parameters.interpolation_mode;
-				db->TransmitAngle         = pb->parameters.focal_vector.E[0];
-				db->FocusDepth            = pb->parameters.focal_vector.E[1];
 				db->ReadiGroupCount       = pb->parameters.readi_group_count;
 				db->OutputSizeX           = cp->output_points.x;
 				db->OutputSizeY           = cp->output_points.y;
@@ -956,8 +954,6 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				b32 single_orientation = pb->parameters.single_orientation != 0;
 
 				sd->compile_flags |= BeamformerDASCompileFlags_CoherencyWeighting * (pb->parameters.coherency_weighting != 0);
-				sd->compile_flags |= BeamformerDASCompileFlags_SingleFocus        * single_focus;
-				sd->compile_flags |= BeamformerDASCompileFlags_SingleOrientation  * single_orientation;
 				sd->compile_flags |= BeamformerDASCompileFlags_Sparse             * sparse;
 
 				sd->layout   = layout_for_output(cp->output_points);
