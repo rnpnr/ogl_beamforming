@@ -284,16 +284,6 @@ arena_clear(Arena *arena)
 	arena_pop_to(arena, 0);
 }
 
-function void
-arena_pre_align(Arena *arena, u64 align)
-{
-	assert(IsPowerOfTwo(align));
-	Arena *current = arena->current;
-	u8 *start = (u8 *)current + current->position;
-	u8 *desired_start = (u8 *)AlignUpPowerOfTwo((u64)start, align);
-	current->position += (u64)(desired_start - start);
-}
-
 function Temp
 temp_begin(Arena *arena)
 {

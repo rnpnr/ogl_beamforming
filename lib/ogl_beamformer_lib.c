@@ -27,9 +27,9 @@ W32(iptr) OpenFileMappingA(u32, b32, c8 *);
 
 global struct {
 	BeamformerSharedMemory *bp;
+	b32                     new_rf;
 	i32                     timeout_ms;
 	BeamformerLibErrorKind  last_error;
-	i64                     shared_memory_size;
 } g_beamformer_library_context;
 
 #if OS_LINUX
@@ -156,8 +156,7 @@ check_shared_memory(void)
 			BeamformerSharedMemory *bp = (BeamformerSharedMemory *)shared_memory.data;
 			result = lib_error_check(bp->version == BEAMFORMER_SHARED_MEMORY_VERSION, VersionMismatch);
 			if (result) {
-				g_beamformer_library_context.bp                 = bp;
-				g_beamformer_library_context.shared_memory_size = shared_memory.length;
+				g_beamformer_library_context.bp = bp;
 			} else {
 				os_close_shared_memory_area(shared_memory.data, shared_memory.length);
 			}
@@ -314,9 +313,9 @@ beamformer_maximum_rf_data_size(void)
 {
 	u64 result = U64_MAX;
 	if (check_shared_memory()) {
-		Arena *sm = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
-		                                                   g_beamformer_library_context.shared_memory_size);
-		result = Min(sm->reserved - sm->position, g_beamformer_library_context.bp->capabilities.max_rf_data_size);
+		u64 transient_size = g_beamformer_library_context.bp->transient.page_count
+		                     * BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE;
+		result = Min(transient_size, g_beamformer_library_context.bp->capabilities.max_rf_data_size);
 	}
 	return result;
 }
@@ -487,77 +486,79 @@ function b32
 beamformer_push_data_base(void *data, u64 data_size, i32 timeout_ms, u32 block)
 {
 	b32 result = 0;
-	Arena *scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
-	                                                        g_beamformer_library_context.shared_memory_size);
-	BeamformerParameterBlock *b  = beamformer_parameter_block(g_beamformer_library_context.bp, block);
+	BeamformerSharedMemory   *sm = g_beamformer_library_context.bp;
+	BeamformerParameterBlock *b  = beamformer_parameter_block(sm, block);
 	BeamformerParameters     *bp = &b->parameters;
 	BeamformerDataKind     data_kind     = b->pipeline.data_kind;
 	BeamformerContrastMode contrast_mode = bp->contrast_mode;
 
-
-	u64 arena_size  = scratch->reserved - scratch->position;
-	u64 max_rf_size = g_beamformer_library_context.bp->capabilities.max_rf_data_size;
+	u64 max_rf_size = sm->capabilities.max_rf_data_size;
 	u32 rf_size     = bp->acquisition_count * bp->sample_count * bp->channel_count * beamformer_data_kind_byte_size[data_kind];
 	u32 raw_size    = bp->raw_data_dimensions.x * bp->raw_data_dimensions.y * beamformer_data_kind_byte_size[data_kind];
 
 	// TODO(rnp): support multi push upload so that max_rf_size is actual limit
-	if (lib_error_check(rf_size <= arena_size, BufferOverflow) &&
-	    lib_error_check(rf_size <= max_rf_size, RFDataSizeOverflow) &&
-	    lib_error_check(rf_size <= data_size && data_size == raw_size, DataSizeMismatch))
-	{
-		if (lib_try_lock(BeamformerSharedMemoryLockKind_UploadRF, timeout_ms)) {
-			if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
-				u32 channel_count      = bp->channel_count;
-				u32 out_channel_stride = beamformer_data_kind_byte_size[data_kind] * bp->sample_count * bp->acquisition_count;
-				u32 in_channel_stride  = beamformer_data_kind_byte_size[data_kind] * bp->raw_data_dimensions.x;
+	if (lib_try_lock(BeamformerSharedMemoryLockKind_UploadRF, timeout_ms)) {
+		BeamformerSharedMemoryAllocationHandle rf_handle = beamformer_shared_memory_transient_alloc(sm, .size = rf_size, .align = BEAMFORMER_RF_ALIGN);
+		if (lib_error_check(rf_handle != 0, TransientSpaceOverflow) &&
+		    lib_error_check(rf_size <= max_rf_size, RFDataSizeOverflow) &&
+		    lib_error_check(rf_size <= data_size && data_size == raw_size, DataSizeMismatch))
+		{
+			u32 channel_count      = bp->channel_count;
+			u32 out_channel_stride = beamformer_data_kind_byte_size[data_kind] * bp->sample_count * bp->acquisition_count;
+			u32 in_channel_stride  = beamformer_data_kind_byte_size[data_kind] * bp->raw_data_dimensions.x;
 
-				for (u32 channel = 0; channel < channel_count; channel++) {
-					u16 data_channel = (u16)b->channel_mapping[channel];
-					u32 out_off = out_channel_stride * channel;
-					u32 in_off  = in_channel_stride  * data_channel;
-					u8 *memory  = (u8 *)scratch + scratch->position + out_off;
-					switch (contrast_mode) {
-					default:{
-						/* NOTE(rnp): non temporal copy would be better, but we can't ensure
-						 * 64 byte boundaries. */
-						memory_copy(memory, (u8 *)data + in_off, out_channel_stride);
-					}break;
+			u8 *base = beamformer_shared_memory_allocation_pointer(sm, rf_handle);
+			for (u32 channel = 0; channel < channel_count; channel++) {
+				u16 data_channel = (u16)b->channel_mapping[channel];
+				u32 out_off = out_channel_stride * channel;
+				u32 in_off  = in_channel_stride  * data_channel;
 
-					case BeamformerContrastMode_A1S2:{
-						read_only u8 reduce_a1s2_index_map[] = {
-							[BeamformerDataKind_Int16]          = 0,
-							[BeamformerDataKind_Int16Complex]   = 0,
-							[BeamformerDataKind_Float32]        = 1,
-							[BeamformerDataKind_Float32Complex] = 1,
-							[BeamformerDataKind_Float16]        = 2,
-							[BeamformerDataKind_Float16Complex] = 2,
-						};
-						static_assert(BeamformerDataKind_Float16Complex == (BeamformerDataKind_Count - 1), "");
+				u8 *memory = base + out_off;
+				switch (contrast_mode) {
+				default:{
+					/* NOTE(rnp): non temporal copy would be better, but we can't ensure
+					 * 64 byte boundaries. */
+					memory_copy(memory, (u8 *)data + in_off, out_channel_stride);
+				}break;
 
-						local_persist beamformer_reduce_a1s2_contrast_fn *reduce_a1s2_fn_table[] = {
-							#define X(type, ...) beamformer_reduce_a1s2_contrast_##type,
-							BEAMFORMER_REDUCE_A1S2_CONTRAST_LIST
-							#undef X
-						};
+				case BeamformerContrastMode_A1S2:{
+					read_only u8 reduce_a1s2_index_map[] = {
+						[BeamformerDataKind_Int16]          = 0,
+						[BeamformerDataKind_Int16Complex]   = 0,
+						[BeamformerDataKind_Float32]        = 1,
+						[BeamformerDataKind_Float32Complex] = 1,
+						[BeamformerDataKind_Float16]        = 2,
+						[BeamformerDataKind_Float16Complex] = 2,
+					};
+					static_assert(BeamformerDataKind_Float16Complex == (BeamformerDataKind_Count - 1), "");
 
-						u32 sample_count       = bp->sample_count * beamformer_data_kind_element_count[data_kind];
-						u32 acquisition_stride = sample_count * beamformer_data_kind_element_size[data_kind];
-						for (u32 acquisition = 0; acquisition < bp->acquisition_count; acquisition++) {
-							void *out = memory + acquisition * acquisition_stride;
-							void *in  = (u8 *)data + in_off + 3 * acquisition * acquisition_stride;
-							reduce_a1s2_fn_table[reduce_a1s2_index_map[data_kind]](out, in, sample_count);
-						}
-					}break;
+					local_persist beamformer_reduce_a1s2_contrast_fn *reduce_a1s2_fn_table[] = {
+						#define X(type, ...) beamformer_reduce_a1s2_contrast_##type,
+						BEAMFORMER_REDUCE_A1S2_CONTRAST_LIST
+						#undef X
+					};
+					beamformer_reduce_a1s2_contrast_fn *reduce = reduce_a1s2_fn_table[reduce_a1s2_index_map[data_kind]];
+
+					u32 sample_count       = bp->sample_count * beamformer_data_kind_element_count[data_kind];
+					u32 acquisition_stride = sample_count * beamformer_data_kind_element_size[data_kind];
+					for (u32 acquisition = 0; acquisition < bp->acquisition_count; acquisition++) {
+						void *out = memory + acquisition * acquisition_stride;
+						void *in  = (u8 *)data + in_off + 3 * acquisition * acquisition_stride;
+						reduce(out, in, sample_count);
 					}
+				}break;
 				}
-
-				lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
-				/* TODO(rnp): need a better way to communicate this */
-				u64 rf_block_rf_size = ((u64)block << 56ull) | (rf_size & 0x00FFFFFFFFFFFFFFull);
-				atomic_store_u64(&g_beamformer_library_context.bp->rf_block_rf_size, rf_block_rf_size);
-				atomic_store_u64(&g_beamformer_library_context.bp->new_rf_upload, 1ull);
-				result = 1;
 			}
+
+			/* TODO(rnp): need a better way to communicate this */
+			atomic_store_u64(&sm->rf_handle, rf_handle);
+			g_beamformer_library_context.new_rf = 1;
+			result = 1;
+		}
+
+		if (!result && rf_handle) {
+			beamformer_shared_memory_allocation_release(sm, rf_handle);
+			lib_release_lock(BeamformerSharedMemoryLockKind_UploadRF);
 		}
 	}
 	return result;
@@ -578,7 +579,8 @@ beamformer_start_compute(u64 offset, u32 image_plane_tag, u32 parameter_slot)
 
 			BeamformWork *work = try_push_work_queue();
 			if (work) {
-				b64 new_rf = atomic_swap_u64(&g_beamformer_library_context.bp->new_rf_upload, 0ull);
+				b32 new_rf = g_beamformer_library_context.new_rf;
+				g_beamformer_library_context.new_rf = 0;
 				work->kind = new_rf ? BeamformerWorkKind_WaitThenCompute : BeamformerWorkKind_Compute;
 				work->compute_context.view_plane        = image_plane_tag;
 				work->compute_context.parameter_set     = parameter_slot;
@@ -683,7 +685,6 @@ beamformer_export_buffer(BeamformerExportContext export_context)
 	if (result) {
 		work->export_context = export_context;
 		work->kind = BeamformerWorkKind_ExportBuffer;
-		work->lock = BeamformerSharedMemoryLockKind_ScratchSpace;
 		beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
 	}
 	return result;
@@ -700,14 +701,11 @@ beamformer_export(BeamformerExportContext export, void *out, i32 timeout_ms)
 		beamformer_flush_commands();
 
 		if (lib_try_lock(BeamformerSharedMemoryLockKind_ExportSync, timeout_ms)) {
-			if (lib_try_lock(BeamformerSharedMemoryLockKind_ScratchSpace, 0)) {
-				void *sm = beamformer_shared_memory_data_pointer(g_beamformer_library_context.bp,
-				                                                 g_beamformer_library_context.shared_memory_size);
-				memory_copy(out, sm, export.size);
-				lib_release_lock(BeamformerSharedMemoryLockKind_ScratchSpace);
-				result = 1;
-			}
+			BeamformerSharedMemory *sm = g_beamformer_library_context.bp;
+			memory_copy(out, beamformer_shared_memory_allocation_pointer(sm, export.memory),
+			            beamformer_shared_memory_allocation_size(sm, export.memory));
 			lib_release_lock(BeamformerSharedMemoryLockKind_ExportSync);
+			result = 1;
 		}
 	}
 	return result;
@@ -719,8 +717,17 @@ beamformer_get_last_frames(void *out_data, u64 out_data_size, u32 count)
 	BeamformerExportContext export = {0};
 	export.kind  = BeamformerExportKind_BeamformedData;
 	export.count = count;
-	export.size  = out_data_size;
-	b32 result = out_data && out_data_size && count && beamformer_export(export, out_data, g_beamformer_library_context.timeout_ms);
+	if (out_data_size) {
+		export.memory = beamformer_shared_memory_transient_alloc(g_beamformer_library_context.bp,
+		                                                         .size = out_data_size, .align = 64);
+	}
+
+	b32 result = lib_error_check(export.memory != 0, TransientSpaceOverflow) && count;
+	if (result)
+		result = beamformer_export(export, out_data, g_beamformer_library_context.timeout_ms);
+	if (export.memory)
+		beamformer_shared_memory_allocation_release(g_beamformer_library_context.bp, export.memory);
+
 	return result;
 }
 
@@ -746,16 +753,10 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 		u64 output_size = output_points.x * output_points.y * output_points.z * sizeof(f32);
 		if (complex) output_size *= 2;
 
-		Arena *scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
-		                                                        g_beamformer_library_context.shared_memory_size);
-		u64 scratch_size = scratch->reserved - scratch->position;
-		if (result && out_data) result &= lib_error_check(output_size <= scratch_size, ExportSpaceOverflow);
+		result = beamformer_push_data_with_compute(data, data_size, 0, 0);
 
-		if (result) {
-			result = beamformer_push_data_with_compute(data, data_size, 0, 0);
-			if (result && out_data)
-				result = beamformer_get_last_frames(out_data, output_size, 1);
-		}
+		if (result && out_data)
+			result = beamformer_get_last_frames(out_data, output_size, 1);
 	}
 	return result;
 }
@@ -765,14 +766,14 @@ beamformer_compute_timings(BeamformerComputeStatsTable *output, i32 timeout_ms)
 {
 	b32 result = 0;
 	if (check_shared_memory()) {
-		Arena *scratch = beamformer_shared_memory_scratch_arena(g_beamformer_library_context.bp,
-		                                                        g_beamformer_library_context.shared_memory_size);
-		u64 scratch_size = scratch->reserved - scratch->position;
-		if (lib_error_check(sizeof(*output) <= scratch_size, ExportSpaceOverflow)) {
-			BeamformerExportContext export = {0};
-			export.kind = BeamformerExportKind_Stats;
-			export.size = sizeof(*output);
+		BeamformerExportContext export = {0};
+		export.kind   = BeamformerExportKind_Stats;
+		export.memory = beamformer_shared_memory_transient_alloc(g_beamformer_library_context.bp,
+		                                                         .size  = sizeof(BeamformerComputeStatsTable),
+		                                                         .align = alignof(BeamformerComputeStatsTable));
+		if (lib_error_check(export.memory != 0, TransientSpaceOverflow)) {
 			result = beamformer_export(export, output, timeout_ms);
+			beamformer_shared_memory_allocation_release(g_beamformer_library_context.bp, export.memory);
 		}
 	}
 	return result;

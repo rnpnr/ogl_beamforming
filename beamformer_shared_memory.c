@@ -1,5 +1,31 @@
 /* See LICENSE for license details. */
-#define BEAMFORMER_SHARED_MEMORY_VERSION (37UL)
+#define BEAMFORMER_SHARED_MEMORY_VERSION (38UL)
+
+#define BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE KB(32)
+
+#define BEAMFORMER_RF_ALIGN 256
+
+#define BEAMFORMER_HANDLE(kind) struct kind##_T; typedef struct kind##_T *kind
+
+BEAMFORMER_HANDLE(BeamformerSharedMemoryAllocationHandle);
+
+typedef enum {
+	BeamformerSharedMemoryHandleKind_Nil,
+	BeamformerSharedMemoryHandleKind_Memory,
+	BeamformerSharedMemoryHandleKind_Count,
+} BeamformerSharedMemoryHandleKind;
+
+typedef struct {
+	u64 size;
+	u32 align;
+	u32 page_count;
+} BeamformerSharedMemoryAllocation;
+
+typedef struct {
+	u32 page_count;
+	u32 prev_page;
+	u32 next_page;
+} BeamformerFreePageRun;
 
 typedef enum {
 	BeamformerWorkKind_Compute,
@@ -23,12 +49,11 @@ typedef enum {
 
 typedef struct {
 	BeamformerExportKind kind;
-	u32 count; /* Number of items to export */
-	u64 size;  /* Total expected size of the exported data */
+	u32 count; /* Number of frames to export */
+	BeamformerSharedMemoryAllocationHandle memory;
 } BeamformerExportContext;
 
 #define BEAMFORMER_SHARED_MEMORY_LOCKS \
-	X(ScratchSpace)    \
 	X(UploadRF)        \
 	X(ExportSync)      \
 	X(DispatchCompute)
@@ -142,9 +167,7 @@ typedef struct {
 	u32 reserved_parameter_blocks;
 
 	/* TODO(rnp): this is really sucky. we need a better way to communicate this */
-	u64 rf_block_rf_size;
-
-	b64 new_rf_upload;
+	BeamformerSharedMemoryAllocationHandle rf_handle;
 
 	// NOTE(rnp): currently this cannot be directly user readable. its interpretation
 	// requires beamformer implementation details
@@ -158,6 +181,13 @@ typedef struct {
 
 	BeamformerLiveImagingParameters live_imaging_parameters;
 	BeamformerLiveImagingDirtyFlags live_imaging_dirty_flags;
+
+	struct {
+		u32 first_free_page;
+		u32 page_count;
+		u64 offset;
+		u64 lock;
+	} transient;
 
 	BeamformWorkQueue external_work_queue;
 } BeamformerSharedMemory;
@@ -274,25 +304,6 @@ beamformer_parameter_block_unlock(BeamformerSharedMemory *sm, u32 block)
 	beamformer_shared_memory_release_lock(sm, BeamformerSharedMemoryLockKind_Count + block);
 }
 
-function Arena *
-beamformer_shared_memory_scratch_arena(BeamformerSharedMemory *sm, i64 shared_memory_size)
-{
-	assert(sm->reserved_parameter_blocks > 0);
-	BeamformerParameterBlock *last = beamformer_parameter_block(sm, sm->reserved_parameter_blocks - 1);
-	u64 size = (u64)((u8 *)sm + shared_memory_size - (u8 *)(last + 1));
-	Arena *result = arena_create(.optional_backing_store = (last + 1), .reserve_size = size, .commit_size = size, .flags = ArenaFlag_NoChain);
-	arena_pre_align(result, KB(4));
-	return result;
-}
-
-function void *
-beamformer_shared_memory_data_pointer(BeamformerSharedMemory *sm, i64 shared_memory_size)
-{
-	Arena *arena  = beamformer_shared_memory_scratch_arena(sm, shared_memory_size);
-	void  *result = (u8 *)arena + arena->position;
-	return result;
-}
-
 function void
 beamformed_shared_memory_dirty_flag(BeamformerSharedMemory *sm, u32 block, BeamformerParameterDirtyFlags flag)
 {
@@ -308,4 +319,160 @@ post_sync_barrier(BeamformerSharedMemory *sm, BeamformerSharedMemoryLockKind loc
 	DEBUG_DECL(if (sm->locks[lock])) {
 		beamformer_shared_memory_release_lock(sm, lock);
 	}
+}
+
+function u32
+beamformer_shared_memory_release_pages(BeamformerSharedMemory *sm, u32 first_free_page, u32 page, u32 count, u32 page_size)
+{
+	u32 current = first_free_page;
+	BeamformerFreePageRun *pr = (void *)((u8 *)sm + page_size * current);
+	while (current < page && page > pr->next_page) {
+		current = pr->next_page;
+		pr = (void *)((u8 *)sm + page_size * current);
+	}
+
+	u32 result = first_free_page;
+
+	BeamformerFreePageRun *to_free = (void *)((u8 *)sm + page_size * page);
+	zero_struct(to_free);
+
+	if (current > page) {
+		assert(current == first_free_page);
+		assert(pr->prev_page == 0);
+
+		result = page;
+
+		to_free->page_count = count;
+		if (page + count == current) {
+			to_free->page_count += pr->page_count;
+			to_free->next_page   = pr->next_page;
+		} else {
+			to_free->next_page = current;
+			pr->prev_page      = page;
+		}
+	} else {
+		BeamformerFreePageRun *next = (void *)((u8 *)sm + page_size * pr->next_page);
+		if (current + pr->page_count == page) {
+			pr->page_count += count;
+			if (current + pr->page_count == pr->next_page) {
+				pr->next_page   = next->next_page;
+				pr->page_count += next->page_count;
+				if (next->next_page) {
+					next = (void *)((u8 *)sm + page_size * next->next_page);
+					next->prev_page = current;
+				}
+			}
+		} else {
+			if (pr->next_page) next->prev_page = page;
+			to_free->next_page  = pr->next_page;
+			to_free->page_count = count;
+			to_free->prev_page  = current;
+		}
+	}
+	return result;
+}
+
+function void *
+beamformer_shared_memory_make_handle(BeamformerSharedMemoryHandleKind kind, u64 payload)
+{
+	static_assert(BeamformerSharedMemoryHandleKind_Count <= U16_MAX, "");
+	u64 result = ((u64)kind << 48ul) | (payload & 0x0000fffffffffffful);
+	return (void *)result;
+}
+
+function BeamformerSharedMemoryHandleKind
+beamformer_shared_memory_handle_kind(void *handle)
+{
+	BeamformerSharedMemoryHandleKind result = (BeamformerSharedMemoryHandleKind)((u64)handle >> 48ul);
+	return result;
+}
+
+function u64
+beamformer_shared_memory_handle_payload(void *handle)
+{
+	u64 result = ((u64)handle & 0x0000fffffffffffful);
+	return result;
+}
+
+#define beamformer_shared_memory_transient_alloc(sm, ...) beamformer_shared_memory_transient_alloc_(sm, (ArenaAllocateInfo){.align = 8, .count = 1, __VA_ARGS__})
+function BeamformerSharedMemoryAllocationHandle
+beamformer_shared_memory_transient_alloc_(BeamformerSharedMemory *sm, ArenaAllocateInfo info)
+{
+	u64 needed_size = AlignUpPowerOfTwo(info.size * info.count + sizeof(BeamformerSharedMemoryAllocation), info.align);
+
+	u64 page_count = DivRoundUp(needed_size, BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE);
+	u64 expected = 0;
+	spin_wait(!atomic_cas_u64(&sm->transient.lock, &expected, 1));
+
+	BeamformerFreePageRun *pr = sm->transient.first_free_page ? (void *)((u8 *)sm + sm->transient.first_free_page * BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE) : 0;
+	while (pr) {
+		if (pr->page_count >= page_count)
+			break;
+		pr = pr->next_page ? (void *)((u8 *)sm + pr->next_page * BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE) : 0;
+	}
+
+	BeamformerSharedMemoryAllocationHandle result = 0;
+	if (pr) {
+		u64 new_free_page = (u64)((u8 *)pr - (u8 *)sm) / BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE + page_count;
+
+		BeamformerFreePageRun *next = (void *)((u8 *)sm + new_free_page * BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE);
+		next->page_count = pr->page_count - page_count;
+		next->prev_page  = pr->prev_page;
+		next->next_page  = pr->next_page;
+
+		if (next->prev_page) {
+			BeamformerFreePageRun *prev = (void *)((u8 *)sm + next->prev_page * BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE);
+			prev->next_page = new_free_page;
+		}
+
+		if (next->next_page) {
+			BeamformerFreePageRun *nn = (void *)((u8 *)sm + next->next_page * BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE);
+			nn->prev_page = new_free_page;
+		}
+
+		zero_struct(pr);
+
+		BeamformerSharedMemoryAllocation *ma = (void *)pr;
+		ma->size       = info.size * info.count;
+		ma->align      = info.align;
+		ma->page_count = page_count;
+
+		result = beamformer_shared_memory_make_handle(BeamformerSharedMemoryHandleKind_Memory,
+		                                              new_free_page - page_count);
+	}
+	atomic_store_u64(&sm->transient.lock, 0);
+
+	return result;
+}
+
+function void
+beamformer_shared_memory_allocation_release(BeamformerSharedMemory *sm, BeamformerSharedMemoryAllocationHandle handle)
+{
+	assert(beamformer_shared_memory_handle_kind(handle) == BeamformerSharedMemoryHandleKind_Memory);
+	u64 page = beamformer_shared_memory_handle_payload(handle);
+	BeamformerSharedMemoryAllocation *ma = (void *)((u8 *)sm + page * BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE);
+	sm->transient.first_free_page = beamformer_shared_memory_release_pages(sm, sm->transient.first_free_page,
+	                                                                       page, ma->page_count,
+	                                                                       BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE);
+}
+
+function void *
+beamformer_shared_memory_allocation_pointer(BeamformerSharedMemory *sm, BeamformerSharedMemoryAllocationHandle handle)
+{
+	assert(beamformer_shared_memory_handle_kind(handle) == BeamformerSharedMemoryHandleKind_Memory);
+	u64 page = beamformer_shared_memory_handle_payload(handle);
+	BeamformerSharedMemoryAllocation *ma = (void *)((u8 *)sm + page * BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE);
+	void *result = (void *)AlignUpPowerOfTwo((u64)(ma + 1), (u64)ma->align);
+	return result;
+}
+
+function u64
+beamformer_shared_memory_allocation_size(BeamformerSharedMemory *sm, BeamformerSharedMemoryAllocationHandle handle)
+{
+	assert(beamformer_shared_memory_handle_kind(handle) == BeamformerSharedMemoryHandleKind_Memory);
+	u64 page = beamformer_shared_memory_handle_payload(handle);
+
+	BeamformerSharedMemoryAllocation *ma = (void *)((u8 *)sm + page * BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE);
+	u64 result = ma->size;
+	return result;
 }

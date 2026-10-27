@@ -1433,14 +1433,16 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 		case BeamformerWorkKind_ExportBuffer:{
 			/* TODO(rnp): better way of handling DispatchCompute barrier */
 			post_sync_barrier(ctx->shared_memory, BeamformerSharedMemoryLockKind_DispatchCompute);
-			beamformer_shared_memory_take_lock(ctx->shared_memory, (i32)work->lock, (u32)-1);
 			BeamformerExportContext *ec = &work->export_context;
 			switch (ec->kind) {
 			case BeamformerExportKind_BeamformedData:{
 				BeamformerFrameBacklog *bl = &ctx->compute_context.backlog;
 				u32 req_count = Clamp(ec->count, 1, bl->counter);
 				u32 frame_idx = bl->counter - req_count;
-				u8 *sm_output = beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size);
+
+				u8 *sm_output  = beamformer_shared_memory_allocation_pointer(sm, ec->memory);
+				u64 total_size = beamformer_shared_memory_allocation_size(sm, ec->memory);
+
 				u64 exported_size = 0;
 				for (u32 export_count = 0; export_count < req_count; export_count++, frame_idx++) {
 					BeamformerFrame *f = bl->frames + frame_idx % countof(bl->frames);
@@ -1449,7 +1451,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 					// NOTE(tkh) we don't want to assume that all req_count frames are the same size,
 					// so we either need to count the total size of all requested frames first or
 					// just fill up as much as possible.
-					if (exported_size + frame_size <= ec->size) {
+					if (exported_size + frame_size <= total_size) {
 						u64 offset = f->gpu_pointer - bl->buffer->gpu_pointer;
 						gpu_host_wait_timeline(GPUTimeline_Compute, f->timeline_valid_value, -1ULL);
 						gpu_buffer_range_download(sm_output + exported_size, bl->buffer, offset, frame_size, 1);
@@ -1463,13 +1465,13 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				/* NOTE(rnp): do a little spin to let this finish updating */
 				spin_wait(table->write_index != atomic_load_u32(&table->read_index));
 				ComputeShaderStats *stats = ctx->compute_shader_stats;
-				if (sizeof(stats->table) <= ec->size)
-					memory_copy(beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size),
-					         &stats->table, sizeof(stats->table));
+
+				u64 size = beamformer_shared_memory_allocation_size(sm, ec->memory);
+				if (sizeof(stats->table) <= size)
+					memory_copy(beamformer_shared_memory_allocation_pointer(sm, ec->memory), &stats->table, sizeof(stats->table));
 			}break;
 			InvalidDefaultCase;
 			}
-			beamformer_shared_memory_release_lock(ctx->shared_memory, work->lock);
 			post_sync_barrier(ctx->shared_memory, BeamformerSharedMemoryLockKind_ExportSync);
 		}break;
 
@@ -1784,19 +1786,17 @@ DEBUG_EXPORT BEAMFORMER_COMPLETE_COMPUTE_FN(beamformer_complete_compute)
 
 DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 {
-	BeamformerSharedMemory *sm                  = ctx->shared_memory;
-	BeamformerSharedMemoryLockKind scratch_lock = BeamformerSharedMemoryLockKind_ScratchSpace;
-	BeamformerSharedMemoryLockKind upload_lock  = BeamformerSharedMemoryLockKind_UploadRF;
+	BeamformerSharedMemory *sm                 = ctx->shared_memory;
+	BeamformerSharedMemoryLockKind upload_lock = BeamformerSharedMemoryLockKind_UploadRF;
 
-	u64 rf_block_rf_size;
-	if (atomic_load_u32(sm->locks + upload_lock) &&
-	    (rf_block_rf_size = atomic_swap_u64(&sm->rf_block_rf_size, 0)))
+	BeamformerSharedMemoryAllocationHandle rf_handle;
+	if (atomic_load_u32(sm->locks + upload_lock) && (rf_handle = atomic_swap_u64(&sm->rf_handle, 0)))
 	{
-		beamformer_shared_memory_take_lock(ctx->shared_memory, (i32)scratch_lock, (u32)-1);
-
 		BeamformerRFBuffer *rf = ctx->rf_buffer;
 
-		rf->active_rf_size = gpu_round_up_to_sync_size(rf_block_rf_size & 0x00FFFFFFFFFFFFFFull, 64);
+		u64 rf_size = beamformer_shared_memory_allocation_size(sm, rf_handle);
+
+		rf->active_rf_size = gpu_round_up_to_sync_size(rf_size, BEAMFORMER_RF_ALIGN);
 		if unlikely((u64)rf->buffer.size < countof(rf->upload_complete_values) * rf->active_rf_size) {
 			gpu_buffer_allocate(&rf->buffer, (GPUBufferAllocateInfo){
 				.size  = countof(rf->upload_complete_values) * rf->active_rf_size,
@@ -1814,7 +1814,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		gpu_host_wait_timeline(GPUTimeline_Compute, rf->compute_complete_values[slot], -1ULL);
 
 		assert((ctx->shared_memory_size % os_system_info()->page_size) == 0 &&
-		       (os_system_info()->page_size % gpu_round_up_to_sync_size(1, 64)) == 0);
+		       (os_system_info()->page_size % gpu_round_up_to_sync_size(1, BEAMFORMER_RF_ALIGN)) == 0);
 
 		u64 wait_value = gpu_semaphore_value(rf->upload_semaphore) + 1;
 		atomic_store_u64(rf->upload_complete_values + slot, wait_value);
@@ -1822,14 +1822,15 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 
 		void *host_pointer = gpu_buffer_host_pointer(&rf->buffer);
 		memory_copy_non_temporal((u8 *)host_pointer + slot * rf->active_rf_size,
-		                         beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size),
+		                         beamformer_shared_memory_allocation_pointer(sm, rf_handle),
 		                         rf->active_rf_size);
 		store_fence();
 
 		GPUSemaphoreSignalInfo signal_info = {.semaphore = rf->upload_semaphore, .value = wait_value};
 		gpu_buffer_make_visible(&rf->buffer, slot * rf->active_rf_size, rf->active_rf_size, &signal_info, 1);
 
-		beamformer_shared_memory_release_lock(ctx->shared_memory, (i32)scratch_lock);
+		beamformer_shared_memory_allocation_release(sm, rf_handle);
+
 		post_sync_barrier(ctx->shared_memory, upload_lock);
 		os_wake_all_waiters(ctx->compute_worker_sync);
 

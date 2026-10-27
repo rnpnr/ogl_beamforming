@@ -74,6 +74,7 @@
 
 #define IsPowerOfTwo(a)         (((a) & ((a) - 1)) == 0)
 #define AlignUpPowerOfTwo(v, a) (((v) + (a) - 1) & (~((a) - 1)))
+#define DivRoundUp(a, b)        (((a) + (b) - 1) / (b))
 
 #define IsDigit(c)        (Between((c), '0', '9'))
 #define IsUpper(c)        (((c) & 0x20u) == 0)
