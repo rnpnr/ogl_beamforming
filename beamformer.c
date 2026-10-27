@@ -245,11 +245,6 @@ beamformer_init(BeamformerInput *input)
 		zero_struct(sm);
 
 		sm->version = BEAMFORMER_SHARED_MEMORY_VERSION;
-		sm->reserved_parameter_blocks = 1;
-		{
-			BeamformerParameterBlock *pb = beamformer_parameter_block(sm, 0);
-			zero_struct(pb);
-		}
 
 		sm->beamformed_frame_buffer_size = cs->backlog.buffer->size;
 
@@ -269,6 +264,21 @@ beamformer_init(BeamformerInput *input)
 		BeamformerFreePageRun *pr = (void *)((u8 *)sm + sm->transient.offset);
 		pr->page_count = sm->transient.page_count;
 		pr->next_page = pr->prev_page = -1u;
+
+		sm->persistent.first_free_page = -1u;
+		sm->persistent.page_count      = 0;
+		sm->persistent.offset          = ctx->shared_memory_size;
+
+		// TODO(rnp): remove with legacy parameter block path
+		// NOTE(rnp): reserve legacy parameter blocks
+		for (u32 it = 0; it < BeamformerMaxParameterBlocks; it++) {
+			bitset_set(sm->parameter_sets_used_masks, countof(sm->parameter_sets_used_masks), it);
+
+			BeamformerParameterSetMetadata *set = sm->parameter_sets + it;
+			u64 persistent_bytes = beamformer_parameter_set_persistent_size(BeamformerMaxChannelCount, BeamformerMaxEmissionsCount);
+			set->first_page = beamformer_shared_memory_persistent_alloc(sm, persistent_bytes);
+			set->page_count = DivRoundUp(persistent_bytes, BEAMFORMER_SHARED_MEMORY_PARAMETER_PAGE_SIZE);
+		}
 	}
 
 	/* TODO(rnp): I'm not sure if its a good idea to pre-reserve a bunch of semaphores

@@ -11,6 +11,8 @@
 #define BeamformerMaxComputeShaderStages   (16)
 #define BeamformerMaxParameterBlocks       (16)
 #define BeamformerMaxRawDataFramesInFlight (3)
+#define BeamformerMaxParameterSets         (256)
+#define BeamformerMaxAcquisitionCount      (65535)
 
 typedef enum {
 	BeamformerDecodeMode_None     = 0,
@@ -54,7 +56,8 @@ typedef enum {
 	BeamformerDataLayout_ChannelSampleEvent = 1,
 	BeamformerDataLayout_EventChannelSample = 2,
 	BeamformerDataLayout_SampleChannelEvent = 3,
-	BeamformerDataLayout_Image              = 4,
+	BeamformerDataLayout_RawBuffer          = 4,
+	BeamformerDataLayout_Image              = 5,
 	BeamformerDataLayout_Count,
 } BeamformerDataLayout;
 
@@ -120,8 +123,11 @@ typedef enum {
 } BeamformerLiveFeedbackFlags;
 
 typedef enum {
-	BeamformerAcquisitionKindFlags_FixedTransmits = 1 << 0,
-	BeamformerAcquisitionKindFlags_Sparse         = 1 << 1,
+	BeamformerAcquisitionKindFlags_FixedTransmits   = 1 << 0,
+	BeamformerAcquisitionKindFlags_MultiOrientation = 1 << 1,
+	BeamformerAcquisitionKindFlags_MultiDepth       = 1 << 2,
+	BeamformerAcquisitionKindFlags_MultiSteering    = 1 << 3,
+	BeamformerAcquisitionKindFlags_Sparse           = 1 << 4,
 } BeamformerAcquisitionKindFlags;
 
 typedef enum {
@@ -208,23 +214,24 @@ typedef struct {
 } BeamformerFilterBakeParameters;
 
 typedef struct {
-	u32 FocalVectors;
 	u32 Hadamard;
 	u32 IncoherentFrame;
 	u32 SparseElements;
-	u32 TransducerTransforms;
 	u32 TransmitReceiveOrientations;
-	u32 AcquisitionKind;
-	i32 AcquisitionCount;
-	i32 SampleCount;
+	u32 TransducerTransforms;
+	u32 FocusDepths;
+	u32 OriginOffsets;
+	u32 TiltingAngles;
 	u32 AcquisitionByteStride;
 	u32 ChannelByteStride;
-	u16 ReceiveChannelCount;
-	u16 TransmitChannelCount;
-	u16 ReceiveTileCount;
-	u16 TransmitTileCount;
+	i32 SampleCount;
+	u32 AcquisitionKind;
+	u16 AcquisitionCount;
 	u16 ChunkChannelCount;
-	u16 TransmitReceiveOrientation;
+	u16 RowChannelCount;
+	u16 ColumnChannelCount;
+	u16 RowTileCount;
+	u16 ColumnTileCount;
 	u16 InterpolationMode;
 	u16 ReadiGroupCount;
 	f32 SamplingFrequency;
@@ -272,7 +279,8 @@ typedef struct {
 	u64 output_frame;
 	u32 channel_offset;
 	f32 focus_depth;
-	f32 steering_angle;
+	f32 tilting_angle;
+	f32 origin_offset;
 	u16 tx_rx_orientation;
 	u16 readi_group;
 } BeamformerDASPushConstants;
@@ -382,6 +390,114 @@ typedef struct {
 } BeamformerParameters;
 
 typedef struct {
+	BeamformerDataKind     kind;
+	BeamformerDataLayout   layout;
+	BeamformerContrastMode contrast_mode;
+	uv4                    dimensions;
+} BeamformerDataDescriptor;
+
+typedef struct {
+	BeamformerDataDescriptor     data_description;
+	BeamformerEmissionParameters emission_parameters;
+	u16                          transducer_channel_count[2];
+	u16                          transducer_tile_count[2];
+	v2                           transducer_element_pitch;
+	BeamformerAcquisitionKind    acquisition_kind;
+	BeamformerDecodeMode         decode_mode;
+	BeamformerSamplingMode       sampling_mode;
+	f32                          sampling_frequency;
+	f32                          demodulation_frequency;
+	u32                          decimation_rate;
+	f32                          speed_of_sound;
+	f32                          time_offset;
+	f32                          f_number;
+	BeamformerInterpolationMode  interpolation_mode;
+	b32                          coherency_weighting;
+	u32                          readi_group_count;
+} BeamformerComputeParameters;
+
+typedef struct {
+	m4  *transducer_transforms;
+	u16 *sparse_elements;
+	f32 *focus_depths;
+	f32 *tilting_angles;
+	f32 *origin_offsets;
+	u8  *transmit_receive_orientations;
+} BeamformerDynamicComputeParameters;
+
+typedef struct {
+	BeamformerDataDescriptor      data_description;
+	BeamformerEmissionParameters  emission_parameters;
+	u16                           transducer_channel_count[2];
+	u16                           transducer_tile_count[2];
+	v2                            transducer_element_pitch;
+	BeamformerAcquisitionKind     acquisition_kind;
+	BeamformerDecodeMode          decode_mode;
+	BeamformerSamplingMode        sampling_mode;
+	f32                           sampling_frequency;
+	f32                           demodulation_frequency;
+	u32                           decimation_rate;
+	f32                           speed_of_sound;
+	f32                           time_offset;
+	f32                           f_number;
+	BeamformerInterpolationMode   interpolation_mode;
+	b32                           coherency_weighting;
+	u32                           readi_group_count;
+	iv4                           output_points;
+	u32                           compute_stages_count;
+	u32                           compute_stages[BeamformerMaxComputeShaderStages];
+	u32                           compute_stage_parameters[BeamformerMaxComputeShaderStages];
+	m4                           *transducer_transforms;
+	u16                          *sparse_elements;
+	f32                          *focus_depths;
+	f32                          *tilting_angles;
+	f32                          *origin_offsets;
+	u8                           *transmit_receive_orientations;
+	u16                          *channel_mapping;
+} BeamformerParameterSet;
+
+typedef struct {
+	BeamformerDataDescriptor     data_description;
+	BeamformerEmissionParameters emission_parameters;
+	u16                          transducer_channel_count[2];
+	u16                          transducer_tile_count[2];
+	v2                           transducer_element_pitch;
+	BeamformerAcquisitionKind    acquisition_kind;
+	BeamformerDecodeMode         decode_mode;
+	BeamformerSamplingMode       sampling_mode;
+	f32                          sampling_frequency;
+	f32                          demodulation_frequency;
+	u32                          decimation_rate;
+	f32                          speed_of_sound;
+	f32                          time_offset;
+	f32                          f_number;
+	BeamformerInterpolationMode  interpolation_mode;
+	b32                          coherency_weighting;
+	u32                          readi_group_count;
+	iv4                          output_points;
+	u32                          compute_stages_count;
+	u32                          compute_stages[BeamformerMaxComputeShaderStages];
+	u32                          compute_stage_parameters[BeamformerMaxComputeShaderStages];
+	u32                          transducer_transforms_offset;
+	u32                          sparse_elements_offset;
+	u32                          focus_depths_offset;
+	u32                          tilting_angles_offset;
+	u32                          origin_offsets_offset;
+	u32                          transmit_receive_orientations_offset;
+} BeamformerParameterSetFlat;
+
+typedef struct {
+	m4                     voxel_transform;
+	u64                    rf_offset;
+	f32                    focus_depth;
+	f32                    steering_angle;
+	f32                    origin_offset;
+	u16                    transmit_receive_orientation;
+	u16                    readi_group;
+	BeamformerViewPlaneTag view_plane_tag;
+} BeamformerPushParameters;
+
+typedef struct {
 	m4                           das_voxel_transform;
 	m4                           xdc_transform;
 	v2                           xdc_element_pitch;
@@ -486,26 +602,27 @@ read_only MetaStructMember *meta_struct_members_by_id[] = {
 		{18, 16, 1, 0},
 		{18, 20, 1, 0},
 		{18, 24, 1, 0},
-		{10, 28, 1, 0},
-		{10, 32, 1, 0},
+		{18, 28, 1, 0},
+		{18, 32, 1, 0},
 		{18, 36, 1, 0},
-		{18, 40, 1, 0},
-		{19, 44, 1, 0},
-		{19, 46, 1, 0},
+		{10, 40, 1, 0},
+		{18, 44, 1, 0},
 		{19, 48, 1, 0},
 		{19, 50, 1, 0},
 		{19, 52, 1, 0},
 		{19, 54, 1, 0},
 		{19, 56, 1, 0},
 		{19, 58, 1, 0},
-		{8,  60, 1, 0},
+		{19, 60, 1, 0},
+		{19, 62, 1, 0},
 		{8,  64, 1, 0},
 		{8,  68, 1, 0},
 		{8,  72, 1, 0},
 		{8,  76, 1, 0},
-		{18, 80, 1, 0},
+		{8,  80, 1, 0},
 		{18, 84, 1, 0},
 		{18, 88, 1, 0},
+		{18, 92, 1, 0},
 	},
 	(MetaStructMember []){
 		{18, 0, 1, 0},
@@ -554,23 +671,24 @@ read_only str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("OutputTransmitStride"),
 	},
 	(str8 []){
-		str8_comp("FocalVectors"),
 		str8_comp("Hadamard"),
 		str8_comp("IncoherentFrame"),
 		str8_comp("SparseElements"),
-		str8_comp("TransducerTransforms"),
 		str8_comp("TransmitReceiveOrientations"),
-		str8_comp("AcquisitionKind"),
-		str8_comp("AcquisitionCount"),
-		str8_comp("SampleCount"),
+		str8_comp("TransducerTransforms"),
+		str8_comp("FocusDepths"),
+		str8_comp("OriginOffsets"),
+		str8_comp("TiltingAngles"),
 		str8_comp("AcquisitionByteStride"),
 		str8_comp("ChannelByteStride"),
-		str8_comp("ReceiveChannelCount"),
-		str8_comp("TransmitChannelCount"),
-		str8_comp("ReceiveTileCount"),
-		str8_comp("TransmitTileCount"),
+		str8_comp("SampleCount"),
+		str8_comp("AcquisitionKind"),
+		str8_comp("AcquisitionCount"),
 		str8_comp("ChunkChannelCount"),
-		str8_comp("TransmitReceiveOrientation"),
+		str8_comp("RowChannelCount"),
+		str8_comp("ColumnChannelCount"),
+		str8_comp("RowTileCount"),
+		str8_comp("ColumnTileCount"),
 		str8_comp("InterpolationMode"),
 		str8_comp("ReadiGroupCount"),
 		str8_comp("SamplingFrequency"),
@@ -603,7 +721,7 @@ read_only str8 *meta_struct_member_names_by_id[] = {
 read_only MetaStructInfo meta_struct_info_by_id[] = {
 	{str8_comp("DecodeBakeParameters"),             11, 44, 0},
 	{str8_comp("FilterBakeParameters"),             12, 48, 0},
-	{str8_comp("DASBakeParameters"),                27, 92, 0},
+	{str8_comp("DASBakeParameters"),                28, 96, 0},
 	{str8_comp("CoherencyWeightingBakeParameters"), 3,  12, 0},
 	{str8_comp("ReshapeBakeParameters"),            9,  36, 0},
 };
@@ -735,7 +853,8 @@ read_only str8 beamformer_shader_global_header_strings[] = {
 	"  uint64_t  output_frame;\n"
 	"  uint32_t  channel_offset;\n"
 	"  float32_t focus_depth;\n"
-	"  float32_t steering_angle;\n"
+	"  float32_t tilting_angle;\n"
+	"  float32_t origin_offset;\n"
 	"  uint16_t  tx_rx_orientation;\n"
 	"  uint16_t  readi_group;\n"
 	"} pc;\n"
@@ -883,6 +1002,39 @@ read_only u8 beamformer_shader_push_constant_sizes[] = {
 	sizeof(BeamformerRenderBeamformedPushConstants),
 };
 
+#define beamformer_parameter_set_dynamic_field_init_literal \
+	.transducer_transforms_offset         = -1u, \
+	.sparse_elements_offset               = -1u, \
+	.focus_depths_offset                  = -1u, \
+	.tilting_angles_offset                = -1u, \
+	.origin_offsets_offset                = -1u, \
+	.transmit_receive_orientations_offset = -1u, \
+
+function void
+beamformer_parameter_set_flat_append_dynamic_data(BeamformerParameterSetFlat *f,
+                                                  BeamformerParameterSet *ps,
+                                                  u32 events, u32 transducer_tile_count)
+{
+	if (f->transducer_transforms_offset != -1u)         memory_copy((u8 *)f + f->transducer_transforms_offset,         ps->transducer_transforms,         transducer_tile_count * sizeof(*ps->transducer_transforms));
+	if (f->sparse_elements_offset != -1u)               memory_copy((u8 *)f + f->sparse_elements_offset,               ps->sparse_elements,               events * sizeof(*ps->sparse_elements));
+	if (f->focus_depths_offset != -1u)                  memory_copy((u8 *)f + f->focus_depths_offset,                  ps->focus_depths,                  events * sizeof(*ps->focus_depths));
+	if (f->tilting_angles_offset != -1u)                memory_copy((u8 *)f + f->tilting_angles_offset,                ps->tilting_angles,                events * sizeof(*ps->tilting_angles));
+	if (f->origin_offsets_offset != -1u)                memory_copy((u8 *)f + f->origin_offsets_offset,                ps->origin_offsets,                events * sizeof(*ps->origin_offsets));
+	if (f->transmit_receive_orientations_offset != -1u) memory_copy((u8 *)f + f->transmit_receive_orientations_offset, ps->transmit_receive_orientations, events * sizeof(*ps->transmit_receive_orientations));
+}
+
+function void
+beamformer_dynamic_compute_parameter_set_assign_pointers(BeamformerDynamicComputeParameters *dp,
+                                                         BeamformerParameterSetFlat *f, u8 *base)
+{
+	if (f->transducer_transforms_offset != -1u)         dp->transducer_transforms         = (void *)(base + f->transducer_transforms_offset);
+	if (f->sparse_elements_offset != -1u)               dp->sparse_elements               = (void *)(base + f->sparse_elements_offset);
+	if (f->focus_depths_offset != -1u)                  dp->focus_depths                  = (void *)(base + f->focus_depths_offset);
+	if (f->tilting_angles_offset != -1u)                dp->tilting_angles                = (void *)(base + f->tilting_angles_offset);
+	if (f->origin_offsets_offset != -1u)                dp->origin_offsets                = (void *)(base + f->origin_offsets_offset);
+	if (f->transmit_receive_orientations_offset != -1u) dp->transmit_receive_orientations = (void *)(base + f->transmit_receive_orientations_offset);
+}
+
 read_only u8 beamformer_data_kind_element_size[] = {
 	2,
 	2,
@@ -943,19 +1095,19 @@ read_only f32 beamformer_sampling_mode_samples_per_wave[] = {
 };
 
 read_only u32 beamformer_acquisition_kind_flags[] = {
-	(1*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
-	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(1*BeamformerAcquisitionKindFlags_Sparse),
-	(1*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
-	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
-	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
-	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(1*BeamformerAcquisitionKindFlags_Sparse),
-	(1*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
-	(1*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
-	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(1*BeamformerAcquisitionKindFlags_Sparse),
-	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(1*BeamformerAcquisitionKindFlags_Sparse),
-	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
-	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
-	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse),
+	(1*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse)|(0*BeamformerAcquisitionKindFlags_MultiOrientation)|(0*BeamformerAcquisitionKindFlags_MultiDepth)|(0*BeamformerAcquisitionKindFlags_MultiSteering),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(1*BeamformerAcquisitionKindFlags_Sparse)|(0*BeamformerAcquisitionKindFlags_MultiOrientation)|(0*BeamformerAcquisitionKindFlags_MultiDepth)|(0*BeamformerAcquisitionKindFlags_MultiSteering),
+	(1*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse)|(0*BeamformerAcquisitionKindFlags_MultiOrientation)|(0*BeamformerAcquisitionKindFlags_MultiDepth)|(0*BeamformerAcquisitionKindFlags_MultiSteering),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse)|(1*BeamformerAcquisitionKindFlags_MultiOrientation)|(1*BeamformerAcquisitionKindFlags_MultiDepth)|(1*BeamformerAcquisitionKindFlags_MultiSteering),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse)|(1*BeamformerAcquisitionKindFlags_MultiOrientation)|(0*BeamformerAcquisitionKindFlags_MultiDepth)|(1*BeamformerAcquisitionKindFlags_MultiSteering),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(1*BeamformerAcquisitionKindFlags_Sparse)|(0*BeamformerAcquisitionKindFlags_MultiOrientation)|(0*BeamformerAcquisitionKindFlags_MultiDepth)|(0*BeamformerAcquisitionKindFlags_MultiSteering),
+	(1*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse)|(0*BeamformerAcquisitionKindFlags_MultiOrientation)|(0*BeamformerAcquisitionKindFlags_MultiDepth)|(0*BeamformerAcquisitionKindFlags_MultiSteering),
+	(1*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse)|(0*BeamformerAcquisitionKindFlags_MultiOrientation)|(0*BeamformerAcquisitionKindFlags_MultiDepth)|(0*BeamformerAcquisitionKindFlags_MultiSteering),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(1*BeamformerAcquisitionKindFlags_Sparse)|(0*BeamformerAcquisitionKindFlags_MultiOrientation)|(0*BeamformerAcquisitionKindFlags_MultiDepth)|(0*BeamformerAcquisitionKindFlags_MultiSteering),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(1*BeamformerAcquisitionKindFlags_Sparse)|(0*BeamformerAcquisitionKindFlags_MultiOrientation)|(0*BeamformerAcquisitionKindFlags_MultiDepth)|(0*BeamformerAcquisitionKindFlags_MultiSteering),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse)|(1*BeamformerAcquisitionKindFlags_MultiOrientation)|(1*BeamformerAcquisitionKindFlags_MultiDepth)|(1*BeamformerAcquisitionKindFlags_MultiSteering),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse)|(0*BeamformerAcquisitionKindFlags_MultiOrientation)|(0*BeamformerAcquisitionKindFlags_MultiDepth)|(0*BeamformerAcquisitionKindFlags_MultiSteering),
+	(0*BeamformerAcquisitionKindFlags_FixedTransmits)|(0*BeamformerAcquisitionKindFlags_Sparse)|(0*BeamformerAcquisitionKindFlags_MultiOrientation)|(0*BeamformerAcquisitionKindFlags_MultiDepth)|(0*BeamformerAcquisitionKindFlags_MultiSteering),
 };
 
 read_only str8 beamformer_acquisition_kind_strings[] = {

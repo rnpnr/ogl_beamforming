@@ -134,9 +134,13 @@ parse_argv(i32 argc, char *argv[])
 }
 
 function b32
-send_frame(i16 *restrict i16_data, u32 data_size)
+send_frame(const i16 *i16_data, BeamformerDataDescriptor *raw_description)
 {
-	b32 result = beamformer_push_data_with_compute(i16_data, data_size, BeamformerViewPlaneTag_XZ, 0);
+	// TODO(rnp): this isn't great
+	BeamformerParameterSetHandle handle = beamformer_parameter_set_handle_for_block(g_beamformer_library_context.bp, 0);
+
+	BeamformerPushParameters push = {0};
+	b32 result = beamformer_push_data_with_compute(i16_data, raw_description, &push, handle);
 	if (!result && !g_should_exit) printf("lib error: %s\n", beamformer_get_last_error_string());
 	return result;
 }
@@ -187,9 +191,9 @@ dump_stats(BeamformerComputeStatsTable *stats, Options *options, u32 transmit_co
 }
 
 function void
-send_parameters(Options *options, u32 transmit_count)
+send_parameters(Options *options, u32 transmit_count, BeamformerDataDescriptor *raw)
 {
-	BeamformerParameters bp = {0};
+	BeamformerSimpleParameters bp = {0};
 	bp.decode_mode    = BeamformerDecodeMode_Hadamard;
 	b32 full_aperture = options->full_aperture;
 	uv3 dec_data_dim  = decoded_data_dim(transmit_count, full_aperture).xyz;
@@ -198,7 +202,13 @@ send_parameters(Options *options, u32 transmit_count)
 	bp.acquisition_count = dec_data_dim.z;
 
 	bp.raw_data_dimensions = raw_data_dim(transmit_count, full_aperture);
-	beamformer_push_parameters(&bp);
+
+	raw->kind            = BeamformerDataKind_Int16;
+	raw->layout          = BeamformerDataLayout_RawBuffer;
+	raw->dimensions.E[0] = bp.raw_data_dimensions.x;
+	raw->dimensions.E[1] = bp.raw_data_dimensions.y;
+	raw->dimensions.E[2] = 1;
+	raw->dimensions.E[3] = 1;
 
 	/* NOTE(rnp): use real channel mapping so that we still get ~random~ access pattern */
 	read_only i16 channel_mapping[] = {
@@ -219,25 +229,29 @@ send_parameters(Options *options, u32 transmit_count)
 		 77,  40, 123,   0,  76,  36, 121,  24,  74,  37, 120,  33,  75,  15, 122,  17,
 		 69,  23, 124,   7,  68,  35, 126,  39,  66,  38, 127,  34,  67,   8, 125,  22,
 	};
-	beamformer_push_channel_mapping(channel_mapping, countof(channel_mapping));
+	u32 copy_count = Min(countof(bp.channel_mapping), countof(channel_mapping));
+	memory_copy(bp.channel_mapping, channel_mapping, copy_count * sizeof(*bp.channel_mapping));
 
-	i32 shader_stages = BeamformerShaderKind_Decode;
-	beamformer_push_pipeline(&shader_stages, 1, BeamformerDataKind_Int16);
+	bp.compute_stages[0]    = BeamformerShaderKind_Decode;
+	bp.compute_stages_count = 1;
+	bp.data_kind            = BeamformerDataKind_Int16;
+
+	beamformer_push_simple_parameters(&bp);
 	beamformer_set_global_timeout(1000);
 }
 
 function f32
 execute_study(Options *options, u32 transmit_count, i16 *restrict data)
 {
-	send_parameters(options, transmit_count);
-	u32 data_size = data_size_for_transmit_count(transmit_count, options->full_aperture);
+	BeamformerDataDescriptor raw_description = {0};
+	send_parameters(options, transmit_count, &raw_description);
 	for (u32 i = 0; !g_should_exit && i < options->warmup_count; i++)
-		send_frame(data, data_size);
+		send_frame(data, &raw_description);
 
 	u64 start     = os_timer_count();
 	f64 frequency = os_timer_frequency();
 	for (u32 i = 0; !g_should_exit && i < AVERAGE_SAMPLES; i++)
-		send_frame(data, data_size);
+		send_frame(data, &raw_description);
 	f32 result = (os_timer_count() - start) / frequency / (f32)AVERAGE_SAMPLES;
 
 	return result;
@@ -281,11 +295,12 @@ entry_point(i32 argc, char *argv[])
 			f32 time = execute_study(&options, transmit_count, data);
 			if (!g_should_exit) print_result(transmit_count, time);
 		}
+
 	} else if (options.once) {
+		BeamformerDataDescriptor raw_description = {0};
 		u32 transmit_count = decode_transmit_counts[0];
-		u32 data_size = data_size_for_transmit_count(transmit_count, options.full_aperture);
-		send_parameters(&options, transmit_count);
-		send_frame(data, data_size);
+		send_parameters(&options, transmit_count, &raw_description);
+		send_frame(data, &raw_description);
 	} else {
 		BeamformerComputeStatsTable stats = {0};
 		for (i64 i = 0; i < countof(decode_transmit_counts); i++) {

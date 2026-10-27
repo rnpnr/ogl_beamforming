@@ -1,4 +1,38 @@
 /* See LICENSE for license details. */
+
+// TODO(rnp): lib updates and beamformer usage notes
+// VLS/TPW:
+// - need to sort based on receive orientation on data intern
+//   - AcquisitionCount[orientation]
+//   - orientation passed in through push constants
+//   - need to calculate channel offset push constant:
+//     channel_offset - (channel_offset >= ChannelCount[0] ? ChannelCount[0] : 0);
+//   - orientation push const set based on (channel_offset < ChannelCount[0])
+//   - sum of acquisition count in each orientation is still a fixed count
+// RF Upload:
+// - multi frame upload allowed
+//   - no handling for it with parameter sets
+//     - use per frame parameter set if required
+//     - data descriptor compared for compatibility between
+//       dataset and parameter set
+//   - beamforming side only ever considers 1 frame. only parameter
+//     related to data frames is the onetime offset added to the rf_pointer
+//     - 1D rf_offset needs to validated. we compute single frame size from
+//       the data descriptor and verify (total_size - rf_offset) >= single_frame_size
+// - want both explicit RF datasets with handles and
+//   current implicit last dataset
+// Parameter Sets:
+// - parameter sets will be immutable
+//   - need some internal fields that are not part of the
+//     parameter set the library user passes in
+//   - channel mapping, tx_rx_orientations (depending on aquisition kind),
+//     and data layouts need to be persistent. everything else can be
+//     overwritten once interned by beamformer
+// - previously fixed channel count, emission count limits will
+//   be removed
+// [ ]: remove shared memory region semaphores
+//   - these are not needed since only library is touching that region of memory
+
 #define BEAMFORMER_IMPORT static
 
 #ifndef BASE_PLATFORM_H
@@ -22,6 +56,7 @@ W32(iptr) OpenFileMappingA(u32, b32, c8 *);
 #error Unsupported Platform
 #endif
 
+#define BEAMFORMER_LIB_SHARED_MEMORY_INCLUDE
 #include "../beamformer_compute_stats.c"
 #include "../beamformer_shared_memory.c"
 
@@ -169,12 +204,287 @@ check_shared_memory(void)
 }
 
 function b32
-valid_parameter_block(u32 block)
+beamformer_lib_validate_rf_offset(u64 offset, BeamformerDataDescriptor data_descriptor)
+{
+	uv4 dim = data_descriptor.dimensions;
+	u64 frame_size = dim.E[BeamformerRFDimension_Channels]
+	                 * dim.E[BeamformerRFDimension_Events]
+	                 * dim.E[BeamformerRFDimension_Samples]
+	                 * beamformer_data_kind_byte_size[data_descriptor.kind];
+	b32 result = ((offset % frame_size) == 0) &&
+	             (dim.E[BeamformerRFDimension_Frames] > offset / frame_size);
+	return result;
+}
+
+function b32
+beamformer_lib_validate_parameters(BeamformerParameters *bp)
+{
+	if (!lib_error_check(Between(bp->contrast_mode, 0, BeamformerContrastMode_Count - 1), InvalidContrastMode))
+		return 0;
+
+	u32 contrast_raw_sample_count = bp->acquisition_count * bp->sample_count * beamformer_contrast_mode_samples[bp->contrast_mode];
+	if (!lib_error_check(contrast_raw_sample_count <= bp->raw_data_dimensions.x, DataSizeMismatch))
+		return 0;
+
+	// NOTE(rnp): frame size checks
+	{
+		// TODO(rnp): this check is overly conservative, what if we are exporting something smaller than Float32Complex
+		u64 buffer_size     = g_beamformer_library_context.bp->beamformed_frame_buffer_size;
+		u64 frame_size      = Max(1, bp->output_points.x) * Max(1, bp->output_points.y) * Max(1, bp->output_points.z)
+		                      * beamformer_data_kind_byte_size[BeamformerDataKind_Float32Complex];
+		u64 incoherent_size = frame_size / 2;
+		if (bp->coherency_weighting)
+			buffer_size -= incoherent_size;
+
+		if (!lib_error_check(frame_size <= buffer_size, FrameSizeOverflow))
+			return 0;
+	}
+
+	return 1;
+}
+
+function b32
+beamformer_lib_validate_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data_kind)
+{
+	b32 data_kind_test = Between(data_kind, 0, BeamformerDataKind_Count - 1);
+	if (!lib_error_check(data_kind_test, InvalidDataKind))
+		return 0;
+
+	if (!lib_error_check(shader_count <= BeamformerMaxComputeShaderStages, ComputeStageOverflow))
+		return 0;
+
+	for (u32 i = 0; i < shader_count; i++) {
+		b32 stage_test = Between(shaders[i], BeamformerShaderKind_ComputeFirst, BeamformerShaderKind_ComputeLast);
+		if (!lib_error_check(stage_test, InvalidComputeStage))
+			return 0;
+
+		if (shaders[i] == BeamformerShaderKind_Hilbert &&
+		    !lib_error_check(g_beamformer_library_context.bp->capabilities.hilbert != 0, InvalidComputeStage))
+			return 0;
+
+		if (shaders[i] == BeamformerShaderKind_Demodulate &&
+		    !lib_error_check(!beamformer_data_kind_complex[data_kind], InvalidDemodulationDataKind))
+		{
+			return 0;
+		}
+	}
+
+	b32 start_stage_test = shaders[0] == BeamformerShaderKind_Demodulate ||
+	                       shaders[0] == BeamformerShaderKind_Decode;
+	if (!lib_error_check(start_stage_test, InvalidStartShader))
+		return 0;
+
+	return 1;
+}
+
+#define beamformer_shared_memory_transient_alloc(sm, ...) beamformer_shared_memory_transient_alloc_(sm, (ArenaAllocateInfo){.align = 8, .count = 1, __VA_ARGS__})
+function BeamformerSharedMemoryAllocationHandle
+beamformer_shared_memory_transient_alloc_(BeamformerSharedMemory *sm, ArenaAllocateInfo info)
+{
+	BeamformerMemoryAllocation *ma = beamformer_page_allocate(&sm->transient, sm, BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE, 0, info);
+	BeamformerSharedMemoryAllocationHandle result = {0};
+	if (ma) {
+		u64 page = (u64)((u8 *)ma - ((u8 *)sm + sm->transient.offset)) / BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE;
+		result.v = beamformer_shared_memory_make_handle(BeamformerSharedMemoryHandleKind_Memory, page);
+	}
+	return result;
+}
+
+// TODO(rnp): remove
+function BeamformerParameterSetHandle
+beamformer_parameter_set_handle_for_block(BeamformerSharedMemory *sm, u32 block)
+{
+	assert(block < BeamformerMaxParameterBlocks);
+	BeamformerParameterSetMetadata *set = sm->parameter_sets + block;
+	BeamformerParameterSetHandle result;
+	result.v = beamformer_shared_memory_make_handle(BeamformerSharedMemoryHandleKind_ParameterSet,
+	                                                (u64)block << 32u | (u64)set->generation);
+	return result;
+}
+
+function void *
+beamformer_parameter_set_persistent_data(BeamformerSharedMemory *sm, BeamformerParameterSetMetadata *set)
+{
+	const u64 page_size = BEAMFORMER_SHARED_MEMORY_PARAMETER_PAGE_SIZE;
+	u8   *base   = (u8 *)sm + sm->persistent.offset + (sm->persistent.page_count - 1) * page_size;
+	void *result = base - set->first_page * page_size;
+	return result;
+}
+
+function void
+beamformer_shared_memory_release_persistent_pages(BeamformerSharedMemory *sm, u32 page, u32 count)
+{
+	BeamformerPageAllocatorContext *pa = &sm->persistent;
+
+	// NOTE(rnp): pages in persistent set refer to pages from end but
+	// beamformer_shared_memory_release_pages expects pages from start
+	// so this must get reversed
+	page = pa->page_count - (page + count);
+	u32 free = beamformer_shared_memory_release_pages((u8 *)sm + pa->offset, pa->first_free_page,
+	                                                  page, count, BEAMFORMER_SHARED_MEMORY_PARAMETER_PAGE_SIZE);
+
+	pa->first_free_page = free;
+}
+
+function b32
+beamformer_parameter_set_validate(BeamformerParameterSet *ps)
+{
+	b32 result = Between(ps->acquisition_kind, 0, BeamformerAcquisitionKind_Count);
+
+	result &= ps->channel_mapping       != 0;
+	result &= ps->transducer_transforms != 0;
+
+	result &= (ps->tilting_angles == 0 && ps->origin_offsets == 0) ||
+	          (ps->tilting_angles != 0 && ps->origin_offsets == 0) ||
+	          (ps->tilting_angles == 0 && ps->origin_offsets != 0);
+
+	u64 flags = beamformer_acquisition_kind_flags[ps->acquisition_kind];
+	if (flags & BeamformerAcquisitionKindFlags_MultiDepth)
+		result &= ps->focus_depths != 0;
+	if (flags & BeamformerAcquisitionKindFlags_MultiSteering)
+		result &= (ps->tilting_angles != 0 || ps->origin_offsets != 0);
+	if (flags & BeamformerAcquisitionKindFlags_MultiOrientation)
+		result &= ps->transmit_receive_orientations != 0;
+	if (flags & BeamformerAcquisitionKindFlags_Sparse)
+		result &= ps->sparse_elements != 0;
+
+	result &= beamformer_lib_validate_pipeline((i32 *)ps->compute_stages, ps->compute_stages_count, ps->data_description.kind);
+
+	return result;
+}
+
+function u64
+beamformer_shared_memory_first_free_parameter_set(BeamformerSharedMemory *sm)
+{
+	u64 result = bitset_find_first_clear(sm->parameter_sets_used_masks, countof(sm->parameter_sets_used_masks));
+	if (result >= BeamformerMaxParameterSets)
+		result = ~0ULL;
+	return result;
+}
+
+function b32
+beamformer_push_parameter_set_at(BeamformerParameterSet *ps, u32 set_index)
 {
 	b32 result = check_shared_memory();
 	if (result) {
-		result = lib_error_check(block < g_beamformer_library_context.bp->reserved_parameter_blocks,
-		                         ParameterBlockUnallocated);
+		BeamformerSharedMemory *sm = g_beamformer_library_context.bp;
+
+		u64 flags = beamformer_acquisition_kind_flags[ps->acquisition_kind];
+
+		BeamformerDataDescriptor *dd = &ps->data_description;
+
+		BeamformerParameterSetFlat sf[1] = {{beamformer_parameter_set_dynamic_field_init_literal}};
+
+		static_assert(offsetof(BeamformerParameterSetFlat, compute_stage_parameters) + sizeof(sf->compute_stage_parameters)
+		              == offsetof(BeamformerParameterSetFlat, transducer_transforms_offset), "Hey Stinky!");
+		memory_copy(sf, ps, offsetof(BeamformerParameterSetFlat, transducer_transforms_offset));
+
+		u32 offset = AlignUpPowerOfTwo(sizeof(BeamformerParameterSetFlat), 16);
+		sf->transducer_transforms_offset = offset;
+		offset += ps->transducer_tile_count[0] * ps->transducer_tile_count[1] * sizeof(*ps->transducer_transforms);
+
+		if (flags & BeamformerAcquisitionKindFlags_Sparse) {
+			sf->sparse_elements_offset += AlignUpPowerOfTwo(offset, 16);
+			offset += dd->dimensions.E[BeamformerRFDimension_Events] * sizeof(*ps->sparse_elements);
+		}
+
+		if (flags & BeamformerAcquisitionKindFlags_MultiDepth) {
+			sf->focus_depths_offset = AlignUpPowerOfTwo(offset, 16);
+			offset += dd->dimensions.E[BeamformerRFDimension_Events] * sizeof(*ps->focus_depths);
+		}
+
+		if (flags & BeamformerAcquisitionKindFlags_MultiSteering) {
+			// NOTE(rnp): we only give space for either origin offsets or tilting angles
+			static_assert(sizeof(*ps->origin_offsets) == sizeof(*ps->tilting_angles), "");
+			b32 vls = ps->acquisition_kind == BeamformerAcquisitionKind_RCA_VLS;
+			if (vls) sf->origin_offsets_offset = AlignUpPowerOfTwo(offset, 16);
+			else     sf->tilting_angles_offset = AlignUpPowerOfTwo(offset, 16);
+			offset += dd->dimensions.E[BeamformerRFDimension_Events] * sizeof(*ps->origin_offsets);
+		}
+
+		// TODO(rnp): delete with above change
+		if (flags & BeamformerAcquisitionKindFlags_MultiOrientation) {
+			sf->transmit_receive_orientations_offset = AlignUpPowerOfTwo(offset, 16);
+			offset += dd->dimensions.E[BeamformerRFDimension_Events] * sizeof(u8);
+		}
+
+		u64 persistent_bytes = beamformer_parameter_set_persistent_size(dd->dimensions.E[BeamformerRFDimension_Channels],
+		                                                                dd->dimensions.E[BeamformerRFDimension_Events]);
+
+		BeamformerParameterSetMetadata *set = sm->parameter_sets + set_index;
+		if (set->page_count) {
+			beamformer_shared_memory_release_persistent_pages(sm, set->first_page, set->page_count);
+			set->first_page = -1u;
+			set->page_count = 0;
+		}
+
+		u32 persistent_page  = beamformer_shared_memory_persistent_alloc(sm, persistent_bytes);
+		u32 persistent_count = DivRoundUp(persistent_bytes, BEAMFORMER_SHARED_MEMORY_PARAMETER_PAGE_SIZE);
+		BeamformerSharedMemoryAllocationHandle transient_handle = {0};
+		if (persistent_page != -1u)
+			transient_handle = beamformer_shared_memory_transient_alloc(sm, .size = offset, .align = alignof(BeamformerParameterSetFlat));
+
+		result = transient_handle.v != 0;
+		if (!transient_handle.v) {
+			beamformer_shared_memory_release_persistent_pages(sm, persistent_page, persistent_count);
+		} else {
+			set->generation++;
+			set->first_page = persistent_page;
+			set->page_count = persistent_count;
+			set->release_requested = 0;
+
+			set->data_description = ps->data_description;
+
+			////////////////////////////
+			// NOTE(rnp): persistent data
+			{
+				u8 *persistent_data = beamformer_parameter_set_persistent_data(sm, set);
+				memory_copy(persistent_data, ps->channel_mapping, sizeof(*ps->channel_mapping) * dd->dimensions.E[BeamformerRFDimension_Channels]);
+
+				// NOTE(rnp): build acquisition table
+				// TODO(rnp): remap table for acquisitions. use below for storing focus and in push_data
+			}
+
+			////////////////////////////
+			// NOTE(rnp): transient data
+			{
+				BeamformerParameterSetFlat *nf = beamformer_shared_memory_allocation_pointer(sm, transient_handle);
+				memory_copy(nf, sf, sizeof(*nf));
+
+				u32 events = dd->dimensions.E[BeamformerRFDimension_Events];
+				u32 transducer_tile_count = ps->transducer_tile_count[0] * ps->transducer_tile_count[1];
+				beamformer_parameter_set_flat_append_dynamic_data(nf, ps, events, transducer_tile_count);
+			}
+
+			BeamformerSharedMemoryAllocationHandle old_handle;
+			old_handle.v = atomic_swap_u64(&set->transient_handle.v, transient_handle.v);
+
+			if (old_handle.v) beamformer_shared_memory_allocation_release(sm, old_handle);
+		}
+	}
+	return result;
+}
+
+function b32
+beamformer_shared_memory_register_parameters(BeamformerParameterSet *ps, BeamformerParameterSetHandle *out_handle)
+{
+	b32 result = check_shared_memory();
+	if (result) {
+		BeamformerSharedMemory *sm = g_beamformer_library_context.bp;
+
+		u64 set_index = beamformer_shared_memory_first_free_parameter_set(sm);
+		if (lib_error_check(set_index != ~0UL, ParameterSetHandlesExhausted) &&
+		    lib_error_check(beamformer_parameter_set_validate(ps), ParameterSetInvalid))
+		{
+			if (beamformer_push_parameter_set_at(ps, set_index)) {
+				bitset_set(sm->parameter_sets_used_masks, countof(sm->parameter_sets_used_masks), set_index);
+
+				u32 generation = sm->parameter_sets[set_index].generation;
+				static_assert(BeamformerMaxParameterSets <= U16_MAX, "");
+				out_handle->v = beamformer_shared_memory_make_handle(BeamformerSharedMemoryHandleKind_ParameterSet,
+				                                                     (u64)set_index << 32u | (u64)generation);
+			}
+		}
 	}
 	return result;
 }
@@ -234,80 +544,6 @@ beamformer_set_global_timeout(u32 timeout_ms)
 	g_beamformer_library_context.timeout_ms = timeout_ms;
 }
 
-b32
-beamformer_reserve_parameter_blocks(uint32_t count)
-{
-	b32 result = 0;
-	if (check_shared_memory() &&
-	    lib_error_check(count <= BeamformerMaxParameterBlocks, ParameterBlockOverflow))
-	{
-		g_beamformer_library_context.bp->reserved_parameter_blocks = count;
-		result = 1;
-	}
-	return result;
-}
-
-function b32
-validate_parameters(BeamformerParameters *bp)
-{
-	if (!lib_error_check(Between(bp->contrast_mode, 0, BeamformerContrastMode_Count - 1), InvalidContrastMode))
-		return 0;
-
-	u32 contrast_raw_sample_count = bp->acquisition_count * bp->sample_count * beamformer_contrast_mode_samples[bp->contrast_mode];
-	if (!lib_error_check(contrast_raw_sample_count <= bp->raw_data_dimensions.x, DataSizeMismatch))
-		return 0;
-
-	// NOTE(rnp): frame size checks
-	{
-		// TODO(rnp): this check is overly conservative, what if we are exporting something smaller than Float32Complex
-		u64 buffer_size     = g_beamformer_library_context.bp->beamformed_frame_buffer_size;
-		u64 frame_size      = Max(1, bp->output_points.x) * Max(1, bp->output_points.y) * Max(1, bp->output_points.z)
-		                      * beamformer_data_kind_byte_size[BeamformerDataKind_Float32Complex];
-		u64 incoherent_size = frame_size / 2;
-		if (bp->coherency_weighting)
-			buffer_size -= incoherent_size;
-
-		if (!lib_error_check(frame_size <= buffer_size, FrameSizeOverflow))
-			return 0;
-	}
-
-	return 1;
-}
-
-function b32
-validate_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data_kind)
-{
-	b32 data_kind_test = Between(data_kind, 0, BeamformerDataKind_Count - 1);
-	if (!lib_error_check(data_kind_test, InvalidDataKind))
-		return 0;
-
-	if (!lib_error_check(shader_count <= BeamformerMaxComputeShaderStages, ComputeStageOverflow))
-		return 0;
-
-	for (u32 i = 0; i < shader_count; i++) {
-		b32 stage_test = Between(shaders[i], BeamformerShaderKind_ComputeFirst, BeamformerShaderKind_ComputeLast);
-		if (!lib_error_check(stage_test, InvalidComputeStage))
-			return 0;
-
-		if (shaders[i] == BeamformerShaderKind_Hilbert &&
-		    !lib_error_check(g_beamformer_library_context.bp->capabilities.hilbert != 0, InvalidComputeStage))
-			return 0;
-
-		if (shaders[i] == BeamformerShaderKind_Demodulate &&
-		    !lib_error_check(!beamformer_data_kind_complex[data_kind], InvalidDemodulationDataKind))
-		{
-			return 0;
-		}
-	}
-
-	b32 start_stage_test = shaders[0] == BeamformerShaderKind_Demodulate ||
-	                       shaders[0] == BeamformerShaderKind_Decode;
-	if (!lib_error_check(start_stage_test, InvalidStartShader))
-		return 0;
-
-	return 1;
-}
-
 u64
 beamformer_maximum_rf_data_size(void)
 {
@@ -324,7 +560,7 @@ u64
 beamformer_maximum_frames_for_parameters(BeamformerParameters *bp)
 {
 	u64 result = U64_MAX;
-	if (check_shared_memory() && validate_parameters(bp)) {
+	if (check_shared_memory() && beamformer_lib_validate_parameters(bp)) {
 		// TODO(rnp): overly conservative frame size check
 		u64 buffer_size     = g_beamformer_library_context.bp->beamformed_frame_buffer_size;
 		u64 frame_size      = Max(1, bp->output_points.x) * Max(1, bp->output_points.y) * Max(1, bp->output_points.z)
@@ -344,64 +580,6 @@ beamformer_maximum_frames_for_simple_parameters(BeamformerSimpleParameters *bp)
 	return result;
 }
 
-function b32
-parameter_block_region_upload(const void *data, u32 size, u32 block, u32 block_offset, i32 timeout_ms)
-{
-	i32 lock   = BeamformerSharedMemoryLockKind_Count + (i32)block;
-	b32 result = valid_parameter_block(block) && lib_try_lock(lock, timeout_ms);
-	if (result) {
-		memory_copy((u8 *)beamformer_parameter_block(g_beamformer_library_context.bp, block) + block_offset,
-		            data, size);
-		beamformed_shared_memory_dirty_flag(g_beamformer_library_context.bp, block, BeamformerParameterDirtyFlag_Parameters);
-		lib_release_lock(lock);
-	}
-	return result;
-}
-
-b32
-beamformer_set_pipeline_stage_parameters_at(u32 stage_index, i32 parameter, u32 block)
-{
-	u32 offset  = BeamformerParameterBlockRegionOffsets[BeamformerParameterBlockRegion_ComputePipeline];
-	offset     += offsetof(BeamformerComputePipeline, parameters);
-	offset     += (stage_index % BeamformerMaxComputeShaderStages) * sizeof(BeamformerShaderParameters);
-	b32 result  = parameter_block_region_upload(&parameter, sizeof(BeamformerShaderParameters), block,
-	                                            offset, g_beamformer_library_context.timeout_ms);
-	return result;
-}
-
-b32
-beamformer_set_pipeline_stage_parameters(u32 stage_index, i32 parameter)
-{
-	b32 result = beamformer_set_pipeline_stage_parameters_at(stage_index, parameter, 0);
-	return result;
-}
-
-b32
-beamformer_push_pipeline_at(i32 *shaders, u32 shader_count, BeamformerDataKind data_kind, u32 block)
-{
-	b32 result = 0;
-	if (check_shared_memory() && validate_pipeline(shaders, shader_count, data_kind)) {
-		i32 lock = BeamformerSharedMemoryLockKind_Count + (i32)block;
-		if (valid_parameter_block(block) && lib_try_lock(lock, g_beamformer_library_context.timeout_ms)) {
-			BeamformerParameterBlock *b = beamformer_parameter_block(g_beamformer_library_context.bp, block);
-			memory_copy(&b->pipeline.shaders, shaders, shader_count * sizeof(*shaders));
-			beamformed_shared_memory_dirty_flag(g_beamformer_library_context.bp, block, BeamformerParameterDirtyFlag_Parameters);
-			b->pipeline.shader_count = shader_count;
-			b->pipeline.data_kind    = data_kind;
-			lib_release_lock(lock);
-			result = 1;
-		}
-	}
-	return result;
-}
-
-b32
-beamformer_push_pipeline(i32 *shaders, u32 shader_count, BeamformerDataKind data_kind)
-{
-	b32 result = beamformer_push_pipeline_at(shaders, shader_count, data_kind, 0);
-	return result;
-}
-
 b32
 beamformer_create_filter(BeamformerFilterParameters *filter, u8 filter_slot, u8 parameter_block)
 {
@@ -410,12 +588,13 @@ beamformer_create_filter(BeamformerFilterParameters *filter, u8 filter_slot, u8 
 		if (check_shared_memory()) {
 			BeamformWork *work = try_push_work_queue();
 			if (work) {
+				BeamformerSharedMemory *sm = g_beamformer_library_context.bp;
 				BeamformerCreateFilterContext *ctx = &work->create_filter_context;
 				work->kind = BeamformerWorkKind_CreateFilter;
-				ctx->parameters      = *filter;
-				ctx->filter_slot     = filter_slot     % BeamformerFilterSlots;
-				ctx->parameter_block = parameter_block % BeamformerMaxParameterBlocks;
-				beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
+				ctx->parameters  = *filter;
+				ctx->filter_slot = filter_slot % BeamformerFilterSlots;
+				ctx->set_handle  = beamformer_parameter_set_handle_for_block(sm, parameter_block % BeamformerMaxParameterBlocks);
+				beamform_work_queue_push_commit(&sm->external_work_queue);
 				result = 1;
 			}
 		}
@@ -429,33 +608,6 @@ beamformer_flush_commands(void)
 	i32 lock = BeamformerSharedMemoryLockKind_DispatchCompute;
 	beamformer_shared_memory_take_lock(g_beamformer_library_context.bp, lock, 0);
 }
-
-#define BEAMFORMER_UPLOAD_FNS \
-	X(channel_mapping,               i16, 1, ChannelMapping) \
-	X(focal_vectors,                 f32, 2, FocalVectors)   \
-	X(sparse_elements,               i16, 1, SparseElements) \
-	X(transmit_receive_orientations, u8,  1, TransmitReceiveOrientations)
-
-#define X(name, dtype, elements, region_name) \
-b32 beamformer_push_##name ##_at(const dtype *data, u32 count, u32 block) { \
-	b32 result = 0; \
-	if (lib_error_check(count <= countof(((BeamformerParameterBlock *)0)->name), BufferOverflow)) { \
-		result = parameter_block_region_upload(data, count * elements * sizeof(dtype), block, \
-		                                       offsetof(BeamformerParameterBlock, name),      \
-		                                       g_beamformer_library_context.timeout_ms);      \
-	} \
-	return result; \
-}
-BEAMFORMER_UPLOAD_FNS
-#undef X
-
-#define X(name, dtype, ...) \
-b32 beamformer_push_##name (const dtype *data, u32 count) { \
-	b32 result = beamformer_push_##name ##_at(data, count, 0); \
-	return result; \
-}
-BEAMFORMER_UPLOAD_FNS
-#undef X
 
 #define BEAMFORMER_REDUCE_A1S2_CONTRAST_FN(name) void name(void *restrict output_v, \
                                                            void *restrict input_v, \
@@ -482,39 +634,52 @@ function BEAMFORMER_REDUCE_A1S2_CONTRAST_FN(beamformer_reduce_a1s2_contrast_##ty
 BEAMFORMER_REDUCE_A1S2_CONTRAST_LIST
 #undef X
 
+function u64
+beamformer_data_descriptor_byte_size(BeamformerDataDescriptor dd)
+{
+	u32 d[4];
+	static_assert(sizeof(d) == sizeof(dd.dimensions), "");
+	for EachElement(dd.dimensions.E, it)
+		d[it] = Max(1, dd.dimensions.E[it]);
+
+	u64 result = d[0] * d[1] * d[2] * d[3] * beamformer_data_kind_byte_size[dd.kind];
+	return result;
+}
+
 function b32
-beamformer_push_data_base(void *data, u64 data_size, i32 timeout_ms, u32 block)
+beamformer_push_data_base(const void *data, BeamformerSharedMemory *sm, i32 timeout_ms,
+                          const BeamformerDataDescriptor *raw_description,
+                          const BeamformerDataDescriptor *flat_description,
+                          const u16 *channel_mapping)
 {
 	b32 result = 0;
-	BeamformerSharedMemory   *sm = g_beamformer_library_context.bp;
-	BeamformerParameterBlock *b  = beamformer_parameter_block(sm, block);
-	BeamformerParameters     *bp = &b->parameters;
-	BeamformerDataKind     data_kind     = b->pipeline.data_kind;
-	BeamformerContrastMode contrast_mode = bp->contrast_mode;
+	BeamformerDataKind data_kind = raw_description->kind;
 
 	u64 max_rf_size = sm->capabilities.max_rf_data_size;
-	u32 rf_size     = bp->acquisition_count * bp->sample_count * bp->channel_count * beamformer_data_kind_byte_size[data_kind];
-	u32 raw_size    = bp->raw_data_dimensions.x * bp->raw_data_dimensions.y * beamformer_data_kind_byte_size[data_kind];
+	u64 rf_size     = beamformer_data_descriptor_byte_size(*flat_description);
+	u64 raw_size    = beamformer_data_descriptor_byte_size(*raw_description);
 
 	// TODO(rnp): support multi push upload so that max_rf_size is actual limit
 	if (lib_try_lock(BeamformerSharedMemoryLockKind_UploadRF, timeout_ms)) {
 		BeamformerSharedMemoryAllocationHandle rf_handle = beamformer_shared_memory_transient_alloc(sm, .size = rf_size, .align = BEAMFORMER_RF_ALIGN);
-		if (lib_error_check(rf_handle != 0, TransientSpaceOverflow) &&
+		if (lib_error_check(rf_handle.v != 0, TransientSpaceOverflow) &&
 		    lib_error_check(rf_size <= max_rf_size, RFDataSizeOverflow) &&
-		    lib_error_check(rf_size <= data_size && data_size == raw_size, DataSizeMismatch))
+		    lib_error_check(rf_size <= raw_size, DataSizeMismatch))
 		{
-			u32 channel_count      = bp->channel_count;
-			u32 out_channel_stride = beamformer_data_kind_byte_size[data_kind] * bp->sample_count * bp->acquisition_count;
-			u32 in_channel_stride  = beamformer_data_kind_byte_size[data_kind] * bp->raw_data_dimensions.x;
+			u32 sample_count  = flat_description->dimensions.E[BeamformerRFDimension_Samples];
+			u32 event_count   = flat_description->dimensions.E[BeamformerRFDimension_Events];
+			u32 channel_count = flat_description->dimensions.E[BeamformerRFDimension_Channels];
+
+			u32 out_channel_stride = sample_count * event_count   * beamformer_data_kind_byte_size[data_kind];
+			u32 in_channel_stride  = raw_description->dimensions.x * beamformer_data_kind_byte_size[data_kind];
 
 			u8 *base = beamformer_shared_memory_allocation_pointer(sm, rf_handle);
 			for (u32 channel = 0; channel < channel_count; channel++) {
-				u16 data_channel = (u16)b->channel_mapping[channel];
 				u32 out_off = out_channel_stride * channel;
-				u32 in_off  = in_channel_stride  * data_channel;
+				u32 in_off  = in_channel_stride  * channel_mapping[channel];
 
 				u8 *memory = base + out_off;
-				switch (contrast_mode) {
+				switch (raw_description->contrast_mode) {
 				default:{
 					/* NOTE(rnp): non temporal copy would be better, but we can't ensure
 					 * 64 byte boundaries. */
@@ -539,24 +704,25 @@ beamformer_push_data_base(void *data, u64 data_size, i32 timeout_ms, u32 block)
 					};
 					beamformer_reduce_a1s2_contrast_fn *reduce = reduce_a1s2_fn_table[reduce_a1s2_index_map[data_kind]];
 
-					u32 sample_count       = bp->sample_count * beamformer_data_kind_element_count[data_kind];
-					u32 acquisition_stride = sample_count * beamformer_data_kind_element_size[data_kind];
-					for (u32 acquisition = 0; acquisition < bp->acquisition_count; acquisition++) {
-						void *out = memory + acquisition * acquisition_stride;
-						void *in  = (u8 *)data + in_off + 3 * acquisition * acquisition_stride;
-						reduce(out, in, sample_count);
+					u32 flat_sample_count = sample_count * beamformer_data_kind_element_count[data_kind];
+					u32 event_stride      = sample_count * beamformer_data_kind_byte_size[data_kind];
+					u32 in_stride         = event_stride * beamformer_contrast_mode_samples[raw_description->contrast_mode];
+					for (u32 event = 0; event < event_count; event++) {
+						void *out = memory + event * event_stride;
+						void *in  = (u8 *)data + in_off + in_stride * event;
+						reduce(out, in, flat_sample_count);
 					}
 				}break;
 				}
 			}
 
 			/* TODO(rnp): need a better way to communicate this */
-			atomic_store_u64(&sm->rf_handle, rf_handle);
+			atomic_store_u64(&sm->rf_handle.v, rf_handle.v);
 			g_beamformer_library_context.new_rf = 1;
 			result = 1;
 		}
 
-		if (!result && rf_handle) {
+		if (!result && rf_handle.v) {
 			beamformer_shared_memory_allocation_release(sm, rf_handle);
 			lib_release_lock(BeamformerSharedMemoryLockKind_UploadRF);
 		}
@@ -565,81 +731,117 @@ beamformer_push_data_base(void *data, u64 data_size, i32 timeout_ms, u32 block)
 }
 
 function b32
-beamformer_start_compute(u64 offset, u32 image_plane_tag, u32 parameter_slot)
+beamformer_push_data(const void *data, const BeamformerDataDescriptor *raw_descriptor, BeamformerParameterSetHandle set_handle)
 {
 	b32 result = 0;
 	if (check_shared_memory()) {
-		u32 reserved_blocks = g_beamformer_library_context.bp->reserved_parameter_blocks;
-		if (lib_error_check(parameter_slot < reserved_blocks, ParameterBlockUnallocated) &&
-		    lib_error_check(image_plane_tag < BeamformerViewPlaneTag_Count, InvalidImagePlane))
-		{
-			// TODO(rnp): this stuff will be passed in rather than taken from the existing set
-			BeamformerParameterBlock *pb = beamformer_parameter_block(g_beamformer_library_context.bp, parameter_slot);
-			BeamformerParameters     *bp = &pb->parameters;
-
-			BeamformWork *work = try_push_work_queue();
-			if (work) {
-				b32 new_rf = g_beamformer_library_context.new_rf;
-				g_beamformer_library_context.new_rf = 0;
-				work->kind = new_rf ? BeamformerWorkKind_WaitThenCompute : BeamformerWorkKind_Compute;
-				work->compute_context.view_plane        = image_plane_tag;
-				work->compute_context.parameter_set     = parameter_slot;
-				work->compute_context.rf_offset         = offset;
-				work->compute_context.steering_angle    = bp->single_focus ? bp->focal_vector.x : pb->focal_vectors[0].x;
-				work->compute_context.focus_depth       = bp->single_focus ? bp->focal_vector.y : pb->focal_vectors[0].y;
-				work->compute_context.tx_rx_orientation = bp->single_orientation ? bp->transmit_receive_orientation
-				                                                                 : pb->transmit_receive_orientations[0];
-				memory_copy(&work->compute_context.voxel_transform, &bp->das_voxel_transform, sizeof(bp->das_voxel_transform));
-				beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
-				beamformer_flush_commands();
-				result = 1;
-			}
+		BeamformerSharedMemory         *sm   = g_beamformer_library_context.bp;
+		BeamformerParameterSetMetadata *meta = beamformer_parameter_set_metadata_from_handle(sm, set_handle);
+		if (lib_error_check(meta != 0, ParameterSetInvalid)) {
+			result = beamformer_push_data_base(data, sm, 0, raw_descriptor, &meta->data_description,
+			                                   beamformer_parameter_set_persistent_data(sm, meta));
 		}
 	}
 	return result;
 }
 
 function b32
-beamformer_push_data(void *data, u64 data_size, u32 parameter_slot)
+beamformer_start_compute_base(const BeamformerPushParameters *pp, BeamformerParameterSetHandle set_handle,
+                              BeamformerParameterSetMetadata *meta)
 {
 	b32 result = 0;
-	if (check_shared_memory()) {
-		u32 reserved_blocks = g_beamformer_library_context.bp->reserved_parameter_blocks;
-		result = lib_error_check(parameter_slot < reserved_blocks, ParameterBlockUnallocated) &&
-		         beamformer_push_data_base(data, data_size, g_beamformer_library_context.timeout_ms, parameter_slot);
-	}
-	return result;
-}
-
-b32
-beamformer_push_data_with_compute(void *data, u32 data_size, u32 image_plane_tag, u32 parameter_slot)
-{
-	b32 result = beamformer_push_data(data, data_size, parameter_slot) &&
-	             beamformer_start_compute(0, image_plane_tag, parameter_slot);
-	return result;
-}
-
-b32
-beamformer_push_parameters_at(BeamformerParameters *bp, u32 block)
-{
-	b32 result = check_shared_memory() && validate_parameters(bp);
-	if (result) {
-		result = parameter_block_region_upload(bp, sizeof(*bp), block,
-		                                       offsetof(BeamformerParameterBlock, parameters),
-		                                       g_beamformer_library_context.timeout_ms);
-		if (result) {
-			beamformed_shared_memory_dirty_flag(g_beamformer_library_context.bp, block,
-			                                    BeamformerParameterDirtyFlag_NotifyUI);
+	if (lib_error_check(pp->view_plane_tag < BeamformerViewPlaneTag_Count, InvalidImagePlane) &&
+	    lib_error_check(beamformer_lib_validate_rf_offset(pp->rf_offset, meta->data_description), RFOffsetInvalid))
+	{
+		BeamformWork *work = try_push_work_queue();
+		if (work) {
+			b32 new_rf = g_beamformer_library_context.new_rf;
+			g_beamformer_library_context.new_rf = 0;
+			work->kind = new_rf ? BeamformerWorkKind_WaitThenCompute : BeamformerWorkKind_Compute;
+			memory_copy(&work->compute_context.parameters, pp, sizeof(*pp));
+			work->compute_context.set_handle = set_handle;
+			beamform_work_queue_push_commit(&g_beamformer_library_context.bp->external_work_queue);
+			beamformer_flush_commands();
+			result = 1;
 		}
 	}
 	return result;
 }
 
-b32
-beamformer_push_parameters(BeamformerParameters *bp)
+function b32
+beamformer_start_compute(const BeamformerPushParameters *pp, BeamformerParameterSetHandle handle)
 {
-	b32 result = beamformer_push_parameters_at(bp, 0);
+	b32 result = 0;
+	if (check_shared_memory()) {
+		BeamformerSharedMemory         *sm   = g_beamformer_library_context.bp;
+		BeamformerParameterSetMetadata *meta = beamformer_parameter_set_metadata_from_handle(sm, handle);
+		if (lib_error_check(meta != 0, ParameterSetInvalid))
+			result = beamformer_start_compute_base(pp, handle, meta);
+	}
 	return result;
+}
+
+BEAMFORMER_LIB_EXPORT b32
+beamformer_push_data_with_compute(const void *data,
+                                  const BeamformerDataDescriptor *raw_descriptor,
+                                  const BeamformerPushParameters *pp,
+                                  BeamformerParameterSetHandle handle)
+{
+	b32 result = 0;
+	if (check_shared_memory()) {
+		BeamformerSharedMemory         *sm   = g_beamformer_library_context.bp;
+		BeamformerParameterSetMetadata *meta = beamformer_parameter_set_metadata_from_handle(sm, handle);
+		if (lib_error_check(meta != 0, ParameterSetInvalid)) {
+			if (beamformer_push_data_base(data, sm, 0, raw_descriptor, &meta->data_description,
+			                              beamformer_parameter_set_persistent_data(sm, meta)))
+			{
+				result = beamformer_start_compute_base(pp, handle, meta);
+			}
+		}
+	}
+	return result;
+}
+
+function void
+beamformer_parameter_set_from_simple(BeamformerParameterSet *set, BeamformerSimpleParameters *bp)
+{
+	set->data_description.layout = BeamformerDataLayout_ChannelEventSample;
+	set->data_description.kind   = bp->data_kind;
+	set->data_description.contrast_mode = bp->contrast_mode;
+	set->data_description.dimensions.E[BeamformerRFDimension_Samples]  = bp->sample_count;
+	set->data_description.dimensions.E[BeamformerRFDimension_Events]   = bp->acquisition_count;
+	set->data_description.dimensions.E[BeamformerRFDimension_Channels] = bp->channel_count;
+	set->data_description.dimensions.E[BeamformerRFDimension_Frames]   = 1;
+
+	set->transducer_channel_count[0] = bp->channel_count;
+	set->transducer_channel_count[1] = bp->channel_count;
+	set->transducer_tile_count[0] = 1;
+	set->transducer_tile_count[1] = 1;
+	set->transducer_element_pitch = bp->xdc_element_pitch;
+	set->output_points            = bp->output_points;
+	set->acquisition_kind         = bp->acquisition_kind;
+	set->decode_mode              = bp->decode_mode;
+	set->sampling_mode            = bp->sampling_mode;
+	set->sampling_frequency       = bp->sampling_frequency;
+	set->demodulation_frequency   = bp->demodulation_frequency;
+	set->decimation_rate          = bp->decimation_rate;
+	set->speed_of_sound           = bp->speed_of_sound;
+	set->time_offset              = bp->time_offset;
+	set->f_number                 = bp->f_number;
+	set->interpolation_mode       = bp->interpolation_mode;
+	set->coherency_weighting      = bp->coherency_weighting;
+	set->readi_group_count        = bp->readi_group_count;
+	set->emission_parameters      = bp->emission_parameters;
+	set->transducer_transforms    = &bp->xdc_transform;
+	set->sparse_elements          = (u16 *)bp->sparse_elements;
+	set->channel_mapping          = (u16 *)bp->channel_mapping;
+	set->transmit_receive_orientations = bp->transmit_receive_orientations;
+	set->focus_depths             = bp->focal_depths;
+
+	// TODO(rnp): dynamic
+	memory_copy(set->compute_stages, bp->compute_stages, sizeof(bp->compute_stages));
+	memory_copy(set->compute_stage_parameters, bp->compute_stage_parameters, sizeof(bp->compute_stage_parameters));
+	set->compute_stages_count = bp->compute_stages_count;
 }
 
 b32
@@ -647,25 +849,23 @@ beamformer_push_simple_parameters_at(BeamformerSimpleParameters *bp, u32 block)
 {
 	b32 result = check_shared_memory();
 	if (result) {
-		alignas(64) v2 focal_vectors[countof(bp->steering_angles)];
-		for (u32 i = 0; i < countof(bp->steering_angles); i++)
-			focal_vectors[i] = (v2){{bp->steering_angles[i], bp->focal_depths[i]}};
+		BeamformerParameterSet set = {0};
+		beamformer_parameter_set_from_simple(&set, bp);
 
-		result &= beamformer_push_parameters_at((BeamformerParameters *)bp, block);
-		result &= beamformer_push_pipeline_at(bp->compute_stages, bp->compute_stages_count, (BeamformerDataKind)bp->data_kind, block);
-		result &= beamformer_push_channel_mapping_at(bp->channel_mapping, bp->channel_count, block);
-		result &= beamformer_push_focal_vectors_at((f32 *)focal_vectors, countof(focal_vectors), block);
-		result &= beamformer_push_transmit_receive_orientations_at(bp->transmit_receive_orientations,
-		                                                           bp->acquisition_count, block);
-
-		if (bp->acquisition_kind == BeamformerAcquisitionKind_UFORCES ||
-		    bp->acquisition_kind == BeamformerAcquisitionKind_UHERCULES)
-		{
-			result &= beamformer_push_sparse_elements_at(bp->sparse_elements, bp->acquisition_count, block);
+		f32 origin_offsets[BeamformerMaxEmissionsCount];
+		if (bp->acquisition_kind == BeamformerAcquisitionKind_RCA_VLS) {
+			set.origin_offsets = origin_offsets;
+			for EachIndex(bp->acquisition_count, it) {
+				f32 depth = bp->focal_depths[it];
+				f32 angle = bp->steering_angles[it];
+				// TODO(rnp): sign?
+				origin_offsets[it] = depth * tan_f32(angle * PI / 180.f);
+			}
+		} else if (bp->acquisition_kind == BeamformerAcquisitionKind_RCA_TPW) {
+			set.tilting_angles = bp->steering_angles;
 		}
 
-		for (u32 stage = 0; stage < bp->compute_stages_count; stage++)
-			result &= beamformer_set_pipeline_stage_parameters_at(stage, bp->compute_stage_parameters[stage], block);
+		result = beamformer_push_parameter_set_at(&set, block);
 	}
 	return result;
 }
@@ -722,10 +922,10 @@ beamformer_get_last_frames(void *out_data, u64 out_data_size, u32 count)
 		                                                         .size = out_data_size, .align = 64);
 	}
 
-	b32 result = lib_error_check(export.memory != 0, TransientSpaceOverflow) && count;
+	b32 result = lib_error_check(export.memory.v != 0, TransientSpaceOverflow) && count;
 	if (result)
 		result = beamformer_export(export, out_data, g_beamformer_library_context.timeout_ms);
-	if (export.memory)
+	if (export.memory.v)
 		beamformer_shared_memory_allocation_release(g_beamformer_library_context.bp, export.memory);
 
 	return result;
@@ -737,6 +937,7 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 {
 	b32 result = beamformer_push_simple_parameters(bp);
 	if (result) {
+		BeamformerSharedMemory *sm = g_beamformer_library_context.bp;
 		beamformer_set_global_timeout(timeout_ms);
 
 		iv3 output_points = bp->output_points.xyz;
@@ -753,7 +954,32 @@ beamformer_beamform_data(BeamformerSimpleParameters *bp, void *data, uint32_t da
 		u64 output_size = output_points.x * output_points.y * output_points.z * sizeof(f32);
 		if (complex) output_size *= 2;
 
-		result = beamformer_push_data_with_compute(data, data_size, 0, 0);
+		BeamformerParameterSetHandle    set_handle = beamformer_parameter_set_handle_for_block(sm, 0);
+		BeamformerParameterSetMetadata *set_meta   = beamformer_parameter_set_metadata_from_handle(sm, set_handle);
+
+		BeamformerDataDescriptor raw_descriptor = {
+			.kind          = bp->data_kind,
+			.layout        = BeamformerDataLayout_RawBuffer,
+			.contrast_mode = bp->contrast_mode,
+			.dimensions.x  = bp->raw_data_dimensions.x,
+			.dimensions.y  = bp->raw_data_dimensions.y,
+			.dimensions.z  = 1,
+			.dimensions.w  = 1,
+		};
+
+		result = beamformer_push_data_base(data, sm, 0, &raw_descriptor, &set_meta->data_description,
+		                                   beamformer_parameter_set_persistent_data(sm, set_meta));
+		if (result) {
+			BeamformerPushParameters push = {
+				.focus_depth                  = bp->single_focus ? bp->focal_vector.y : bp->focal_depths[0],
+				.steering_angle               = bp->single_focus ? bp->focal_vector.x : bp->steering_angles[0],
+				.transmit_receive_orientation = bp->single_orientation ? bp->transmit_receive_orientation
+				                                                       : bp->transmit_receive_orientations[0],
+				.view_plane_tag               = 0,
+			};
+			memory_copy(&push.voxel_transform, &bp->das_voxel_transform, sizeof(push.voxel_transform));
+			result = beamformer_start_compute_base(&push, set_handle, set_meta);
+		}
 
 		if (result && out_data)
 			result = beamformer_get_last_frames(out_data, output_size, 1);
@@ -771,7 +997,7 @@ beamformer_compute_timings(BeamformerComputeStatsTable *output, i32 timeout_ms)
 		export.memory = beamformer_shared_memory_transient_alloc(g_beamformer_library_context.bp,
 		                                                         .size  = sizeof(BeamformerComputeStatsTable),
 		                                                         .align = alignof(BeamformerComputeStatsTable));
-		if (lib_error_check(export.memory != 0, TransientSpaceOverflow)) {
+		if (lib_error_check(export.memory.v != 0, TransientSpaceOverflow)) {
 			result = beamformer_export(export, output, timeout_ms);
 			beamformer_shared_memory_allocation_release(g_beamformer_library_context.bp, export.memory);
 		}

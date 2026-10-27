@@ -1099,3 +1099,114 @@ release_lock(i32 *lock)
 	atomic_store_u32(lock, 0);
 	os_wake_all_waiters(lock);
 }
+
+//////////////////////
+// BITSET FUNCTIONS //
+//////////////////////
+
+function force_inline u64
+bitset_pop_count(u64 *bitset, u64 bin_count)
+{
+	u64 result = 0;
+	for EachIndex(bin_count, it)
+		result += popcount_u64(bitset[it]);
+	return result;
+}
+
+function force_inline u64
+bitset_find_first_clear(u64 *bitset, u64 bin_count)
+{
+	u64 result = 0;
+	for EachIndex(bin_count, it) {
+		u64 v = ~bitset[it];
+		result += ctz_u64(v);
+		if (v) break;
+	}
+	return result;
+}
+
+function force_inline u64
+bitset_find_first_set(u64 *bitset, u64 bin_count)
+{
+	u64 result = 0;
+	for EachIndex(bin_count, it) {
+		u64 v = bitset[it];
+		result += ctz_u64(v);
+		if (v) break;
+	}
+	return result;
+}
+
+// NOTE(rnp): find next/prev are niche to begin with so they will
+// wrap around if a bit isn't found.
+// return: -1: no bit found; current: only current is set;
+function force_inline u64
+bitset_find_next_set(u64 *bitset, u64 bin_count, u64 current)
+{
+	assert((U64_MAX / 64ul) >= bin_count);
+
+	u64 bit_count = bin_count * 64ul;
+	u64 mask      = bit_count - 1ul;
+	u64 result    = -1ul;
+	for (u64 step = 1; step <= bit_count; ++step) {
+		u64 i = (current + step) & mask;
+		if ((bitset[i / 64] >> (i % 64)) & 1ul) {
+			result = i;
+			break;
+		}
+	}
+	return result;
+}
+
+function force_inline u64
+bitset_find_prev_set(u64 *bitset, u64 bin_count, u64 current)
+{
+	assert((U64_MAX / 64ul) >= bin_count);
+
+	u64 bit_count = bin_count * 64ul;
+	u64 mask      = bit_count - 1ul;
+	u64 result    = -1ul;
+	for (u64 step = 1; step <= bin_count; step++) {
+		u64 i = (current + bit_count - step) & mask;
+		if ((bitset[i / 64] >> (i % 64)) & 1u) {
+			result = i;
+			break;
+		}
+	}
+	return result;
+}
+
+function force_inline u64
+bitset_find_delta_set(u64 *bitset, u64 bin_count, u64 current, i32 delta)
+{
+	u64 result = current;
+	while (delta) {
+		if (delta > 0) { result = bitset_find_next_set(bitset, bin_count, result); delta--; }
+		else           { result = bitset_find_prev_set(bitset, bin_count, result); delta++; }
+	}
+	return result;
+}
+
+function force_inline b32
+bitset_set(u64 *bitset, u64 bin_count, u64 bit)
+{
+	u64 bin        = bit / 64ul;
+	u64 local_bit  = bit % 64ul;
+	u64 last_value = bitset[bin];
+	bitset[bin] = last_value | (1ul << local_bit);
+	// NOTE(rnp): need to do a rmw so might as well return the previous value
+	b32 result = (last_value & (1ul << local_bit)) != 0;
+	return result;
+}
+
+function force_inline b32
+bitset_clear(u64 *bitset, u64 bin_count, u64 bit)
+{
+	u64 bin        = bit / 64ul;
+	u64 local_bit  = bit % 64ul;
+	u64 last_value = bitset[bin];
+	bitset[bin] = last_value & ~(1ul << local_bit);
+	// NOTE(rnp): need to do a rmw so might as well return the previous value
+	b32 result = (last_value & (1ul << local_bit)) != 0;
+	return result;
+}

@@ -1,4 +1,7 @@
 /* See LICENSE for license details. */
+// TODO:
+// [ ]: refactor unpack to generic ZBP_Parameters that handles all versions then convert
+//      from that to BeamformerParameterSet, BeamformerPushParameters, ...
 #define BASE_EXPORT           function
 #define BASE_IMPORT           function
 #define BEAMFORMER_LIB_EXPORT function
@@ -42,18 +45,20 @@ die_(char *function_name, char *format, ...)
 }
 
 function void
-beamformer_simple_parameters_equip_channel_mapping(BeamformerSimpleParameters *bp, u8 *raw, u32 channel_count, i32 channel_mapping_offset)
+beamformer_parameter_set_equip_channel_mapping(BeamformerParameterSet *bp, u8 *raw, u32 channel_count,
+                                               i32 channel_mapping_offset, Arena *arena)
 {
 	if (channel_mapping_offset != -1) {
-		memory_copy(bp->channel_mapping, raw + channel_mapping_offset, sizeof(*bp->channel_mapping) * channel_count);
+		bp->channel_mapping = (u16 *)(raw + channel_mapping_offset);
 	} else {
+		bp->channel_mapping = push_array_no_zero(arena, u16, channel_count);
 		for EachIndex(channel_count, it)
 			bp->channel_mapping[it] = it;
 	}
 }
 
 function void
-beamformer_simple_parameters_equip_emission(BeamformerSimpleParameters *bp, u8 *raw, i32 emission_descriptors_offset)
+beamformer_parameter_set_equip_emission(BeamformerParameterSet *bp, u8 *raw, i32 emission_descriptors_offset)
 {
 	// NOTE/TODO(rnp): only considering the first data frame right now
 	ZBP_EmissionDescriptor *ed = (ZBP_EmissionDescriptor *)(raw + emission_descriptors_offset);
@@ -80,85 +85,56 @@ beamformer_simple_parameters_equip_emission(BeamformerSimpleParameters *bp, u8 *
 }
 
 function void
-beamformer_simple_parameters_equip_acquisition(BeamformerSimpleParameters *bp, u8 *raw,
-                                               BeamformerAcquisitionKind acquisition_kind,
-                                               i32 acquisition_parameters_offset)
+beamformer_parameter_set_equip_acquisition(BeamformerParameterSet *bp, u8 *raw,
+                                           BeamformerPushParameters *push,
+                                           BeamformerAcquisitionKind acquisition_kind,
+                                           i32 acquisition_parameters_offset)
 {
 	switch (acquisition_kind) {
 	case ZBP_AcquisitionKind_FORCES:{
 		ZBP_FORCESParameters *p = (ZBP_FORCESParameters *)(raw + acquisition_parameters_offset);
-		bp->transmit_receive_orientation = p->transmit_focus.transmit_receive_orientation;
-		bp->focal_vector.E[0] = p->transmit_focus.steering_angle;
-		bp->focal_vector.E[1] = p->transmit_focus.focal_depth;
-
-		bp->single_focus       = 1;
-		bp->single_orientation = 1;
+		push->transmit_receive_orientation = p->transmit_focus.transmit_receive_orientation;
+		push->steering_angle = p->transmit_focus.steering_angle;
+		push->focus_depth    = p->transmit_focus.focal_depth;
 	}break;
 
 	case ZBP_AcquisitionKind_HERCULES:{
 		ZBP_HERCULESParameters *p = (ZBP_HERCULESParameters *)(raw + acquisition_parameters_offset);
-		bp->transmit_receive_orientation = p->transmit_focus.transmit_receive_orientation;
-		bp->focal_vector.E[0] = p->transmit_focus.steering_angle;
-		bp->focal_vector.E[1] = p->transmit_focus.focal_depth;
-
-		bp->single_focus       = 1;
-		bp->single_orientation = 1;
+		push->transmit_receive_orientation = p->transmit_focus.transmit_receive_orientation;
+		push->steering_angle = p->transmit_focus.steering_angle;
+		push->focus_depth    = p->transmit_focus.focal_depth;
 	}break;
 
 	case ZBP_AcquisitionKind_UFORCES:{
 		ZBP_uFORCESParameters *p = (ZBP_uFORCESParameters *)(raw + acquisition_parameters_offset);
-		bp->transmit_receive_orientation = p->transmit_focus.transmit_receive_orientation;
-		bp->focal_vector.E[0] = p->transmit_focus.steering_angle;
-		bp->focal_vector.E[1] = p->transmit_focus.focal_depth;
+		push->transmit_receive_orientation = p->transmit_focus.transmit_receive_orientation;
+		push->steering_angle = p->transmit_focus.steering_angle;
+		push->focus_depth    = p->transmit_focus.focal_depth;
 
-		bp->single_focus       = 1;
-		bp->single_orientation = 1;
-
-		memory_copy(bp->sparse_elements, raw + p->sparse_elements_offset,
-		            sizeof(*bp->sparse_elements) * bp->acquisition_count);
+		bp->sparse_elements = (u16 *)(raw + p->sparse_elements_offset);
 	}break;
 
 	case ZBP_AcquisitionKind_UHERCULES:{
 		ZBP_uHERCULESParameters *p = (ZBP_uHERCULESParameters *)(raw + acquisition_parameters_offset);
-		bp->transmit_receive_orientation = p->transmit_focus.transmit_receive_orientation;
-		bp->focal_vector.E[0] = p->transmit_focus.steering_angle;
-		bp->focal_vector.E[1] = p->transmit_focus.focal_depth;
+		push->transmit_receive_orientation = p->transmit_focus.transmit_receive_orientation;
+		push->steering_angle = p->transmit_focus.steering_angle;
+		push->focus_depth    = p->transmit_focus.focal_depth;
 
-		bp->single_focus       = 1;
-		bp->single_orientation = 1;
-
-		memory_copy(bp->sparse_elements, raw + p->sparse_elements_offset,
-		            sizeof(*bp->sparse_elements) * bp->acquisition_count);
+		bp->sparse_elements = (u16 *)(raw + p->sparse_elements_offset);
 	}break;
 
 	case ZBP_AcquisitionKind_RCA_TPW:{
 		ZBP_TPWParameters *p = (ZBP_TPWParameters *)(raw + acquisition_parameters_offset);
-
-		memory_copy(bp->transmit_receive_orientations, raw + p->transmit_receive_orientations_offset,
-		            sizeof(*bp->transmit_receive_orientations) * bp->acquisition_count);
-		memory_copy(bp->steering_angles, raw + p->tilting_angles_offset,
-		            sizeof(*bp->steering_angles) * bp->acquisition_count);
-
-		for EachIndex(bp->acquisition_count, it)
-			bp->focal_depths[it] = inf32();
+		bp->transmit_receive_orientations = raw + p->transmit_receive_orientations_offset;
+		bp->tilting_angles                = (f32 *)(raw + p->tilting_angles_offset);
 	}break;
 
 	case ZBP_AcquisitionKind_RCA_VLS:{
 		ZBP_VLSParameters *p = (ZBP_VLSParameters *)(raw + acquisition_parameters_offset);
 
-		memory_copy(bp->transmit_receive_orientations, raw + p->transmit_receive_orientations_offset,
-		            sizeof(*bp->transmit_receive_orientations) * bp->acquisition_count);
-
-		f32 *focal_depths   = (f32 *)(raw + p->focal_depths_offset);
-		f32 *origin_offsets = (f32 *)(raw + p->origin_offsets_offset);
-
-		for EachIndex(bp->acquisition_count, it) {
-			f32 sign   = Sign(focal_depths[it]);
-			f32 depth  = focal_depths[it];
-			f32 origin = origin_offsets[it];
-			bp->steering_angles[it] = atan2_f32(origin, -depth) * 180.0f / PI;
-			bp->focal_depths[it]    = sign * sqrt_f32(depth * depth + origin * origin);
-		}
+		bp->transmit_receive_orientations = raw + p->transmit_receive_orientations_offset;
+		bp->focus_depths                  = (f32 *)(raw + p->focal_depths_offset);
+		bp->origin_offsets                = (f32 *)(raw + p->origin_offsets_offset);
 	}break;
 
 	InvalidDefaultCase;
@@ -166,7 +142,10 @@ beamformer_simple_parameters_equip_acquisition(BeamformerSimpleParameters *bp, u
 }
 
 function b32
-beamformer_simple_parameters_from_zbp_file(Arena *arena, BeamformerSimpleParameters *bp, char *path, ZBP_Data *raw_data, u32 *data_frame_count)
+beamformer_parameter_set_from_zbp_file(BeamformerParameterSet *bp,
+                                       BeamformerDataDescriptor *raw_description,
+                                       BeamformerPushParameters *push,
+                                       ZBP_Data *raw_data, char *path, Arena *arena)
 {
 	str8 raw = os_read_entire_file(arena, path);
 	if (raw.length < (i64)sizeof(ZBP_BaseHeader) || ((ZBP_BaseHeader *)raw.data)->magic != ZBP_HeaderMagic)
@@ -180,11 +159,12 @@ beamformer_simple_parameters_from_zbp_file(Arena *arena, BeamformerSimpleParamet
 	switch (((ZBP_BaseHeader *)raw.data)->major) {
 
 	case 1:{
-		ZBP_HeaderV1 *header       = (ZBP_HeaderV1 *)raw.data;
+		ZBP_HeaderV1 *header = (ZBP_HeaderV1 *)raw.data;
 
-		bp->sample_count           = header->sample_count;
-		bp->channel_count          = header->channel_count;
-		bp->acquisition_count      = header->receive_event_count;
+		bp->data_description.dimensions.E[BeamformerRFDimension_Samples]  = header->sample_count;
+		bp->data_description.dimensions.E[BeamformerRFDimension_Channels] = header->channel_count;
+		bp->data_description.dimensions.E[BeamformerRFDimension_Events]   = header->receive_event_count;
+		bp->data_description.dimensions.E[BeamformerRFDimension_Frames]   = 1;
 
 		bp->sampling_mode          = BeamformerSamplingMode_4X;
 		bp->acquisition_kind       = header->beamform_mode;
@@ -194,15 +174,24 @@ beamformer_simple_parameters_from_zbp_file(Arena *arena, BeamformerSimpleParamet
 		bp->speed_of_sound         = header->speed_of_sound;
 		bp->time_offset            = header->time_offset;
 
-		memory_copy(bp->channel_mapping,       header->channel_mapping,             sizeof(*bp->channel_mapping) * bp->channel_count);
-		memory_copy(bp->xdc_transform.E,       header->transducer_transform_matrix, sizeof(bp->xdc_transform));
-		memory_copy(bp->xdc_element_pitch.E,   header->transducer_element_pitch,    sizeof(bp->xdc_element_pitch));
-		// NOTE(rnp): ignores emission count and ensemble count
-		memory_copy(bp->raw_data_dimensions.E, header->raw_data_dimension,          sizeof(bp->raw_data_dimensions));
-		if (data_frame_count) *data_frame_count = header->raw_data_dimension[2];
-		//if (data_frame_count) *data_frame_count = header->raw_data_dimension[3];
+		bp->channel_mapping        = (u16 *)header->channel_mapping;
+		bp->transducer_transforms  = (m4 *)&header->transducer_transform_matrix;
 
-		bp->data_kind              = (BeamformerDataKind)ZBP_DataKind_Int16;
+		bp->transducer_channel_count[0] = header->channel_count;
+		bp->transducer_channel_count[1] = header->channel_count;
+		bp->transducer_tile_count[0]    = 1;
+		bp->transducer_tile_count[1]    = 1;
+
+		memory_copy(&bp->transducer_element_pitch, header->transducer_element_pitch, sizeof(bp->transducer_element_pitch));
+
+		raw_description->kind          = BeamformerDataKind_Int16;
+		raw_description->layout        = BeamformerDataLayout_RawBuffer;
+		raw_description->contrast_mode = BeamformerContrastMode_None;
+		raw_description->dimensions.x  = header->raw_data_dimension[0];
+		raw_description->dimensions.y  = header->raw_data_dimension[1];
+		raw_description->dimensions.z  = header->raw_data_dimension[2];
+		raw_description->dimensions.w  = 1;
+
 		raw_data->kind             = ZBP_DataKind_Int16;
 		raw_data->compression_kind = ZBP_DataCompressionKind_ZSTD;
 
@@ -215,7 +204,7 @@ beamformer_simple_parameters_from_zbp_file(Arena *arena, BeamformerSimpleParamet
 		if (header->transmit_mode >= countof(transmit_mode_to_orientation))
 			return 0;
 
-		bp->transmit_receive_orientation = transmit_mode_to_orientation[header->transmit_mode];
+		push->transmit_receive_orientation = transmit_mode_to_orientation[header->transmit_mode];
 
 		ZBP_AcquisitionKind acquisition_kind = header->beamform_mode;
 		if (acquisition_kind == ZBP_AcquisitionKind_FORCES   ||
@@ -223,25 +212,24 @@ beamformer_simple_parameters_from_zbp_file(Arena *arena, BeamformerSimpleParamet
 		    acquisition_kind == ZBP_AcquisitionKind_UFORCES  ||
 		    acquisition_kind == ZBP_AcquisitionKind_UHERCULES)
 		{
-			bp->single_focus       = 1;
-			bp->single_orientation = 1;
-			bp->focal_vector.E[0]  = header->steering_angles[0];
-			bp->focal_vector.E[1]  = header->focal_depths[0];
+			push->steering_angle = header->steering_angles[0];
+			push->focus_depth    = header->focal_depths[0];
 		}
 
 		if (acquisition_kind == ZBP_AcquisitionKind_UFORCES ||
 		    acquisition_kind == ZBP_AcquisitionKind_UHERCULES)
 		{
-			memory_copy(bp->sparse_elements, header->sparse_elements, sizeof(*bp->sparse_elements) * bp->acquisition_count);
+			bp->sparse_elements = (u16 *)header->sparse_elements;
 		}
 
 		if (acquisition_kind == ZBP_AcquisitionKind_RCA_TPW ||
 		    acquisition_kind == ZBP_AcquisitionKind_RCA_VLS)
 		{
-			memory_copy(bp->focal_depths,    header->focal_depths,    sizeof(*bp->focal_depths) * bp->acquisition_count);
-			memory_copy(bp->steering_angles, header->steering_angles, sizeof(*bp->steering_angles) * bp->acquisition_count);
-			for EachIndex(bp->acquisition_count, it)
-				bp->transmit_receive_orientations[it] = bp->transmit_receive_orientation;
+			bp->focus_depths   = header->focal_depths;
+			bp->tilting_angles = header->steering_angles;
+			bp->transmit_receive_orientations = push_array_no_zero(arena, u8, header->receive_event_count);
+			for EachIndex(header->receive_event_count, it)
+				bp->transmit_receive_orientations[it] = push->transmit_receive_orientation;
 		}
 
 		bp->emission_parameters.kind           = BeamformerEmissionKind_Sine;
@@ -250,10 +238,15 @@ beamformer_simple_parameters_from_zbp_file(Arena *arena, BeamformerSimpleParamet
 	}break;
 
 	case 2:{
-		ZBP_HeaderV2 *header       = (ZBP_HeaderV2 *)raw.data;
-		bp->sample_count           = header->sample_count;
-		bp->channel_count          = header->channel_count;
-		bp->acquisition_count      = header->receive_event_count;
+		ZBP_HeaderV2 *header = (ZBP_HeaderV2 *)raw.data;
+
+		bp->data_description.kind          = (BeamformerDataKind)header->raw_data_kind;
+		bp->data_description.contrast_mode = (BeamformerContrastMode)header->contrast_mode;
+		bp->data_description.dimensions.E[BeamformerRFDimension_Samples]  = header->sample_count;
+		bp->data_description.dimensions.E[BeamformerRFDimension_Channels] = header->channel_count;
+		bp->data_description.dimensions.E[BeamformerRFDimension_Events]   = header->receive_event_count;
+		bp->data_description.dimensions.E[BeamformerRFDimension_Frames]   = header->raw_data_dimension[2];
+
 		bp->sampling_mode          = zbp_sampling_mode_to_beamformer[header->sampling_mode];
 		bp->acquisition_kind       = (BeamformerAcquisitionKind)header->acquisition_mode;
 		bp->decode_mode            = (BeamformerDecodeMode)header->decode_mode;
@@ -261,19 +254,28 @@ beamformer_simple_parameters_from_zbp_file(Arena *arena, BeamformerSimpleParamet
 		bp->demodulation_frequency = header->demodulation_frequency;
 		bp->speed_of_sound         = header->speed_of_sound;
 		bp->time_offset            = header->time_offset;
-		bp->contrast_mode          = (BeamformerContrastMode)header->contrast_mode;
-		bp->data_kind              = (BeamformerDataKind)header->raw_data_kind;
 
-		beamformer_simple_parameters_equip_channel_mapping(bp, raw.data, bp->channel_count, header->channel_mapping_offset);
-		beamformer_simple_parameters_equip_emission(bp, raw.data, header->emission_descriptors_offset);
-		beamformer_simple_parameters_equip_acquisition(bp, raw.data, bp->acquisition_kind, header->acquisition_parameters_offset);
+		beamformer_parameter_set_equip_channel_mapping(bp, raw.data, header->channel_count, header->channel_mapping_offset, arena);
+		beamformer_parameter_set_equip_emission(bp, raw.data, header->emission_descriptors_offset);
+		beamformer_parameter_set_equip_acquisition(bp, raw.data, push, bp->acquisition_kind, header->acquisition_parameters_offset);
 
-		memory_copy(bp->xdc_transform.E,       header->transducer_transform_matrix, sizeof(bp->xdc_transform));
-		memory_copy(bp->xdc_element_pitch.E,   header->transducer_element_pitch,    sizeof(bp->xdc_element_pitch));
+
+		bp->transducer_channel_count[0] = header->channel_count;
+		bp->transducer_channel_count[1] = header->channel_count;
+		bp->transducer_tile_count[0]    = 1;
+		bp->transducer_tile_count[1]    = 1;
+		bp->transducer_transforms       = (m4 *)&header->transducer_transform_matrix;
+		memory_copy(bp->transducer_element_pitch.E, header->transducer_element_pitch, sizeof(bp->transducer_element_pitch));
+
 		// NOTE(rnp): ignores group count and ensemble count
-		memory_copy(bp->raw_data_dimensions.E, header->raw_data_dimension,          sizeof(bp->raw_data_dimensions));
-		if (data_frame_count) *data_frame_count = header->raw_data_dimension[2];
-		//if (data_frame_count) *data_frame_count = header->raw_data_dimension[3];
+
+		raw_description->kind          = (BeamformerDataKind)header->raw_data_kind;
+		raw_description->layout        = BeamformerDataLayout_RawBuffer;
+		raw_description->contrast_mode = BeamformerContrastMode_None;
+		raw_description->dimensions.x  = header->raw_data_dimension[0];
+		raw_description->dimensions.y  = header->raw_data_dimension[1];
+		raw_description->dimensions.z  = header->raw_data_dimension[2];
+		raw_description->dimensions.w  = 1;
 
 		raw_data->kind             = header->raw_data_kind;
 		raw_data->compression_kind = header->raw_data_compression_kind;
@@ -292,32 +294,38 @@ beamformer_simple_parameters_from_zbp_file(Arena *arena, BeamformerSimpleParamet
 	}break;
 
 	case 3:{
-		ZBP_HeaderV3 *header   = (ZBP_HeaderV3 *)raw.data;
-		bp->sample_count       = header->sample_count;
-		bp->channel_count      = header->channel_count;
-		bp->acquisition_count  = header->receive_event_count;
+		ZBP_HeaderV3 *header = (ZBP_HeaderV3 *)raw.data;
+
+		bp->data_description.kind          = (BeamformerDataKind)header->raw_data_kind;
+		bp->data_description.contrast_mode = (BeamformerContrastMode)header->contrast_mode;
+		bp->data_description.dimensions.E[BeamformerRFDimension_Samples]  = header->sample_count;
+		bp->data_description.dimensions.E[BeamformerRFDimension_Channels] = header->channel_count;
+		bp->data_description.dimensions.E[BeamformerRFDimension_Events]   = header->receive_event_count;
+		bp->data_description.dimensions.E[BeamformerRFDimension_Frames]   = header->raw_data_dimension[2];
+
 		bp->sampling_mode      = zbp_sampling_mode_to_beamformer[header->sampling_mode];
 		bp->acquisition_kind   = (BeamformerAcquisitionKind)header->acquisition_mode;
 		bp->decode_mode        = (BeamformerDecodeMode)header->decode_mode;
 		bp->sampling_frequency = header->sampling_frequency;
 		bp->speed_of_sound     = header->speed_of_sound;
-		bp->contrast_mode      = (BeamformerContrastMode)header->contrast_mode;
-		bp->data_kind          = (BeamformerDataKind)header->raw_data_kind;
 
-		memory_copy(bp->xdc_element_pitch.E,   header->transducer_element_pitch,    sizeof(bp->xdc_element_pitch));
-		memory_copy(bp->raw_data_dimensions.E, header->raw_data_dimension,          sizeof(bp->raw_data_dimensions));
-		if (data_frame_count) *data_frame_count = header->raw_data_dimension[2];
+		beamformer_parameter_set_equip_channel_mapping(bp, raw.data, header->channel_count, header->channel_mapping_offset, arena);
+		beamformer_parameter_set_equip_emission(bp, raw.data, header->emission_descriptors_offset);
+		beamformer_parameter_set_equip_acquisition(bp, raw.data, push, bp->acquisition_kind, header->acquisition_parameters_offset);
 
-		beamformer_simple_parameters_equip_channel_mapping(bp, raw.data, bp->channel_count, header->channel_mapping_offset);
-		beamformer_simple_parameters_equip_emission(bp, raw.data, header->emission_descriptors_offset);
-		beamformer_simple_parameters_equip_acquisition(bp, raw.data, bp->acquisition_kind, header->acquisition_parameters_offset);
+		// TODO(rnp): doesn't handle non-square arrays
+		bp->transducer_channel_count[0] = header->channel_count;
+		bp->transducer_channel_count[1] = header->channel_count;
+		bp->transducer_tile_count[0]    = header->transducer_tile_count[0];
+		bp->transducer_tile_count[1]    = header->transducer_tile_count[1];
+		bp->transducer_transforms       = (m4 *)(raw.data + header->transducer_transforms_offset);
+		memory_copy(bp->transducer_element_pitch.E, header->transducer_element_pitch, sizeof(bp->transducer_element_pitch));
+
+		// NOTE(rnp): ignores group count and ensemble count
 
 		// TODO(rnp): for now we only consider first data frame
 		memory_copy(&bp->time_offset, raw.data + header->time_delays_offset, sizeof(f32));
 		memory_copy(&bp->demodulation_frequency , raw.data + header->demodulation_frequencies_offset, sizeof(f32));
-
-		// TODO(rnp): for now we only consider first tile
-		memory_copy(&bp->xdc_transform, raw.data + header->transducer_transforms_offset, sizeof(m4));
 
 		raw_data->kind             = header->raw_data_kind;
 		raw_data->compression_kind = header->raw_data_compression_kind;

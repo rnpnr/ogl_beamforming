@@ -7,6 +7,8 @@
   #endif
 #endif
 
+#define BEAMFORMER_LIB_HANDLE(kind) typedef struct {uint64_t v;} kind;
+
 #define BEAMFORMER_LIB_ERRORS \
 	X(None,                          0, "None") \
 	X(VersionMismatch,               1, "host-library version mismatch")                     \
@@ -29,10 +31,16 @@
 	X(SyncVariable,                 18, "failed to acquire lock within timeout period")      \
 	X(FrameSizeOverflow,            19, "maximum frame size exceeded")                       \
 	X(RFDataSizeOverflow,           20, "raw rf size exceeds available GPU space")           \
+	X(RFOffsetInvalid,              21, "rf offset will result in out of bounds access")     \
+	X(ParameterSetHandlesExhausted, 22, "all parameter set handles are in use")              \
+	X(ParameterSetOutOfMemory,      23, "no memory avaiable for parameter set storage")      \
+	X(ParameterSetInvalid,          24, "parameter set invalid")                             \
 
 #define X(type, num, string) BeamformerLibErrorKind_##type = num,
 typedef enum {BEAMFORMER_LIB_ERRORS} BeamformerLibErrorKind;
 #undef X
+
+BEAMFORMER_LIB_HANDLE(BeamformerParameterSetHandle);
 
 BEAMFORMER_LIB_EXPORT uint32_t beamformer_get_api_version(void);
 
@@ -81,9 +89,10 @@ BEAMFORMER_LIB_EXPORT void beamformer_set_global_timeout(uint32_t timeout_ms);
 // NOTE: Advanced API
 
 /* NOTE: pushes data and tries to immediately starts a compute */
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_data_with_compute(void *data, uint32_t size,
-                                                                 uint32_t image_plane_tag,
-                                                                 uint32_t parameter_slot);
+BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_data_with_compute(const void *data,
+                                                                 const BeamformerDataDescriptor *raw_descriptor,
+                                                                 const BeamformerPushParameters *pp,
+                                                                 BeamformerParameterSetHandle handle);
 
 
 /* Returns the last N beamformed frames, ordered from oldest to newest.
@@ -104,44 +113,9 @@ BEAMFORMER_LIB_EXPORT uint32_t beamformer_get_last_frames(void *out_data, uint64
 
 ///////////////////////////
 // Parameter Configuration
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_reserve_parameter_blocks(uint32_t count);
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_set_pipeline_stage_parameters(uint32_t stage_index,
-                                                                        int32_t parameter);
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_pipeline(int32_t *shaders, uint32_t shader_count,
-                                                        BeamformerDataKind data_kind);
-
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_set_pipeline_stage_parameters_at(uint32_t stage_index,
-                                                                           int32_t  parameter,
-                                                                           uint32_t parameter_slot);
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_pipeline_at(int32_t *shaders, uint32_t shader_count,
-                                                           BeamformerDataKind data_kind,
-                                                           uint32_t parameter_slot);
-
 BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_simple_parameters(BeamformerSimpleParameters *bp);
 BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_simple_parameters_at(BeamformerSimpleParameters *bp,
                                                                     uint32_t parameter_slot);
-
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_parameters(BeamformerParameters *);
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_parameters_at(BeamformerParameters *,
-                                                             uint32_t parameter_slot);
-
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_channel_mapping(const int16_t *mapping, uint32_t count);
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_channel_mapping_at(const int16_t *mapping, uint32_t count,
-                                                                  uint32_t parameter_slot);
-
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_sparse_elements(const int16_t *elements, uint32_t count);
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_sparse_elements_at(const int16_t *elements, uint32_t count,
-                                                                  uint32_t parameter_slot);
-
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_focal_vectors(const float *vectors, uint32_t count);
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_focal_vectors_at(const float *vectors, uint32_t count,
-                                                                uint32_t parameter_slot);
-
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_transmit_receive_orientations(const uint8_t *values,
-                                                                             uint32_t count);
-BEAMFORMER_LIB_EXPORT uint32_t beamformer_push_transmit_receive_orientations_at(const uint8_t *values,
-                                                                                uint32_t count,
-                                                                                uint32_t parameter_slot);
 
 ////////////////////
 // Filter Creation
