@@ -1,5 +1,7 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: rename spin_wait to spin_while_true
+ * [ ]: ceil_div_u32 -> DivRoundUp
  * [ ]: backtrace dumping on SIGSEGV
  * [ ]: cooperative shared memory loading in decode shader
  * [ ]: refactor: save filter parameters with rest of parameters, whole slot thing is dumb

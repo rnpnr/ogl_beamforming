@@ -1,4 +1,36 @@
 /* See LICENSE for license details. */
+
+// TODO(rnp): lib updates and beamformer usage notes
+// VLS/TPW:
+// - need to sort based on receive orientation on data intern
+//   - AcquisitionCount[orientation]
+//   - orientation passed in through push constants
+//   - need to calculate channel offset push constant:
+//     channel_offset - (channel_offset >= ChannelCount[0] ? ChannelCount[0] : 0);
+//   - orientation push const set based on (channel_offset < ChannelCount[0])
+//   - sum of acquisition count in each orientation is still a fixed count
+// RF Upload:
+// - multi frame upload allowed
+//   - no handling for it with parameter sets
+//     - use per frame parameter set if required
+//     - data descriptor compared for compatibility between
+//       dataset and parameter set
+//   - beamforming side only ever considers 1 frame. only parameter
+//     related to data frames is the onetime offset added to the rf_pointer
+//     - 1D rf_offset needs to validated. we compute single frame size from
+//       the data descriptor and verify (total_size - rf_offset) >= single_frame_size
+// - want both explicit RF datasets with handles and
+//   current implicit last dataset
+// Parameter Sets:
+// - parameter sets will be immutable
+//   - need some internal fields that are not part of the
+//     parameter set the library user passes in
+//   - channel mapping, tx_rx_orientations (depending on aquisition kind),
+//     and data layouts need to be persistent. everything else can be
+//     overwritten once interned by beamformer
+// - previously fixed channel count, emission count limits will
+//   be removed
+
 #define BEAMFORMER_IMPORT static
 
 #ifndef BASE_PLATFORM_H
@@ -165,6 +197,84 @@ check_shared_memory(void)
 
 	if likely(g_beamformer_library_context.bp)
 		result = lib_error_check(likely(!g_beamformer_library_context.bp->invalid), InvalidAccess);
+	return result;
+}
+
+function b32
+beamformer_validate_parameter_set(BeamformerParameterSet *ps)
+{
+	b32 result = Between(ps->acquisition_kind, 0, BeamformerAcquisitionKind_Count);
+
+	result &= ps->channel_mapping       != 0;
+	result &= ps->transducer_transforms != 0;
+
+	result &= (ps->tilting_angles == 0 && ps->origin_offsets == 0) ||
+	          (ps->tilting_angles != 0 && ps->origin_offsets == 0) ||
+	          (ps->tilting_angles == 0 && ps->origin_offsets != 0);
+
+	u64 flags = beamformer_acquisition_kind_flags[ps->acquisition_kind];
+	if (flags & BeamformerAcquisitionKindFlags_MultiDepth)
+		result &= ps->focus_depths != 0;
+	if (flags & BeamformerAcquisitionKindFlags_MultiSteering)
+		result &= (ps->tilting_angles != 0 || ps->origin_offsets != 0);
+	if (flags & BeamformerAcquisitionKindFlags_MultiOrientation)
+		result &= ps->transmit_receive_orientations != 0;
+	if (flags & BeamformerAcquisitionKindFlags_Sparse)
+		result &= ps->sparse_elements != 0;
+
+	return result;
+}
+
+function u64
+beamformer_shared_memory_first_free_parameter_set(BeamformerSharedMemory *sm)
+{
+	u64 result = bitset_first_clear(sm->parameter_sets_used_masks, countof(sm->parameter_sets_used_masks));
+	if (result >= BeamformerMaxParameterSets)
+		result = ~0ULL;
+	return result;
+}
+
+b32
+beamformer_shared_memory_register_parameters(BeamformerParameterSet *ps, BeamformerParameterSetHandle *out_handle)
+{
+	b32 result = check_shared_memory();
+	if (result) {
+		u64 set_index = beamformer_shared_memory_first_free_parameter_set(g_beamformer_library_context.bp);
+		result = lib_error_check(set_index != ~0ULL, ParameterSetHandlesExhausted);
+		result = result && lib_error_check(beamformer_validate_parameter_set(ps), ParameterSetInvalid);
+		if (result) {
+			u64 flags = beamformer_acquisition_kind_flags[ps->acquisition_kind];
+
+			BeamformerDataDescriptor *dd = &ps->data_description;
+			u64 persistent_bytes = dd->dimensions.E[BeamformerRFDimension_Channels] * sizeof(*ps->channel_mapping);
+			if (flags & BeamformerAcquisitionKindFlags_MultiOrientation)
+				persistent_bytes += dd->dimensions.E[BeamformerRFDimension_Events] * sizeof(*ps->transmit_receive_orientations);
+
+			u64 transient_bytes = AlignUpPowerOfTwo(sizeof(BeamformerParameterSetFlat), 16);
+			transient_bytes += AlignUpPowerOfTwo(ps->transducer_tile_count[0] * ps->transducer_tile_count[1] * sizeof(*ps->transducer_transforms), 16);
+
+			if (flags & BeamformerAcquisitionKindFlags_Sparse)
+				transient_bytes += AlignUpPowerOfTwo(dd->dimensions.E[BeamformerRFDimension_Events] * sizeof(*ps->sparse_elements), 16);
+
+			if (flags & BeamformerAcquisitionKindFlags_MultiDepth)
+				transient_bytes += AlignUpPowerOfTwo(dd->dimensions.E[BeamformerRFDimension_Events] * sizeof(*ps->focus_depths), 16);
+
+			if (flags & BeamformerAcquisitionKindFlags_MultiSteering) {
+				// NOTE(rnp): we only give space for either origin offsets or tilting angles
+				static_assert(sizeof(*ps->origin_offsets) == sizeof(*ps->tilting_angles), "");
+				transient_bytes += AlignUpPowerOfTwo(dd->dimensions.E[BeamformerRFDimension_Events] * sizeof(*ps->origin_offsets), 16);
+			}
+
+			u32 persistent_page = beamformer_shared_memory_claim_pages(g_beamformer_library_context.bp, persistent_bytes);
+			void *transient_memory = 0;
+			if (persistent_page != -1u)
+				transient_memory = beamformer_shared_memory_transient_alloc(g_beamformer_library_context.bp, .size = transient_bytes, .align = alignof(BeamformerParameterSetFlat));
+
+			(void)transient_memory;
+			(void)persistent_page;
+			// TODO(rnp): count up needed page count and try to find space
+		}
+	}
 	return result;
 }
 
