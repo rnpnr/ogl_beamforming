@@ -24,7 +24,7 @@
 	X(BufferOverflow,               13, "passed buffer size exceeds available space")        \
 	X(DataSizeMismatch,             14, "data size doesn't match the size specified in parameters") \
 	X(WorkQueueFull,                15, "work queue full")                                   \
-	X(ExportSpaceOverflow,          16, "not enough space for data export")                  \
+	X(TransientSpaceOverflow,       16, "temporary memory space exhausted")                  \
 	X(SharedMemory,                 17, "failed to open shared memory region")               \
 	X(SyncVariable,                 18, "failed to acquire lock within timeout period")      \
 	X(FrameSizeOverflow,            19, "maximum frame size exceeded")                       \
