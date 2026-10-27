@@ -2,6 +2,7 @@
 #define BEAMFORMER_SHARED_MEMORY_VERSION (38UL)
 
 #define BEAMFORMER_SHARED_MEMORY_TRANSIENT_PAGE_SIZE KB(32)
+#define BEAMFORMER_SHARED_MEMORY_PARAMETER_PAGE_SIZE KB(1)
 
 #define BEAMFORMER_RF_ALIGN 256
 
@@ -9,9 +10,24 @@
 
 BEAMFORMER_HANDLE(BeamformerSharedMemoryAllocationHandle);
 
+typedef struct {
+	u32 generation;
+
+	u32 first_page;
+	u32 page_count;
+
+	b32 release_requested;
+	u64 last_use_counter;
+
+	BeamformerDataDescriptor data_descriptor;
+	u32 transmit_receive_orientation_offset;
+	u32 channel_mapping_offset;
+} BeamformerParameterSetMetadata;
+
 typedef enum {
 	BeamformerSharedMemoryHandleKind_Nil,
 	BeamformerSharedMemoryHandleKind_Memory,
+	BeamformerSharedMemoryHandleKind_ParameterSet,
 	BeamformerSharedMemoryHandleKind_Count,
 } BeamformerSharedMemoryHandleKind;
 
@@ -189,6 +205,12 @@ typedef struct {
 		u64 lock;
 	} transient;
 
+	u32 parameter_set_first_free_page;
+
+	u64 parameter_sets_used_masks[(BeamformerMaxParameterSets + 63) / 64];
+
+	BeamformerParameterSetMetadata parameter_sets[BeamformerMaxParameterSets];
+
 	BeamformWorkQueue external_work_queue;
 } BeamformerSharedMemory;
 
@@ -319,6 +341,13 @@ post_sync_barrier(BeamformerSharedMemory *sm, BeamformerSharedMemoryLockKind loc
 	DEBUG_DECL(if (sm->locks[lock])) {
 		beamformer_shared_memory_release_lock(sm, lock);
 	}
+}
+
+function u32
+beamformer_shared_memory_claim_pages(BeamformerSharedMemory *sm, u64 bytes)
+{
+	u32 result = -1u;
+	return result;
 }
 
 function u32
