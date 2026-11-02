@@ -29,8 +29,8 @@ beamformer_debug_hot_release(void *memory, BeamformerInput *input)
 	// TODO(rnp): this will deadlock if live imaging is active
 	/* NOTE(rnp): spin until compute thread finishes its work (we will probably
 	 * never reload while compute is in progress but just incase). */
-	spin_wait(atomic_load_u32(&ctx->upload_worker.awake));
-	spin_wait(atomic_load_u32(&ctx->compute_worker.awake));
+	spin_while_true(atomic_load_u32(&ctx->upload_worker.awake));
+	spin_while_true(atomic_load_u32(&ctx->compute_worker.awake));
 }
 
 BEAMFORMER_EXPORT void

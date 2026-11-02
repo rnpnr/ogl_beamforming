@@ -93,7 +93,8 @@
 #define EachNonZeroEnumValue(type, it) (type it = (type)1; it < type##_Count; it = (type)(it + 1))
 #define EachIndex(count, it)           (u64 it = 0; it < count; it += 1)
 
-#define spin_wait(c) while ((c)) cpu_yield()
+#define spin_while_true(c)  while ((c))  cpu_yield()
+#define spin_while_false(c) while (!(c)) cpu_yield()
 
 // NOTE(rnp): typically for enums, wtf is wrong with modern compilers
 #define circular_add(v, add, max) (((u64)(v) + (u64)(max) + (i64)(add)) % (u64)(max))

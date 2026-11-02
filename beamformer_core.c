@@ -1461,7 +1461,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			case BeamformerExportKind_Stats:{
 				ComputeTimingTable *table = ctx->compute_timing_table;
 				/* NOTE(rnp): do a little spin to let this finish updating */
-				spin_wait(table->write_index != atomic_load_u32(&table->read_index));
+				spin_while_true(table->write_index != atomic_load_u32(&table->read_index));
 				ComputeShaderStats *stats = ctx->compute_shader_stats;
 				if (sizeof(stats->table) <= ec->size)
 					memory_copy(beamformer_shared_memory_data_pointer(sm, ctx->shared_memory_size),
@@ -1641,7 +1641,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			u32 wait_info_count = 0;
 			GPUSemaphoreSignalInfo wait_info = {.semaphore = rf->upload_semaphore};
 			if (work->kind == BeamformerWorkKind_WaitThenCompute) {
-				spin_wait(atomic_load_u64(&rf->insertion_index) <= compute_index);
+				spin_while_true(atomic_load_u64(&rf->insertion_index) <= compute_index);
 				wait_info.value = atomic_load_u64(rf->upload_complete_values + slot);
 				wait_info_count = 1;
 			}
@@ -1810,7 +1810,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 		u64 slot = rf->insertion_index % countof(rf->upload_complete_values);
 
 		/* NOTE(rnp): don't overwrite slot if the compute thread hasn't processed it */
-		spin_wait(rf->insertion_index - atomic_load_u64(&rf->compute_index) >= countof(rf->upload_complete_values));
+		spin_while_true(rf->insertion_index - atomic_load_u64(&rf->compute_index) >= countof(rf->upload_complete_values));
 		gpu_host_wait_timeline(GPUTimeline_Compute, rf->compute_complete_values[slot], -1ULL);
 
 		assert((ctx->shared_memory_size % os_system_info()->page_size) == 0 &&
