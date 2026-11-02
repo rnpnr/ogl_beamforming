@@ -3895,7 +3895,6 @@ metagen_emit_c_str8_list(MetaprogramContext *m, str8 *strs, u32 count)
 function b32
 metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 {
-	b32 result = 1;
 	char *out, *out_shaders;
 	{
 		str8 basename;
@@ -3926,6 +3925,8 @@ metagen_emit_c_code(MetaContext *ctx, Arena *arena)
 	if (setjmp(compiler_jmp_buf)) {
 		build_fatal("Failed to generate C Code");
 	}
+
+	b32 result = 1;
 
 	////////////////////////////
 	// NOTE(rnp): shader baking
