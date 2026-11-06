@@ -560,6 +560,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	u32 input_sample_count = pb->parameters.sample_count;
 	u32 acquisition_count  = pb->parameters.acquisition_count;
 	u32 decimation_rate    = Max(pb->parameters.decimation_rate, 1);
+	// NOTE(rnp): only relevant when demodulating
+	f32 samples_per_wave   = (pb->parameters.sampling_frequency / 2.0f) / pb->parameters.demodulation_frequency;
+	if ((u32)pb->parameters.sampling_mode < (u32)BeamformerSamplingMode_Count)
+		samples_per_wave = beamformer_sampling_mode_samples_per_wave[pb->parameters.sampling_mode] / 2.0f;
 
 	cp->raw_channel_byte_stride = pb->parameters.sample_count * pb->parameters.acquisition_count
 	                              * beamformer_data_kind_byte_size[pb->pipeline.data_kind];
@@ -902,10 +906,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				 *   Q[n]  = RF[n + 1]
 				 *   IQ[n] = I[n] - j*Q[n]
 				 */
-				if (demod) {
-					fb->DemodulationFrequency = pb->parameters.demodulation_frequency;
-					fb->SamplingFrequency     = pb->parameters.sampling_frequency / 2;
-				}
+				fb->SamplesPerWave = samples_per_wave;
 
 				sd->layout     = (uv3){{subgroup_size, 1, 1}};
 				sd->dispatch.x = DivRoundUp(node->rf_dimensions.E[BeamformerRFDimension_Samples],  sd->layout.x);
@@ -918,7 +919,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 				BeamformerDASBakeParameters *db = &sd->bake.DAS;
 				db->SamplingFrequency     = sampling_frequency;
-				db->DemodulationFrequency = pb->parameters.demodulation_frequency;
+				db->SamplesPerWave        = samples_per_wave / decimation_rate;
 				db->SpeedOfSound          = pb->parameters.speed_of_sound;
 				db->TimeOffset            = time_offset;
 				db->FNumber               = pb->parameters.f_number;

@@ -195,8 +195,7 @@ typedef struct {
 typedef struct {
 	u32 FilterCoefficients;
 	u32 FilterLength;
-	f32 SamplingFrequency;
-	f32 DemodulationFrequency;
+	f32 SamplesPerWave;
 	u32 DecimationRate;
 	u32 SampleCount;
 	u32 BatchSampleCount;
@@ -229,7 +228,7 @@ typedef struct {
 	u16 InterpolationMode;
 	u16 ReadiGroupCount;
 	f32 SamplingFrequency;
-	f32 DemodulationFrequency;
+	f32 SamplesPerWave;
 	f32 SpeedOfSound;
 	f32 TimeOffset;
 	f32 FNumber;
@@ -469,7 +468,7 @@ read_only MetaStructMember *meta_struct_members_by_id[] = {
 		{18, 0,  1, 0},
 		{18, 4,  1, 0},
 		{8,  8,  1, 0},
-		{8,  12, 1, 0},
+		{18, 12, 1, 0},
 		{18, 16, 1, 0},
 		{18, 20, 1, 0},
 		{18, 24, 1, 0},
@@ -478,7 +477,6 @@ read_only MetaStructMember *meta_struct_members_by_id[] = {
 		{18, 36, 1, 0},
 		{18, 40, 1, 0},
 		{18, 44, 1, 0},
-		{18, 48, 1, 0},
 	},
 	(MetaStructMember []){
 		{18, 0,  1, 0},
@@ -544,8 +542,7 @@ read_only str8 *meta_struct_member_names_by_id[] = {
 	(str8 []){
 		str8_comp("FilterCoefficients"),
 		str8_comp("FilterLength"),
-		str8_comp("SamplingFrequency"),
-		str8_comp("DemodulationFrequency"),
+		str8_comp("SamplesPerWave"),
 		str8_comp("DecimationRate"),
 		str8_comp("SampleCount"),
 		str8_comp("BatchSampleCount"),
@@ -577,7 +574,7 @@ read_only str8 *meta_struct_member_names_by_id[] = {
 		str8_comp("InterpolationMode"),
 		str8_comp("ReadiGroupCount"),
 		str8_comp("SamplingFrequency"),
-		str8_comp("DemodulationFrequency"),
+		str8_comp("SamplesPerWave"),
 		str8_comp("SpeedOfSound"),
 		str8_comp("TimeOffset"),
 		str8_comp("FNumber"),
@@ -605,7 +602,7 @@ read_only str8 *meta_struct_member_names_by_id[] = {
 
 read_only MetaStructInfo meta_struct_info_by_id[] = {
 	{str8_comp("DecodeBakeParameters"),             11, 44, 0},
-	{str8_comp("FilterBakeParameters"),             13, 52, 0},
+	{str8_comp("FilterBakeParameters"),             12, 48, 0},
 	{str8_comp("DASBakeParameters"),                27, 92, 0},
 	{str8_comp("CoherencyWeightingBakeParameters"), 3,  12, 0},
 	{str8_comp("ReshapeBakeParameters"),            9,  36, 0},
@@ -938,6 +935,11 @@ read_only str8 beamformer_data_kind_str8[] = {
 	str8_comp("Float32Complex"),
 	str8_comp("Float16"),
 	str8_comp("Float16Complex"),
+};
+
+read_only f32 beamformer_sampling_mode_samples_per_wave[] = {
+	2,
+	4,
 };
 
 read_only u32 beamformer_acquisition_kind_flags[] = {

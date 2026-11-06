@@ -50,9 +50,9 @@ f32vec2 complex_mul(f32vec2 a, f32vec2 b)
 }
 
 #if Demodulate
-SAMPLE_TYPE rotate_iq(SAMPLE_TYPE iq, uint index)
+SAMPLE_TYPE rotate_iq(SAMPLE_TYPE iq, u32 index)
 {
-	float arg          = radians(360) * DemodulationFrequency * index / SamplingFrequency;
+	f32 arg            = radians(360) * index / SamplesPerWave;
 	SAMPLE_TYPE result = SAMPLE_TYPE(complex_mul(iq, f32vec2(cos(arg), -sin(arg))));
 	return result;
 }

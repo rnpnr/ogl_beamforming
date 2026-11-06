@@ -57,7 +57,7 @@ const f32 C_SPLINE = 0.5f;
 #if InputDataKind == DataKind_Float32Complex || InputDataKind == DataKind_Float16Complex
 vec2 rotate_iq(const vec2 iq, const float time)
 {
-	float arg    = radians(360) * DemodulationFrequency * time;
+	float arg    = radians(360) * time / SamplesPerWave;
 	mat2  phasor = mat2( cos(arg), sin(arg),
 	                    -sin(arg), cos(arg));
 	vec2 result = phasor * iq;
@@ -153,7 +153,7 @@ SAMPLE_TYPE sample_rf(const u64 rf_pointer, const f32 index)
 	switch (u32(InterpolationMode)) {
 	case InterpolationMode_Nearest:{
 		if (index >= 0.f && index < (f32(SampleCount) - 0.5f))
-			result = rotate_iq(Input(rf_pointer + InputDataKindByteSize * u32(round(index))).x[0], index / SamplingFrequency);
+			result = rotate_iq(Input(rf_pointer + InputDataKindByteSize * u32(round(index))).x[0], index);
 	}break;
 	case InterpolationMode_Linear:{
 		if (index >= 0.f && index < f32(SampleCount - 1)) {
@@ -171,12 +171,12 @@ SAMPLE_TYPE sample_rf(const u64 rf_pointer, const f32 index)
 
 			f32 t  = fract(index);
 			result = (1 - t) * rf[0] + t * rf[1];
-			result = rotate_iq(result, index / SamplingFrequency);
+			result = rotate_iq(result, index);
 		}
 	}break;
 	case InterpolationMode_Cubic:{
 		if (index >= 1.f && index < f32(SampleCount - 2))
-			result = rotate_iq(cubic(rf_pointer + InputDataKindByteSize * u32(index), fract(index)), index / SamplingFrequency);
+			result = rotate_iq(cubic(rf_pointer + InputDataKindByteSize * u32(index), fract(index)), index);
 	}break;
 	}
 	return result;

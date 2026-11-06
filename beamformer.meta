@@ -20,11 +20,12 @@
 	Columns
 }
 
-@Enumeration SamplingMode
+@Table([name samples]) SamplingModeTable
 {
-	2X
-	4X
+	[2X 2]
+	[4X 4]
 }
+@Expand(SamplingModeTable) @Enumeration(`$(name)`) SamplingMode
 
 @Table([name size elements complex glsl]) DataKindTable
 {
@@ -294,6 +295,10 @@
 	@Expand(DataKindTable) `	str8_comp("$(name)"),`
 	`};`
 	``
+	`read_only f32 beamformer_sampling_mode_samples_per_wave[] = {`
+	@Expand(SamplingModeTable) `	$(samples),`
+	`};`
+	``
 	`read_only u32 beamformer_acquisition_kind_flags[] = {`
 	@Expand(AcquisitionKindTable) `	($(fixed_transmits)*BeamformerAcquisitionKindFlags_FixedTransmits)|($(sparse)*BeamformerAcquisitionKindFlags_Sparse),`
 	`};`
@@ -373,19 +378,18 @@
 
 		@Bake
 		{
-			[FilterCoefficients    U32]
-			[FilterLength          U32]
-			[SamplingFrequency     F32]
-			[DemodulationFrequency F32]
-			[DecimationRate        U32]
-			[SampleCount           U32]
-			[BatchSampleCount      U32]
-			[InputChannelStride    U32]
-			[InputSampleStride     U32]
-			[InputTransmitStride   U32]
-			[OutputChannelStride   U32]
-			[OutputSampleStride    U32]
-			[OutputTransmitStride  U32]
+			[FilterCoefficients   U32]
+			[FilterLength         U32]
+			[SamplesPerWave       F32]
+			[DecimationRate       U32]
+			[SampleCount          U32]
+			[BatchSampleCount     U32]
+			[InputChannelStride   U32]
+			[InputSampleStride    U32]
+			[InputTransmitStride  U32]
+			[OutputChannelStride  U32]
+			[OutputSampleStride   U32]
+			[OutputTransmitStride U32]
 		}
 
 		@PushConstants
@@ -433,7 +437,7 @@
 			[ReadiGroupCount             U16]
 
 			[SamplingFrequency           F32]
-			[DemodulationFrequency       F32]
+			[SamplesPerWave              F32]
 			[SpeedOfSound                F32]
 			[TimeOffset                  F32]
 			[FNumber                     F32]
