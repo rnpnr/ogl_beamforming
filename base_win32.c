@@ -317,12 +317,18 @@ os_read_entire_file(Arena *arena, const char *file)
 	if (h >= 0 && GetFileInformationByHandle(h, &fileinfo)) {
 		i64 filesize  = (i64)fileinfo.nFileSizeHigh << 32;
 		filesize     |= (i64)fileinfo.nFileSizeLow;
-		result.data   = push_array(arena, u8, filesize);
+		result.data   = push_array_no_zero(arena, u8, filesize);
 		result.length = filesize;
-		i32 rlen;
-		if (!ReadFile(h, result.data, (i32)filesize, &rlen, 0) || rlen != filesize) {
-			arena_pop(arena, filesize);
-			zero_struct(&result);
+
+		i64 total_read = 0;
+		while (total_read < result.length) {
+			i32 read_length;
+			i32 chunk_size = (i32)Min(result.length - total_read, (i64)S32_MAX);
+			if (!ReadFile(h, result.data + total_read, chunk_size, &read_length, 0) || read_length != chunk_size) {
+				arena_pop(arena, result.length);
+				zero_struct(&result);
+			}
+			total_read += chunk_size;
 		}
 	}
 	if (h >= 0) CloseHandle(h);
