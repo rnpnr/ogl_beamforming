@@ -301,31 +301,6 @@ os_remove_directory_(i32 base_fd, char *name)
 	return result;
 }
 
-function str8
-os_read_file_into_arena(const char *name, Arena *arena)
-{
-	str8 result = {0};
-	struct stat sb;
-	i32 fd = open(name, O_RDONLY);
-	if (fd >= 0 && fstat(fd, &sb) >= 0) {
-		result.data   = push_array_no_zero(arena, u8, sb.st_size);
-		result.length = sb.st_size;
-		i64 total_read = 0;
-		do {
-			i64 rlen = read(fd, (u8 *)result.data + total_read, (u64)(result.length - total_read));
-			if (rlen > 0) total_read += rlen;
-		} while (total_read != result.length && errno != EINTR);
-
-		if (total_read != result.length) {
-			arena_pop(arena, result.length);
-			result = (str8){0};
-		}
-	}
-	if (fd >= 0) close(fd);
-
-	return result;
-}
-
 function u64
 os_get_filetime(char *file)
 {
@@ -421,30 +396,6 @@ function void
 os_make_directory(char *name)
 {
 	CreateDirectoryA(name, 0);
-}
-
-function str8
-os_read_file_into_arena(const char *name, Arena *arena)
-{
-	str8 result = {0};
-	w32_file_info fileinfo;
-	iptr h = CreateFileA((c8 *)name, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
-	if (h >= 0 && GetFileInformationByHandle(h, &fileinfo)) {
-		u64 filesize  = (i64)fileinfo.nFileSizeHigh << 32;
-		filesize     |= (i64)fileinfo.nFileSizeLow;
-		if (filesize <= S32_MAX) {
-			result.data   = push_array_no_zero(arena, u8, filesize);
-			result.length = filesize;
-			i32 rlen = 0;
-			if (!ReadFile(h, result.data, (i32)filesize, &rlen, 0) || rlen != filesize) {
-				arena_pop(arena, filesize);
-				result = (str8){0};
-			}
-		}
-	}
-	if (h >= 0) CloseHandle(h);
-
-	return result;
 }
 
 function b32
