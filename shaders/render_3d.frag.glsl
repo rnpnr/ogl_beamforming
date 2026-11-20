@@ -39,33 +39,33 @@ uint32_t texture_dimension(uvec3 points)
 
 uint32_t input_index(vec3 uv)
 {
-	uv *= vec3(input_size_x - 1, input_size_y - 1, input_size_z - 1);
-	uint32_t result = input_size_y * input_size_x * uint32_t(uv.z) +
-	                                 input_size_x * uint32_t(uv.y) +
-	                                                uint32_t(uv.x);
-	result = min(result, input_size_z * input_size_y * input_size_x - 1);
+	uv *= vec3(pc.input_size_x - 1, pc.input_size_y - 1, pc.input_size_z - 1);
+	u32 result = pc.input_size_y * pc.input_size_x * u32(uv.z) +
+	                               pc.input_size_x * u32(uv.y) +
+	                                                 u32(uv.x);
+	result = min(result, pc.input_size_z * pc.input_size_y * pc.input_size_x - 1);
 	return result;
 }
 
 float sample_value(vec3 p)
 {
 	float result;
-	if (input_data != 0) {
-		uint32_t index = input_index(texture_coordinate);
-		switch (data_kind) {
-		case DataKind_Float32:{        result = length(InputFloat(input_data).values[index]); }break;
-		case DataKind_Float32Complex:{ result = length(InputVec2(input_data).values[index]);  }break;
+	if (pc.input_data != 0) {
+		u32 index = input_index(texture_coordinate);
+		switch (pc.data_kind) {
+		case DataKind_Float32:{        result = length(InputFloat(pc.input_data).values[index]); }break;
+		case DataKind_Float32Complex:{ result = length(InputVec2(pc.input_data).values[index]);  }break;
 		}
 	}
 
-	float threshold_val = pow(10.0f, threshold / 20.0f);
+	float threshold_val = pow(10.0f, pc.threshold / 20.0f);
 	result = clamp(result, 0.0f, threshold_val);
 	result = result / threshold_val;
-	result = pow(result, gamma);
+	result = pow(result, pc.gamma);
 
-	if (db_cutoff > 0) {
+	if (pc.db_cutoff > 0) {
 		result = 20 * log(result) / log(10);
-		result = clamp(result, -db_cutoff, 0) / -db_cutoff;
+		result = clamp(result, -pc.db_cutoff, 0) / -pc.db_cutoff;
 		result = 1 - result;
 	}
 
@@ -82,7 +82,7 @@ float grad(float x)
 
 void main(void)
 {
-	uint32_t dimension = texture_dimension(uvec3(input_size_x, input_size_y, input_size_z));
+	u32 dimension = texture_dimension(uvec3(pc.input_size_x, pc.input_size_y, pc.input_size_z));
 
 	if (dimension == 3) {
 		// TODO(rnp): add slice offset passed in as a uniform
@@ -94,6 +94,7 @@ void main(void)
 
 	vec3  p = 2.0f * texture_coordinate - 1.0f;
 
+	const vec4 bb_colour = pc.bounding_box_colour;
 	switch (dimension) {
 	case 1:{
 
@@ -105,16 +106,16 @@ void main(void)
 		float thickness = 4.f;
 
 		float alpha = smoothstep((0.5f * thickness + 2.0f) * eps, (0.5f * thickness + 0.0f) * eps, de);
-		out_colour = vec4(bounding_box_colour.xyz, alpha);
+		out_colour = vec4(bb_colour.xyz, alpha);
 	}break;
 
 	case 0: // NOTE(rnp): 0 is a special case for X-Plane Rendering
 	case 2:
 	case 3:
 	{
-		float t = clamp(sdf_wire_box_outside(p, vec3(1.0f), bounding_box_fraction) /  bounding_box_fraction, 0, 1);
+		f32 t = clamp(sdf_wire_box_outside(p, vec3(1.0f), pc.bounding_box_fraction) / pc.bounding_box_fraction, 0, 1);
 
-		out_colour = vec4(t * vec3(data) + (1 - t) * bounding_box_colour.xyz, 1);
+		out_colour = vec4(t * vec3(data) + (1 - t) * bb_colour.xyz, 1);
 		//if (u_solid_bb) out_colour = u_bb_colour;
 	}break;
 	}

@@ -686,7 +686,7 @@ read_only str8 beamformer_shader_global_header_strings[] = {
 	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  uint64_t rf_buffer;\n"
 	"  uint64_t output_buffer;\n"
-	"};\n"
+	"} pc;\n"
 	"\n"),
 	str8_comp(""
 	"#define ComplexFilter ((CompileFlags & (1 << 0)) != 0)\n"
@@ -696,7 +696,7 @@ read_only str8 beamformer_shader_global_header_strings[] = {
 	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  uint64_t input_buffer;\n"
 	"  uint64_t output_buffer;\n"
-	"};\n"
+	"} pc;\n"
 	"\n"),
 	str8_comp(""
 	"#define AcquisitionKind_FORCES         0\n"
@@ -738,12 +738,12 @@ read_only str8 beamformer_shader_global_header_strings[] = {
 	"  float32_t steering_angle;\n"
 	"  uint16_t  tx_rx_orientation;\n"
 	"  uint16_t  readi_group;\n"
-	"};\n"
+	"} pc;\n"
 	"\n"),
 	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
 	"  uint64_t coherent_sum;\n"
-	"};\n"
+	"} pc;\n"
 	"\n"),
 	str8_comp(""
 	"#define Deinterleave ((CompileFlags & (1 << 0)) != 0)\n"
@@ -754,7 +754,7 @@ read_only str8 beamformer_shader_global_header_strings[] = {
 	"  uint64_t output_buffer;\n"
 	"  uint64_t left_input_buffer;\n"
 	"  uint64_t right_input_buffer;\n"
-	"};\n"
+	"} pc;\n"
 	"\n"),
 	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
@@ -762,7 +762,7 @@ read_only str8 beamformer_shader_global_header_strings[] = {
 	"  uint64_t  input_data;\n"
 	"  uint32_t  image_elements;\n"
 	"  float32_t scale;\n"
-	"};\n"
+	"} pc;\n"
 	"\n"),
 	str8_comp(""
 	"layout(push_constant, std430) uniform PushConstants {\n"
@@ -779,7 +779,7 @@ read_only str8 beamformer_shader_global_header_strings[] = {
 	"  uint32_t  input_size_y;\n"
 	"  uint32_t  input_size_z;\n"
 	"  uint32_t  data_kind;\n"
-	"};\n"
+	"} pc;\n"
 	"\n"),
 };
 

@@ -17,7 +17,7 @@ layout(std430, buffer_reference, buffer_reference_align = 16) readonly buffer F1
 
 OutputDataType sample_rf_data(u32 index)
 {
-	OutputDataType result = OutputDataType(RF(rf_buffer).x[index]);
+	OutputDataType result = OutputDataType(RF(pc.rf_buffer).x[index]);
 	return result;
 }
 
@@ -30,7 +30,7 @@ void run_decode_large(void)
 
 	u32 rf_offset = TransmitCount * ChunkChannelCount * gl_WorkGroupID.z + TransmitCount * channel;
 	for (u32 index = gl_LocalInvocationID.x; index < TransmitCount; index += gl_WorkGroupSize.x)
-		rf[gl_LocalInvocationID.y][index] = RF(rf_buffer).x[rf_offset + index];
+		rf[gl_LocalInvocationID.y][index] = RF(pc.rf_buffer).x[rf_offset + index];
 
 	barrier();
 
@@ -59,7 +59,7 @@ void run_decode_large(void)
 
 		for (uint i = 0; i < ToProcess; i++, out_off += OutputTransmitStride)
 			if (TransmitCount % (gl_WorkGroupSize.x * ToProcess) == 0 || transmit + i < TransmitCount)
-				Output(output_buffer).x[out_off] = result[i];
+				Output(pc.output_buffer).x[out_off] = result[i];
 	}
 }
 
@@ -87,7 +87,7 @@ void run_decode_coop(void)
 	for (u32 k = 0; k < TransmitCount; k += CooperativeMatrixK) {
 		u32 rf_tile_row = CooperativeMatrixM * tile_index.y;
 		u32 rf_tile_col = k;
-		coopMatLoad(rf_matrix, RF(rf_buffer).x, offset + TransmitCount * rf_tile_row + rf_tile_col,
+		coopMatLoad(rf_matrix, RF(pc.rf_buffer).x, offset + TransmitCount * rf_tile_row + rf_tile_col,
 		            TransmitCount, gl_CooperativeMatrixLayoutRowMajor);
 
 		u32 hadamard_tile_row = k;
@@ -101,7 +101,7 @@ void run_decode_coop(void)
 	for (s32 i = 0; i < result.length(); i++)
 		result[i] = result[i] / f32(TransmitCount);
 
-	Output out_buffer = Output(output_buffer);
+	Output out_buffer = Output(pc.output_buffer);
 	coopMatStore(result, out_buffer.x, offset + TransmitCount * result_row + result_col,
 	             TransmitCount, gl_CooperativeMatrixLayoutRowMajor);
 }
@@ -116,7 +116,7 @@ void run_decode_small(void)
 	if (time_sample < OutputTransmitStride) {
 		InputDataType rf[TransmitCount];
 		for (s32 j = 0; j < TransmitCount; j++)
-			rf[j] = RF(rf_buffer).x[rf_offset + j];
+			rf[j] = RF(pc.rf_buffer).x[rf_offset + j];
 
 		OutputDataType result[TransmitCount];
 		for (s32 j = 0; j < TransmitCount; j++)
@@ -136,7 +136,7 @@ void run_decode_small(void)
 		uint out_off = OutputChannelStride  * channel +
 		               OutputSampleStride   * time_sample;
 		for (int i = 0; i < TransmitCount; i++, out_off += OutputTransmitStride)
-			Output(output_buffer).x[out_off] = result[i];
+			Output(pc.output_buffer).x[out_off] = result[i];
 	}
 }
 

@@ -86,7 +86,7 @@ void main()
 			in_offset /= 2;
 
 		// NOTE(rnp): broken out to avoid overflow from the subtraction
-		u64 input_address = input_buffer + in_offset;
+		u64 input_address = pc.input_buffer + in_offset;
 		input_address += InputDataKindByteSize * (DecimationRate * gl_WorkGroupID.x * gl_WorkGroupSize.x);
 		input_address -= InputDataKindByteSize * (FilterLength - 1);
 
@@ -117,11 +117,11 @@ void main()
 
 		if (BatchSampleCount != 0) {
 			// NOTE(rnp): deinterleave
-			Output(output_buffer).x[out_offset] = OutputDataType(result.x);
+			Output(pc.output_buffer).x[out_offset] = OutputDataType(result.x);
 			out_offset += BatchSampleCount;
-			Output(output_buffer).x[out_offset] = OutputDataType(result.y);
+			Output(pc.output_buffer).x[out_offset] = OutputDataType(result.y);
 		} else {
-			Output(output_buffer).x[out_offset] = OutputDataType(result);
+			Output(pc.output_buffer).x[out_offset] = OutputDataType(result);
 		}
 	}
 }

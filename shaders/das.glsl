@@ -72,13 +72,13 @@ vec2 rotate_iq(const vec2 iq, const float time)
 u32 batch_channel_count()
 {
 	const bool safe   = (ReceiveChannelCount % ChunkChannelCount) == 0;
-	const u32  result = safe ? ChunkChannelCount : min(ReceiveChannelCount - channel_offset, ChunkChannelCount);
+	const u32  result = safe ? ChunkChannelCount : min(ReceiveChannelCount - pc.channel_offset, ChunkChannelCount);
 	return result;
 }
 
 u64 rf_data_pointer(const u32 channel, const u32 acquisition)
 {
-	u64 result  = rf_data + ChannelByteStride * channel + AcquisitionByteStride * acquisition;
+	u64 result  = pc.rf_data + ChannelByteStride * channel + AcquisitionByteStride * acquisition;
 	result     -= InputDataKindByteSize * u32(InterpolationMode == InterpolationMode_Cubic);
 	return result;
 }
@@ -248,7 +248,7 @@ f32 rca_transmit_distance(const vec3 world_point, const vec2 focal_vector, const
 mat4 transducer_transform(const u32 acquisition)
 {
 	const u32 receive_tile_channels = ReceiveChannelCount / ReceiveTileCount;
-	const u32 receive_index = channel_offset / receive_tile_channels;
+	const u32 receive_index = pc.channel_offset / receive_tile_channels;
 
 	const u32 transmit_tile_channels = TransmitChannelCount / TransmitTileCount;
 	const u32 transmit_index = acquisition / transmit_tile_channels;
@@ -273,8 +273,8 @@ RESULT_TYPE RCA(const vec3 world_point)
 		u64 rf_pointer = rf_data_pointer(0u, u32(acquisition));
 
 		for (f32 chunk_channel = 0.f; chunk_channel < f32(batch_channel_count()); chunk_channel += 1.f) {
-			f32  rx_channel     = f32(channel_offset) + chunk_channel;
-			vec3 rx_center      = vec3(rx_channel * xdc_element_pitch, 0);
+			f32  rx_channel     = f32(pc.channel_offset) + chunk_channel;
+			vec3 rx_center      = vec3(rx_channel * pc.xdc_element_pitch, 0);
 			vec2 receive_vector = xdc_world_point - rca_plane_projection(rx_center, rx_rows);
 			f32  a_arg          = abs(FNumber * receive_vector.x / abs(xdc_world_point.y));
 
@@ -293,23 +293,23 @@ RESULT_TYPE HERCULES(const vec3 world_point)
 {
 	// TODO(rnp): this whole thing needs have an outer loop over transmit tiles
 	const mat4 xdc_transform   = transducer_transform(0);
-	const bool rx_cols         = RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Columns;
-	const vec2 focal_vector    = f32vec2(steering_angle, focus_depth);
+	const bool rx_cols         = RX_ORIENTATION(pc.tx_rx_orientation) == RCAOrientation_Columns;
+	const vec2 focal_vector    = f32vec2(pc.steering_angle, pc.focus_depth);
 	const vec3 xdc_world_point = (xdc_transform * vec4(world_point, 1)).xyz;
 
-	const f32 transmit_index   = sample_index(rca_transmit_distance(world_point, focal_vector, u8(tx_rx_orientation)));
+	const f32 transmit_index   = sample_index(rca_transmit_distance(world_point, focal_vector, u8(pc.tx_rx_orientation)));
 	const f32 z_delta_squared  = xdc_world_point.z * xdc_world_point.z;
 	const f32 f_number_over_z  = abs(FNumber / xdc_world_point.z);
 	const f32 apodization_test = 0.25f / (f_number_over_z * f_number_over_z);
 
 	const f32 rx_world_point   = xdc_world_point[s32(!rx_cols)];
 	const f32 tx_world_point   = xdc_world_point[s32(rx_cols)];
-	const f32 rx_pitch         = xdc_element_pitch[s32(!rx_cols)];
-	const f32 tx_pitch         = xdc_element_pitch[s32(rx_cols)];
+	const f32 rx_pitch         = pc.xdc_element_pitch[s32(!rx_cols)];
+	const f32 tx_pitch         = pc.xdc_element_pitch[s32(rx_cols)];
 
 	RESULT_TYPE result = RESULT_TYPE(0);
 	for (f32 chunk_channel = 0.f; chunk_channel < f32(batch_channel_count()); chunk_channel += 1.f) {
-		f32 rx_channel  = f32(channel_offset) + chunk_channel;
+		f32 rx_channel  = f32(pc.channel_offset) + chunk_channel;
 
 		f32 element_receive_delta_squared = rx_world_point - rx_channel * rx_pitch;
 		element_receive_delta_squared *= element_receive_delta_squared;
@@ -344,10 +344,10 @@ RESULT_TYPE FORCES(const vec3 world_point)
 	RESULT_TYPE result = RESULT_TYPE(0);
 
 	const mat4 xdc_transform = transducer_transform(0);
-	const u32  rx_axis       = u32(RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows);
-	const f32  element_pitch = xdc_element_pitch[rx_axis];
+	const u32  rx_axis       = u32(RX_ORIENTATION(pc.tx_rx_orientation) == RCAOrientation_Rows);
+	const f32  element_pitch = pc.xdc_element_pitch[rx_axis];
 	// TODO(rnp): the sign of the origin offset might be flipped
-	const f32  origin_offset = focus_depth * tan(radians(steering_angle));
+	const f32  origin_offset = pc.focus_depth * tan(radians(pc.steering_angle));
 
 	vec3 xdc_world_point       = (xdc_transform * vec4(world_point, 1)).xyz;
 	f32  lateral_coord         = xdc_world_point[rx_axis];
@@ -371,7 +371,7 @@ RESULT_TYPE FORCES(const vec3 world_point)
 		}
 
 		for (u32 channel = 0; channel < batch_channel_count(); channel += 1u) {
-			f32 rx_channel    = f32(channel_offset + channel);
+			f32 rx_channel    = f32(pc.channel_offset + channel);
 			f32 receive_delta = lateral_coord - rx_channel * element_pitch;
 			f32 a_arg         = abs(FNumber * receive_delta / axial_coord);
 
@@ -397,10 +397,10 @@ RESULT_TYPE READI_FORCES(const vec3 world_point)
 	RESULT_TYPE result = RESULT_TYPE(0);
 
 	const mat4 xdc_transform = transducer_transform(0);
-	const u32  rx_axis       = u32(RX_ORIENTATION(tx_rx_orientation) == RCAOrientation_Rows);
-	const f32  element_pitch = xdc_element_pitch[rx_axis];
+	const u32  rx_axis       = u32(RX_ORIENTATION(pc.tx_rx_orientation) == RCAOrientation_Rows);
+	const f32  element_pitch = pc.xdc_element_pitch[rx_axis];
 	// TODO(rnp): the sign of the origin offset might be flipped
-	const f32  origin_offset = focus_depth * tan(radians(steering_angle));
+	const f32  origin_offset = pc.focus_depth * tan(radians(pc.steering_angle));
 
 	vec3 xdc_world_point       = (xdc_transform * vec4(world_point, 1)).xyz;
 	f32  lateral_coord         = xdc_world_point[rx_axis];
@@ -410,10 +410,10 @@ RESULT_TYPE READI_FORCES(const vec3 world_point)
 	f32  transmit_oopz_squared = tx_out_of_plane_delta * tx_out_of_plane_delta + z_delta_squared;
 
 	// NOTE(tkh): The row we use matches the acquisition group, the column is the element group we are beamforming.
-	s32 hadamard_offset = s32(readi_group) * s32(ReadiGroupCount);
+	s32 hadamard_offset = s32(pc.readi_group) * s32(ReadiGroupCount);
 
 	for (f32 chunk_channel = 0; chunk_channel < f32(batch_channel_count()); chunk_channel += 1.f) {
-		f32 rx_channel    = f32(channel_offset) + chunk_channel;
+		f32 rx_channel    = f32(pc.channel_offset) + chunk_channel;
 		f32 receive_delta = lateral_coord - rx_channel * element_pitch;
 		f32 a_arg         = abs(FNumber * receive_delta / axial_coord);
 
@@ -451,7 +451,7 @@ void main()
 
 	vec3 image_points = vec3(OutputSizeX, OutputSizeY, OutputSizeZ) - 1.0f;
 	vec3 point        = vec3(out_voxel) / max(vec3(1.0f), image_points);
-	vec3 world_point  = (voxel_transform * vec4(point, 1)).xyz;
+	vec3 world_point  = (pc.voxel_transform * vec4(point, 1)).xyz;
 
 	uint32_t out_index = output_index(out_voxel.x, out_voxel.y, out_voxel.z);
 
@@ -481,5 +481,5 @@ void main()
 	IncoherentOutput(HeapBase + IncoherentFrame).x[out_index] += RESULT_INCOHERENT_CAST(sum);
 	#endif
 
-	Output(output_frame).x[out_index] += RESULT_COHERENT_CAST(sum);
+	Output(pc.output_frame).x[out_index] += RESULT_COHERENT_CAST(sum);
 }

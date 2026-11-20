@@ -16,12 +16,12 @@ void main(void)
 		OutputDataType out_value = OutputDataType(0);
 
 		#if Interleave
-		out_value[0] = Input(left_input_buffer).x[input_index];
-		out_value[1] = Input(right_input_buffer).x[input_index];
+		out_value[0] = Input(pc.left_input_buffer).x[input_index];
+		out_value[1] = Input(pc.right_input_buffer).x[input_index];
 		#else
-		out_value = Input(left_input_buffer).x[input_index];
+		out_value = Input(pc.left_input_buffer).x[input_index];
 		#endif
 
-		Output(output_buffer).x[output_index] = out_value;
+		Output(pc.output_buffer).x[output_index] = out_value;
 	}
 }

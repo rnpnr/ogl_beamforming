@@ -3719,7 +3719,7 @@ meta_push_shader_reload_info(MetaprogramContext *m, MetaContext *ctx)
 					.prefix              = str8("\"  "),
 					.suffix              = str8(";\\n\""),
 				});
-				meta_push_line(m, str8("\"};\\n\""));
+				meta_push_line(m, str8("\"} pc;\\n\""));
 				meta_push_line(m, str8("\"\\n\"),"));
 			}break;
 

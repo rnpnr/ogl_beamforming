@@ -7,13 +7,13 @@ layout(std430, buffer_reference, buffer_reference_align = 16) readonly buffer Ve
 
 void main()
 {
-	vec3 position = Vector4(positions).values[gl_VertexIndex].xyz;
-	vec3 normal   = Vector4(normals).values[gl_VertexIndex].xyz;
+	vec3 position = Vector4(pc.positions).values[gl_VertexIndex].xyz;
+	vec3 normal   = Vector4(pc.normals).values[gl_VertexIndex].xyz;
 	vec3 texture_coordinate = (2 * position + 1) / 2;
 
 	f_texture_coordinate = texture_coordinate;
 	f_normal             = normal;
 	//f_normal             = normalize(mat3(mvp_matrix) * normal);
 
-	gl_Position = mvp_matrix * vec4(position, 1);
+	gl_Position = pc.mvp_matrix * vec4(position, 1);
 }
