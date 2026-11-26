@@ -306,22 +306,27 @@ typedef struct {
 	BeamformerShaderBakeParameters bake;
 } BeamformerShaderDescriptor;
 
-typedef struct BeamformerComputePlan BeamformerComputePlan;
-struct BeamformerComputePlan {
+typedef struct {
+	// NOTE(rnp): stores the compute plan itself and any dynamic parameters
+	Arena *arena;
+	u64    arena_pop_point;
+
 	BeamformerComputePipeline pipeline;
 
 	VulkanHandle vulkan_pipelines[BeamformerMaxComputeShaderStages];
 
 	u32 first_image_shader_index;
-	u32 channel_count;
 	u32 raw_channel_byte_stride;
 
+	b32 dirty_plan;
 	u32 dirty_programs;
 
-	BeamformerAcquisitionKind acquisition_kind;
-	u32                       acquisition_count;
-	BeamformerContrastMode    contrast_mode;
+	u32 lib_generation;
+	// NOTE(rnp): used to tell the UI that the parameters in this plan have been
+	// overwritten by new data from the API. It is never read by the compute thread.
+	b32 ui_cleared;
 
+	// TODO(rnp): check what this size is doing (should it be u64 now?)
 	u32 rf_size;
 	b32 iq_pipeline;
 
@@ -333,22 +338,20 @@ struct BeamformerComputePlan {
 	iv3 output_points;
 	i32 average_frames;
 
-	// TODO(rnp): specialization constants
-	v2  xdc_element_pitch;
-	m4  xdc_transform;
-
-	u32  readi_group;
-
-	u64 last_gpu_heap_pointer;
 	GPUBuffer gpu_temp_arena;
+
+	BeamformerComputeParameters compute_parameters;
+	// TODO(rnp): better way of storing this. we need to be able to call compute_plan_commit
+	// after the transient data is removed from the shared memory region and get the same
+	// planned pipeline out
+	BeamformerDynamicComputeParameters dynamic_parameters;
+	BeamformerComputePipeline          requested_pipeline;
 
 	BeamformerFilterParameters filter_parameters[BeamformerFilterSlots];
 
-	u128 shader_hashes[BeamformerMaxComputeShaderStages];
 	BeamformerShaderDescriptor shader_descriptors[BeamformerMaxComputeShaderStages];
-
-	BeamformerComputePlan *next;
-};
+	u128 shader_hashes[BeamformerMaxComputeShaderStages];
+} BeamformerComputePlan;
 
 typedef struct {
 	u64 upload_complete_values[BeamformerMaxRawDataFramesInFlight];
@@ -426,16 +429,25 @@ typedef struct {
 	iv3 points;
 
 	u32                       id;
-	u32                       compound_count;
-	u16                       parameter_block;
-	u16                       transmit_receive_orientation;
 	f32                       focus_depth;
 	f32                       steering_angle;
+	f32                       origin_offset;
+	u16                       compound_count;
+	u16                       readi_group;
+	u8                        transmit_receive_orientation;
+	BeamformerDataKind        data_kind:8;
+	BeamformerAcquisitionKind acquisition_kind:16;
+	BeamformerContrastMode    contrast_mode:8;
+	BeamformerViewPlaneTag    view_plane_tag:8;
 
-	BeamformerDataKind        data_kind;
-	BeamformerAcquisitionKind acquisition_kind;
-	BeamformerContrastMode    contrast_mode;
-	BeamformerViewPlaneTag    view_plane_tag;
+	u16                       compute_plan_index;
+
+	static_assert(BeamformerContrastMode_Count    <= U8_MAX,  "");
+	static_assert(BeamformerViewPlaneTag_Count    <= U8_MAX,  "");
+	static_assert(BeamformerDataKind_Count        <= U8_MAX,  "");
+	static_assert(BeamformerAcquisitionKind_Count <= U16_MAX, "");
+	static_assert(BeamformerMaxParameterSets      <= U16_MAX, "");
+	static_assert(BeamformerMaxAcquisitionCount   <= U16_MAX, "");
 } BeamformerFrame;
 
 /* NOTE(rnp): backing storage for beamformed frames. The amount of backlog frames
@@ -452,9 +464,6 @@ typedef struct {
 typedef struct {
 	BeamformerRFBuffer rf_buffer;
 
-	BeamformerComputePlan *compute_plans[BeamformerMaxParameterBlocks];
-	BeamformerComputePlan *compute_plan_freelist;
-
 	// NOTE(rnp): used to ping pong data between compute stages.
 	#define PING_PONG_BUFFER_SLOTS 2
 	GPUBuffer ping_pong_buffer;
@@ -463,6 +472,9 @@ typedef struct {
 
 	f32 processing_progress;
 	b32 processing_compute;
+
+	BeamformerComputePlan *compute_plans[BeamformerMaxParameterSets];
+	u64 active_compute_plans_bitset[DivRoundUp(BeamformerMaxParameterSets, 64)];
 
 	BeamformerFrameBacklog backlog;
 } BeamformerComputeContext;
@@ -600,9 +612,11 @@ struct BeamformerUIPanel {
 		BeamformerUIBlinker live_imaging_save_button_blinker;
 
 		struct {
-			u32 parameter_block;
-			b8  expand_emission;
+			u16 compute_plan_index;
 			b8  expand_coordinate[2];
+			b8  expand_emission;
+			// b8 pad;
+			f32 beamform_plane;
 		} parameter_listing;
 
 		struct {
@@ -620,7 +634,6 @@ typedef struct {
 	Arena *arena;
 	Arena *ui_arena;
 	void  *ui;
-	u32    ui_dirty_parameter_blocks;
 
 	u64    frame_timestamp;
 	u64    frame_index;

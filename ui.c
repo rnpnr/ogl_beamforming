@@ -374,12 +374,9 @@ typedef struct {
 
 	BeamformerFrame latest_plane[BeamformerViewPlaneTag_Count];
 
-	b32 flush_parameters;
-	u32 flush_dirty_flags;
-	u32 selected_parameter_block;
-
-	// TODO(rnp): this should be per parameter block
-	f32 beamform_plane;
+	// NOTE(rnp): when present user has updated some compute parameters in the plan
+	// selected by this panel.
+	BeamformerUIPanel *flush_compute_plan_panel;
 
 	BeamformerUIPanel *tree;
 	BeamformerUIPanel *tree_node_freelist;
@@ -2323,7 +2320,7 @@ function UI_CUSTOM_DRAW_FUNCTION(beamformer_custom_draw_frame_view)
 }
 
 function b32
-ui_rebuild_das_transform(m4 das_transform, u32 parameter_block, i32 dimension, v3 min, v3 max, f32 off_axis_position)
+ui_rebuild_das_transform(m4 das_transform, u32 compute_plan_index, i32 dimension, v3 min, v3 max, f32 off_axis_position, f32 beamform_plane)
 {
 	m4 new_transform = m4_identity();
 	switch (dimension) {
@@ -2341,7 +2338,7 @@ ui_rebuild_das_transform(m4 das_transform, u32 parameter_block, i32 dimension, v
 
 		v3 rotation_axis = cross(v3_normalize(new_transform.c[0].xyz), N);
 
-		m4 R = m4_rotation_about_axis(rotation_axis, ui_context->beamform_plane);
+		m4 R = m4_rotation_about_axis(rotation_axis, beamform_plane);
 		m4 T = m4_translation(v3_scale(m4_mul_v3(R, N), off_axis_position));
 
 		new_transform = m4_mul(T, m4_mul(R, new_transform));
@@ -2350,7 +2347,7 @@ ui_rebuild_das_transform(m4 das_transform, u32 parameter_block, i32 dimension, v
 
 	new_transform = m4_mul(new_transform, m4_inverse(das_transform));
 
-	BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[parameter_block];
+	BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[compute_plan_index];
 	b32 result = 0;
 	if (cp) {
 		result |= !m4_equal(new_transform, cp->ui_voxel_transform);
@@ -3008,7 +3005,7 @@ ui_build_frame_view_context_menu(BeamformerUIPanel *panel, BeamformerFrameView *
 	}
 }
 
-function void
+function b32
 ui_build_frame_view(UINode *container, BeamformerFrameView *view)
 {
 	assert(view->kind != BeamformerFrameViewKind_3DXPlane);
@@ -3153,22 +3150,20 @@ ui_build_frame_view(UINode *container, BeamformerFrameView *view)
 		}
 	}
 
+	b32 result = 0;
 	if (rebuild_transform) {
 		min_coordinate.E[0] = min_2d.E[0]; min_coordinate.E[1] = min_2d.E[1];
 		max_coordinate.E[0] = max_2d.E[0]; max_coordinate.E[1] = max_2d.E[1];
 
-		BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[frame->parameter_block];
+		BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[frame->compute_plan_index];
 		m4 last_transform = m4_identity();
 		if (cp) last_transform = cp->last_voxel_transform;
 
-		if (ui_rebuild_das_transform(last_transform, frame->parameter_block,
-		                             iv3_dimension(frame->points), min_coordinate, max_coordinate,
-		                             plane_offset_from_transform(frame->voxel_transform)))
-		{
-			ui->flush_parameters = 1;
-			ui->selected_parameter_block = frame->parameter_block;
-		}
+		result = ui_rebuild_das_transform(last_transform, frame->compute_plan_index,
+		                                  iv3_dimension(frame->points), min_coordinate, max_coordinate,
+		                                  plane_offset_from_transform(frame->voxel_transform), 0.0f);
 	}
+	return result;
 }
 
 function UI_CUSTOM_DRAW_FUNCTION(beamformer_ui_custom_draw_compute_bar_graph)
@@ -3369,6 +3364,22 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 {
 	BeamformerUI *ui = ui_context;
 
+	u64 plan_index = panel->u.parameter_listing.compute_plan_index;
+	BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[plan_index];
+	if unlikely(!cp) {
+		// NOTE(rnp): try to snap to an active plan
+		BeamformerComputeContext *cc = &beamformer_context->compute_context;
+		plan_index = bitset_find_next_set(cc->active_compute_plans_bitset,
+		                                  countof(cc->active_compute_plans_bitset),
+		                                  plan_index);
+		if (plan_index != -1ull) {
+			panel->u.parameter_listing.compute_plan_index = (u32)plan_index;
+			cp = beamformer_context->compute_context.compute_plans[plan_index];
+		} else {
+			cp = (BeamformerComputePlan *)&beamformer_nil_compute_plan;
+		}
+	}
+
 	if ui_context_menu(panel) {
 		UINode *label_column, *button_column;
 		ui_context_menu_default_equip(&label_column, &button_column, UI_NODE_PAD);
@@ -3376,21 +3387,27 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 		UIPrefHeight(ui_text_dim(1.1f, 1.f))
 		UIPrefWidth(ui_text_dim(1.f, 1.f))
 		{
-			UIParent(label_column) ui_label(str8("Block"));
+			UIParent(label_column) ui_label(str8("Plan"));
 			UIParent(button_column)
 			{
+				BeamformerComputeContext *cc = &beamformer_context->compute_context;
 				UISignal signal;
-				u32 cycle = beamformer_context->shared_memory->reserved_parameter_blocks;
-				u32 block = panel->u.parameter_listing.parameter_block;
-				UIFlags(cycle <= 1 ? UINodeFlag_Disabled : 0)
-					signal = ui_label_buttonf("%u", block);
+				u64 active_sets = bitset_pop_count(cc->active_compute_plans_bitset, countof(cc->active_compute_plans_bitset));
+				u32 plan = panel->u.parameter_listing.compute_plan_index;
+				UIFlags(active_sets <= 1 ? UINodeFlag_Disabled : 0)
+					signal = ui_label_buttonf("%u", plan);
 				if (ui_pressed(signal) || ui_scrolled(signal)) {
-					i32 delta = signal.scroll.y + ui_pressed(signal);
-					panel->u.parameter_listing.parameter_block = circular_add(block, delta, cycle);
+					assert(active_sets > 1);
+					plan = bitset_find_delta_set(cc->active_compute_plans_bitset, countof(cc->active_compute_plans_bitset),
+					                             plan, signal.scroll.y + ui_pressed(signal));
+					panel->u.parameter_listing.compute_plan_index = plan;
+					cp = beamformer_context->compute_context.compute_plans[plan_index];
 				}
 			}
 		}
 	}
+
+	BeamformerComputeParameters *bp = &cp->compute_parameters;
 
 	UIFontSize(30.f)
 	UIScroll(Axis2_Count)
@@ -3408,11 +3425,6 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 		UIPrefWidth(ui_text_dim(1.f, 1.f))
 		UIPrefHeight(ui_text_dim(line_pad_pct, 1.f))
 		{
-			u32 parameter_block = panel->u.parameter_listing.parameter_block;
-			BeamformerParameterBlock *pb = beamformer_parameter_block(beamformer_context->shared_memory, parameter_block);
-			BeamformerComputePlan    *cp = beamformer_context->compute_context.compute_plans[parameter_block];
-			BeamformerParameters     *bp = &pb->parameters;
-
 			UIParent(label_column) ui_label(str8("Sampling Frequency"));
 			UIParent(value_column) ui_labelf("%0.2f##sampling", bp->sampling_frequency * 1e-6);
 			UIParent(unit_column)  ui_label(str8("[MHz]##sampling"));
@@ -3423,7 +3435,7 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 
 			// NOTE(rnp): emission info
 			{
-				BeamformerEmissionParameters *ep = &pb->parameters.emission_parameters;
+				BeamformerEmissionParameters *ep = &bp->emission_parameters;
 				str8 kind  = str8("Unknown");
 				b32  valid = ep->kind <= BeamformerEmissionKind_Count;
 				if (valid) kind = beamformer_emission_kind_strings[ep->kind];
@@ -3493,11 +3505,8 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 			UIFlags(UINodeFlag_Scroll|UINodeFlag_TextInputNumeric)
 			{
 				UISignal signal = ui_text_boxf("%0.2f###sound", bp->speed_of_sound);
-				if (ui_tweak_f32_compute_variable(signal, &bp->speed_of_sound, 1.f, 10.f, (v2){{0, inf32()}})) {
-					ui->selected_parameter_block = parameter_block;
-					ui->flush_parameters   = 1;
-					ui->flush_dirty_flags |= 1 << BeamformerParameterDirtyFlag_Parameters;
-				}
+				if (ui_tweak_f32_compute_variable(signal, &bp->speed_of_sound, 1.f, 10.f, (v2){{0, inf32()}}))
+					ui->flush_compute_plan_panel = panel;
 			}
 
 			b32 rebuild_transform = 0;
@@ -3514,7 +3523,7 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 				m4_mul_v3(das_transform, (v3){{1.0f, 1.0f, 1.0f}}),
 			};
 
-			i32 dimension = iv3_dimension(bp->output_points.xyz);
+			i32 dimension = iv3_dimension(cp->output_points);
 			if (dimension > 0) {
 				read_only str8 dimension_strings[3][2] = {
 					{str8_comp("Start Point"),    str8_comp("End Point")   },
@@ -3612,8 +3621,8 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 				UIParent(value_column)
 				UIFlags(UINodeFlag_Scroll|UINodeFlag_TextInputNumeric)
 				{
-					UISignal signal = ui_text_boxf("%0.2f###beamform_plane", ui->beamform_plane);
-					rebuild_transform |= ui_tweak_f32_compute_variable(signal, &ui->beamform_plane,
+					UISignal signal = ui_text_boxf("%0.2f###beamform_plane", panel->u.parameter_listing.beamform_plane);
+					rebuild_transform |= ui_tweak_f32_compute_variable(signal, &panel->u.parameter_listing.beamform_plane,
 					                                                   1.f, 0.025f, (v2){{-1.f, 1.f}});
 				}
 			}
@@ -3624,11 +3633,8 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 			UIFlags(UINodeFlag_Scroll|UINodeFlag_TextInputNumeric)
 			{
 				UISignal signal = ui_text_boxf("%0.2f###f_number", bp->f_number);
-				if (ui_tweak_f32_compute_variable(signal, &bp->f_number, 1.f, 0.05f, (v2){{0, inf32()}})) {
-					ui->selected_parameter_block = parameter_block;
-					ui->flush_parameters   = 1;
-					ui->flush_dirty_flags |= 1 << BeamformerParameterDirtyFlag_Parameters;
-				}
+				if (ui_tweak_f32_compute_variable(signal, &bp->f_number, 1.f, 0.05f, (v2){{0, inf32()}}))
+					ui->flush_compute_plan_panel = panel;
 			}
 
 			UIParent(label_column) ui_label(str8("Interpolation"));
@@ -3642,9 +3648,7 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 					i32 delta = signal.scroll.y + ui_pressed(signal);
 					bp->interpolation_mode = circular_add(bp->interpolation_mode, delta,
 					                                      BeamformerInterpolationMode_Count);
-					ui->selected_parameter_block = parameter_block;
-					ui->flush_parameters   = 1;
-					ui->flush_dirty_flags |= 1 << BeamformerParameterDirtyFlag_Parameters;
+					ui->flush_compute_plan_panel = panel;
 				}
 			}
 
@@ -3658,17 +3662,16 @@ ui_build_parameters_listing(BeamformerUIPanel *panel)
 				                                  str8("False###coherency_weighting"));
 				if (signal.flags & (UISignalFlag_Pressed|UISignalFlag_Scrolled)) {
 					bp->coherency_weighting = !bp->coherency_weighting;
-					ui->selected_parameter_block = parameter_block;
-					ui->flush_parameters   = 1;
-					ui->flush_dirty_flags |= 1 << BeamformerParameterDirtyFlag_Parameters;
+					ui->flush_compute_plan_panel = panel;
 				}
 			}
 
 			if (rebuild_transform) {
-				if (ui_rebuild_das_transform(last_transform, parameter_block, dimension, coordinates[0], coordinates[1], off_axis_position))
+				if (ui_rebuild_das_transform(last_transform, panel->u.parameter_listing.compute_plan_index,
+				                             dimension, coordinates[0], coordinates[1], off_axis_position,
+				                             panel->u.parameter_listing.beamform_plane))
 				{
-					ui->flush_parameters = 1;
-					ui->selected_parameter_block = parameter_block;
+					ui->flush_compute_plan_panel = panel;
 				}
 			}
 		}
@@ -3893,7 +3896,7 @@ ui_panel_label(BeamformerUIPanel *panel)
 	}break;
 	case BeamformerPanelKind_ParameterListing:{
 		stream_append_str8(&sb, str8("Parameter Listing ["));
-		stream_append_u64(&sb, panel->u.parameter_listing.parameter_block);
+		stream_append_u64(&sb, panel->u.parameter_listing.compute_plan_index);
 		stream_append_str8(&sb, str8("]#"));
 	}break;
 	}
@@ -4279,9 +4282,12 @@ ui_build_regions(UINode *root_node, BeamformerUIPanel *tree_root)
 		}break;
 
 		case BeamformerPanelKind_ComputeStats:{
-			u32 selected_plan = ui->selected_parameter_block % BeamformerMaxParameterBlocks;
-			BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[selected_plan];
-			if (!cp) cp = (BeamformerComputePlan *)&beamformer_nil_compute_plan;
+			BeamformerComputePlan *cp = &beamformer_nil_compute_plan;
+			if (beamformer_frame_valid(beamformer_registers()->frame)) {
+				BeamformerFrame *frame = beamformer_frame_from_index(beamformer_registers()->frame);
+				cp = beamformer_context->compute_context.compute_plans[frame->compute_plan_index];
+				assert(cp);
+			}
 			f32 t = beamformer_ui_blinker_update(&panel->u.compute_stats_broken_shader_blinker, BLINK_SPEED);
 			ui_build_compute_stats(cp, t, panel);
 		}break;
@@ -4316,7 +4322,8 @@ ui_build_regions(UINode *root_node, BeamformerUIPanel *tree_root)
 				UIPrefHeight(ui_pct(1.f, 0.5f))
 				UIAxisAlign(Axis2_Y, Center)
 					container = ui_node_from_string(0, str8("###frame_view_container"));
-				ui_build_frame_view(container, view);
+				if (ui_build_frame_view(container, view) && panel->kind == BeamformerPanelKind_FrameViewLive)
+					ui->flush_compute_plan_panel = panel;
 			}
 			if ui_context_menu(panel) ui_build_frame_view_context_menu(panel, view);
 		}break;
@@ -5300,17 +5307,6 @@ beamformer_ui_frame(void)
 		}
 	}
 
-	asan_poison_region(ui->arena.beg, ui->arena.end - ui->arena.beg);
-
-	u32 selected_block = ui->selected_parameter_block % BeamformerMaxParameterBlocks;
-	u32 selected_mask  = 1 << selected_block;
-	if (atomic_load_u32(&beamformer_context->ui_dirty_parameter_blocks) & selected_mask) {
-		atomic_and_u32(&beamformer_context->ui_dirty_parameter_blocks, ~selected_mask);
-		ui->flush_parameters  = 0;
-		ui->flush_dirty_flags = 0;
-		ui->beamform_plane    = 0;
-	}
-
 	/* NOTE: process interactions first because the user interacted with
 	 * the ui that was presented last frame */
 	Rect window_rect = {.size = {{(f32)beamformer_context->window_size.w, (f32)beamformer_context->window_size.h}}};
@@ -5321,26 +5317,45 @@ beamformer_ui_frame(void)
 	for EachElement(ui->input_consumed, it)
 		ui->input_consumed[it] = 0;
 
-	if (ui->flush_parameters && beamformer_frame_valid(beamformer_registers()->frame)) {
-		BeamformerParameterBlock *pb = beamformer_parameter_block_lock(beamformer_context->shared_memory, selected_block, 0);
-		if (pb) {
-			atomic_or_u32(&pb->region_update_flags, ui->flush_dirty_flags);
-			ui->flush_parameters  = 0;
-			ui->flush_dirty_flags = 0;
+	if (ui->flush_compute_plan_panel && beamformer_frame_valid(beamformer_registers()->frame)) {
+		BeamformerUIPanel *panel = ui->flush_compute_plan_panel;
+		ui->flush_compute_plan_panel = 0;
 
-			BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[selected_block];
-			BeamformerFrame       *f  = beamformer_frame_from_index(beamformer_registers()->frame);
+		BeamformerComputePlan *cp = 0;
+		switch (panel->kind) {
+		InvalidDefaultCase;
+
+		case BeamformerPanelKind_ParameterListing:{
+			cp = beamformer_context->compute_context.compute_plans[panel->u.parameter_listing.compute_plan_index];
+			if (cp && atomic_swap_u32(&cp->ui_cleared, 0)) {
+				panel->u.parameter_listing.beamform_plane = 0;
+				cp = 0;
+			}
+		}break;
+
+		case BeamformerPanelKind_FrameViewLive:{
+			BeamformerFrame *frame = &panel->u.frame_view->frame;
+			cp = beamformer_context->compute_context.compute_plans[frame->compute_plan_index];
+		}break;
+		}
+
+		if (cp) {
+			atomic_store_u32(&cp->dirty_plan, 1);
+
+			BeamformerFrame *f = beamformer_frame_from_index(beamformer_registers()->frame);
 			beamformer_queue_compute(beamformer_context, (BeamformerComputeWorkContext){
-				.voxel_transform   = cp->last_voxel_transform,
-				.rf_offset         = 0,
-				.focus_depth       = f->focus_depth,
-				.steering_angle    = f->steering_angle,
-				.tx_rx_orientation = f->transmit_receive_orientation,
-				.parameter_set     = selected_block,
-				.view_plane        = f->view_plane_tag,
+				.set_handle = beamformer_parameter_set_handle_for_compute_plan(f->compute_plan_index),
+				.parameters = {
+					.view_plane_tag    = f->view_plane_tag,
+					.voxel_transform   = cp->last_voxel_transform,
+					.rf_offset         = 0,
+					.focus_depth       = f->focus_depth,
+					.steering_angle    = f->steering_angle,
+					.origin_offset     = f->origin_offset,
+					.transmit_receive_orientation = f->transmit_receive_orientation,
+					//.readi_group       = f->readi_group,
+				},
 			});
-
-			beamformer_parameter_block_unlock(beamformer_context->shared_memory, selected_block);
 		}
 	}
 

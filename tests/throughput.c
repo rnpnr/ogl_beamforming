@@ -65,13 +65,10 @@ parse_argv(i32 argc, char *argv[])
 }
 
 function b32
-send_frame(void *restrict data, BeamformerSimpleParameters *restrict bp, BeamformerViewPlaneTag tag, u32 slot)
+send_frame(void *data, BeamformerDataDescriptor *raw_description, BeamformerPushParameters *push, BeamformerParameterSetHandle handle)
 {
-	u32 data_size = bp->raw_data_dimensions.E[0] * bp->raw_data_dimensions.E[1]
-	                * beamformer_data_kind_byte_size[bp->data_kind];
-	b32 result    = beamformer_push_data_with_compute(data, data_size, tag, slot);
+	b32 result = beamformer_push_data_with_compute(data, raw_description, push, handle);
 	if (!result && !g_should_exit) printf("lib error: %s\n", beamformer_get_last_error_string());
-
 	return result;
 }
 
@@ -82,17 +79,20 @@ execute_study(Arena *arena, Stream path, Options *options)
 	stream_ensure_termination(&path, 0);
 
 	ZBP_Data raw_data = {0};
-	BeamformerSimpleParameters bp = {0};
-	if (!beamformer_simple_parameters_from_zbp_file(arena, &bp, (char *)path.data, &raw_data, 0))
+	BeamformerParameterSet   bp              = {0};
+	BeamformerDataDescriptor raw_description = {0};
+	BeamformerPushParameters push_parameters = {0};
+
+	if (!beamformer_parameter_set_from_zbp_file(&bp, &raw_description, &push_parameters, &raw_data, (char *)path.data, arena))
 		die("failed to load parameters file: %s\n", (char *)path.data);
 	stream_reset(&path, path_work_index);
 
 	v2 min_coordinate = (v2){{g_lateral_extent.x, g_axial_extent.x}};
 	v2 max_coordinate = (v2){{g_lateral_extent.y, g_axial_extent.y}};
-	if (RXOrientation(bp.transmit_receive_orientation) == ZBP_RCAOrientation_Rows)
-		bp.das_voxel_transform = das_transform_2d_yz(min_coordinate, max_coordinate, 0);
+	if (RXOrientation(push_parameters.transmit_receive_orientation) == ZBP_RCAOrientation_Rows)
+		push_parameters.voxel_transform = das_transform_2d_yz(min_coordinate, max_coordinate, 0);
 	else
-		bp.das_voxel_transform = das_transform_2d_xz(min_coordinate, max_coordinate, 0);
+		push_parameters.voxel_transform = das_transform_2d_xz(min_coordinate, max_coordinate, 0);
 
 	bp.output_points.x = g_output_points.x;
 	bp.output_points.y = g_output_points.z;
@@ -104,8 +104,8 @@ execute_study(Arena *arena, Stream path, Options *options)
 
 	bp.decimation_rate = 1;
 
-	if (bp.data_kind != BeamformerDataKind_Float32Complex &&
-	    bp.data_kind != BeamformerDataKind_Int16Complex)
+	if (raw_description.kind != BeamformerDataKind_Float32Complex &&
+	    raw_description.kind != BeamformerDataKind_Int16Complex)
 	{
 		bp.compute_stages[bp.compute_stages_count++] = BeamformerShaderKind_Demodulate;
 	}
@@ -142,7 +142,12 @@ execute_study(Arena *arena, Stream path, Options *options)
 		bp.compute_stage_parameters[0] = 0;
 	}
 
-	beamformer_push_simple_parameters(&bp);
+	// TODO(rnp): can't do this without also changing the filter spec method
+	//BeamformerParameterSetHandle set_handle;
+	//beamformer_shared_memory_register_parameters(&bp, &set_handle);
+	beamformer_push_parameter_set_at(&bp, 0);
+
+	BeamformerParameterSetHandle set_handle = beamformer_parameter_set_handle_for_block(g_beamformer_library_context.bp, 0);
 
 	beamformer_set_global_timeout(1000);
 
@@ -163,12 +168,12 @@ execute_study(Arena *arena, Stream path, Options *options)
 
 		u32 frame = 0;
 		f32 times[32] = {0};
-		f32 data_size = (f32)(bp.raw_data_dimensions.E[0] * bp.raw_data_dimensions.E[1]
-		                      * beamformer_data_kind_byte_size[bp.data_kind]);
+		f32 data_size = (f32)(raw_description.dimensions.E[0] * raw_description.dimensions.E[1]
+		                      * beamformer_data_kind_byte_size[raw_description.kind]);
 		u64 start = os_timer_count();
 		f64 frequency = os_timer_frequency();
 		for (;!g_should_exit;) {
-			if (send_frame(data, &bp, BeamformerViewPlaneTag_XZ, 0)) {
+			if (send_frame(data, &raw_description, &push_parameters, set_handle)) {
 				u64 now   = os_timer_count();
 				f64 delta = (now - start) / frequency;
 				start = now;
@@ -192,7 +197,7 @@ execute_study(Arena *arena, Stream path, Options *options)
 		lip.active = 0;
 		beamformer_set_live_parameters(&lip);
 	} else {
-		send_frame(data, &bp, BeamformerViewPlaneTag_XZ, 0);
+		send_frame(data, &raw_description, &push_parameters, set_handle);
 	}
 }
 

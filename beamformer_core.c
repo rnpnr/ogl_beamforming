@@ -1,6 +1,13 @@
 /* See LICENSE for license details. */
 /* TODO(rnp):
+ * [ ]: ComputePlan: since it has an arena fixed length arrays can be replaced with
+ *      allocations out of the arena.
+ *      - probably still want to avoid recompiling shaders unnecessarily though
+ *        so hashes may need some thought. maybe move *compiled* shaders into a hash
+ *        table and purge dead ones after planning and hash updating is completed?
  * [ ]: backtrace dumping on SIGSEGV
+        - its kind of important to handle SIGSEGV properly, we need to make sure to
+          unblock any library shared memory waiters to prevent external hardware hangs.
  * [ ]: cooperative shared memory loading in decode shader
  * [ ]: refactor: save filter parameters with rest of parameters, whole slot thing is dumb
  * [ ]: upload previously exported data for display. maybe this is a UI thing but doing it
@@ -89,8 +96,11 @@ typedef struct {
 	GPUResourceHashBucket hash_table[GPU_RESOURCE_HASH_TABLE_COUNT];
 } GPUResourceBuilder;
 
-read_only BeamformerFrame       beamformer_nil_frame;
-read_only BeamformerComputePlan beamformer_nil_compute_plan;
+read_only BeamformerFrame beamformer_nil_frame;
+
+// NOTE(rnp): this is intentionally writable: it allows the ui to
+// write somewhere even if there are no parameter sets yet
+global BeamformerComputePlan beamformer_nil_compute_plan;
 
 global BeamformerCtx   *beamformer_context;
 global BeamformerInput *beamformer_input;
@@ -185,18 +195,6 @@ beamformer_frame_valid(u64 index)
 	return result;
 }
 
-function void
-beamformer_compute_plan_release(BeamformerComputeContext *cc, u32 block)
-{
-	assert(block < countof(cc->compute_plans));
-	BeamformerComputePlan *cp = cc->compute_plans[block];
-	if (cp) {
-		gpu_buffer_release(&cp->gpu_temp_arena);
-		cc->compute_plans[block] = 0;
-		SLLPushFreelist(cp, cc->compute_plan_freelist);
-	}
-}
-
 function GPUResource *
 gpu_resource_from_hash(GPUResourceBuilder *rb, u64 hash)
 {
@@ -263,9 +261,10 @@ gpu_resource_build_begin(Arena *arena)
 	return result;
 }
 
-function void
+function b32
 gpu_resource_build_end(GPUResourceBuilder *rb, GPUBuffer *buffer)
 {
+	b32 result = 0;
 	u64 size = gpu_round_up_to_sync_size(rb->position, 64);
 	if (size != (u64)buffer->size) {
 		gpu_buffer_allocate(buffer, (GPUBufferAllocateInfo){
@@ -275,6 +274,7 @@ gpu_resource_build_end(GPUResourceBuilder *rb, GPUBuffer *buffer)
 			.timelines_used = (GPUTimeline []){GPUTimeline_Compute},
 			.timeline_count = 1,
 		});
+		result = 1;
 	}
 
 	//////////////////////////////////////
@@ -287,22 +287,108 @@ gpu_resource_build_end(GPUResourceBuilder *rb, GPUBuffer *buffer)
 	// TODO(rnp): cleanup this pointless stall
 	if (gpu_buffer_needs_sync(buffer))
 		gpu_host_wait_timeline(GPUTimeline_Transfer, last_wait_value, -1ULL);
+
+	return result;
+}
+
+function iv3
+das_valid_points(iv3 points)
+{
+	iv3 result;
+	result.x = Max(points.x, 1);
+	result.y = Max(points.y, 1);
+	result.z = Max(points.z, 1);
+	return result;
+}
+
+function BeamformerParameterSetHandle
+beamformer_parameter_set_handle_for_compute_plan(u32 compute_plan_index)
+{
+	BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[compute_plan_index];
+	assert(cp);
+
+	BeamformerParameterSetHandle result;
+	result.v = beamformer_shared_memory_make_handle(BeamformerSharedMemoryHandleKind_ParameterSet,
+	                                                (u64)compute_plan_index << 32u | (u64)cp->lib_generation);
+	return result;
+}
+
+function void
+beamformer_compute_plan_release(BeamformerComputeContext *cc, u32 set)
+{
+	assert(set < countof(cc->compute_plans));
+	BeamformerComputePlan *cp = cc->compute_plans[set];
+	if (cp) {
+		gpu_buffer_release(&cp->gpu_temp_arena);
+		arena_destroy(cp->arena);
+		cc->compute_plans[set] = 0;
+
+		bitset_clear(cc->active_compute_plans_bitset, countof(cc->active_compute_plans_bitset), set);
+		store_fence();
+	}
 }
 
 function BeamformerComputePlan *
-beamformer_compute_plan_for_block(BeamformerComputeContext *cc, u32 block, Arena *arena)
+beamformer_compute_plan_for_set(BeamformerComputeContext *cc, BeamformerSharedMemory *sm,
+                                BeamformerParameterSetHandle set_handle)
 {
-	assert(block < countof(cc->compute_plans));
-	BeamformerComputePlan *result = cc->compute_plans[block];
-	if (!result) {
-		result = SLLPopFreelist(cc->compute_plan_freelist);
-		if (!result) result = push_struct_no_zero(arena, BeamformerComputePlan);
-		zero_struct(result);
-		cc->compute_plans[block] = result;
+	u32 set_index = beamformer_parameter_set_index_from_handle(sm, set_handle, 0);
+	assert(set_index < countof(cc->compute_plans));
 
+	BeamformerComputePlan *result = cc->compute_plans[set_index];
+	if unlikely(!result) {
+		Arena *arena = arena_create(.reserve_size = MB(1));
+		result = push_struct(arena, BeamformerComputePlan);
+		result->arena = arena;
+		result->arena_pop_point = arena_position(arena);
 		result->ui_voxel_transform = m4_identity();
+		cc->compute_plans[set_index] = result;
+
+		bitset_set(cc->active_compute_plans_bitset, countof(cc->active_compute_plans_bitset), set_index);
+		store_fence();
 	}
 	return result;
+}
+
+function void
+beamformer_compute_plan_intern_parameter_set(BeamformerComputePlan *cp, BeamformerSharedMemory *sm, BeamformerParameterSetHandle handle)
+{
+	BeamformerParameterSetMetadata *set_meta = beamformer_parameter_set_metadata_from_handle(sm, handle);
+
+	BeamformerSharedMemoryAllocationHandle transient_memory;
+	transient_memory.v = atomic_swap_u64(&set_meta->transient_handle.v, 0);
+
+	BeamformerParameterSetFlat         *fs = beamformer_shared_memory_allocation_pointer(sm, transient_memory);
+	BeamformerDynamicComputeParameters *dp = &cp->dynamic_parameters;
+
+	static_assert(offsetof(BeamformerComputeParameters, data_description) == 0 &&
+	              offsetof(BeamformerComputeParameters, data_description)
+	              == offsetof(BeamformerParameterSetFlat, data_description), "");
+	memory_copy(&cp->compute_parameters, fs, sizeof(cp->compute_parameters));
+
+	arena_pop_to(cp->arena, cp->arena_pop_point);
+	zero_struct(dp);
+
+	// NOTE(rnp): might be slighty over due to padding but it will be minor
+	u64 allocation_size = beamformer_shared_memory_allocation_size(sm, transient_memory) - sizeof(*fs);
+	u8 *base = arena_alloc(cp->arena, .size = allocation_size, .align = 256, .flags = ArenaAllocateFlags_NoZero);
+	memory_copy(base, (u8 *)fs + sizeof(*fs), allocation_size);
+
+	// NOTE(rnp): base is predecremented because all offsets in fs are relative to base of fs
+	beamformer_dynamic_compute_parameter_set_assign_pointers(dp, fs, base - sizeof(*fs));
+
+	memory_copy(cp->requested_pipeline.shaders,    fs->compute_stages,           sizeof(cp->requested_pipeline.shaders));
+	memory_copy(cp->requested_pipeline.parameters, fs->compute_stage_parameters, sizeof(cp->requested_pipeline.parameters));
+	cp->requested_pipeline.shader_count = fs->compute_stages_count;
+
+	cp->output_points  = das_valid_points(fs->output_points.xyz);
+	cp->average_frames = fs->output_points.w;
+
+	cp->lib_generation = set_meta->generation;
+
+	cp->dirty_plan = 1;
+
+	beamformer_shared_memory_allocation_release(sm, transient_memory);
 }
 
 function BeamformerFilter *
@@ -339,23 +425,13 @@ beamformer_filter_create(Arena *arena, BeamformerFilterParameters fp)
 	return result;
 }
 
-function iv3
-das_valid_points(iv3 points)
-{
-	iv3 result;
-	result.x = Max(points.x, 1);
-	result.y = Max(points.y, 1);
-	result.z = Max(points.z, 1);
-	return result;
-}
-
 function GPUBuffer *
 beamformer_gpu_buffer_from_frame(BeamformerFrame *frame)
 {
 	GPUBuffer *result = beamformer_context->compute_context.backlog.buffer;
 	if (!Between(frame->gpu_pointer, result->gpu_pointer, result->gpu_pointer + result->size)) {
 		result = 0;
-		BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[frame->parameter_block];
+		BeamformerComputePlan *cp = beamformer_context->compute_context.compute_plans[frame->compute_plan_index];
 		if (cp) {
 			result = &cp->gpu_temp_arena;
 			assert(Between(frame->gpu_pointer, result->gpu_pointer, result->gpu_pointer + result->size));
@@ -541,13 +617,14 @@ beamformer_data_strides(BeamformerDataLayout layout, uv3 rf_dimensions)
 }
 
 function void
-plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, Arena *scratch)
+beamformer_compute_plan_commit(BeamformerComputePlan *cp, Arena *scratch)
 {
 	b32 run_hilbert = 0;
 	b32 demodulate  = 0;
 
-	for (u32 i = 0; i < pb->pipeline.shader_count; i++) {
-		switch (pb->pipeline.shaders[i]) {
+	BeamformerComputePipeline *rpipe = &cp->requested_pipeline;
+	for (u32 i = 0; i < rpipe->shader_count; i++) {
+		switch (rpipe->shaders[i]) {
 		case BeamformerShaderKind_Hilbert:{run_hilbert = 1;}break;
 		case BeamformerShaderKind_Demodulate:{demodulate = 1;}break;
 		default:{}break;
@@ -556,19 +633,20 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 	if (demodulate) run_hilbert = 0;
 
-	f32 sampling_frequency = pb->parameters.sampling_frequency;
-	u32 input_sample_count = pb->parameters.sample_count;
-	u32 acquisition_count  = pb->parameters.acquisition_count;
-	u32 decimation_rate    = Max(pb->parameters.decimation_rate, 1);
+	BeamformerComputeParameters *params = &cp->compute_parameters;
+	BeamformerDataDescriptor    *dd     = &params->data_description;
+	f32 sampling_frequency = params->sampling_frequency;
+	u32 input_sample_count = dd->dimensions.E[BeamformerRFDimension_Samples];
+	u32 acquisition_count  = dd->dimensions.E[BeamformerRFDimension_Events];
+	u32 decimation_rate    = Max(params->decimation_rate, 1);
 	// NOTE(rnp): only relevant when demodulating
-	f32 samples_per_wave   = (pb->parameters.sampling_frequency / 2.0f) / pb->parameters.demodulation_frequency;
-	if ((u32)pb->parameters.sampling_mode < (u32)BeamformerSamplingMode_Count)
-		samples_per_wave = beamformer_sampling_mode_samples_per_wave[pb->parameters.sampling_mode] / 2.0f;
+	f32 samples_per_wave   = (params->sampling_frequency / 2.0f) / params->demodulation_frequency;
+	if ((u32)params->sampling_mode < (u32)BeamformerSamplingMode_Count)
+		samples_per_wave = beamformer_sampling_mode_samples_per_wave[params->sampling_mode] / 2.0f;
 
-	cp->raw_channel_byte_stride = pb->parameters.sample_count * pb->parameters.acquisition_count
-	                              * beamformer_data_kind_byte_size[pb->pipeline.data_kind];
+	cp->raw_channel_byte_stride = input_sample_count * acquisition_count * beamformer_data_kind_byte_size[dd->kind];
 
-	BeamformerDataKind input_data_kind = pb->pipeline.data_kind;
+	BeamformerDataKind input_data_kind = dd->kind;
 	if (demodulate) {
 		switch (input_data_kind) {
 		case BeamformerDataKind_Int16:{  input_data_kind = BeamformerDataKind_Int16Complex;  }break;
@@ -585,10 +663,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	BeamformerDataKind das_data_kind = cp->iq_pipeline ? BeamformerDataKind_Float32Complex
 	                                                   : BeamformerDataKind_Float32;
 
-	cp->channel_count = pb->parameters.channel_count;
-	u32 chunk_channel_count = Min(cp->channel_count, BeamformerChunkChannelCount);
+	u32 channel_count       = dd->dimensions.E[BeamformerRFDimension_Channels];
+	u32 chunk_channel_count = Min(channel_count, BeamformerChunkChannelCount);
 
-	cp->rf_size = input_sample_count * pb->parameters.acquisition_count * chunk_channel_count
+	cp->rf_size = input_sample_count * acquisition_count * chunk_channel_count
 	              * beamformer_data_kind_byte_size[das_data_kind];
 
 	i64 buffer_size = PING_PONG_BUFFER_SLOTS * round_up_to(cp->rf_size, 64);
@@ -636,16 +714,16 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	root_node->output_data_layout = BeamformerDataLayout_ChannelEventSample;
 
 	root_node->rf_dimensions.E[BeamformerRFDimension_Channels] = chunk_channel_count;
-	root_node->rf_dimensions.E[BeamformerRFDimension_Events]   = pb->parameters.acquisition_count;
-	root_node->rf_dimensions.E[BeamformerRFDimension_Samples]  = pb->parameters.sample_count;
+	root_node->rf_dimensions.E[BeamformerRFDimension_Events]   = dd->dimensions.E[BeamformerRFDimension_Events];
+	root_node->rf_dimensions.E[BeamformerRFDimension_Samples]  = dd->dimensions.E[BeamformerRFDimension_Samples];
 
-	for EachIndex(pb->pipeline.shader_count, it) {
+	for EachIndex(rpipe->shader_count, it) {
 		// NOTE(rnp): skip unnecessary shaders
-		switch (pb->pipeline.shaders[it]) {
+		switch (rpipe->shaders[it]) {
 		case BeamformerShaderKind_Hilbert:{if (!run_hilbert) continue;}break;
 
 		case BeamformerShaderKind_Decode:{
-			if (pb->parameters.decode_mode == BeamformerDecodeMode_None)
+			if (params->decode_mode == BeamformerDecodeMode_None)
 				continue;
 		}break;
 
@@ -659,9 +737,9 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		default:{}break;
 		}
 
-		BeamformerComputeGraphNode *node = push_compute_graph_node(&graph, pb->pipeline.shaders[it], scratch);
+		BeamformerComputeGraphNode *node = push_compute_graph_node(&graph, rpipe->shaders[it], scratch);
 		node->user_pipeline_index = (i32)it;
-		switch (pb->pipeline.shaders[it]) {
+		switch (rpipe->shaders[it]) {
 		case BeamformerShaderKind_Demodulate:{
 			node->rf_dimensions.E[BeamformerRFDimension_Samples] /= (2 * decimation_rate);
 		}break;
@@ -689,12 +767,12 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 			// NOTE(rnp): if we aren't decoding we can let the previous stage's
 			// data kind pass through as long as it is floating point
 			node->requires_fp_input = 1;
-			if (pb->parameters.decode_mode != BeamformerDecodeMode_None)
+			if (params->decode_mode != BeamformerDecodeMode_None)
 				node->input_data_kind = das_data_kind;
 
 			node->input_data_layout = BeamformerDataLayout_ChannelEventSample;
-			if (pb->parameters.acquisition_kind == BeamformerAcquisitionKind_RCA_TPW ||
-			    pb->parameters.acquisition_kind == BeamformerAcquisitionKind_RCA_VLS)
+			if (params->acquisition_kind == BeamformerAcquisitionKind_RCA_TPW ||
+			    params->acquisition_kind == BeamformerAcquisitionKind_RCA_VLS)
 			{
 				node->input_data_layout = BeamformerDataLayout_EventChannelSample;
 			}
@@ -703,7 +781,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 			node->output_data_kind   = das_data_kind;
 
 			// NOTE(rnp): insert implicit CoherencyWeighting node
-			if (pb->parameters.coherency_weighting)
+			if (params->coherency_weighting)
 				node = push_compute_graph_node(&graph, BeamformerShaderKind_CoherencyWeighting, scratch);
 		}break;
 
@@ -774,7 +852,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 	if (graph.last->output_data_kind == BeamformerDataKind_Count)
 		graph.last->output_data_kind = graph.last->input_data_kind;
 
-	f32 time_offset   = pb->parameters.time_offset;
+	//////////////////////////////////////
+	// NOTE(rnp): Third Pass: fill in shader compile options
+
+	f32 time_offset   = params->time_offset;
 	u32 subgroup_size = gpu_info()->subgroup_size;
 
 	cp->first_image_shader_index = 0;
@@ -787,7 +868,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 
 		BeamformerShaderParameters *sp = 0;
 		if (node->user_pipeline_index >= 0)
-			sp = pb->pipeline.parameters + node->user_pipeline_index;
+			sp = rpipe->parameters + node->user_pipeline_index;
 
 		if (compute_plan_push_shader(cp, node, sp)) {
 			BeamformerShaderDescriptor *sd = cp->shader_descriptors + cp->pipeline.shader_count - 1;
@@ -800,7 +881,7 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				BeamformerDecodeBakeParameters *db = &sd->bake.Decode;
 
 				u32 decode_sample_count = node->rf_dimensions.E[BeamformerRFDimension_Samples];
-				db->DecodeMode        = pb->parameters.decode_mode;
+				db->DecodeMode        = params->decode_mode;
 				db->TransmitCount     = node->rf_dimensions.E[BeamformerRFDimension_Events];
 				db->ChunkChannelCount = node->rf_dimensions.E[BeamformerRFDimension_Channels];
 
@@ -920,10 +1001,10 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				BeamformerDASBakeParameters *db = &sd->bake.DAS;
 				db->SamplingFrequency     = sampling_frequency;
 				db->SamplesPerWave        = samples_per_wave / decimation_rate;
-				db->SpeedOfSound          = pb->parameters.speed_of_sound;
+				db->SpeedOfSound          = params->speed_of_sound;
 				db->TimeOffset            = time_offset;
-				db->FNumber               = pb->parameters.f_number;
-				db->AcquisitionKind       = pb->parameters.acquisition_kind;
+				db->FNumber               = params->f_number;
+				db->AcquisitionKind       = params->acquisition_kind;
 				db->SampleCount           = node->rf_dimensions.E[BeamformerRFDimension_Samples];
 				db->AcquisitionCount      = node->rf_dimensions.E[BeamformerRFDimension_Events];
 				db->ChunkChannelCount     = node->rf_dimensions.E[BeamformerRFDimension_Channels];
@@ -932,64 +1013,72 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 				db->AcquisitionByteStride = input_stride.E[BeamformerRFDimension_Events]
 				                            * beamformer_data_kind_byte_size[node->input_data_kind];
 
-				// TODO(rnp): pass these in
-				db->ReceiveChannelCount   = pb->parameters.channel_count;
-				db->TransmitChannelCount  = pb->parameters.channel_count;
-				db->ReceiveTileCount      = 1;
-				db->TransmitTileCount     = 1;
-
-				db->InterpolationMode     = pb->parameters.interpolation_mode;
-				db->ReadiGroupCount       = pb->parameters.readi_group_count;
+				db->InterpolationMode     = params->interpolation_mode;
+				db->ReadiGroupCount       = params->readi_group_count;
 				db->OutputSizeX           = cp->output_points.x;
 				db->OutputSizeY           = cp->output_points.y;
 				db->OutputSizeZ           = cp->output_points.z;
-				db->TransmitReceiveOrientation = pb->parameters.transmit_receive_orientation;
 
-				cp->xdc_element_pitch = pb->parameters.xdc_element_pitch;
+				static_assert(BeamformerRCAOrientation_None == 0 && BeamformerRCAOrientation_Rows == 1, "");
+				db->RowChannelCount    = params->transducer_channel_count[BeamformerRCAOrientation_Rows - 1];
+				db->ColumnChannelCount = params->transducer_channel_count[BeamformerRCAOrientation_Columns - 1];
+				db->RowTileCount       = params->transducer_tile_count[BeamformerRCAOrientation_Rows - 1];
+				db->ColumnTileCount    = params->transducer_tile_count[BeamformerRCAOrientation_Columns - 1];
 
-				u32 id = pb->parameters.acquisition_kind;
+				u32 id = params->acquisition_kind;
 
 				u32 acquisition_kind_flags = beamformer_acquisition_kind_flags[id];
-				b32 sparse             = (acquisition_kind_flags & BeamformerAcquisitionKindFlags_Sparse) != 0;
-				b32 single_focus       = pb->parameters.single_focus != 0;
-				b32 single_orientation = pb->parameters.single_orientation != 0;
+				b32 sparse = (acquisition_kind_flags & BeamformerAcquisitionKindFlags_Sparse) != 0;
 
-				sd->compile_flags |= BeamformerDASCompileFlags_CoherencyWeighting * (pb->parameters.coherency_weighting != 0);
+				sd->compile_flags |= BeamformerDASCompileFlags_CoherencyWeighting * (params->coherency_weighting != 0);
 				sd->compile_flags |= BeamformerDASCompileFlags_Sparse             * sparse;
 
 				sd->layout   = layout_for_output(cp->output_points);
 				sd->dispatch = dispatch_for_output(sd->layout, cp->output_points);
 
 				sd->uses_heap = 1;
-				db->TransducerTransforms = gpu_resource_push(resource_builder, m4, db->TransmitTileCount * db->ReceiveTileCount,
-				                                             .data = &pb->parameters.xdc_transform,
+
+				u32 tile_count = params->transducer_tile_count[0] * params->transducer_tile_count[1];
+				db->TransducerTransforms = gpu_resource_push(resource_builder, m4, tile_count,
+				                                             .data = cp->dynamic_parameters.transducer_transforms,
 				                                             .name = str8("transducer_transforms"));
 
-				if (!single_focus) {
-					db->FocalVectors = gpu_resource_push(resource_builder, v2, db->AcquisitionCount,
-					                                     .data = pb->focal_vectors,
-					                                     .name = str8("focal_vectors"));
+				if (cp->dynamic_parameters.focus_depths) {
+					db->FocusDepths = gpu_resource_push(resource_builder, f32, db->AcquisitionCount,
+					                                    .data = cp->dynamic_parameters.focus_depths,
+					                                    .name = str8("focus_depths"));
 				}
 
-				if (!single_orientation) {
+				if (cp->dynamic_parameters.origin_offsets) {
+					db->OriginOffsets = gpu_resource_push(resource_builder, f32, db->AcquisitionCount,
+					                                      .data = cp->dynamic_parameters.origin_offsets,
+					                                      .name = str8("origin_offsets"));
+				}
+
+				if (cp->dynamic_parameters.tilting_angles) {
+					db->TiltingAngles = gpu_resource_push(resource_builder, f32, db->AcquisitionCount,
+					                                      .data = cp->dynamic_parameters.tilting_angles,
+					                                      .name = str8("tilting_angles"));
+				}
+
+				if (cp->dynamic_parameters.transmit_receive_orientations) {
 					db->TransmitReceiveOrientations = gpu_resource_push(resource_builder, u8, db->AcquisitionCount,
-					                                                    .data = pb->transmit_receive_orientations,
+					                                                    .data = cp->dynamic_parameters.transmit_receive_orientations,
 					                                                    .name = str8("transmit_receive_orientations"));
 				}
 
 				if (sparse) {
 					db->SparseElements = gpu_resource_push(resource_builder, i16, db->AcquisitionCount,
-					                                       .data = pb->sparse_elements,
+					                                       .data = cp->dynamic_parameters.sparse_elements,
 					                                       .name = str8("sparse_elements"));
 				}
 
-				if (pb->parameters.coherency_weighting) {
+				if (params->coherency_weighting) {
 					db->IncoherentFrame = gpu_resource_push(resource_builder, u32, 0,
 					                                        .size = beamformer_incoherent_frame_byte_size(cp->output_points, das_data_kind),
 					                                        .name = str8("incoherent_buffer"));
 				}
 
-				cp->readi_group = pb->parameters.readi_group;
 				if (db->ReadiGroupCount > 1) {
 					u32 order = db->ReadiGroupCount;
 					db->Hadamard = gpu_resource_push(resource_builder, f16, order * order,
@@ -1063,12 +1152,20 @@ plan_compute_pipeline(BeamformerComputePlan *cp, BeamformerParameterBlock *pb, A
 		}
 	}
 
-	cp->pipeline.data_kind = input_data_kind;
-
 	if (cp->first_image_shader_index == 0)
 		cp->first_image_shader_index = cp->pipeline.shader_count;
 
-	gpu_resource_build_end(resource_builder, &cp->gpu_temp_arena);
+	b32 heap_pointer_updated = gpu_resource_build_end(resource_builder, &cp->gpu_temp_arena);
+
+	for (u32 shader_slot = 0; shader_slot < cp->pipeline.shader_count; shader_slot++) {
+		u128 hash = u128_hash_from_data(cp->shader_descriptors + shader_slot, sizeof(BeamformerShaderDescriptor));
+		if (!u128_equal(hash, cp->shader_hashes[shader_slot]) ||
+		    (cp->shader_descriptors[shader_slot].uses_heap && heap_pointer_updated))
+		{
+			cp->dirty_programs |= 1 << shader_slot;
+		}
+		cp->shader_hashes[shader_slot] = hash;
+	}
 }
 
 function void
@@ -1238,48 +1335,6 @@ beamformer_reload_render_pipeline(VulkanHandle *pipeline, BeamformerShaderKind s
 }
 
 function void
-beamformer_commit_parameter_block(BeamformerCtx *ctx, BeamformerComputePlan *cp, u32 block, Arena *scratch)
-{
-	BeamformerParameterBlock *pb;
-	DeferLoop(pb = beamformer_parameter_block_lock(ctx->shared_memory, block, -1),
-	          beamformer_parameter_block_unlock(ctx->shared_memory, block))
-	for EachBit(pb->region_update_flags, region)
-	{
-		pb->region_update_flags &= ~(1ul << region);
-		switch (region) {
-		case BeamformerParameterDirtyFlag_NotifyUI:{
-			atomic_store_u32(&ctx->ui_dirty_parameter_blocks, 1u << block);
-			cp->ui_voxel_transform = m4_identity();
-		}break;
-
-		case BeamformerParameterDirtyFlag_Parameters:{
-			cp->output_points  = das_valid_points(pb->parameters.output_points.xyz);
-			cp->average_frames = pb->parameters.output_points.E[3];
-
-			plan_compute_pipeline(cp, pb, scratch);
-
-			b32 heap_pointer_updated = cp->last_gpu_heap_pointer != cp->gpu_temp_arena.gpu_pointer;
-			cp->last_gpu_heap_pointer = cp->gpu_temp_arena.gpu_pointer;
-
-			for (u32 shader_slot = 0; shader_slot < cp->pipeline.shader_count; shader_slot++) {
-				u128 hash = u128_hash_from_data(cp->shader_descriptors + shader_slot, sizeof(BeamformerShaderDescriptor));
-				if (!u128_equal(hash, cp->shader_hashes[shader_slot]) ||
-				    (cp->shader_descriptors[shader_slot].uses_heap && heap_pointer_updated))
-				{
-					cp->dirty_programs |= 1 << shader_slot;
-				}
-				cp->shader_hashes[shader_slot] = hash;
-			}
-
-			cp->acquisition_count = pb->parameters.acquisition_count;
-			cp->acquisition_kind  = pb->parameters.acquisition_kind;
-			cp->contrast_mode     = pb->parameters.contrast_mode;
-		}break;
-		}
-	}
-}
-
-function void
 do_compute_shader(GPUCommandList cmd, BeamformerComputePlan *cp, BeamformerFrame *frame,
                   u64 input_pointer, u64 output_pointer, u32 shader_slot, u32 channel_offset)
 {
@@ -1324,14 +1379,15 @@ do_compute_shader(GPUCommandList cmd, BeamformerComputePlan *cp, BeamformerFrame
 
 	case BeamformerShaderKind_DAS:{
 		BeamformerDASPushConstants pc = {
-			.xdc_element_pitch = cp->xdc_element_pitch,
+			.xdc_element_pitch = cp->compute_parameters.transducer_element_pitch,
 			.rf_data           = input_pointer,
 			.output_frame      = frame->gpu_pointer,
 			.channel_offset    = channel_offset,
 			.focus_depth       = frame->focus_depth,
-			.steering_angle    = frame->steering_angle,
+			.tilting_angle     = frame->steering_angle,
+			.origin_offset     = frame->origin_offset,
 			.tx_rx_orientation = frame->transmit_receive_orientation,
-			.readi_group       = cp->readi_group,
+			.readi_group       = frame->readi_group,
 		};
 		memory_copy(pc.voxel_transform.E, frame->voxel_transform.E, sizeof(pc.voxel_transform));
 
@@ -1478,10 +1534,8 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 
 		case BeamformerWorkKind_CreateFilter:{
 			BeamformerCreateFilterContext *fctx = &work->create_filter_context;
-			u32 block = fctx->parameter_block;
-			u32 slot  = fctx->filter_slot;
-			BeamformerComputePlan *cp = beamformer_compute_plan_for_block(cs, block, arena);
-			cp->filter_parameters[slot] = fctx->parameters;
+			BeamformerComputePlan *cp = beamformer_compute_plan_for_set(cs, sm, fctx->set_handle);
+			cp->filter_parameters[fctx->filter_slot] = fctx->parameters;
 		}break;
 
 		case BeamformerWorkKind_WaitThenCompute:
@@ -1490,11 +1544,14 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			push_compute_timing_info(ctx->compute_timing_table,
 			                         (ComputeTimingInfo){.kind = ComputeTimingInfoKind_ComputeFrameBegin});
 
-			BeamformerComputePlan *cp = beamformer_compute_plan_for_block(cs, work->compute_context.parameter_set, arena);
-			if unlikely(beamformer_parameter_block_dirty(sm, work->compute_context.parameter_set)) {
-				u32 set = work->compute_context.parameter_set;
+			BeamformerComputePlan *cp = beamformer_compute_plan_for_set(cs, sm, work->compute_context.set_handle);
+			if unlikely(beamformer_parameter_set_dirty(sm, work->compute_context.set_handle))
+				beamformer_compute_plan_intern_parameter_set(cp, sm, work->compute_context.set_handle);
+
+			b32 dirty_plan = atomic_swap_u32(&cp->dirty_plan, 0);
+			if unlikely(dirty_plan) {
 				Temp scratch = temp_begin(arena);
-				beamformer_commit_parameter_block(ctx, cp, set, arena);
+				beamformer_compute_plan_commit(cp, arena);
 				temp_end(scratch);
 			}
 
@@ -1539,21 +1596,23 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			}
 
 			BeamformerFrame *frame  = beamformer_frame_next(cs, cp->output_points, cp->iq_pipeline);
-			frame->acquisition_kind = cp->acquisition_kind;
-			frame->contrast_mode    = cp->contrast_mode;
-			frame->compound_count   = cp->acquisition_count;
-			frame->parameter_block  = work->compute_context.parameter_set;
-			frame->view_plane_tag   = work->compute_context.view_plane;
-			frame->focus_depth      = work->compute_context.focus_depth;
-			frame->steering_angle   = work->compute_context.steering_angle;
-			frame->transmit_receive_orientation = work->compute_context.tx_rx_orientation;
+			frame->acquisition_kind = cp->compute_parameters.acquisition_kind;
+			frame->contrast_mode    = cp->compute_parameters.data_description.contrast_mode;
+			frame->compound_count   = cp->compute_parameters.data_description.dimensions.E[BeamformerRFDimension_Events];
+			frame->view_plane_tag   = work->compute_context.parameters.view_plane_tag;
+			frame->focus_depth      = work->compute_context.parameters.focus_depth;
+			frame->steering_angle   = work->compute_context.parameters.steering_angle;
+			frame->origin_offset    = work->compute_context.parameters.origin_offset;
+			frame->readi_group      = work->compute_context.parameters.readi_group;
+			frame->transmit_receive_orientation = work->compute_context.parameters.transmit_receive_orientation;
+			frame->compute_plan_index = beamformer_parameter_set_index_from_handle(sm, work->compute_context.set_handle, 0);
 
-			b32 transform_changed = !m4_equal(cp->last_voxel_transform, work->compute_context.voxel_transform);
-			memory_copy(&cp->last_voxel_transform, &work->compute_context.voxel_transform, sizeof(cp->last_voxel_transform));
+			b32 transform_changed = !m4_equal(cp->last_voxel_transform, work->compute_context.parameters.voxel_transform);
+			memory_copy(&cp->last_voxel_transform, &work->compute_context.parameters.voxel_transform, sizeof(cp->last_voxel_transform));
 			memory_copy(&frame->voxel_transform, &cp->last_voxel_transform, sizeof(frame->voxel_transform));
 
 			if (transform_changed) {
-				atomic_store_u32(&beamformer_context->ui_dirty_parameter_blocks, 1u << work->compute_context.parameter_set);
+				atomic_store_u32(&cp->ui_cleared, 1);
 				cp->ui_voxel_transform = m4_identity();
 			} else if (u64_hash_from_str8(str8_struct(&cp->last_voxel_transform)) == cp->ui_last_voxel_transform_expected_hash) {
 				frame->voxel_transform = m4_mul(cp->ui_voxel_transform, frame->voxel_transform);
@@ -1591,8 +1650,9 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 			// against vulkan spec to skip them so for simplicity we will default to for now
 			b32 pipeline_memory_barrier = 1; //gpu_info()->vendor == GPUVendor_NVIDIA;
 
+			u32 total_channel_count = cp->compute_parameters.data_description.dimensions.E[BeamformerRFDimension_Channels];
 			for (u32 channel_offset = 0;
-			     channel_offset < cp->channel_count;
+			     channel_offset < total_channel_count;
 			     channel_offset += BeamformerChunkChannelCount)
 			{
 				u64 rf_pointer = rf->buffer.gpu_pointer + slot * rf->active_rf_size;
@@ -1602,12 +1662,12 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				// BeamformerChunkChannelCount. We do not want to have to modify every shader
 				// that might run to care about this so here we run a copy/clear to pad the
 				// data for the last iteration.
-				b32 special_handling = (cp->channel_count - channel_offset) < BeamformerChunkChannelCount;
+				b32 special_handling = (total_channel_count - channel_offset) < BeamformerChunkChannelCount;
 				if unlikely(special_handling) {
-					u32 channel_pad_count = BeamformerChunkChannelCount - (cp->channel_count - channel_offset);
+					u32 channel_pad_count = BeamformerChunkChannelCount - (total_channel_count - channel_offset);
 					u32 input_index = cs->ping_pong_input_index;
 					u64 pp_size     = cs->ping_pong_buffer.size / PING_PONG_BUFFER_SLOTS;
-					u64 copy_size   = cp->raw_channel_byte_stride * (cp->channel_count - channel_offset);
+					u64 copy_size   = cp->raw_channel_byte_stride * (total_channel_count - channel_offset);
 					u64 copy_offset = rf_pointer - rf->buffer.gpu_pointer;
 					u64 clear_size  = cp->raw_channel_byte_stride * channel_pad_count;
 
@@ -1664,7 +1724,7 @@ complete_queue(BeamformerCtx *ctx, BeamformWorkQueue *q, Arena *arena)
 				u64  count       = 0;
 				u64 *timestamps  = gpu_read_timestamps(GPUTimeline_Compute, &count, arena);
 
-				i32 steps        = ((i32)cp->channel_count / BeamformerChunkChannelCount) - 1;
+				i32 steps        = ((i32)total_channel_count / BeamformerChunkChannelCount) - 1;
 				i32 step         = 0;
 				u32 shader_index = 0;
 				u64 last_time    = count > 0 ? timestamps[0] : 0;
@@ -1791,7 +1851,7 @@ DEBUG_EXPORT BEAMFORMER_RF_UPLOAD_FN(beamformer_rf_upload)
 	BeamformerSharedMemoryLockKind upload_lock = BeamformerSharedMemoryLockKind_UploadRF;
 
 	BeamformerSharedMemoryAllocationHandle rf_handle;
-	if (atomic_load_u32(sm->locks + upload_lock) && (rf_handle = atomic_swap_u64(&sm->rf_handle, 0)))
+	if (atomic_load_u32(sm->locks + upload_lock) && (rf_handle.v = atomic_swap_u64(&sm->rf_handle.v, 0)))
 	{
 		BeamformerRFBuffer *rf = ctx->rf_buffer;
 
@@ -1895,17 +1955,20 @@ beamformer_process_input_events(BeamformerCtx *ctx, BeamformerInput *input,
 					}
 				}
 
-				// TODO(rnp): track latest parameter block
 				if (ctx->latest_frame) {
 					BeamformerFrame *f = ctx->latest_frame;
-					beamformer_queue_compute(ctx, (BeamformerComputeWorkContext){
-						.voxel_transform   = f->voxel_transform,
-						.rf_offset         = 0,
-						.focus_depth       = f->focus_depth,
-						.steering_angle    = f->steering_angle,
-						.tx_rx_orientation = f->transmit_receive_orientation,
-						.parameter_set     = 0,
-						.view_plane        = f->view_plane_tag,
+					beamformer_queue_compute(beamformer_context, (BeamformerComputeWorkContext){
+						.set_handle = beamformer_parameter_set_handle_for_compute_plan(f->compute_plan_index),
+						.parameters = {
+							.view_plane_tag    = f->view_plane_tag,
+							.voxel_transform   = f->voxel_transform,
+							.rf_offset         = 0,
+							.focus_depth       = f->focus_depth,
+							.steering_angle    = f->steering_angle,
+							.origin_offset     = f->origin_offset,
+							.transmit_receive_orientation = f->transmit_receive_orientation,
+							//.readi_group       = f->readi_group,
+						},
 					});
 				}
 			}break;

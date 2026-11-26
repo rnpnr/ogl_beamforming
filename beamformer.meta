@@ -6,6 +6,8 @@
 @Constant(16)     MaxComputeShaderStages
 @Constant(16)     MaxParameterBlocks
 @Constant(3)      MaxRawDataFramesInFlight
+@Constant(256)    MaxParameterSets
+@Constant(65535)  MaxAcquisitionCount
 
 @Enumeration DecodeMode
 {
@@ -57,6 +59,7 @@
 @Enumeration DataLayout
 {
 	@Expand(DataLayoutTable) `$(name)`
+	RawBuffer
 	Image
 }
 
@@ -91,24 +94,27 @@
 @Flags AcquisitionKindFlags
 {
 	FixedTransmits
+	MultiOrientation
+	MultiDepth
+	MultiSteering
 	Sparse
 }
 
-@Table([name pretty_name fixed_transmits sparse]) AcquisitionKindTable
+@Table([name pretty_name fixed_transmits sparse multi_orientation multi_depth multi_steering]) AcquisitionKindTable
 {
-	[FORCES         FORCES         1 0]
-	[UFORCES        UFORCES        0 1]
-	[HERCULES       HERCULES       1 0]
-	[RCA_VLS        VLS            0 0]
-	[RCA_TPW        TPW            0 0]
-	[UHERCULES      UHERCULES      0 1]
-	[RACES          RACES          1 0]
-	[EPIC_FORCES    EPIC-FORCES    1 0]
-	[EPIC_UFORCES   EPIC-UFORCES   0 1]
-	[EPIC_UHERCULES EPIC-UHERCULES 0 1]
-	[Flash          Flash          0 0]
-	[HERO_PA        HERO-PA        0 0]
-	[ULM            ULM            0 0]
+	[FORCES         FORCES         1 0 0 0 0]
+	[UFORCES        UFORCES        0 1 0 0 0]
+	[HERCULES       HERCULES       1 0 0 0 0]
+	[RCA_VLS        VLS            0 0 1 1 1]
+	[RCA_TPW        TPW            0 0 1 0 1]
+	[UHERCULES      UHERCULES      0 1 0 0 0]
+	[RACES          RACES          1 0 0 0 0]
+	[EPIC_FORCES    EPIC-FORCES    1 0 0 0 0]
+	[EPIC_UFORCES   EPIC-UFORCES   0 1 0 0 0]
+	[EPIC_UHERCULES EPIC-UHERCULES 0 1 0 0 0]
+	[Flash          Flash          0 0 1 1 1]
+	[HERO_PA        HERO-PA        0 0 0 0 0]
+	[ULM            ULM            0 0 0 0 0]
 }
 @Expand(AcquisitionKindTable) @Enumeration(`$(name)`) AcquisitionKind
 
@@ -220,6 +226,121 @@
 @Library @Struct Parameters
 @MATLAB  @Struct Parameters
 
+@Struct DataDescriptor
+{
+	[kind          DataKind  ]
+	[layout        DataLayout]
+	[contrast_mode ContrastMode]
+	[dimensions    UV4       ]
+}
+@Library @Struct DataDescriptor
+@MATLAB  @Struct DataDescriptor
+
+@Table([name type elements counted_by]) DynamicComputeParametersTable
+{
+	[transducer_transforms         M4  0 transducer_tile_count]
+	[sparse_elements               U16 0 events]
+	[focus_depths                  F32 0 events]
+	[tilting_angles                F32 0 events]
+	[origin_offsets                F32 0 events]
+	[transmit_receive_orientations U8  0 events]
+}
+
+@Table([name type elements]) DynamicLibraryParametersTable
+{
+	@Expand(DynamicComputeParametersTable) [`$(name)` `$(type)` `$(elements)`]
+	[channel_mapping U16 0]
+}
+
+@Struct ComputeParameters
+{
+	[data_description         DataDescriptor    ]
+	[emission_parameters      EmissionParameters]
+
+	[transducer_channel_count U16              2]
+	[transducer_tile_count    U16              2]
+	[transducer_element_pitch V2                ]
+
+	[acquisition_kind         AcquisitionKind   ]
+	[decode_mode              DecodeMode        ]
+	[sampling_mode            SamplingMode      ]
+	[sampling_frequency       F32               ]
+	[demodulation_frequency   F32               ]
+	[decimation_rate          U32               ]
+	[speed_of_sound           F32               ]
+	[time_offset              F32               ]
+	[f_number                 F32               ]
+	[interpolation_mode       InterpolationMode ]
+	[coherency_weighting      B32               ]
+	[readi_group_count        U32               ]
+}
+
+@Struct DynamicComputeParameters
+{
+	@Expand(DynamicComputeParametersTable) [`$(name)` `$(type)` `$(elements)`]
+}
+
+@Table([name type elements]) StaticParametersTable
+{
+	@Expand(ComputeParameters)  [`$(name)` `$(type)` `$(elements)`]
+
+	[output_points SV4 1]
+
+	// TODO(rnp): this should also be dynamic
+	[compute_stages_count     U32 1                     ]
+	[compute_stages           U32 MaxComputeShaderStages]
+	[compute_stage_parameters U32 MaxComputeShaderStages]
+}
+
+@Struct ParameterSet
+{
+	@Expand(StaticParametersTable)         [`$(name)` `$(type)` `$(elements)`]
+	@Expand(DynamicLibraryParametersTable) [`$(name)` `$(type)` 0]
+}
+@Library @Struct ParameterSet
+@MATLAB  @Struct ParameterSet
+
+@Emit
+{
+	`#define beamformer_parameter_set_dynamic_field_init_literal \`
+	@Expand(DynamicComputeParametersTable) `	.$(name)_offset$(|)= -1u, \`
+	``
+	`function void`
+	`beamformer_parameter_set_flat_append_dynamic_data(BeamformerParameterSetFlat *f,`
+	`                                                  BeamformerParameterSet *ps,`
+	`                                                  u32 events, u32 transducer_tile_count)`
+	`{`
+	@Expand(DynamicComputeParametersTable) `	if (f->$(name)_offset != -1u)$(|)memory_copy((u8 *)f + f->$(name)_offset,$(|)ps->$(name),$(|)$(counted_by) * sizeof(*ps->$(name)));`
+	`}`
+	``
+	`function void`
+	`beamformer_dynamic_compute_parameter_set_assign_pointers(BeamformerDynamicComputeParameters *dp,`
+	`                                                         BeamformerParameterSetFlat *f, u8 *base)`
+	`{`
+	@Expand(DynamicComputeParametersTable) `	if (f->$(name)_offset != -1u)$(|)dp->$(name)$(|)= (void *)(base + f->$(name)_offset);`
+	`}`
+}
+
+@Struct ParameterSetFlat
+{
+	@Expand(StaticParametersTable)         [`$(name)` `$(type)` `$(elements)`]
+	@Expand(DynamicComputeParametersTable) [`$(name)_offset` U32 1]
+}
+
+@Struct PushParameters
+{
+	[voxel_transform               M4]
+	[rf_offset                    U64]
+	[focus_depth                  F32]
+	[steering_angle               F32]
+	[origin_offset                F32]
+	[transmit_receive_orientation U16]
+	[readi_group                  U16]
+	[view_plane_tag      ViewPlaneTag]
+}
+@Library @Struct PushParameters
+@MATLAB  @Struct PushParameters
+
 @Struct SimpleParameters
 {
 	@Expand(Parameters) [`$(name)` `$(type)` `$(elements)`]
@@ -300,7 +421,7 @@
 	`};`
 	``
 	`read_only u32 beamformer_acquisition_kind_flags[] = {`
-	@Expand(AcquisitionKindTable) `	($(fixed_transmits)*BeamformerAcquisitionKindFlags_FixedTransmits)|($(sparse)*BeamformerAcquisitionKindFlags_Sparse),`
+	@Expand(AcquisitionKindTable) `	($(fixed_transmits)*BeamformerAcquisitionKindFlags_FixedTransmits)|($(sparse)*BeamformerAcquisitionKindFlags_Sparse)|($(multi_orientation)*BeamformerAcquisitionKindFlags_MultiOrientation)|($(multi_depth)*BeamformerAcquisitionKindFlags_MultiDepth)|($(multi_steering)*BeamformerAcquisitionKindFlags_MultiSteering),`
 	`};`
 	``
 	`read_only str8 beamformer_acquisition_kind_strings[] = {`
@@ -413,24 +534,28 @@
 
 		@Bake
 		{
-			[FocalVectors                U32]
 			[Hadamard                    U32]
 			[IncoherentFrame             U32]
 			[SparseElements              U32]
-			[TransducerTransforms        U32]
 			[TransmitReceiveOrientations U32]
+			[TransducerTransforms        U32]
+			// TODO(rnp): don't really need all of these, they aren't all in use at once
+			[FocusDepths                 U32]
+			[OriginOffsets               U32]
+			[TiltingAngles               U32]
 
-			[AcquisitionKind             U32]
-			[AcquisitionCount            S32]
-			[SampleCount                 S32]
 			[AcquisitionByteStride       U32]
 			[ChannelByteStride           U32]
-			[ReceiveChannelCount         U16]
-			[TransmitChannelCount        U16]
-			[ReceiveTileCount            U16]
-			[TransmitTileCount           U16]
+			[SampleCount                 S32]
+			[AcquisitionKind             U32]
+			[AcquisitionCount            U16]
 			[ChunkChannelCount           U16]
-			[TransmitReceiveOrientation  U16]
+
+			// TODO(rnp): do we really need all of these?
+			[RowChannelCount             U16]
+			[ColumnChannelCount          U16]
+			[RowTileCount                U16]
+			[ColumnTileCount             U16]
 
 			[InterpolationMode           U16]
 
@@ -455,7 +580,8 @@
 			[output_frame       U64]
 			[channel_offset     U32]
 			[focus_depth        F32]
-			[steering_angle     F32]
+			[tilting_angle      F32]
+			[origin_offset      F32]
 			[tx_rx_orientation  U16]
 			[readi_group        U16]
 		}
